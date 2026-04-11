@@ -1,0 +1,60 @@
+name: auto-resolver
+
+# Runs the CRYPTO + FOOTBALL auto-resolver once every 5 minutes so Mako
+# Markets keeps resolving without a laptop running `pnpm auto-resolver`.
+#
+# Triggers:
+#   - schedule: every 5 minutes (GitHub's practical minimum — actual runs
+#     can drift 5–15 min under load, which is fine for markets with close
+#     times ≥ 60s)
+#   - workflow_dispatch: manual trigger from the Actions tab
+#   - push to main (warm tick after every deploy)
+#
+# Required repo secrets:
+#   - ADMIN_PRIVATE_KEY   (0x + 64 hex chars, the deployer/resolver wallet)
+#   - FOOTBALL_DATA_API_KEY  (optional, only needed for football resolution)
+#
+# Non-secret config (edit here if the contract ever moves):
+#   - MAKO_ADDRESS is public so it lives in env below, not secrets.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/auto-resolver.mts'
+      - 'scripts/mako-abi.json'
+      - '.github/workflows/auto-resolver.yml'
+
+concurrency:
+  group: auto-resolver
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MAKO_ADDRESS: '0x87129a4FF7e795286a9939Ce7A73A25A29368389'
+      ADMIN_PRIVATE_KEY: ${{ secrets.ADMIN_PRIVATE_KEY }}
+      FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+      RESOLVER_ONCE: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Run one resolver tick
+        run: pnpm auto-resolver

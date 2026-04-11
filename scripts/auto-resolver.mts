@@ -38,17 +38,20 @@ import {
   type Hex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve as pathResolve } from 'node:path';
 
+// ABI source of truth: prefer the fresh Foundry compile output if present
+// (local dev), otherwise fall back to the vendored copy in this repo (CI).
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const abiJson = JSON.parse(
-  readFileSync(
-    pathResolve(__dirname, '../../mako-contracts/out/MakoMarkets.sol/MakoMarkets.json'),
-    'utf-8',
-  ),
-) as { abi: readonly unknown[] };
+const foundryAbiPath = pathResolve(
+  __dirname,
+  '../../mako-contracts/out/MakoMarkets.sol/MakoMarkets.json',
+);
+const vendoredAbiPath = pathResolve(__dirname, './mako-abi.json');
+const abiPath = existsSync(foundryAbiPath) ? foundryAbiPath : vendoredAbiPath;
+const abiJson = JSON.parse(readFileSync(abiPath, 'utf-8')) as { abi: readonly unknown[] };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const makoAbi = abiJson.abi as any;
 if (!Array.isArray(makoAbi) || makoAbi.length === 0) {
