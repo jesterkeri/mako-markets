@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAccount, useReadContracts } from 'wagmi';
 import { useMarkets } from '@/lib/hooks';
-import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
+import { makoContract, type MarketWithId } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
 import { MarketResolveActions } from '@/components/MarketResolveActions';
 import { MarketClaimAction } from '@/components/MarketClaimAction';
@@ -42,7 +42,11 @@ export default function MyMarketsPage() {
   const [tab, setTab] = useState<PositionsTab>('active');
 
   // Batched read: one getUserBet call per market. wagmi dedupes and caches.
-  const { data: betsData, isLoading: isBetsLoading } = useReadContracts({
+  const {
+    data: betsData,
+    isLoading: isBetsLoading,
+    error: betsError,
+  } = useReadContracts({
     contracts: markets.map(
       (m) =>
         ({
@@ -57,10 +61,11 @@ export default function MyMarketsPage() {
     },
   });
 
-  // Join markets with the user's positions. Skip:
-  // - zero-bet rows (user never bet on this market)
-  // - ADHOC markets (retired from product surface, hidden from /me too)
-  //   Users can still access ADHOC positions via direct /market/[id] URLs.
+  // Join markets with the user's positions. Show every market the wallet has
+  // a non-zero position in — including ADHOC. ADHOC is retired from the
+  // discovery surface (home feed, /create) but users must always see their
+  // own historical positions regardless of mType.
+  const anyReadFailed = !!betsData?.some((r) => r.status === 'failure');
   const userPositions: UserPosition[] = useMemo(() => {
     if (!betsData || !address) return [];
     const out: UserPosition[] = [];
@@ -75,7 +80,6 @@ export default function MyMarketsPage() {
         boolean,
       ];
       if (yes === 0n && no === 0n) continue;
-      if (markets[i].mType === MarketType.ADHOC) continue;
       out.push({ market: markets[i], yesBet: yes, noBet: no, hasClaimed });
     }
     return out;
@@ -156,6 +160,18 @@ export default function MyMarketsPage() {
           CLOSED · {closed.length}
         </button>
       </div>
+
+      {/* Read-error banner — distinguishes an RPC/contract failure from a
+          legitimate empty positions list. The fanout is a batched call: if
+          the whole query errors we show a toast-style banner; if individual
+          rows failed (partial) we still render what we have but warn. */}
+      {(betsError || anyReadFailed) && (
+        <div className="px-6 md:px-8 py-3 border-b border-warning bg-warning/10 text-center">
+          <span className="block text-[10px] font-black tracking-widest text-warning uppercase">
+            [ READ ERROR ] · SOME POSITIONS MAY BE MISSING · RETRYING…
+          </span>
+        </div>
+      )}
 
       {/* List */}
       <div className="flex flex-col w-full pb-8">
