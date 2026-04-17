@@ -45,13 +45,18 @@ jobs:
       BALLDONTLIE_API_KEY: ${{ secrets.BALLDONTLIE_API_KEY }}
       RESOLVER_ONCE: '1'
     steps:
-      - uses: actions/checkout@v4
+      # Actions pinned to commit SHAs (not floating major tags) to defend
+      # against a supply-chain attack on any of these upstreams. This
+      # workflow holds ADMIN_PRIVATE_KEY so a tainted action would drain
+      # the resolver wallet. Re-resolve a SHA with:
+      #   gh api /repos/<owner>/<repo>/git/ref/tags/<tag> --jq .object.sha
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: 'pnpm'

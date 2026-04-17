@@ -247,7 +247,11 @@ async function fetchNewsApi(
       tag,
       title: a.title!,
       time: relativeTime(a.publishedAt),
-      url: a.url,
+      // Only propagate http(s) URLs. A compromised publisher returning
+      // `javascript:...` or `data:text/html,...` would otherwise render as
+      // a clickable XSS vector in NewsFeed. Defense-in-depth — NewsFeed
+      // also validates client-side.
+      url: a.url && /^https?:\/\//i.test(a.url) ? a.url : undefined,
     }));
 }
 

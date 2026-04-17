@@ -111,10 +111,14 @@ export function NewsFeed() {
             </h3>
           </>
         );
-        return news.url ? (
+        // Belt-and-suspenders with the server-side protocol filter in
+        // /api/news. Even if a malicious URL slipped past the server
+        // (e.g. cache, middleware, SSRF), never emit a non-http(s) href.
+        const safeHref = news.url && /^https?:\/\//i.test(news.url) ? news.url : undefined;
+        return safeHref ? (
           <a
             key={i}
-            href={news.url}
+            href={safeHref}
             target="_blank"
             rel="noopener noreferrer"
             className="flex flex-col pt-6 first:pt-0 group cursor-pointer"
