@@ -13,15 +13,16 @@ import { NextResponse } from 'next/server';
  *     These use keys already in .env.local and nearly always succeed, so
  *     the feed never goes empty.
  *
- *  2. EDITORIAL (NewsAPI augment, top of feed when available):
- *     - /v2/top-headlines?category=sports → real sports headlines
- *     - /v2/top-headlines?category=business + crypto keyword filter
- *     Skipped entirely if NEWS_API_KEY is absent. NewsAPI 5xx / timeout /
- *     rate-limit also falls back silently to derived-only.
+ *  2. EDITORIAL (free, real-time, no NewsAPI tier delay):
+ *     - ESPN public news API for soccer + NBA headlines
+ *     - CoinDesk RSS for crypto headlines
+ *     NewsAPI was retired here: its free tier delays articles ~24h, so
+ *     everything stamped "1D AGO" even on healthy news days. ESPN's
+ *     `site.api.espn.com` JSON endpoints and CoinDesk's RSS both serve
+ *     current-minute timestamps without a key.
  *
- * Cache: 15-min revalidate (NewsAPI free tier = 100 req/day, so ~96/day
- * worst case). Each upstream is in its own try/catch so one failure
- * cannot poison the response.
+ * Cache: 15-min revalidate. Each upstream is in its own try/catch so one
+ * failure cannot poison the response.
  */
 
 export const revalidate = 900; // 15 min
@@ -41,7 +42,6 @@ type NewsItem = {
 
 const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 const BALLDONTLIE_API_KEY = process.env.BALLDONTLIE_API_KEY;
-const NEWS_API_KEY = process.env.NEWS_API_KEY;
 
 // ---------------------------------------------------------------
 // Helpers
@@ -62,6 +62,30 @@ function ymd(daysOffset: number): string {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() + daysOffset);
   return d.toISOString().slice(0, 10);
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+// Plucks the inner text of a single XML tag, handling optional CDATA
+// wrapping. RSS fields routinely wrap in CDATA to pass HTML through,
+// and feeds like CoinDesk's use it inconsistently across items.
+function extractXmlTag(block: string, tag: string): string | undefined {
+  const re = new RegExp(
+    `<${tag}>\\s*(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([\\s\\S]*?))\\s*<\\/${tag}>`,
+  );
+  const m = block.match(re);
+  if (!m) return undefined;
+  const raw = (m[1] ?? m[2] ?? '').trim();
+  return raw.length > 0 ? decodeEntities(raw) : undefined;
 }
 
 // ---------------------------------------------------------------
@@ -198,75 +222,148 @@ async function fetchDerivedCrypto(): Promise<NewsItem[]> {
 }
 
 // ---------------------------------------------------------------
-// Editorial source (NewsAPI augment, optional)
+// Editorial sources — ESPN (soccer, NBA) + CoinDesk RSS (crypto)
 // ---------------------------------------------------------------
 
 /**
- * One NewsAPI helper, three beat-specific strategies:
+ * ESPN's `site.api.espn.com` exposes per-sport JSON news feeds with no
+ * auth required. Real-time timestamps, stable schema. These are the same
+ * endpoints ESPN's own web app consumes.
  *
- * - Football: `/v2/everything?q="soccer OR football"&domains=<footy outlets>`
- *   — general sports category leaks too much American football / MMA noise,
- *   so we restrict to dedicated soccer/football outlets + query filter.
- * - NBA: `/v2/everything?q=NBA&domains=<nba outlets>&sortBy=publishedAt`
- *   — scopes to NBA-focused publications so we get actual basketball coverage
- *   not tangential sports mentions.
- * - Crypto: `/v2/everything?domains=<crypto outlets>&sortBy=publishedAt`
- *   — crypto-only outlet whitelist; domain gating alone is enough since
- *   everything on CoinDesk/Decrypt/The Block is crypto by definition.
- *
- * All three filter out `[Removed]` titles (NewsAPI's marker for takedowns
- * / DMCA / paywalls).
+ * NBA lives at a single path (`basketball/nba/news`). Soccer is nested
+ * by league — there is no global soccer/news endpoint anymore, so we
+ * fan out across the five feeds that drive the bulk of real coverage
+ * (Premier League, Champions League, La Liga, Serie A, Bundesliga) and
+ * merge. A dead league just returns 404 and gets skipped.
  */
-async function fetchNewsApi(
-  beat: 'sports' | 'nba' | 'crypto',
+const ESPN_SOCCER_LEAGUES = [
+  'eng.1', // Premier League
+  'uefa.champions', // Champions League
+  'esp.1', // La Liga
+  'ita.1', // Serie A
+  'ger.1', // Bundesliga
+] as const;
+
+async function fetchEspnEndpoint(
+  path: string,
   tag: Tag,
-  limit: number,
 ): Promise<NewsItem[]> {
-  if (!NEWS_API_KEY) return [];
-
-  let url: string;
-  if (beat === 'crypto') {
-    const domains =
-      'coindesk.com,decrypt.co,theblock.co,cointelegraph.com,cryptoslate.com,bitcoinmagazine.com';
-    url = `https://newsapi.org/v2/everything?domains=${domains}&language=en&sortBy=publishedAt&pageSize=15`;
-  } else if (beat === 'nba') {
-    const domains = 'espn.com,bleacherreport.com,cbssports.com,theathletic.com,nytimes.com';
-    const q = encodeURIComponent('NBA');
-    url = `https://newsapi.org/v2/everything?q=${q}&domains=${domains}&language=en&sortBy=publishedAt&pageSize=15`;
-  } else {
-    // sports = soccer/football editorial
-    const domains = 'espn.com,theguardian.com,bbc.co.uk,skysports.com,goal.com';
-    const q = encodeURIComponent('soccer OR "football" OR "Premier League" OR "Champions League"');
-    url = `https://newsapi.org/v2/everything?q=${q}&domains=${domains}&language=en&sortBy=publishedAt&pageSize=15`;
+  try {
+    const res = await fetch(
+      `https://site.api.espn.com/apis/site/v2/sports/${path}/news?limit=15`,
+      { headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) return [];
+    const json = (await res.json()) as {
+      articles?: Array<{
+        headline?: string;
+        published?: string;
+        links?: { web?: { href?: string } };
+      }>;
+    };
+    return (json.articles ?? [])
+      .filter((a) => a.headline && a.headline.trim().length > 0)
+      .map((a) => {
+        const href = a.links?.web?.href;
+        return {
+          kind: 'headline' as const,
+          tag,
+          title: a.headline!,
+          time: relativeTime(a.published),
+          // Only propagate http(s) URLs. Defense-in-depth — NewsFeed
+          // validates client-side too.
+          url: href && /^https?:\/\//i.test(href) ? href : undefined,
+          publishedAt: a.published,
+        };
+      });
+  } catch {
+    return [];
   }
+}
 
-  const res = await fetch(url, {
-    headers: { 'X-Api-Key': NEWS_API_KEY },
-  });
-  if (!res.ok) return [];
-  const json = (await res.json()) as {
-    articles?: Array<{ title?: string; url?: string; publishedAt?: string }>;
-  };
-  return (json.articles ?? [])
-    .filter(
-      (a) =>
-        a.title
-        && a.title.trim().length > 0
-        && !a.title.toLowerCase().startsWith('[removed]'),
-    )
-    .slice(0, limit)
-    .map((a) => ({
-      kind: 'headline' as const,
-      tag,
-      title: a.title!,
-      time: relativeTime(a.publishedAt),
-      // Only propagate http(s) URLs. A compromised publisher returning
-      // `javascript:...` or `data:text/html,...` would otherwise render as
-      // a clickable XSS vector in NewsFeed. Defense-in-depth — NewsFeed
-      // also validates client-side.
-      url: a.url && /^https?:\/\//i.test(a.url) ? a.url : undefined,
-      publishedAt: a.publishedAt,
-    }));
+async function fetchEspnNba(limit: number): Promise<NewsItem[]> {
+  const items = await fetchEspnEndpoint('basketball/nba', 'NBA');
+  return items
+    .slice()
+    .sort((a, b) => {
+      const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+      const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+      return tb - ta;
+    })
+    .slice(0, limit);
+}
+
+async function fetchEspnSoccer(limit: number): Promise<NewsItem[]> {
+  const results = await Promise.allSettled(
+    ESPN_SOCCER_LEAGUES.map((l) => fetchEspnEndpoint(`soccer/${l}`, 'FOOTBALL')),
+  );
+  const merged: NewsItem[] = [];
+  const seen = new Set<string>();
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue;
+    for (const item of r.value) {
+      // Dedup across leagues — big stories (transfer rumors, UCL) often
+      // publish on multiple league feeds with the same headline.
+      const key = item.title;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+  return merged
+    .sort((a, b) => {
+      const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+      const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+      return tb - ta;
+    })
+    .slice(0, limit);
+}
+
+/**
+ * CoinDesk's RSS feed. Free, real-time, canonical crypto publication.
+ * XML is parsed with a narrow regex pass — we only need title / link /
+ * pubDate per item, so adding an XML lib would be overkill.
+ */
+async function fetchCoinDeskRss(limit: number): Promise<NewsItem[]> {
+  try {
+    // Canonical URL (no trailing slash). The slashed variant 308s here,
+    // which Node fetch follows transparently, but using the canonical
+    // path avoids the extra hop and a potential redirect quirk on cold
+    // serverless starts.
+    const res = await fetch('https://www.coindesk.com/arc/outboundfeeds/rss', {
+      // A UA is polite for RSS fetches; some feeds 403 the default Node UA.
+      headers: { 'User-Agent': 'Mozilla/5.0 Mako Markets' },
+    });
+    if (!res.ok) return [];
+    const xml = await res.text();
+
+    const items: NewsItem[] = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    let match: RegExpExecArray | null;
+    while ((match = itemRegex.exec(xml)) !== null && items.length < limit) {
+      const block = match[1];
+      const title = extractXmlTag(block, 'title');
+      const link = extractXmlTag(block, 'link');
+      const pubDate = extractXmlTag(block, 'pubDate');
+      if (!title || !link) continue;
+
+      // new Date() parses RFC 2822 pubDate strings natively.
+      const parsed = pubDate ? new Date(pubDate) : undefined;
+      const iso = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : undefined;
+
+      items.push({
+        kind: 'headline',
+        tag: 'CRYPTO',
+        title,
+        time: relativeTime(iso),
+        url: /^https?:\/\//i.test(link) ? link : undefined,
+        publishedAt: iso,
+      });
+    }
+    return items;
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------
@@ -285,9 +382,9 @@ export async function GET() {
   }
 
   const editorial = await Promise.allSettled([
-    fetchNewsApi('sports', 'FOOTBALL', 5),
-    fetchNewsApi('nba', 'NBA', 5),
-    fetchNewsApi('crypto', 'CRYPTO', 5),
+    fetchEspnSoccer(6),
+    fetchEspnNba(6),
+    fetchCoinDeskRss(6),
   ]);
   const editorialItems: NewsItem[] = [];
   for (const r of editorial) {
