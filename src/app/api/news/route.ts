@@ -391,18 +391,52 @@ export async function GET() {
     if (r.status === 'fulfilled') editorialItems.push(...r.value);
   }
 
-  // Sort the full merged set by publishedAt desc so the panel leads with
-  // whatever is freshest across every source, regardless of tag. Items
-  // without a timestamp (shouldn't happen, but safe) sink to the bottom.
-  const merged = [...editorialItems, ...derivedItems].sort((a, b) => {
+  // Sort the full merged set by publishedAt desc. CoinDesk posts far
+  // more frequently than ESPN's soccer/NBA feeds, so a pure recency sort
+  // produces a wall of crypto up top. We then interleave with a streak
+  // cap so consecutive same-tag items never exceed `maxStreak` while
+  // freshness still wins within each rotation.
+  const sortedByRecency = [...editorialItems, ...derivedItems].sort((a, b) => {
     const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
     const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
     return tb - ta;
   });
+  const merged = interleaveCapStreak(sortedByRecency, 2);
 
   // Strip the internal sort key before returning; client only consumes
   // the precomputed `time` string.
   const items = merged.slice(0, 30).map(({ publishedAt: _p, ...rest }) => rest);
 
   return NextResponse.json({ items });
+}
+
+// Recency-first but prevent one dominant tag from monopolizing the feed.
+// At each slot pick the freshest available item across all tags — unless
+// the last `maxStreak` slots are already that same tag, in which case
+// skip to the next-freshest different tag. If every remaining item is
+// the same tag (tail case, one tag has outlived the others), the cap is
+// relaxed so the feed still drains. Within each tag, relative recency
+// order is preserved.
+function interleaveCapStreak(items: NewsItem[], maxStreak: number): NewsItem[] {
+  const queues: Record<Tag, NewsItem[]> = { FOOTBALL: [], NBA: [], CRYPTO: [] };
+  for (const item of items) queues[item.tag].push(item);
+
+  const out: NewsItem[] = [];
+  while (queues.FOOTBALL.length || queues.NBA.length || queues.CRYPTO.length) {
+    const candidates = (['FOOTBALL', 'NBA', 'CRYPTO'] as const)
+      .filter((t) => queues[t].length > 0)
+      .map((t) => ({
+        tag: t,
+        ts: new Date(queues[t][0].publishedAt ?? 0).getTime(),
+      }))
+      .sort((a, b) => b.ts - a.ts);
+
+    const allowed = candidates.find((c) => {
+      if (out.length < maxStreak) return true;
+      return !out.slice(-maxStreak).every((i) => i.tag === c.tag);
+    });
+    const pick = allowed ?? candidates[0];
+    out.push(queues[pick.tag].shift()!);
+  }
+  return out;
 }
