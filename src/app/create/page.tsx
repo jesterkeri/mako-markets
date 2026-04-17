@@ -13,6 +13,7 @@ import {
   CRYPTO_ASSETS,
   roundStrike,
   formatStrikeForDisplay,
+  formatPriceUsd,
   type CryptoSymbol,
 } from '@/lib/crypto-assets';
 
@@ -364,9 +365,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
                 >
                   <span className="text-[11px] font-black uppercase tracking-widest mb-1">{sym}</span>
                   <span className="text-base font-black tabular-nums">
-                    {price
-                      ? `$${price.usd.toLocaleString(undefined, { maximumFractionDigits: price.usd < 10 ? 2 : 0 })}`
-                      : '—'}
+                    {price ? formatPriceUsd(price.usd) : '—'}
                   </span>
                   {isTestnet ? (
                     <span

@@ -107,3 +107,72 @@ export function formatStrikeForDisplay(strike: number): string {
   if (strike >= 1) return strike.toLocaleString();
   return strike.toString();
 }
+
+/**
+ * Human-facing live price string. Aims for ~5 significant figures across
+ * the whole range we care about (BTC five-digit through micro-cap).
+ *
+ *   $76,391         BTC           (>=10000, integer)
+ *   $2,398.45       ETH           (>=1000,  2 decimals)
+ *   $89.054         SOL           (>=10,    3 decimals)
+ *   $9.7054         LINK          (>=1,     4 decimals)
+ *   $0.10247        DOGE          (>=0.1,   5 decimals)
+ *   $0.041234       MON           (>=0.01,  6 decimals)
+ *   $0.0₄1234       micro-cap     (<0.0001, subscript notation)
+ *
+ * The subscript notation ("$0.0ₙX") is the DexScreener / CoinGecko
+ * convention for prices with 4+ leading zeros after the decimal. `n` is
+ * the total count of zeros between the decimal point and the first
+ * significant digit; the trailing digits are the first ~3 significant
+ * figures with redundant trailing zeros trimmed.
+ *
+ * Uses `minimumFractionDigits: 2` as a floor so "$9.7" displays as
+ * "$9.70" and "$0.1" as "$0.10" — CoinGecko occasionally returns values
+ * that round-trip to whole-ish numbers at the API boundary, and a bare
+ * "$0.1" reads as sloppy for a market with real money on the line.
+ */
+export function formatPriceUsd(usd: number): string {
+  if (!Number.isFinite(usd) || usd < 0) return '—';
+  if (usd === 0) return '$0';
+
+  if (usd < 0.0001) return formatMicroPriceUsd(usd);
+
+  let max: number;
+  if (usd >= 10000) max = 0;
+  else if (usd >= 1000) max = 2;
+  else if (usd >= 100) max = 3;
+  else if (usd >= 10) max = 4;
+  else if (usd >= 1) max = 5;
+  else if (usd >= 0.1) max = 6;
+  else if (usd >= 0.01) max = 7;
+  else max = 8;
+
+  const min = max === 0 ? 0 : 2;
+  return `$${usd.toLocaleString(undefined, {
+    minimumFractionDigits: min,
+    maximumFractionDigits: max,
+  })}`;
+}
+
+const SUBSCRIPT_DIGITS = '₀₁₂₃₄₅₆₇₈₉';
+
+function formatMicroPriceUsd(usd: number): string {
+  // toFixed(20) gives us enough trailing digits to reliably extract the
+  // leading-zero run plus a few sig figs, without float-repr surprises.
+  const str = usd.toFixed(20);
+  const dot = str.indexOf('.');
+  if (dot === -1) return `$${usd}`;
+  const frac = str.slice(dot + 1);
+
+  let zeros = 0;
+  while (zeros < frac.length && frac[zeros] === '0') zeros++;
+
+  let sig = frac.slice(zeros, zeros + 3).replace(/0+$/, '');
+  if (sig === '') sig = '0';
+
+  const sub = String(zeros)
+    .split('')
+    .map((d) => SUBSCRIPT_DIGITS[Number(d)] ?? d)
+    .join('');
+  return `$0.0${sub}${sig}`;
+}

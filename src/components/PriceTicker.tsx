@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CRYPTO_ASSETS, type CryptoSymbol } from '@/lib/crypto-assets';
+import { CRYPTO_ASSETS, formatPriceUsd, type CryptoSymbol } from '@/lib/crypto-assets';
 
 /**
  * News-channel-style bottom price crawl. Fixed to the bottom of the
@@ -27,16 +27,6 @@ import { CRYPTO_ASSETS, type CryptoSymbol } from '@/lib/crypto-assets';
 type CoinPrice = { usd: number; change24h: number; testnet?: boolean };
 type Prices = Partial<Record<CryptoSymbol, CoinPrice>>;
 
-function formatUsd(n: number): string {
-  if (n >= 1000) {
-    const whole = Math.round(n).toString();
-    const withCommas = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    return `$${withCommas}`;
-  }
-  if (n >= 10) return `$${n.toFixed(0)}`;
-  return `$${n.toFixed(2)}`;
-}
-
 function formatPct(n: number): string {
   const sign = n > 0 ? '+' : n < 0 ? '' : '';
   return `${sign}${n.toFixed(2)}%`;
@@ -52,7 +42,7 @@ function TickerItem({ label, price }: { label: string; price: CoinPrice }) {
       <span className="text-[10px] font-black uppercase tracking-widest text-background/60">
         {label}
       </span>
-      <span className="text-sm font-black text-background">{formatUsd(price.usd)}</span>
+      <span className="text-sm font-black text-background">{formatPriceUsd(price.usd)}</span>
       {price.testnet ? (
         <span className="text-[10px] font-black uppercase tracking-widest text-background/40">
           TESTNET
