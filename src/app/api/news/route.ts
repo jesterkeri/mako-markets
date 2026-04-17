@@ -172,58 +172,15 @@ async function fetchDerivedNba(): Promise<NewsItem[]> {
     }));
 }
 
-async function fetchDerivedCrypto(): Promise<NewsItem[]> {
-  // Widened to cover the full asset registry. Sort by |change| so the
-  // panel leads with the biggest movers, not always the majors.
-  const COINS: Array<{ coingeckoId: string; label: string }> = [
-    { coingeckoId: 'bitcoin', label: 'BTC' },
-    { coingeckoId: 'ethereum', label: 'ETH' },
-    { coingeckoId: 'solana', label: 'SOL' },
-    { coingeckoId: 'avalanche-2', label: 'AVAX' },
-    { coingeckoId: 'near', label: 'NEAR' },
-    { coingeckoId: 'aptos', label: 'APT' },
-    { coingeckoId: 'sui', label: 'SUI' },
-    { coingeckoId: 'dogecoin', label: 'DOGE' },
-    { coingeckoId: 'chainlink', label: 'LINK' },
-  ];
-  const ids = COINS.map((c) => c.coingeckoId).join(',');
-  const res = await fetch(
-    `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`,
-    { cache: 'no-store' },
-  );
-  if (!res.ok) return [];
-  const json = (await res.json()) as Record<
-    string,
-    { usd: number; usd_24h_change?: number } | undefined
-  >;
-  return COINS.map((c) => ({
-    label: c.label,
-    change: json[c.coingeckoId]?.usd_24h_change ?? 0,
-  }))
-    .filter((e) => e.change !== 0)
-    .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
-    .slice(0, 3)
-    .map((e) => {
-      const sign = e.change > 0 ? '+' : '';
-      return {
-        kind: 'event' as const,
-        tag: 'CRYPTO' as const,
-        title: `${e.label} ${sign}${e.change.toFixed(2)}% past 24h`,
-        // Label "24H" not "NOW" — the change is measured over the last
-        // 24h, not this moment. Calling it NOW reads as a breaking
-        // headline and misleads users.
-        time: '24H',
-        // Sort timestamp sits ~1h back so genuinely fresh editorial
-        // (<1h old) can outrank movers. Otherwise movers always crown
-        // the feed on slow news days just because their clock says now.
-        publishedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-      };
-    });
-}
-
 // ---------------------------------------------------------------
 // Editorial sources — ESPN (soccer, NBA) + CoinDesk RSS (crypto)
 // ---------------------------------------------------------------
+//
+// Note: no derived crypto movers here. Earlier revisions synthesized
+// "SUI +6.87% past 24h" items from CoinGecko, but a 24h percent change
+// has no single publishedAt and any stamp we invented was dishonest.
+// Live crypto prices + 24h change already render in the bottom
+// PriceTicker; the news panel stays purely real-headline / real-event.
 
 /**
  * ESPN's `site.api.espn.com` exposes per-sport JSON news feeds with no
@@ -374,7 +331,6 @@ export async function GET() {
   const derived = await Promise.allSettled([
     fetchDerivedFootball(),
     fetchDerivedNba(),
-    fetchDerivedCrypto(),
   ]);
   const derivedItems: NewsItem[] = [];
   for (const r of derived) {
