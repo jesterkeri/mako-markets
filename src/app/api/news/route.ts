@@ -33,6 +33,10 @@ type NewsItem = {
   title: string;
   time: string; // "10M AGO" style, precomputed server-side
   url?: string;
+  // Internal sort key — ISO of when the thing happened. Not used by the
+  // client, stripped before response. Keeps the final merge deterministic:
+  // newest first across all sources regardless of tag.
+  publishedAt?: string;
 };
 
 const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
@@ -97,6 +101,7 @@ async function fetchDerivedFootball(): Promise<NewsItem[]> {
         tag: 'FOOTBALL' as const,
         title: `${home} ${hg}-${ag} ${away} · FT`,
         time: relativeTime(m.utcDate),
+        publishedAt: m.utcDate,
       };
     });
 }
@@ -139,6 +144,7 @@ async function fetchDerivedNba(): Promise<NewsItem[]> {
       tag: 'NBA' as const,
       title: `${g.home_team.full_name} ${g.home_team_score}, ${g.visitor_team.full_name} ${g.visitor_team_score}${g.status?.toLowerCase().includes('ot') ? ` (${g.status})` : ''}`,
       time: relativeTime(g.datetime ?? g.date),
+      publishedAt: g.datetime ?? g.date,
     }));
 }
 
@@ -172,14 +178,21 @@ async function fetchDerivedCrypto(): Promise<NewsItem[]> {
   }))
     .filter((e) => e.change !== 0)
     .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
-    .slice(0, 5)
+    .slice(0, 3)
     .map((e) => {
       const sign = e.change > 0 ? '+' : '';
       return {
         kind: 'event' as const,
         tag: 'CRYPTO' as const,
         title: `${e.label} ${sign}${e.change.toFixed(2)}% past 24h`,
-        time: 'NOW',
+        // Label "24H" not "NOW" — the change is measured over the last
+        // 24h, not this moment. Calling it NOW reads as a breaking
+        // headline and misleads users.
+        time: '24H',
+        // Sort timestamp sits ~1h back so genuinely fresh editorial
+        // (<1h old) can outrank movers. Otherwise movers always crown
+        // the feed on slow news days just because their clock says now.
+        publishedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
       };
     });
 }
@@ -252,6 +265,7 @@ async function fetchNewsApi(
       // a clickable XSS vector in NewsFeed. Defense-in-depth — NewsFeed
       // also validates client-side.
       url: a.url && /^https?:\/\//i.test(a.url) ? a.url : undefined,
+      publishedAt: a.publishedAt,
     }));
 }
 
@@ -280,26 +294,18 @@ export async function GET() {
     if (r.status === 'fulfilled') editorialItems.push(...r.value);
   }
 
-  // Interleave editorial by tag so the feed doesn't dump all FOOTBALL first,
-  // then all NBA, then all CRYPTO — that made the panel look FOOTBALL-heavy
-  // on tall viewports. Round-robin produces an even rhythm.
-  const byTag = {
-    FOOTBALL: editorialItems.filter((i) => i.tag === 'FOOTBALL'),
-    NBA: editorialItems.filter((i) => i.tag === 'NBA'),
-    CRYPTO: editorialItems.filter((i) => i.tag === 'CRYPTO'),
-  };
-  const interleaved: NewsItem[] = [];
-  for (let i = 0; i < 10; i++) {
-    for (const tag of ['FOOTBALL', 'NBA', 'CRYPTO'] as const) {
-      const pick = byTag[tag][i];
-      if (pick) interleaved.push(pick);
-    }
-  }
+  // Sort the full merged set by publishedAt desc so the panel leads with
+  // whatever is freshest across every source, regardless of tag. Items
+  // without a timestamp (shouldn't happen, but safe) sink to the bottom.
+  const merged = [...editorialItems, ...derivedItems].sort((a, b) => {
+    const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+    const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+    return tb - ta;
+  });
 
-  // Editorial on top when we have it; derived as the always-present baseline.
-  // Overall cap is roomy (30) so the xl+ intel panel scrolls through a full
-  // news shift rather than looking half-empty on slow days.
-  const items = [...interleaved.slice(0, 12), ...derivedItems].slice(0, 30);
+  // Strip the internal sort key before returning; client only consumes
+  // the precomputed `time` string.
+  const items = merged.slice(0, 30).map(({ publishedAt: _p, ...rest }) => rest);
 
   return NextResponse.json({ items });
 }
