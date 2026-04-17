@@ -2,16 +2,21 @@
 /**
  * scripts/seed.ts — curated seed for MakoMarkets.
  *
- * Creates 6 long-lived markets (2 football, 2 crypto, 2 adhoc) on the live
- * contract via a viem WalletClient. Runs locally only — no HTTP endpoint,
- * no auth surface.
+ * Creates up to 6 long-lived markets (2 football, 2 crypto, up to 2 NBA)
+ * on the live contract via a viem WalletClient. Runs locally only —
+ * no HTTP endpoint, no auth surface.
+ *
+ * NBA entries are best-effort: if BALLDONTLIE_API_KEY is missing or no
+ * upcoming games are returned (offseason), seed proceeds with the
+ * football + crypto markets only.
  *
  * Usage:
  *   pnpm seed
  *
  * Requires these values in .env.local:
- *   ADMIN_PRIVATE_KEY=0x...    (deployer / resolver wallet)
- *   MAKO_ADDRESS=0x87129a...   (deployed contract, non-zero)
+ *   ADMIN_PRIVATE_KEY=0x...     (deployer / resolver wallet)
+ *   MAKO_ADDRESS=0x...          (deployed contract, non-zero)
+ *   BALLDONTLIE_API_KEY=...     (optional — unlocks NBA markets)
  */
 // dotenv's `/config` auto-loader only reads `.env`, not `.env.local`.
 // Explicitly point it at `.env.local` (same file Next.js reads) so we
@@ -94,6 +99,10 @@ if (!/^0x[a-fA-F0-9]{64}$/.test(rawKey)) {
 }
 const ADMIN_PRIVATE_KEY = rawKey as Hex;
 
+// Optional — unlocks NBA seed entries. Missing key is not fatal: the NBA
+// block below degrades to zero markets and logs a warning.
+const BALLDONTLIE_API_KEY = process.env.BALLDONTLIE_API_KEY ?? '';
+
 // ---------------------------------------------------------------
 // 2. Clients
 // ---------------------------------------------------------------
@@ -171,13 +180,81 @@ const [btcPrice, ethPrice] = await Promise.all([
 console.log(`[seed] live prices: BTC $${btcPrice.toLocaleString()}, ETH $${ethPrice.toLocaleString()}`);
 
 // ---------------------------------------------------------------
+// 4b. Upcoming NBA games (balldontlie, auth via Authorization header)
+// ---------------------------------------------------------------
+
+interface UpcomingNbaGame {
+  id: number;
+  home: string;
+  away: string;
+  kickoff: Date;
+}
+
+async function fetchUpcomingNbaGames(limit: number): Promise<UpcomingNbaGame[]> {
+  if (!BALLDONTLIE_API_KEY) {
+    console.warn('[seed] BALLDONTLIE_API_KEY missing — skipping NBA markets');
+    return [];
+  }
+  const now = Date.now();
+  const start = new Date(now);
+  const end = new Date(now + 7 * 24 * 3600 * 1000);
+  const startStr = start.toISOString().slice(0, 10);
+  const endStr = end.toISOString().slice(0, 10);
+  const url = `https://api.balldontlie.io/v1/games?start_date=${startStr}&end_date=${endStr}&per_page=100`;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: BALLDONTLIE_API_KEY, Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      console.warn(`[seed] balldontlie upstream ${res.status} — skipping NBA markets`);
+      return [];
+    }
+    const json = (await res.json()) as {
+      data?: Array<{
+        id: number;
+        date: string;
+        status?: string;
+        home_team: { full_name: string };
+        visitor_team: { full_name: string };
+      }>;
+    };
+    // Keep only games that haven't tipped off yet (status is not already Final
+    // and kickoff is > 10 minutes away — the same safety margin used for
+    // closeTime below).
+    return (json.data ?? [])
+      .filter((g) => !g.status || !g.status.startsWith('Final'))
+      .map((g) => ({
+        id: g.id,
+        home: g.home_team.full_name,
+        away: g.visitor_team.full_name,
+        kickoff: new Date(g.date),
+      }))
+      .filter((g) => g.kickoff.getTime() > now + 10 * 60 * 1000)
+      .sort((a, b) => a.kickoff.getTime() - b.kickoff.getTime())
+      .slice(0, limit);
+  } catch (e) {
+    console.warn(`[seed] balldontlie fetch failed, skipping NBA markets: ${e}`);
+    return [];
+  }
+}
+
+const nbaGames = await fetchUpcomingNbaGames(2);
+if (nbaGames.length > 0) {
+  console.log(
+    `[seed] NBA upcoming (${nbaGames.length}): ${nbaGames
+      .map((g) => `#${g.id} ${g.away}@${g.home} ${g.kickoff.toISOString()}`)
+      .join('; ')}`,
+  );
+}
+
+// ---------------------------------------------------------------
 // 5. Market spec — 6 long-lived curated markets
 // ---------------------------------------------------------------
 
 enum MType {
   FOOTBALL = 0,
   CRYPTO = 1,
-  ADHOC = 2,
+  BASKETBALL = 2,
 }
 
 const now = Math.floor(Date.now() / 1000);
@@ -218,9 +295,14 @@ const markets: MarketSpec[] = [
     closeTime: inHours(2),
     question: `Will ETH close above $${ethStrike.toLocaleString()} in 2 hours?`,
   },
-  // ADHOC seed markets retired — product surface only supports structured
-  // (auto-resolvable) market types going forward. Contract still supports ADHOC
-  // if a future build ever wants to re-enable them.
+  // NBA: best-effort — appended only if balldontlie returned upcoming games.
+  // closeTime is 10 minutes before tip-off; resolver takes over from there.
+  ...nbaGames.map((g): MarketSpec => ({
+    mType: MType.BASKETBALL,
+    oracleRef: toBytes32(`${g.id}:home_win:0`),
+    closeTime: BigInt(Math.floor(g.kickoff.getTime() / 1000) - 600),
+    question: `Will the ${g.home} beat the ${g.away}?`,
+  })),
 ];
 
 // ---------------------------------------------------------------

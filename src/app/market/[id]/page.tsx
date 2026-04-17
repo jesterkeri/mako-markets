@@ -11,6 +11,8 @@ import { formatEther } from 'viem';
 import { BetSheet } from '@/components/BetSheet';
 import { ClaimButton } from '@/components/ClaimButton';
 import { ShareMarketButton } from '@/components/ShareMarketButton';
+import { BroadcastButton } from '@/components/BroadcastButton';
+import { formatTime, humanizeUntil } from '@/lib/time';
 
 // Next.js 16 client-component dynamic route params are delivered as a Promise.
 // Use React's `use()` to unwrap synchronously per node_modules/next/dist/docs/
@@ -110,8 +112,13 @@ export default function MarketDetailPage({
         </h1>
       </div>
 
-      <div className="grid grid-cols-2 divide-x divide-black border-b border-black">
+      <div className="grid grid-cols-3 divide-x divide-black border-b border-black">
         <ShareMarketButton marketId={market.id} />
+        <BroadcastButton
+          marketId={market.id}
+          question={market.question}
+          closeTimeSec={market.closeTime}
+        />
         <Link
           href="/create"
           className="py-3 px-4 font-black text-[11px] uppercase tracking-widest hover:bg-black hover:text-background transition-colors text-center"
@@ -223,6 +230,16 @@ function AwaitingResolutionPanel({
   const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash });
   const [lastAction, setLastAction] = useState<string | null>(null);
 
+  // Clock tick for the "Closed X ago" label below. 60s granularity is
+  // enough — the label itself only resolves to minutes. Kept here (above
+  // the conditional return) so hook order stays stable across both admin
+  // and non-admin branches.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (!isSuccess) return;
     onResolved();
@@ -252,15 +269,31 @@ function AwaitingResolutionPanel({
           ? `ERROR: ${(error as Error).message.slice(0, 80).toUpperCase()}`
           : null;
 
-  // Non-admin: passive banner
+  // Non-admin: informational "bet is live" banner.
+  // Old copy said "ADMIN WILL RESOLVE SHORTLY" — inaccurate now that the
+  // auto-resolver handles nearly every market without human touch. Tell
+  // the bettor what's actually happening: game is playing (or the window
+  // just closed), resolver takes it from here.
   if (!isAdmin) {
+    const headline =
+      market.mType === MarketType.FOOTBALL
+        ? 'BET LIVE · RESOLVES AFTER FULL TIME'
+        : market.mType === MarketType.BASKETBALL
+          ? 'BET LIVE · RESOLVES AFTER FINAL BUZZER'
+          : market.mType === MarketType.CRYPTO
+            ? 'WINDOW CLOSED · RESOLVING NOW'
+            : 'MARKET CLOSED · RESOLVING';
+    const closedAgoLabel = humanizeUntil(Number(market.closeTime) - nowSec);
     return (
       <div className="px-6 md:px-8 py-8 border-t border-warning bg-warning/10 text-center">
         <span className="block text-xs font-black tracking-widest text-warning uppercase mb-2">
           [ AWAITING RESOLUTION ]
         </span>
-        <span className="block text-[11px] font-medium text-muted uppercase tracking-tight">
-          MARKET CLOSED · ADMIN WILL RESOLVE SHORTLY
+        <span className="block text-sm font-black text-foreground uppercase tracking-tight mb-1">
+          {headline}
+        </span>
+        <span className="block text-[10px] font-medium text-muted uppercase tracking-widest">
+          Closed {closedAgoLabel} · resolver polling every 30s
         </span>
       </div>
     );
@@ -331,12 +364,3 @@ function NotFound({ reason }: { reason: string }) {
   );
 }
 
-function formatTime(s: number): string {
-  if (s <= 0) return 'CLOSED';
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.floor(s % 60);
-  if (h > 0) return `${h}H ${m}M`;
-  if (m > 0) return `${m}M ${sec}S`;
-  return `${sec}S`;
-}

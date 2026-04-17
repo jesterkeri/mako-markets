@@ -1,7 +1,8 @@
 name: auto-resolver
 
-# Runs the CRYPTO + FOOTBALL auto-resolver once every 5 minutes so Mako
-# Markets keeps resolving without a laptop running `pnpm auto-resolver`.
+# Runs the structured-market auto-resolver once every 5 minutes so Mako
+# Markets keeps resolving CRYPTO + FOOTBALL + NBA markets without a laptop
+# running `pnpm auto-resolver`.
 #
 # Triggers:
 #   - schedule: every 5 minutes (GitHub's practical minimum — actual runs
@@ -11,8 +12,9 @@ name: auto-resolver
 #   - push to main (warm tick after every deploy)
 #
 # Required repo secrets:
-#   - ADMIN_PRIVATE_KEY   (0x + 64 hex chars, the deployer/resolver wallet)
-#   - FOOTBALL_DATA_API_KEY  (optional, only needed for football resolution)
+#   - ADMIN_PRIVATE_KEY       (0x + 64 hex chars, the deployer/resolver wallet)
+#   - FOOTBALL_DATA_API_KEY   (optional, only needed for football resolution)
+#   - BALLDONTLIE_API_KEY     (optional, only needed for basketball resolution)
 #
 # Non-secret config (edit here if the contract ever moves):
 #   - MAKO_ADDRESS is public so it lives in env below, not secrets.
@@ -37,9 +39,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      MAKO_ADDRESS: '0x87129a4FF7e795286a9939Ce7A73A25A29368389'
+      MAKO_ADDRESS: '0x9d4d399D2fca1432337C5e606D005DEfa2EB4992'
       ADMIN_PRIVATE_KEY: ${{ secrets.ADMIN_PRIVATE_KEY }}
       FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+      BALLDONTLIE_API_KEY: ${{ secrets.BALLDONTLIE_API_KEY }}
       RESOLVER_ONCE: '1'
     steps:
       - uses: actions/checkout@v4

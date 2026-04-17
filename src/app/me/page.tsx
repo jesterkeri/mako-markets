@@ -61,10 +61,8 @@ export default function MyMarketsPage() {
     },
   });
 
-  // Join markets with the user's positions. Show every market the wallet has
-  // a non-zero position in — including ADHOC. ADHOC is retired from the
-  // discovery surface (home feed, /create) but users must always see their
-  // own historical positions regardless of mType.
+  // Join markets with the user's positions. Show every market the wallet
+  // has a non-zero position in, regardless of mType.
   const anyReadFailed = !!betsData?.some((r) => r.status === 'failure');
   const userPositions: UserPosition[] = useMemo(() => {
     if (!betsData || !address) return [];

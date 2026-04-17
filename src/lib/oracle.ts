@@ -17,10 +17,3 @@ export function toBytes32(s: string): Hex {
   }
   return pad(hex, { size: 32, dir: 'right' });
 }
-
-/**
- * The canonical empty oracleRef for ADHOC markets (which don't resolve
- * via an external oracle — the creator/admin resolves manually).
- */
-export const EMPTY_ORACLE_REF: Hex =
-  '0x0000000000000000000000000000000000000000000000000000000000000000';

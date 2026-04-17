@@ -32,17 +32,22 @@ export function MarketCard({ market }: { market: MarketWithId }) {
     return `${m}M ${s % 60}S`;
   };
 
-  const badgeText = 
+  const badgeText =
     market.mType === MarketType.FOOTBALL ? 'FOOTBALL' :
     market.mType === MarketType.CRYPTO ? 'CRYPTO' :
+    market.mType === MarketType.BASKETBALL ? 'NBA' :
     'EVENT';
 
   return (
-    <div className="w-full flex border-b border-black flex-col bg-transparent relative hover:bg-black/[0.02] transition-colors cursor-pointer group">
+    // `h-full` so the card stretches to match the tallest sibling in its
+    // grid row; `flex-col` lets the question section grow while the YES/NO
+    // + POOL footers stay intrinsic-sized. Net effect: all cards in a row
+    // end at the same bottom line even when question lengths vary.
+    <div className="w-full h-full flex border-b border-black flex-col bg-transparent relative hover:bg-black/[0.02] transition-colors cursor-pointer group">
       {isClosed && (
         <div className="absolute inset-0 bg-background/50 z-10 pointer-events-none" />
       )}
-      
+
       {/* Top Header */}
       <div className="flex justify-between items-center px-8 py-2.5 border-b border-black">
         <span className={`text-[11px] font-black tracking-widest uppercase ${isClosed ? 'text-muted' : 'text-foreground'}`}>
@@ -53,8 +58,9 @@ export function MarketCard({ market }: { market: MarketWithId }) {
         </span>
       </div>
 
-      {/* Question */}
-      <div className="px-8 py-8 border-b border-black bg-transparent">
+      {/* Question — flex-1 so short-question cards absorb the extra row
+          height here rather than leaving a gap above the YES/NO row. */}
+      <div className="flex-1 px-8 py-8 border-b border-black bg-transparent">
         <h2 className={`text-4xl font-black uppercase leading-[1.05] tracking-tight ${isClosed ? 'text-muted' : 'text-foreground'}`}>
           {market.question}
         </h2>

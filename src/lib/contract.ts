@@ -33,11 +33,13 @@ export { makoAbi };
 // Enums — must match MakoMarkets.sol exactly
 // ============================================================
 
-/** Market type. Matches `MarketType` enum in the contract. */
+/** Market type. Matches `MarketType` enum in the contract.
+ *  Append-only: new market types go at the end so existing on-chain
+ *  mType values never get silently remapped. */
 export enum MarketType {
   FOOTBALL = 0,
   CRYPTO = 1,
-  ADHOC = 2,
+  BASKETBALL = 2,
 }
 
 /** Resolution outcome. Matches `Outcome` enum in the contract. */

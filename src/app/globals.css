@@ -35,6 +35,25 @@ html {
   scroll-behavior: smooth;
 }
 
+/* News-channel-style marquee for the bottom price ticker. The content
+   track is rendered twice side-by-side so the loop is seamless — when
+   the animation translates to -50%, the second copy has reached the
+   origin. */
+@keyframes ticker-crawl {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }
+}
+.ticker-crawl {
+  animation: ticker-crawl 50s linear infinite;
+  will-change: transform;
+}
+.ticker-crawl:hover {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticker-crawl { animation: none; }
+}
+
 body {
   background: var(--color-background);
   color: var(--color-foreground);

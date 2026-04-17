@@ -8,9 +8,9 @@ import { MarketType, Outcome, type MarketWithId } from './contract';
  * `useMarkets().data` is a no-op at the component boundary.
  *
  * Includes one of each market type:
- *   - FOOTBALL — Arsenal vs Chelsea, 2h countdown
- *   - CRYPTO   — ETH > $3500 in 30s (tight, urgent)
- *   - ADHOC    — audience question, 15s left (amber warning state)
+ *   - FOOTBALL   — Arsenal vs Chelsea, 2h countdown
+ *   - CRYPTO     — ETH > $3500 in 30s (tight, urgent)
+ *   - BASKETBALL — NBA game, 15s left (amber warning state)
  */
 const now = () => BigInt(Math.floor(Date.now() / 1000));
 
@@ -50,9 +50,9 @@ export const mockMarkets: MarketWithId[] = [
   {
     id: 2n,
     creator: '0xCA4010000000000000000000000000000000CA40',
-    mType: MarketType.ADHOC,
+    mType: MarketType.BASKETBALL,
     oracleRef: '0x0000000000000000000000000000000000000000000000000000000000000000',
-    question: "Will the next speaker say 'throughput'?",
+    question: 'Will the Lakers beat the Warriors tonight?',
     createdAt: now() - 45n,
     closeTime: now() + 15n, // < 20s, should trigger amber warning state
     totalYes: 4_200_000_000_000_000_000n,  // 4.2 MON
