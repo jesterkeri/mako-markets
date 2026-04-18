@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import Link from 'next/link';
 import { useIsAdmin } from '@/lib/admin';
 import { useAdminAnalytics } from '@/lib/admin-analytics';
@@ -9,6 +10,7 @@ import {
   NotAuthorized,
   ActivityRow,
   DegradedBanner,
+  Honest,
   fourDp,
 } from '@/components/admin-shared';
 
@@ -35,6 +37,9 @@ export default function AdminOverviewPage() {
         <h1 className="text-3xl font-black uppercase tracking-tight">MAKO MARKETS</h1>
         <p className="text-muted text-[11px] font-bold uppercase tracking-widest mt-2">
           PLATFORM HEALTH · REFRESHED EVERY 30s
+          {data?.window.bounded
+            ? ` · EVENT SCAN: LAST ${Number(data.window.blocksCovered).toLocaleString()} BLOCKS`
+            : null}
         </p>
       </div>
 
@@ -51,42 +56,84 @@ export default function AdminOverviewPage() {
           <div className="grid grid-cols-2 md:grid-cols-3 divide-x divide-y md:divide-y-0 divide-black border-b border-black">
             <Tile
               label="MARKETS"
-              value={data.totals.marketCount.toString()}
+              value={<>{data.totals.marketCount.toString()}</>}
               sub={`${data.totals.resolvedCount} RESOLVED · ${data.totals.pendingResolveCount} PENDING`}
             />
             <Tile
               label="VOLUME"
-              value={`${fourDp(data.totals.totalVolumeMon)} MON`}
-              sub={`${data.totals.uniqueBettors} UNIQUE BETTORS`}
+              value={<>{fourDp(data.totals.totalVolumeMon)} MON</>}
+              sub={
+                <Honest
+                  value={`${data.totals.uniqueBettors} UNIQUE BETTORS`}
+                  dependsOn={['bet']}
+                  degraded={data.degraded}
+                />
+              }
             />
             <Tile
               label="USERS"
-              value={data.totals.uniqueBettors.toString()}
-              sub={`${data.totals.uniqueCreators} CREATORS`}
+              value={
+                <Honest
+                  value={data.totals.uniqueBettors.toString()}
+                  dependsOn={['bet']}
+                  degraded={data.degraded}
+                />
+              }
+              sub={
+                <Honest
+                  value={`${data.totals.uniqueCreators} CREATORS`}
+                  dependsOn={['market']}
+                  degraded={data.degraded}
+                />
+              }
             />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 divide-x divide-y md:divide-y-0 divide-black border-b border-black">
             <Tile
               label="PROTOCOL FEES"
-              value={`${fourDp(data.totals.totalProtocolFeesMon)} MON`}
+              value={
+                <Honest
+                  value={`${fourDp(data.totals.totalProtocolFeesMon)} MON`}
+                  dependsOn={['withdraw']}
+                  degraded={data.degraded}
+                />
+              }
               sub={`${fourDp(data.totals.treasuryMon)} MON IN TREASURY NOW`}
             />
             <Tile
               label="CREATOR FEES PAID"
-              value={`${fourDp(data.totals.creatorFeesPaidMon)} MON`}
+              value={
+                <Honest
+                  value={`${fourDp(data.totals.creatorFeesPaidMon)} MON`}
+                  dependsOn={['fee']}
+                  degraded={data.degraded}
+                />
+              }
               sub="TOTAL EARNED BY CREATORS"
             />
             <Tile
               label="TOTAL TAKE"
-              value={`${fourDp(
-                (parseFloat(data.totals.totalProtocolFeesMon) + parseFloat(data.totals.creatorFeesPaidMon)).toString(),
-              )} MON`}
+              value={
+                <Honest
+                  value={`${fourDp(
+                    (parseFloat(data.totals.totalProtocolFeesMon) + parseFloat(data.totals.creatorFeesPaidMon)).toString(),
+                  )} MON`}
+                  dependsOn={['fee', 'withdraw']}
+                  degraded={data.degraded}
+                />
+              }
               sub="PROTOCOL + CREATOR FEES"
             />
           </div>
 
-          <DauStrip dau={data.dau} />
+          {data.degraded.includes('bet') ? (
+            <div className="border-b border-black px-6 md:px-8 py-6 text-[10px] font-black uppercase tracking-widest text-subtle">
+              DAILY ACTIVE WALLETS · — · BET STREAM UNAVAILABLE
+            </div>
+          ) : (
+            <DauStrip dau={data.dau} />
+          )}
 
           <div className="px-6 md:px-8 py-6 border-b border-black flex items-center justify-between">
             <div className="text-[10px] font-black uppercase tracking-widest text-muted">
@@ -162,7 +209,15 @@ function DauStrip({ dau }: { dau: Array<{ dateISO: string; wallets: number; bets
   );
 }
 
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Tile({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+}) {
   return (
     <div className="px-6 py-6">
       <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">

@@ -19,6 +19,19 @@ export type AdminAnalytics = {
    * the missing stream are silently wrong otherwise.
    */
   degraded: string[];
+  /**
+   * Effective block range the server scanned. When `bounded` is true, the
+   * scan is clipped by a lookback window (public RPC mitigation); volume-
+   * and user-shape numbers that derive from event logs only cover this
+   * window. Lifetime contract-state numbers (marketCount, treasuryMon)
+   * still reflect the whole chain because they come from eth_call, not logs.
+   */
+  window: {
+    fromBlock: string;
+    toBlock: string;
+    blocksCovered: string;
+    bounded: boolean;
+  };
   totals: {
     marketCount: number;
     resolvedCount: number;

@@ -84,9 +84,29 @@ export function DegradedBanner({ streams }: { streams: string[] }) {
   if (streams.length === 0) return null;
   return (
     <div className="bg-warning/15 border-b border-warning px-6 md:px-8 py-3 text-[10px] font-black uppercase tracking-widest text-warning">
-      DEGRADED · MISSING {streams.map((s) => s.toUpperCase()).join(' · ')} STREAM{streams.length > 1 ? 'S' : ''} · TOTALS MAY UNDERCOUNT
+      DEGRADED · MISSING {streams.map((s) => s.toUpperCase()).join(' · ')} STREAM{streams.length > 1 ? 'S' : ''} · FIELDS BELOW SHOW — INSTEAD OF A MISLEADING 0
     </div>
   );
+}
+
+/**
+ * Renders `—` when any of the underlying event streams the field depends
+ * on failed to scan, otherwise returns the value formatter output. Keeps
+ * the dashboard honest: a zero always means "really zero," never "we
+ * don't know." The banner explains the — to the viewer.
+ */
+export function Honest({
+  value,
+  dependsOn,
+  degraded,
+}: {
+  value: string;
+  dependsOn: string[];
+  degraded: string[];
+}) {
+  const missing = dependsOn.some((d) => degraded.includes(d));
+  if (missing) return <span className="text-subtle">—</span>;
+  return <>{value}</>;
 }
 
 type Activity = AdminAnalytics['activity'][number];

@@ -32,10 +32,17 @@ export default function AdminActivityPage() {
           [ ADMIN · ACTIVITY ]
         </div>
         <h1 className="text-3xl font-black uppercase tracking-tight">
-          {data ? `${data.activity.length} EVENTS` : '…'}
+          {!data
+            ? '…'
+            : data.degraded.length > 0
+              ? '—'
+              : `${data.activity.length} EVENTS`}
         </h1>
         <p className="text-muted text-[11px] font-bold uppercase tracking-widest mt-2">
           LATEST 200 · NEWEST FIRST
+          {data?.window.bounded
+            ? ` · LAST ${Number(data.window.blocksCovered).toLocaleString()} BLOCKS`
+            : null}
         </p>
       </div>
 
@@ -64,7 +71,9 @@ export default function AdminActivityPage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="py-20 text-center font-black uppercase tracking-widest text-muted text-sm border-b border-black">
-          NO EVENTS IN THIS FILTER
+          {data && data.degraded.length > 0
+            ? 'EVENT DATA UNAVAILABLE · STREAM FAILED'
+            : 'NO EVENTS IN THIS FILTER'}
         </div>
       ) : (
         filtered.map((a) => <ActivityRow key={`${a.txHash}-${a.kind}`} activity={a} />)

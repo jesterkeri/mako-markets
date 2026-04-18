@@ -53,10 +53,29 @@ let inFlight: Promise<AdminAnalytics> | null = null;
 const DEPLOY_BLOCK_RAW = process.env.NEXT_PUBLIC_MAKO_DEPLOY_BLOCK;
 const DEPLOY_BLOCK = BigInt(DEPLOY_BLOCK_RAW ?? '0');
 
-// Monad public RPC caps `eth_getLogs` range per call. 10k blocks is well
-// under the observed limit and keeps round-trip count small for the
-// contract's current history. Shrink if Monad tightens the cap.
-const LOG_CHUNK = 10_000n;
+// Monad's public RPC returns `-32614: eth_getLogs is limited to a 100 range`
+// for anything wider. Private RPCs (Alchemy, dRPC, Ankr) allow ~10k+.
+// Start at 100 as the safe floor; bump via env when a real RPC is wired up.
+const LOG_CHUNK: bigint = BigInt(process.env.ADMIN_ANALYTICS_LOG_CHUNK ?? '100');
+
+// Parallelize chunked scans. 5 concurrent = throughput without hammering
+// rate-limited public RPC. Scales up naturally with a private RPC URL.
+const CHUNK_CONCURRENCY = Number(process.env.ADMIN_ANALYTICS_CONCURRENCY ?? '5');
+
+// Default lookback window when no private RPC is configured. 10k blocks
+// ≈ 3h of Monad testnet at ~1s block time. Keeps the cold-cache scan
+// comfortably under 10s against public RPC's 100-block getLogs cap + its
+// aggressive rate limiting. Wider windows (overnight, weekly) want a
+// private RPC via MONAD_RPC_URL.
+// Overridable via ADMIN_ANALYTICS_LOOKBACK_BLOCKS; set to 0 to disable
+// the window (scan from DEPLOY_BLOCK to latest — only safe on private RPC).
+const DEFAULT_LOOKBACK = 10_000n;
+
+const MONAD_RPC_URL = process.env.MONAD_RPC_URL;
+const LOOKBACK_RAW = process.env.ADMIN_ANALYTICS_LOOKBACK_BLOCKS;
+const LOOKBACK_BLOCKS: bigint = LOOKBACK_RAW !== undefined
+  ? BigInt(LOOKBACK_RAW)
+  : (MONAD_RPC_URL ? 0n : DEFAULT_LOOKBACK);
 
 const eventBetPlaced = parseAbiItem(
   'event BetPlaced(uint256 indexed id, address indexed user, bool isYes, uint256 amount)',
@@ -79,7 +98,7 @@ const eventTreasuryWithdrawn = parseAbiItem(
 
 const client = createPublicClient({
   chain: monadTestnet,
-  transport: http(),
+  transport: http(MONAD_RPC_URL),
 });
 
 async function chunkedGetLogs(
@@ -87,18 +106,30 @@ async function chunkedGetLogs(
   fromBlock: bigint,
   toBlock: bigint,
 ): Promise<Log[]> {
-  const out: Log[] = [];
+  // Build the full range upfront, then fire batches of CHUNK_CONCURRENCY
+  // in parallel. Serial 100-block scans over 400k+ blocks take minutes;
+  // parallel scans finish in seconds on a good RPC.
+  const ranges: Array<[bigint, bigint]> = [];
   for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK) {
     const end = start + LOG_CHUNK - 1n > toBlock ? toBlock : start + LOG_CHUNK - 1n;
-    const logs = await client.getLogs({
-      address: MAKO_ADDRESS,
-      event,
-      fromBlock: start,
-      toBlock: end,
-    });
-    // Narrow logs lose their typed `args` via this generic signature; every
-    // call site re-casts `args` based on the specific event definition above.
-    out.push(...(logs as unknown as Log[]));
+    ranges.push([start, end]);
+  }
+  const out: Log[] = [];
+  for (let i = 0; i < ranges.length; i += CHUNK_CONCURRENCY) {
+    const batch = ranges.slice(i, i + CHUNK_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(([start, end]) =>
+        client.getLogs({
+          address: MAKO_ADDRESS,
+          event,
+          fromBlock: start,
+          toBlock: end,
+        }),
+      ),
+    );
+    for (const r of results) {
+      out.push(...(r as unknown as Log[]));
+    }
   }
   return out;
 }
@@ -148,6 +179,16 @@ async function aggregate(): Promise<AdminAnalytics> {
     client.getBlockNumber(),
   ]);
   const count = Number(nextIdBn);
+
+  // Effective scan range: floor at DEPLOY_BLOCK, optionally clamp to a
+  // rolling window so we're not trying to scan 15M blocks against a
+  // rate-limited public RPC. The UI shows the range so "only real data"
+  // always means "real data for the visible window."
+  const windowedFrom = LOOKBACK_BLOCKS > 0n && latestBlock > LOOKBACK_BLOCKS
+    ? latestBlock - LOOKBACK_BLOCKS
+    : 0n;
+  const scanFrom = windowedFrom > DEPLOY_BLOCK ? windowedFrom : DEPLOY_BLOCK;
+  const scanTo = latestBlock;
 
   const marketResults =
     count === 0
@@ -207,12 +248,12 @@ async function aggregate(): Promise<AdminAnalytics> {
   // silently reporting wrong totals.
   const [betLogs, marketLogs, resolveLogs, claimLogs, feeLogs, withdrawLogs] =
     (await Promise.all([
-      wrapStream('bet', chunkedGetLogs(eventBetPlaced, DEPLOY_BLOCK, latestBlock)),
-      wrapStream('market', chunkedGetLogs(eventMarketCreated, DEPLOY_BLOCK, latestBlock)),
-      wrapStream('resolve', chunkedGetLogs(eventMarketResolved, DEPLOY_BLOCK, latestBlock)),
-      wrapStream('claim', chunkedGetLogs(eventClaimed, DEPLOY_BLOCK, latestBlock)),
-      wrapStream('fee', chunkedGetLogs(eventCreatorFeePaid, DEPLOY_BLOCK, latestBlock)),
-      wrapStream('withdraw', chunkedGetLogs(eventTreasuryWithdrawn, DEPLOY_BLOCK, latestBlock)),
+      wrapStream('bet', chunkedGetLogs(eventBetPlaced, scanFrom, scanTo)),
+      wrapStream('market', chunkedGetLogs(eventMarketCreated, scanFrom, scanTo)),
+      wrapStream('resolve', chunkedGetLogs(eventMarketResolved, scanFrom, scanTo)),
+      wrapStream('claim', chunkedGetLogs(eventClaimed, scanFrom, scanTo)),
+      wrapStream('fee', chunkedGetLogs(eventCreatorFeePaid, scanFrom, scanTo)),
+      wrapStream('withdraw', chunkedGetLogs(eventTreasuryWithdrawn, scanFrom, scanTo)),
     ])).map((l) => l ?? []) as [Log[], Log[], Log[], Log[], Log[], Log[]];
 
   // Resolve block timestamps (dedup first, bounded concurrency)
@@ -454,6 +495,17 @@ async function aggregate(): Promise<AdminAnalytics> {
 
   return {
     degraded,
+    window: {
+      fromBlock: scanFrom.toString(),
+      toBlock: scanTo.toString(),
+      blocksCovered: (scanTo - scanFrom + 1n).toString(),
+      /**
+       * True when a lookback window is actively clipping history.
+       * When true the UI should label totals like VOLUME / USERS /
+       * CREATOR FEES as scoped ("LAST N BLOCKS") rather than lifetime.
+       */
+      bounded: scanFrom > DEPLOY_BLOCK,
+    },
     totals: {
       marketCount: markets.length,
       resolvedCount,
