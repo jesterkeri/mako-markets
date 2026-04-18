@@ -6,10 +6,19 @@ import { useQuery } from '@tanstack/react-query';
  * Shape returned by `/api/admin/analytics`.
  *
  * All `bigint` values are pre-formatted to decimal strings on the server
- * so the payload is pure JSON-safe. Client components format for display
- * without needing to parse bigints.
+ * so the payload is pure JSON-safe. `volumeWei` stays as a bigint-shaped
+ * string (unformatted) alongside `volumeMon` so the client can sort by
+ * raw wei without going through float.
  */
 export type AdminAnalytics = {
+  /**
+   * Non-empty when one or more event log streams failed during aggregation.
+   * Each entry is a short stream name: 'bet' | 'market' | 'resolve' |
+   * 'claim' | 'fee' | 'withdraw'. When any of these are present, the UI
+   * must show a "DEGRADED" banner — totals and user rows derived from
+   * the missing stream are silently wrong otherwise.
+   */
+  degraded: string[];
   totals: {
     marketCount: number;
     resolvedCount: number;
@@ -18,14 +27,25 @@ export type AdminAnalytics = {
     totalVolumeMon: string;
     uniqueBettors: number;
     uniqueCreators: number;
+    /** Current MON sitting in the contract awaiting `withdrawTreasury()`. */
     treasuryMon: string;
+    /** Cumulative MON paid out to creators via CreatorFeePaid events. */
+    creatorFeesPaidMon: string;
+    /** Cumulative protocol fees: treasuryMon + everything ever withdrawn. */
+    totalProtocolFeesMon: string;
     fetchedAtSec: number;
   };
   users: Array<{
     address: `0x${string}`;
     betCount: number;
     volumeMon: string;
+    /** Raw wei as a decimal string. Use for exact bigint sort on the client. */
+    volumeWei: string;
     marketsCreated: number;
+    /** Cumulative MON earned by this address as a creator (CreatorFeePaid sum). */
+    creatorFeesEarnedMon: string;
+    /** Cumulative MON this address claimed from winning bets (Claimed sum). */
+    claimedMon: string;
     firstSeenSec: number;
     lastSeenSec: number;
   }>;
@@ -63,17 +83,20 @@ export type AdminAnalytics = {
 /**
  * Shared fetch key + TanStack Query hook used by every /admin/* page.
  *
- * `staleTime: 30_000` means navigating between admin tabs inside the
- * 30s window reuses the in-memory cache — the browser never re-fetches.
- * `refetchInterval: 30_000` picks up fresh server data on schedule so
- * tiles drift forward without the admin having to reload.
+ * Pass `{ enabled: isAdmin }` so the fetch only fires for the admin wallet.
+ * Without this gate every page load — including disconnected + non-admin
+ * visitors — would hit the public analytics route and join the 30s poll
+ * loop behind the NOT AUTHORIZED screen.
  *
- * The server route applies its own 30s module-scoped memo, so even if
- * several clients refetch at the same tick, Monad RPC sees one fanout.
+ * `staleTime` + `refetchInterval` both 30_000 means navigating between
+ * admin tabs inside the window reuses the in-memory cache; one HTTP hit
+ * per 30s per client regardless of tab count. The server route adds its
+ * own 30s memo so concurrent clients still see one RPC fanout.
  */
-export function useAdminAnalytics() {
+export function useAdminAnalytics(opts: { enabled?: boolean } = {}) {
   return useQuery<AdminAnalytics>({
     queryKey: ['admin-analytics'],
+    enabled: opts.enabled ?? true,
     queryFn: async () => {
       const res = await fetch('/api/admin/analytics', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

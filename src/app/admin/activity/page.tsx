@@ -4,13 +4,13 @@ import { useMemo, useState } from 'react';
 import { useIsAdmin } from '@/lib/admin';
 import { useAdminAnalytics } from '@/lib/admin-analytics';
 import { AdminNav } from '@/components/AdminNav';
-import { TopBar, NotAuthorized, ActivityRow } from '@/components/admin-shared';
+import { TopBar, NotAuthorized, ActivityRow, DegradedBanner } from '@/components/admin-shared';
 
 type Kind = 'all' | 'bet' | 'market' | 'resolve' | 'claim' | 'fee';
 
 export default function AdminActivityPage() {
   const isAdmin = useIsAdmin();
-  const { data, isLoading, error } = useAdminAnalytics();
+  const { data, isLoading, error } = useAdminAnalytics({ enabled: isAdmin });
   const [kind, setKind] = useState<Kind>('all');
 
   const filtered = useMemo(() => {
@@ -25,6 +25,7 @@ export default function AdminActivityPage() {
     <main className="flex-1 flex flex-col w-full pb-16">
       <TopBar />
       <AdminNav active="activity" />
+      {data ? <DegradedBanner streams={data.degraded} /> : null}
 
       <div className="px-6 md:px-8 py-8 border-b border-black">
         <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">

@@ -74,6 +74,21 @@ export function explorerTx(hash: string): string {
   return `${monadTestnet.blockExplorers.default.url}tx/${hash}`;
 }
 
+/**
+ * Banner shown at the top of any admin page when the server reports
+ * that one or more event log streams failed during aggregation. Every
+ * admin page should render this — without it, silently-wrong totals
+ * look identical to correct ones.
+ */
+export function DegradedBanner({ streams }: { streams: string[] }) {
+  if (streams.length === 0) return null;
+  return (
+    <div className="bg-warning/15 border-b border-warning px-6 md:px-8 py-3 text-[10px] font-black uppercase tracking-widest text-warning">
+      DEGRADED · MISSING {streams.map((s) => s.toUpperCase()).join(' · ')} STREAM{streams.length > 1 ? 'S' : ''} · TOTALS MAY UNDERCOUNT
+    </div>
+  );
+}
+
 type Activity = AdminAnalytics['activity'][number];
 
 export function ActivityRow({ activity: a }: { activity: Activity }) {

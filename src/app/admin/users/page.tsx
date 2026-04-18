@@ -7,6 +7,7 @@ import { AdminNav } from '@/components/AdminNav';
 import {
   TopBar,
   NotAuthorized,
+  DegradedBanner,
   fourDp,
   short,
   explorerAddress,
@@ -18,20 +19,36 @@ import { useNowSec } from '@/lib/use-now';
  * Users list. Sortable by volume, bet count, or recency.
  * Addresses link to the Monad testnet explorer (URL read from chain config).
  */
-type SortKey = 'volume' | 'bets' | 'recent';
+type SortKey = 'volume' | 'bets' | 'earned' | 'recent';
+
+// Decimal-string fee rank. Float precision is fine here at MON-scale
+// testnet values; BigInt sort stays reserved for the headline VOLUME
+// column because that's the ranking that most visibly misbehaves first.
+function feeRank(decimalStr: string): number {
+  return Number(decimalStr);
+}
 
 export default function AdminUsersPage() {
   const isAdmin = useIsAdmin();
-  const { data, isLoading, error } = useAdminAnalytics();
+  const { data, isLoading, error } = useAdminAnalytics({ enabled: isAdmin });
   const [sortKey, setSortKey] = useState<SortKey>('volume');
 
   const sortedUsers = useMemo(() => {
     if (!data) return [];
     const copy = [...data.users];
     if (sortKey === 'volume') {
-      copy.sort((a, b) => Number(b.volumeMon) - Number(a.volumeMon));
+      // BigInt comparison on the raw wei string avoids the Number() float
+      // precision pitfall that shows up once volumes get large.
+      copy.sort((a, b) => {
+        const bw = BigInt(b.volumeWei);
+        const aw = BigInt(a.volumeWei);
+        if (bw === aw) return 0;
+        return bw > aw ? 1 : -1;
+      });
     } else if (sortKey === 'bets') {
       copy.sort((a, b) => b.betCount - a.betCount);
+    } else if (sortKey === 'earned') {
+      copy.sort((a, b) => feeRank(b.creatorFeesEarnedMon) - feeRank(a.creatorFeesEarnedMon));
     } else {
       copy.sort((a, b) => b.lastSeenSec - a.lastSeenSec);
     }
@@ -44,6 +61,7 @@ export default function AdminUsersPage() {
     <main className="flex-1 flex flex-col w-full pb-16">
       <TopBar />
       <AdminNav active="users" />
+      {data ? <DegradedBanner streams={data.degraded} /> : null}
 
       <div className="px-6 md:px-8 py-8 border-b border-black">
         <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">
@@ -57,19 +75,19 @@ export default function AdminUsersPage() {
         </p>
       </div>
 
-      <div className="flex divide-x divide-black border-b border-black">
-        {(['volume', 'bets', 'recent'] as const).map((k) => (
+      <div className="flex divide-x divide-black border-b border-black overflow-x-auto">
+        {(['volume', 'bets', 'earned', 'recent'] as const).map((k) => (
           <button
             key={k}
             type="button"
             onClick={() => setSortKey(k)}
-            className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest transition-colors ${
+            className={`flex-1 min-w-[90px] py-3 text-[10px] font-black uppercase tracking-widest transition-colors ${
               sortKey === k
                 ? 'bg-black text-background'
                 : 'hover:bg-black hover:text-background'
             }`}
           >
-            SORT · {k === 'volume' ? 'VOLUME' : k === 'bets' ? 'BETS' : 'RECENT'}
+            SORT · {k === 'volume' ? 'VOLUME' : k === 'bets' ? 'BETS' : k === 'earned' ? 'EARNED' : 'RECENT'}
           </button>
         ))}
       </div>
@@ -100,7 +118,10 @@ function UserRow({
     address: `0x${string}`;
     betCount: number;
     volumeMon: string;
+    volumeWei: string;
     marketsCreated: number;
+    creatorFeesEarnedMon: string;
+    claimedMon: string;
     firstSeenSec: number;
     lastSeenSec: number;
   };
@@ -131,6 +152,14 @@ function UserRow({
         </span>
         <span>
           CREATED <span className="text-foreground tabular-nums">{u.marketsCreated}</span>
+        </span>
+        <span>
+          EARNED{' '}
+          <span className="text-foreground tabular-nums">{fourDp(u.creatorFeesEarnedMon)} MON</span>
+        </span>
+        <span>
+          CLAIMED{' '}
+          <span className="text-foreground tabular-nums">{fourDp(u.claimedMon)} MON</span>
         </span>
       </div>
     </div>

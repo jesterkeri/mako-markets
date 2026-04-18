@@ -8,6 +8,7 @@ import {
   TopBar,
   NotAuthorized,
   ActivityRow,
+  DegradedBanner,
   fourDp,
 } from '@/components/admin-shared';
 
@@ -17,7 +18,7 @@ import {
  */
 export default function AdminOverviewPage() {
   const isAdmin = useIsAdmin();
-  const { data, isLoading, error } = useAdminAnalytics();
+  const { data, isLoading, error } = useAdminAnalytics({ enabled: isAdmin });
 
   if (!isAdmin) return <NotAuthorized />;
 
@@ -25,6 +26,7 @@ export default function AdminOverviewPage() {
     <main className="flex-1 flex flex-col w-full pb-16">
       <TopBar />
       <AdminNav active="overview" />
+      {data ? <DegradedBanner streams={data.degraded} /> : null}
 
       <div className="px-6 md:px-8 py-8 border-b border-black">
         <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">
@@ -46,7 +48,7 @@ export default function AdminOverviewPage() {
         </div>
       ) : data ? (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-black border-b border-black">
+          <div className="grid grid-cols-2 md:grid-cols-3 divide-x divide-y md:divide-y-0 divide-black border-b border-black">
             <Tile
               label="MARKETS"
               value={data.totals.marketCount.toString()}
@@ -62,10 +64,25 @@ export default function AdminOverviewPage() {
               value={data.totals.uniqueBettors.toString()}
               sub={`${data.totals.uniqueCreators} CREATORS`}
             />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 divide-x divide-y md:divide-y-0 divide-black border-b border-black">
             <Tile
-              label="TREASURY"
-              value={`${fourDp(data.totals.treasuryMon)} MON`}
-              sub="PROTOCOL FEES"
+              label="PROTOCOL FEES"
+              value={`${fourDp(data.totals.totalProtocolFeesMon)} MON`}
+              sub={`${fourDp(data.totals.treasuryMon)} MON IN TREASURY NOW`}
+            />
+            <Tile
+              label="CREATOR FEES PAID"
+              value={`${fourDp(data.totals.creatorFeesPaidMon)} MON`}
+              sub="TOTAL EARNED BY CREATORS"
+            />
+            <Tile
+              label="TOTAL TAKE"
+              value={`${fourDp(
+                (parseFloat(data.totals.totalProtocolFeesMon) + parseFloat(data.totals.creatorFeesPaidMon)).toString(),
+              )} MON`}
+              sub="PROTOCOL + CREATOR FEES"
             />
           </div>
 

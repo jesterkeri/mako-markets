@@ -8,6 +8,7 @@ import { AdminNav } from '@/components/AdminNav';
 import {
   TopBar,
   NotAuthorized,
+  DegradedBanner,
   fourDp,
   short,
   explorerAddress,
@@ -20,7 +21,7 @@ type Filter = 'all' | 'open' | 'pending' | 'resolved';
 
 export default function AdminMarketsPage() {
   const isAdmin = useIsAdmin();
-  const { data, isLoading, error } = useAdminAnalytics();
+  const { data, isLoading, error } = useAdminAnalytics({ enabled: isAdmin });
   const [filter, setFilter] = useState<Filter>('all');
   const nowSec = useNowSec();
 
@@ -41,6 +42,7 @@ export default function AdminMarketsPage() {
     <main className="flex-1 flex flex-col w-full pb-16">
       <TopBar />
       <AdminNav active="markets" />
+      {data ? <DegradedBanner streams={data.degraded} /> : null}
 
       <div className="px-6 md:px-8 py-8 border-b border-black">
         <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">

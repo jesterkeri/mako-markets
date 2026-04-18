@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
-import { createPublicClient, formatEther, http, parseAbiItem, type AbiEvent, type Log } from 'viem';
+import {
+  createPublicClient,
+  formatEther,
+  http,
+  parseAbiItem,
+  type AbiEvent,
+  type Log,
+} from 'viem';
 import { monadTestnet } from '@/lib/chain';
 import { makoAbi, MAKO_ADDRESS } from '@/lib/contract';
 import type { AdminAnalytics } from '@/lib/admin-analytics';
@@ -9,26 +16,28 @@ import type { AdminAnalytics } from '@/lib/admin-analytics';
  *
  * Aggregates everything the admin dashboard needs:
  *   - Market count & pool totals (via Multicall3 `getMarket` fanout)
- *   - Treasury balance
- *   - Per-address bet count / volume / markets-created (via `getLogs`)
- *   - Recent activity feed (last 200 events, newest first)
+ *   - Treasury balance + cumulative protocol + creator fees
+ *   - Per-address bet count / volume / markets-created / claimed /
+ *     creator-fees-earned (via `getLogs`)
+ *   - Recent activity feed (last 200 events, newest first, chain-ordered)
  *
- * Why one endpoint instead of four: everything derives from the same
- * on-chain read pass. Splitting per page would quadruple RPC load and
+ * Why one endpoint instead of many: everything derives from the same
+ * on-chain read pass. Splitting per-page would multiply RPC load and
  * the client's query cache already share-fetches via a single queryKey.
  *
  * Caching:
- *   - Server:  module-scoped memo with 30s TTL (survives across requests
- *              on Vercel Fluid Compute since function instances persist)
- *   - Client:  TanStack Query `staleTime: 30_000` in `useAdminAnalytics()`
+ *   - Server:  module-scoped memo with 30s TTL + in-flight promise coalesce,
+ *              so a burst of concurrent cold-cache requests share one fanout.
+ *   - Client:  TanStack Query `staleTime: 30_000` in `useAdminAnalytics()`.
  *
- * Deliberately NOT using the Next.js 16 `"use cache"` directive because it
- * requires `experimental.cacheComponents: true` in next.config.ts which
- * changes render semantics repo-wide. Not worth the blast radius for one
- * admin route.
+ * Not using Next.js 16 `"use cache"` because that requires enabling
+ * `cacheComponents` globally and changes render semantics app-wide —
+ * too big a blast radius for one admin route.
  *
- * Data here is already public on-chain — no auth needed on the endpoint.
- * The cosmetic `useIsAdmin()` gate on the pages hides the UI from non-admins.
+ * Data here is already public on-chain, so the endpoint is unauthenticated;
+ * the cosmetic `useIsAdmin()` gate on the pages hides the UI from non-admins
+ * and (with `enabled: isAdmin` on the client hook) stops non-admins from
+ * warming up the cache by opening the page.
  */
 export const dynamic = 'force-dynamic';
 
@@ -36,14 +45,17 @@ const CACHE_TTL_MS = 30_000;
 
 type Cached = { data: AdminAnalytics; at: number };
 let memo: Cached | null = null;
+// Coalesce concurrent cold-cache requests: every caller awaits the same
+// in-flight promise instead of triggering a parallel full-history scan.
+// Cleared in `finally` so the next stale window starts a fresh attempt.
+let inFlight: Promise<AdminAnalytics> | null = null;
 
-const DEPLOY_BLOCK = BigInt(
-  process.env.NEXT_PUBLIC_MAKO_DEPLOY_BLOCK ?? '0',
-);
+const DEPLOY_BLOCK_RAW = process.env.NEXT_PUBLIC_MAKO_DEPLOY_BLOCK;
+const DEPLOY_BLOCK = BigInt(DEPLOY_BLOCK_RAW ?? '0');
 
 // Monad public RPC caps `eth_getLogs` range per call. 10k blocks is well
-// under the observed limit and keeps the total number of round-trips small
-// (50 chunks ≈ 500k blocks covered). Shrink if Monad tightens the cap.
+// under the observed limit and keeps round-trip count small for the
+// contract's current history. Shrink if Monad tightens the cap.
 const LOG_CHUNK = 10_000n;
 
 const eventBetPlaced = parseAbiItem(
@@ -60,6 +72,9 @@ const eventClaimed = parseAbiItem(
 );
 const eventCreatorFeePaid = parseAbiItem(
   'event CreatorFeePaid(uint256 indexed id, address indexed creator, uint256 amount)',
+);
+const eventTreasuryWithdrawn = parseAbiItem(
+  'event TreasuryWithdrawn(uint256 amount)',
 );
 
 const client = createPublicClient({
@@ -88,7 +103,6 @@ async function chunkedGetLogs(
   return out;
 }
 
-// Fetch block timestamps for a set of unique block numbers, bounded-parallel.
 async function resolveTimestamps(blockNumbers: Iterable<bigint>): Promise<Map<string, number>> {
   const uniq = Array.from(new Set(Array.from(blockNumbers, (b) => b.toString())));
   const out = new Map<string, number>();
@@ -107,7 +121,27 @@ async function resolveTimestamps(blockNumbers: Iterable<bigint>): Promise<Map<st
 }
 
 async function aggregate(): Promise<AdminAnalytics> {
-  // 1. Market count + treasury, then 2. Multicall `getMarket` fanout
+  // Module-level "production deploy block required" guard. Missing env
+  // in prod silently falls back to block 0, which would scan the entire
+  // chain on every cold cache — a DoS amplifier against Monad's public RPC.
+  if (!DEPLOY_BLOCK_RAW && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'NEXT_PUBLIC_MAKO_DEPLOY_BLOCK env is required in production. ' +
+        'Grab it from ../mako-contracts/broadcast/Deploy.s.sol/10143/run-latest.json.',
+    );
+  }
+
+  const degraded: string[] = [];
+  const wrapStream = async <T>(name: string, p: Promise<T>): Promise<T | null> => {
+    try {
+      return await p;
+    } catch (e) {
+      console.error(`[admin-analytics] ${name} stream failed:`, e);
+      degraded.push(name);
+      return null;
+    }
+  };
+
   const [nextIdBn, treasuryBn, latestBlock] = await Promise.all([
     client.readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'nextMarketId' }),
     client.readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'treasuryBalance' }),
@@ -128,8 +162,8 @@ async function aggregate(): Promise<AdminAnalytics> {
           allowFailure: true,
         });
 
-  // Sum volume in wei during the mapping pass — keep bigints until we stringify.
-  // Going through parseFloat would silently lose precision at higher totals.
+  // Sum volume in wei during the mapping pass — keep bigints until we
+  // stringify. parseFloat round-trips would lose precision at higher totals.
   let totalVolumeWei = 0n;
 
   const markets = marketResults
@@ -168,68 +202,65 @@ async function aggregate(): Promise<AdminAnalytics> {
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
-  // 3. Event logs in parallel, each chunked
-  const [betLogs, marketLogs, resolveLogs, claimLogs, feeLogs] = await Promise.all([
-    chunkedGetLogs(eventBetPlaced, DEPLOY_BLOCK, latestBlock).catch((e) => {
-      console.error('[admin-analytics] BetPlaced getLogs failed:', e);
-      return [] as Log[];
-    }),
-    chunkedGetLogs(eventMarketCreated, DEPLOY_BLOCK, latestBlock).catch((e) => {
-      console.error('[admin-analytics] MarketCreated getLogs failed:', e);
-      return [] as Log[];
-    }),
-    chunkedGetLogs(eventMarketResolved, DEPLOY_BLOCK, latestBlock).catch((e) => {
-      console.error('[admin-analytics] MarketResolved getLogs failed:', e);
-      return [] as Log[];
-    }),
-    chunkedGetLogs(eventClaimed, DEPLOY_BLOCK, latestBlock).catch((e) => {
-      console.error('[admin-analytics] Claimed getLogs failed:', e);
-      return [] as Log[];
-    }),
-    chunkedGetLogs(eventCreatorFeePaid, DEPLOY_BLOCK, latestBlock).catch((e) => {
-      console.error('[admin-analytics] CreatorFeePaid getLogs failed:', e);
-      return [] as Log[];
-    }),
-  ]);
+  // All six event streams in parallel. A failure in any one is captured
+  // in `degraded` so the UI can surface partial-data state instead of
+  // silently reporting wrong totals.
+  const [betLogs, marketLogs, resolveLogs, claimLogs, feeLogs, withdrawLogs] =
+    (await Promise.all([
+      wrapStream('bet', chunkedGetLogs(eventBetPlaced, DEPLOY_BLOCK, latestBlock)),
+      wrapStream('market', chunkedGetLogs(eventMarketCreated, DEPLOY_BLOCK, latestBlock)),
+      wrapStream('resolve', chunkedGetLogs(eventMarketResolved, DEPLOY_BLOCK, latestBlock)),
+      wrapStream('claim', chunkedGetLogs(eventClaimed, DEPLOY_BLOCK, latestBlock)),
+      wrapStream('fee', chunkedGetLogs(eventCreatorFeePaid, DEPLOY_BLOCK, latestBlock)),
+      wrapStream('withdraw', chunkedGetLogs(eventTreasuryWithdrawn, DEPLOY_BLOCK, latestBlock)),
+    ])).map((l) => l ?? []) as [Log[], Log[], Log[], Log[], Log[], Log[]];
 
-  // 4. Resolve block timestamps (dedup first)
+  // Resolve block timestamps (dedup first, bounded concurrency)
   const allBlocks: bigint[] = [
     ...betLogs.map((l) => l.blockNumber!),
     ...marketLogs.map((l) => l.blockNumber!),
     ...resolveLogs.map((l) => l.blockNumber!),
     ...claimLogs.map((l) => l.blockNumber!),
     ...feeLogs.map((l) => l.blockNumber!),
+    ...withdrawLogs.map((l) => l.blockNumber!),
   ];
   const tsByBlock = await resolveTimestamps(allBlocks);
   const tsOf = (bn: bigint) => tsByBlock.get(bn.toString()) ?? 0;
 
-  // 5. Aggregate users
+  // --- Users aggregation ---
   type UserAcc = {
     address: `0x${string}`;
     betCount: number;
     volumeWei: bigint;
     marketsCreated: number;
+    creatorFeesEarnedWei: bigint;
+    claimedWei: bigint;
     firstSeenSec: number;
     lastSeenSec: number;
   };
   const users = new Map<string, UserAcc>();
 
-  const touch = (addr: `0x${string}`, ts: number) => {
+  const touch = (addr: `0x${string}`, ts: number): UserAcc => {
     const key = addr.toLowerCase();
     const existing = users.get(key);
     if (!existing) {
-      users.set(key, {
+      const fresh: UserAcc = {
         address: addr,
         betCount: 0,
         volumeWei: 0n,
         marketsCreated: 0,
-        firstSeenSec: ts,
-        lastSeenSec: ts,
-      });
-      return users.get(key)!;
+        creatorFeesEarnedWei: 0n,
+        claimedWei: 0n,
+        firstSeenSec: ts || 0,
+        lastSeenSec: ts || 0,
+      };
+      users.set(key, fresh);
+      return fresh;
     }
-    if (ts < existing.firstSeenSec || existing.firstSeenSec === 0) existing.firstSeenSec = ts;
-    if (ts > existing.lastSeenSec) existing.lastSeenSec = ts;
+    if (ts && (ts < existing.firstSeenSec || existing.firstSeenSec === 0)) {
+      existing.firstSeenSec = ts;
+    }
+    if (ts && ts > existing.lastSeenSec) existing.lastSeenSec = ts;
     return existing;
   };
 
@@ -238,22 +269,35 @@ async function aggregate(): Promise<AdminAnalytics> {
 
   for (const l of betLogs) {
     const args = (l as unknown as { args: { id: bigint; user: `0x${string}`; isYes: boolean; amount: bigint } }).args;
-    const ts = tsOf(l.blockNumber!);
-    const acc = touch(args.user, ts);
+    const acc = touch(args.user, tsOf(l.blockNumber!));
     acc.betCount += 1;
     acc.volumeWei += args.amount;
     uniqueBettors.add(args.user.toLowerCase());
   }
   for (const l of marketLogs) {
     const args = (l as unknown as { args: { id: bigint; creator: `0x${string}` } }).args;
-    const ts = tsOf(l.blockNumber!);
-    const acc = touch(args.creator, ts);
+    const acc = touch(args.creator, tsOf(l.blockNumber!));
     acc.marketsCreated += 1;
     uniqueCreators.add(args.creator.toLowerCase());
   }
+  // Claims and creator-fee payouts are real activity — they must push
+  // firstSeen/lastSeen forward so the users page doesn't show a stale
+  // "LAST SEEN" for a user who only interacts via claim/fee now.
+  for (const l of claimLogs) {
+    const args = (l as unknown as { args: { id: bigint; user: `0x${string}`; amount: bigint } }).args;
+    const acc = touch(args.user, tsOf(l.blockNumber!));
+    acc.claimedWei += args.amount;
+  }
+  let creatorFeesPaidWei = 0n;
+  for (const l of feeLogs) {
+    const args = (l as unknown as { args: { id: bigint; creator: `0x${string}`; amount: bigint } }).args;
+    const acc = touch(args.creator, tsOf(l.blockNumber!));
+    acc.creatorFeesEarnedWei += args.amount;
+    creatorFeesPaidWei += args.amount;
+  }
 
-  // Sort by raw wei volume (bigint comparison — exact, no float precision loss).
-  // Tie-break by lastSeenSec so the freshest activity rises in a tie.
+  // Sort by raw wei (exact bigint compare, no float precision loss),
+  // then by lastSeen as tie-breaker.
   const usersArray = Array.from(users.values())
     .sort((a, b) => {
       if (a.volumeWei !== b.volumeWei) return b.volumeWei > a.volumeWei ? 1 : -1;
@@ -263,18 +307,35 @@ async function aggregate(): Promise<AdminAnalytics> {
       address: u.address,
       betCount: u.betCount,
       volumeMon: formatEther(u.volumeWei),
+      volumeWei: u.volumeWei.toString(),
       marketsCreated: u.marketsCreated,
+      creatorFeesEarnedMon: formatEther(u.creatorFeesEarnedWei),
+      claimedMon: formatEther(u.claimedWei),
       firstSeenSec: u.firstSeenSec,
       lastSeenSec: u.lastSeenSec,
     }));
 
-  // 6. Build activity feed (newest first, cap at 200)
+  // --- Activity feed ---
   type Activity = AdminAnalytics['activity'][number];
-  const activity: Activity[] = [];
+  // Composite chain-order tuple per event so same-block events sort by
+  // their true position (blockNumber > transactionIndex > logIndex), not
+  // by the order we happened to push them in.
+  type Entry = Activity & {
+    _blockN: bigint;
+    _txIdx: number;
+    _logIdx: number;
+  };
+  const entries: Entry[] = [];
+
+  const chainKey = (l: Log) => ({
+    _blockN: l.blockNumber!,
+    _txIdx: Number(l.transactionIndex ?? 0),
+    _logIdx: Number(l.logIndex ?? 0),
+  });
 
   for (const l of betLogs) {
     const a = (l as unknown as { args: { id: bigint; user: `0x${string}`; isYes: boolean; amount: bigint } }).args;
-    activity.push({
+    entries.push({
       kind: 'bet',
       marketId: a.id.toString(),
       txHash: l.transactionHash!,
@@ -283,33 +344,36 @@ async function aggregate(): Promise<AdminAnalytics> {
       user: a.user,
       amountMon: formatEther(a.amount),
       isYes: a.isYes,
+      ...chainKey(l),
     });
   }
   for (const l of marketLogs) {
     const a = (l as unknown as { args: { id: bigint; creator: `0x${string}` } }).args;
-    activity.push({
+    entries.push({
       kind: 'market',
       marketId: a.id.toString(),
       txHash: l.transactionHash!,
       blockNumber: l.blockNumber!.toString(),
       tsSec: tsOf(l.blockNumber!),
       user: a.creator,
+      ...chainKey(l),
     });
   }
   for (const l of resolveLogs) {
     const a = (l as unknown as { args: { id: bigint; outcome: number } }).args;
-    activity.push({
+    entries.push({
       kind: 'resolve',
       marketId: a.id.toString(),
       txHash: l.transactionHash!,
       blockNumber: l.blockNumber!.toString(),
       tsSec: tsOf(l.blockNumber!),
       outcome: a.outcome as 0 | 1 | 2 | 3,
+      ...chainKey(l),
     });
   }
   for (const l of claimLogs) {
     const a = (l as unknown as { args: { id: bigint; user: `0x${string}`; amount: bigint } }).args;
-    activity.push({
+    entries.push({
       kind: 'claim',
       marketId: a.id.toString(),
       txHash: l.transactionHash!,
@@ -317,11 +381,12 @@ async function aggregate(): Promise<AdminAnalytics> {
       tsSec: tsOf(l.blockNumber!),
       user: a.user,
       amountMon: formatEther(a.amount),
+      ...chainKey(l),
     });
   }
   for (const l of feeLogs) {
     const a = (l as unknown as { args: { id: bigint; creator: `0x${string}`; amount: bigint } }).args;
-    activity.push({
+    entries.push({
       kind: 'fee',
       marketId: a.id.toString(),
       txHash: l.transactionHash!,
@@ -329,24 +394,25 @@ async function aggregate(): Promise<AdminAnalytics> {
       tsSec: tsOf(l.blockNumber!),
       user: a.creator,
       amountMon: formatEther(a.amount),
+      ...chainKey(l),
     });
   }
 
-  activity.sort((a, b) => {
-    const bb = BigInt(b.blockNumber);
-    const ab = BigInt(a.blockNumber);
-    if (bb !== ab) return bb > ab ? 1 : -1;
-    return 0;
+  entries.sort((a, b) => {
+    if (a._blockN !== b._blockN) return b._blockN > a._blockN ? 1 : -1;
+    if (a._txIdx !== b._txIdx) return b._txIdx - a._txIdx;
+    return b._logIdx - a._logIdx;
   });
-  const cappedActivity = activity.slice(0, 200);
+  const cappedActivity: Activity[] = entries.slice(0, 200).map((e) => {
+    // Strip the private chain-order helper fields from the wire shape.
+    const { _blockN, _txIdx, _logIdx, ...wire } = e;
+    void _blockN;
+    void _txIdx;
+    void _logIdx;
+    return wire;
+  });
 
-  const resolvedCount = markets.filter((m) => m.resolved).length;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const pendingResolveCount = markets.filter((m) => !m.resolved && m.closeTimeSec <= nowSec).length;
-  const unresolvedOpenCount = markets.filter((m) => !m.resolved && m.closeTimeSec > nowSec).length;
-
-  // Daily active wallets for the last 30 days, derived from BetPlaced events.
-  // Bucketed in UTC so the boundaries don't drift by viewer timezone.
+  // --- DAU (30-day bucket, UTC) ---
   const DAYS = 30;
   const dayMs = 24 * 60 * 60 * 1000;
   const todayUtc = new Date(Date.now());
@@ -372,7 +438,22 @@ async function aggregate(): Promise<AdminAnalytics> {
     bets: slot.bets,
   }));
 
+  // --- Totals ---
+  const resolvedCount = markets.filter((m) => m.resolved).length;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const pendingResolveCount = markets.filter((m) => !m.resolved && m.closeTimeSec <= nowSec).length;
+  const unresolvedOpenCount = markets.filter((m) => !m.resolved && m.closeTimeSec > nowSec).length;
+  const treasuryWei = treasuryBn as bigint;
+  // `treasuryBalance()` is "what's in the contract now" — once the owner
+  // calls `withdrawTreasury()` the balance resets. Summing TreasuryWithdrawn
+  // events + the current balance gives cumulative protocol fees ever earned.
+  const withdrawnWei = withdrawLogs.reduce((acc, l) => {
+    const args = (l as unknown as { args: { amount: bigint } }).args;
+    return acc + args.amount;
+  }, 0n);
+
   return {
+    degraded,
     totals: {
       marketCount: markets.length,
       resolvedCount,
@@ -381,7 +462,9 @@ async function aggregate(): Promise<AdminAnalytics> {
       totalVolumeMon: formatEther(totalVolumeWei),
       uniqueBettors: uniqueBettors.size,
       uniqueCreators: uniqueCreators.size,
-      treasuryMon: formatEther(treasuryBn as bigint),
+      treasuryMon: formatEther(treasuryWei),
+      creatorFeesPaidMon: formatEther(creatorFeesPaidWei),
+      totalProtocolFeesMon: formatEther(treasuryWei + withdrawnWei),
       fetchedAtSec: nowSec,
     },
     users: usersArray,
@@ -398,13 +481,22 @@ export async function GET() {
         headers: { 'x-admin-cache': 'HIT' },
       });
     }
-    const data = await aggregate();
+    // Coalesce concurrent cold-cache callers onto the same aggregation.
+    if (!inFlight) {
+      inFlight = aggregate().finally(() => {
+        inFlight = null;
+      });
+    }
+    const data = await inFlight;
     memo = { data, at: Date.now() };
     return NextResponse.json(data, {
       headers: { 'x-admin-cache': 'MISS' },
     });
   } catch (e) {
     console.error('[admin-analytics] aggregate failed:', e);
-    return NextResponse.json({ error: 'upstream' }, { status: 503 });
+    return NextResponse.json(
+      { error: 'upstream', message: (e as Error).message },
+      { status: 503 },
+    );
   }
 }
