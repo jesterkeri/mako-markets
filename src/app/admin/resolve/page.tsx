@@ -7,6 +7,7 @@ import { useMarkets, useResolveMarket } from '@/lib/hooks';
 import { Outcome, type MarketWithId } from '@/lib/contract';
 import { useIsAdmin, ADMIN_ADDRESS } from '@/lib/admin';
 import { formatEther } from 'viem';
+import { AdminNav } from '@/components/AdminNav';
 
 /**
  * Admin-only resolve UI.
@@ -58,6 +59,8 @@ export default function AdminResolvePage() {
           &lt; BACK
         </Link>
       </div>
+
+      <AdminNav active="resolve" />
 
       <div className="px-6 md:px-8 py-8 border-b border-black">
         <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">

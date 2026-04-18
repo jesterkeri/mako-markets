@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Providers } from '@/components/Providers';
 import { Sidebar } from '@/components/Sidebar';
+import { Analytics } from '@vercel/analytics/next';
 
 // Removed `next/font/google` Inter import to eliminate remote font fetch
 // during Vercel build (was failing in sandboxed CI). System font stack is
@@ -35,6 +36,9 @@ export default function RootLayout({
             </div>
           </div>
         </Providers>
+        {/* Vercel Web Analytics — anonymous page-view counters. Only sends
+            data from production deploys on Vercel; silent no-op locally. */}
+        <Analytics />
       </body>
     </html>
   );
