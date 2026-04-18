@@ -54,6 +54,35 @@ html {
   .ticker-crawl { animation: none; }
 }
 
+/* DAU bar chart on the admin overview.
+ *
+ * Two motions layered on each bar:
+ *   1. Mount:  scaleY rises from 0 to 1 on the first paint, with a per-bar
+ *              stagger so the strip sweeps in left→right. `--i` is set
+ *              inline on each bar as its index in the 30-day window.
+ *   2. Update: when the 30s query refetch swaps `height` with a new %,
+ *              the transition makes the bar slide to its new size instead
+ *              of snapping.
+ */
+@keyframes dau-bar-in {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+.dau-bar {
+  transform-origin: bottom;
+  animation: dau-bar-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 18ms);
+  transition: height 500ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              background-color 300ms ease-out;
+  will-change: transform, height;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dau-bar {
+    animation: none;
+    transition: none;
+  }
+}
+
 body {
   background: var(--color-background);
   color: var(--color-foreground);

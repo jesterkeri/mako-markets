@@ -118,7 +118,7 @@ function DauStrip({ dau }: { dau: Array<{ dateISO: string; wallets: number; bets
         </div>
       </div>
       <div className="flex items-end gap-[3px] h-20">
-        {dau.map((d) => {
+        {dau.map((d, i) => {
           const pct = maxWallets === 0 ? 0 : Math.max(4, Math.round((d.wallets / maxWallets) * 100));
           return (
             <div
@@ -127,8 +127,11 @@ function DauStrip({ dau }: { dau: Array<{ dateISO: string; wallets: number; bets
               title={`${d.dateISO} · ${d.wallets} wallets · ${d.bets} bets`}
             >
               <div
-                className={`${d.wallets === 0 ? 'bg-foreground/10' : 'bg-foreground'} w-full`}
-                style={{ height: `${d.wallets === 0 ? 4 : pct}%` }}
+                className={`dau-bar w-full ${d.wallets === 0 ? 'bg-foreground/10' : 'bg-foreground'}`}
+                style={{
+                  height: `${d.wallets === 0 ? 4 : pct}%`,
+                  ['--i' as string]: i,
+                }}
               />
             </div>
           );
