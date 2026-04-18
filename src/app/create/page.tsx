@@ -32,6 +32,37 @@ import {
 type Tab = 'crypto' | 'football' | 'basketball';
 type Direction = 'above' | 'below';
 
+/**
+ * Map known viem / wagmi write errors to plain-English UI strings.
+ *
+ * The default viem message for a failed wallet request reads like
+ * "Requested resource not available. Request arguments: from: 0x..."
+ * which is useless to a user. This mapper catches the common cases we
+ * can actually help with (wrong chain, rejection, low balance) and
+ * falls through to a trimmed raw message otherwise.
+ */
+function friendlyWriteError(e: Error): string {
+  const msg = (e.message || '').toLowerCase();
+  if (msg.includes('switch your wallet to monad')) {
+    // Thrown by useEnsureMonadChain when the user declined the switch.
+    return 'SWITCH WALLET TO MONAD TESTNET';
+  }
+  if (msg.includes('user rejected') || msg.includes('user denied')) {
+    return 'REJECTED IN WALLET';
+  }
+  if (msg.includes('insufficient funds')) {
+    return 'INSUFFICIENT MON BALANCE';
+  }
+  if (
+    msg.includes('requested resource not available')
+    || msg.includes('unsupported chain')
+    || msg.includes('chain mismatch')
+  ) {
+    return 'SWITCH WALLET TO MONAD TESTNET';
+  }
+  return `ERROR: ${e.message.slice(0, 100).toUpperCase()}`;
+}
+
 type FootballFixture = {
   id: number;
   homeTeam: string;
@@ -165,7 +196,7 @@ export default function CreateMarketPage() {
         : isSuccess
           ? 'MARKET CREATED · REDIRECTING...'
           : error
-            ? `ERROR: ${(error as Error).message.slice(0, 100).toUpperCase()}`
+            ? friendlyWriteError(error as Error)
             : null;
 
   return (

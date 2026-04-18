@@ -1,6 +1,12 @@
 'use client';
 
-import { useReadContract, useReadContracts, useWriteContract } from 'wagmi';
+import {
+  useChainId,
+  useReadContract,
+  useReadContracts,
+  useSwitchChain,
+  useWriteContract,
+} from 'wagmi';
 import { parseEther } from 'viem';
 import {
   makoContract,
@@ -9,6 +15,33 @@ import {
   MarketType,
   Outcome,
 } from './contract';
+import { monadTestnet } from './chain';
+
+/**
+ * Pre-write chain guard.
+ *
+ * If the user's wallet is on a chain other than Monad testnet, a raw
+ * `writeContractAsync` call fails at the EIP-1193 layer with
+ * "Requested resource not available" — a cryptic error that surfaced
+ * verbatim in the create flow. This helper awaits a switch first so
+ * every write path lands on the right chain without each hook having
+ * to duplicate the logic.
+ *
+ * Throws with a friendly message if the user declines the switch so
+ * the UI can display something useful instead of the EIP-1193 string.
+ */
+function useEnsureMonadChain() {
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
+  return async () => {
+    if (chainId === monadTestnet.id) return;
+    try {
+      await switchChainAsync({ chainId: monadTestnet.id });
+    } catch {
+      throw new Error('Switch your wallet to Monad testnet to continue.');
+    }
+  };
+}
 
 // ---------------------------------------------------------------
 // Reads
@@ -143,6 +176,7 @@ export function useMarket(id: bigint) {
  */
 export function usePlaceBet() {
   const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract();
+  const ensureChain = useEnsureMonadChain();
 
   const placeBet = async ({
     id,
@@ -153,6 +187,7 @@ export function usePlaceBet() {
     isYes: boolean;
     amountMon: string;
   }) => {
+    await ensureChain();
     return writeContractAsync({
       ...makoContract,
       functionName: 'placeBet',
@@ -169,8 +204,10 @@ export function usePlaceBet() {
  */
 export function useClaim() {
   const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract();
+  const ensureChain = useEnsureMonadChain();
 
   const claim = async (id: bigint) => {
+    await ensureChain();
     return writeContractAsync({
       ...makoContract,
       functionName: 'claim',
@@ -189,6 +226,7 @@ export function useClaim() {
  */
 export function useCreateMarket() {
   const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract();
+  const ensureChain = useEnsureMonadChain();
 
   const create = async ({
     mType,
@@ -201,6 +239,7 @@ export function useCreateMarket() {
     closeTime: bigint;
     question: string;
   }) => {
+    await ensureChain();
     return writeContractAsync({
       ...makoContract,
       functionName: 'createMarket',
@@ -218,8 +257,10 @@ export function useCreateMarket() {
  */
 export function useResolveMarket() {
   const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract();
+  const ensureChain = useEnsureMonadChain();
 
   const resolve = async ({ id, outcome }: { id: bigint; outcome: Outcome }) => {
+    await ensureChain();
     return writeContractAsync({
       ...makoContract,
       functionName: 'resolveMarket',
@@ -236,8 +277,10 @@ export function useResolveMarket() {
  */
 export function useClaimCreatorFee() {
   const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract();
+  const ensureChain = useEnsureMonadChain();
 
   const claimFee = async (id: bigint) => {
+    await ensureChain();
     return writeContractAsync({
       ...makoContract,
       functionName: 'claimCreatorFee',
