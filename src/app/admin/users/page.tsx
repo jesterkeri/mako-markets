@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { useIsAdmin } from '@/lib/admin';
-import { useAdminAnalytics } from '@/lib/admin-analytics';
+import { useAdminAnalytics, UNAUTHORIZED } from '@/lib/admin-analytics';
 import { AdminNav } from '@/components/AdminNav';
+import { AdminLogin } from '@/components/AdminLogin';
 import {
   TopBar,
   NotAuthorized,
@@ -57,6 +58,7 @@ export default function AdminUsersPage() {
   }, [data, sortKey]);
 
   if (!isAdmin) return <NotAuthorized />;
+  if (error instanceof Error && error.message === UNAUTHORIZED) return <AdminLogin />;
 
   return (
     <main className="flex-1 flex flex-col w-full pb-16">

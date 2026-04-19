@@ -24,17 +24,22 @@
  */
 
 import { useAccount } from 'wagmi';
+import { ADMIN_ADDRESS } from '@/lib/admin-address';
 
 /**
- * The deployer / resolver wallet for the live MakoMarkets contract
- * at 0x87129a4FF7e795286a9939Ce7A73A25A29368389 on Monad testnet.
+ * The deployer / resolver wallet for the live MakoMarkets contract on
+ * Monad testnet. Lives in `admin-address.ts` (plain module, no 'use client')
+ * so the server-side SIWE verify route can read it as a real string
+ * constant — importing from this file on the server returns a client stub
+ * and blows up any `.toLowerCase()` call. Re-exported here to keep every
+ * existing `import { ADMIN_ADDRESS } from '@/lib/admin'` working.
  *
  * This address is hardcoded rather than read from env because it needs
  * to match the on-chain `resolver` state variable of the deployed
  * contract — changing it here without also calling `setResolver()`
  * on-chain would break the resolve flow.
  */
-export const ADMIN_ADDRESS = '0x774f7559E8fa4EAca55490df4F2F138D53323B9f' as const;
+export { ADMIN_ADDRESS };
 
 /**
  * Returns true if the connected wallet matches the admin address.

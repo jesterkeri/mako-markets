@@ -6,8 +6,10 @@ import { useWaitForTransactionReceipt } from 'wagmi';
 import { useMarkets, useResolveMarket } from '@/lib/hooks';
 import { Outcome, type MarketWithId } from '@/lib/contract';
 import { useIsAdmin, ADMIN_ADDRESS } from '@/lib/admin';
+import { useAdminSession } from '@/lib/use-admin-session';
 import { formatEther } from 'viem';
 import { AdminNav } from '@/components/AdminNav';
+import { AdminLogin } from '@/components/AdminLogin';
 
 /**
  * Admin-only resolve UI.
@@ -22,6 +24,7 @@ import { AdminNav } from '@/components/AdminNav';
  */
 export default function AdminResolvePage() {
   const isAdmin = useIsAdmin();
+  const { data: session } = useAdminSession({ enabled: isAdmin });
   const { markets, isLoading, refetch } = useMarkets();
 
   const pending = useMemo(() => {
@@ -48,6 +51,12 @@ export default function AdminResolvePage() {
       </main>
     );
   }
+
+  // SIWE session gate. The resolve page doesn't hit /api/admin/analytics,
+  // so we can't learn session state from that query's 401 — probe /api/auth/me
+  // instead. First render: session is undefined → show AdminLogin while the
+  // probe runs (safe default). Once authed resolves true, show the page.
+  if (session?.authed !== true) return <AdminLogin />;
 
   return (
     <main className="flex-1 flex flex-col w-full pb-16">

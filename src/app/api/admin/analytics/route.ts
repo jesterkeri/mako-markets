@@ -10,6 +10,7 @@ import {
 import { monadTestnet } from '@/lib/chain';
 import { makoAbi, MAKO_ADDRESS } from '@/lib/contract';
 import type { AdminAnalytics } from '@/lib/admin-analytics';
+import { getAdminSession } from '@/lib/admin-session';
 
 /**
  * GET /api/admin/analytics
@@ -670,6 +671,12 @@ async function aggregate(): Promise<AdminAnalytics> {
 }
 
 export async function GET() {
+  // SIWE gate. Runs before any RPC work so unauth'd callers can't burn
+  // Alchemy credits. Session cookie is HMAC-signed; see src/lib/admin-session.ts.
+  const session = await getAdminSession();
+  if (!session) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
   try {
     if (memo && Date.now() - memo.at < CACHE_TTL_MS) {
       return NextResponse.json(memo.data, {

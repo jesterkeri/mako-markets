@@ -117,17 +117,28 @@ export type AdminAnalytics = {
  * per 30s per client regardless of tab count. The server route adds its
  * own 30s memo so concurrent clients still see one RPC fanout.
  */
+/** Sentinel the admin pages check for to swap the error view for the SIWE
+ * login panel. A thrown Error.message of exactly this string means: wallet
+ * is admin-address, but there's no valid session cookie — render AdminLogin. */
+export const UNAUTHORIZED = 'UNAUTHORIZED' as const;
+
 export function useAdminAnalytics(opts: { enabled?: boolean } = {}) {
   return useQuery<AdminAnalytics>({
     queryKey: ['admin-analytics'],
     enabled: opts.enabled ?? true,
     queryFn: async () => {
       const res = await fetch('/api/admin/analytics', { cache: 'no-store' });
+      if (res.status === 401) throw new Error(UNAUTHORIZED);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return (await res.json()) as AdminAnalytics;
     },
     staleTime: 30_000,
     refetchInterval: 30_000,
     refetchOnWindowFocus: false,
+    // Don't retry on 401 — SIWE login must happen before a retry is useful.
+    retry: (failureCount, err) => {
+      if (err instanceof Error && err.message === UNAUTHORIZED) return false;
+      return failureCount < 3;
+    },
   });
 }
