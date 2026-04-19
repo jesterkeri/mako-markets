@@ -33,6 +33,11 @@ import type { AdminAnalytics } from '@/lib/admin-analytics';
  *              1× RPC fanout per live instance. If that becomes a cost
  *              problem at scale, add a shared cache layer (Blob / KV / Redis)
  *              — scope for a later round.
+ *   - Incremental: a `lastScannedBlock` cursor + in-memory event store
+ *              means every cache miss after the first only issues getLogs
+ *              for the delta since last scan (~30 blocks on a 30s loop,
+ *              not 450k+). Drops steady-state CU per aggregate from ~207k
+ *              to ~550, making PAYG viable for long-lived tabs.
  *   - Client:  TanStack Query `staleTime: 30_000` in `useAdminAnalytics()`.
  *
  * Not using Next.js 16 `"use cache"` because that requires enabling
@@ -56,6 +61,43 @@ let memo: Cached | null = null;
 // there's no window where a second caller can see both `inFlight = null`
 // and `memo` stale. Per-instance only — see header note on caching.
 let inFlight: Promise<AdminAnalytics> | null = null;
+
+/**
+ * Incremental-scan state (per function instance).
+ *
+ * `lastScannedBlock` is the highest block number we've already pulled logs
+ * for. On the next cache miss we only scan `lastScannedBlock + 1 → latest`
+ * instead of DEPLOY_BLOCK → latest, which drops per-aggregate RPC cost
+ * from ~207k CU to ~550 CU in steady state.
+ *
+ * `eventStore` accumulates the raw logs so the aggregation pass can
+ * re-derive users / activity / DAU / userGrowth on every call. CPU is
+ * cheap; it's the RPC calls we're cutting.
+ *
+ * `blockTsCache` caches block timestamps across ticks so we don't re-fetch
+ * the same block's timestamp every 30s just to re-label existing events.
+ *
+ * All three reset on process restart / cold start, which makes the first
+ * request after a cold start do a full scan (expected, amortized across
+ * the instance's lifetime).
+ */
+let lastScannedBlock: bigint | null = null;
+type StreamKey = 'bet' | 'market' | 'resolve' | 'claim' | 'fee' | 'withdraw';
+const eventStore: Record<StreamKey, Log[]> = {
+  bet: [],
+  market: [],
+  resolve: [],
+  claim: [],
+  fee: [],
+  withdraw: [],
+};
+const blockTsCache = new Map<string, number>();
+
+function evictBelow(floor: bigint) {
+  for (const key of Object.keys(eventStore) as StreamKey[]) {
+    eventStore[key] = eventStore[key].filter((l) => (l.blockNumber ?? 0n) >= floor);
+  }
+}
 
 const DEPLOY_BLOCK_RAW = process.env.NEXT_PUBLIC_MAKO_DEPLOY_BLOCK;
 const DEPLOY_BLOCK = BigInt(DEPLOY_BLOCK_RAW ?? '0');
@@ -141,21 +183,29 @@ async function chunkedGetLogs(
   return out;
 }
 
-async function resolveTimestamps(blockNumbers: Iterable<bigint>): Promise<Map<string, number>> {
-  const uniq = Array.from(new Set(Array.from(blockNumbers, (b) => b.toString())));
-  const out = new Map<string, number>();
+async function resolveTimestamps(blockNumbers: Iterable<bigint>): Promise<void> {
+  // Populate `blockTsCache` only for blocks we haven't fetched before.
+  // Previous revision returned a fresh Map per call, which meant we
+  // re-paid for every event's timestamp on every 30s tick even when
+  // we already knew the answer.
+  const needed = new Set<string>();
+  for (const b of blockNumbers) {
+    const k = b.toString();
+    if (!blockTsCache.has(k)) needed.add(k);
+  }
+  if (needed.size === 0) return;
   const CONCURRENCY = 20;
-  for (let i = 0; i < uniq.length; i += CONCURRENCY) {
-    const slice = uniq.slice(i, i + CONCURRENCY);
+  const list = Array.from(needed);
+  for (let i = 0; i < list.length; i += CONCURRENCY) {
+    const slice = list.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
       slice.map(async (bn) => {
         const block = await client.getBlock({ blockNumber: BigInt(bn) });
         return [bn, Number(block.timestamp)] as const;
       }),
     );
-    for (const [bn, ts] of results) out.set(bn, ts);
+    for (const [bn, ts] of results) blockTsCache.set(bn, ts);
   }
-  return out;
 }
 
 async function aggregate(): Promise<AdminAnalytics> {
@@ -250,20 +300,64 @@ async function aggregate(): Promise<AdminAnalytics> {
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
-  // All six event streams in parallel. A failure in any one is captured
-  // in `degraded` so the UI can surface partial-data state instead of
-  // silently reporting wrong totals.
-  const [betLogs, marketLogs, resolveLogs, claimLogs, feeLogs, withdrawLogs] =
-    (await Promise.all([
-      wrapStream('bet', chunkedGetLogs(eventBetPlaced, scanFrom, scanTo)),
-      wrapStream('market', chunkedGetLogs(eventMarketCreated, scanFrom, scanTo)),
-      wrapStream('resolve', chunkedGetLogs(eventMarketResolved, scanFrom, scanTo)),
-      wrapStream('claim', chunkedGetLogs(eventClaimed, scanFrom, scanTo)),
-      wrapStream('fee', chunkedGetLogs(eventCreatorFeePaid, scanFrom, scanTo)),
-      wrapStream('withdraw', chunkedGetLogs(eventTreasuryWithdrawn, scanFrom, scanTo)),
-    ])).map((l) => l ?? []) as [Log[], Log[], Log[], Log[], Log[], Log[]];
+  // Incremental scan. If we've never scanned, or the cursor is stale
+  // relative to the current bounded window (can happen if LOOKBACK_BLOCKS
+  // shrinks between ticks or if latestBlock jumps forward far enough that
+  // the cursor is older than the window floor), do a full scan. Otherwise
+  // only scan `lastScannedBlock + 1 → latestBlock`.
+  const cursorUsable =
+    lastScannedBlock !== null &&
+    lastScannedBlock >= scanFrom &&
+    lastScannedBlock <= scanTo;
+  const deltaFrom = cursorUsable ? lastScannedBlock! + 1n : scanFrom;
+  const deltaTo = scanTo;
 
-  // Resolve block timestamps (dedup first, bounded concurrency)
+  // If there are no new blocks since the last scan, skip RPC entirely
+  // and re-aggregate from the cached eventStore.
+  const hasDelta = deltaFrom <= deltaTo;
+
+  if (hasDelta) {
+    const [betLogs, marketLogs, resolveLogs, claimLogs, feeLogs, withdrawLogs] =
+      (await Promise.all([
+        wrapStream('bet', chunkedGetLogs(eventBetPlaced, deltaFrom, deltaTo)),
+        wrapStream('market', chunkedGetLogs(eventMarketCreated, deltaFrom, deltaTo)),
+        wrapStream('resolve', chunkedGetLogs(eventMarketResolved, deltaFrom, deltaTo)),
+        wrapStream('claim', chunkedGetLogs(eventClaimed, deltaFrom, deltaTo)),
+        wrapStream('fee', chunkedGetLogs(eventCreatorFeePaid, deltaFrom, deltaTo)),
+        wrapStream('withdraw', chunkedGetLogs(eventTreasuryWithdrawn, deltaFrom, deltaTo)),
+      ])).map((l) => l ?? []) as [Log[], Log[], Log[], Log[], Log[], Log[]];
+
+    // If this was a full scan (cursor wasn't usable), reset the store
+    // so we don't mix pre-window leftovers with the fresh full set.
+    if (!cursorUsable) {
+      for (const k of Object.keys(eventStore) as StreamKey[]) eventStore[k] = [];
+    }
+    eventStore.bet.push(...betLogs);
+    eventStore.market.push(...marketLogs);
+    eventStore.resolve.push(...resolveLogs);
+    eventStore.claim.push(...claimLogs);
+    eventStore.fee.push(...feeLogs);
+    eventStore.withdraw.push(...withdrawLogs);
+    lastScannedBlock = scanTo;
+  }
+
+  // In bounded mode, evict events whose block is older than the current
+  // window floor. Cheap filter, keeps the "LAST N BLOCKS" chart honest.
+  if (scanFrom > DEPLOY_BLOCK) {
+    evictBelow(scanFrom);
+  }
+
+  // Pull the full working set out of the store for the aggregation pass.
+  const betLogs = eventStore.bet;
+  const marketLogs = eventStore.market;
+  const resolveLogs = eventStore.resolve;
+  const claimLogs = eventStore.claim;
+  const feeLogs = eventStore.fee;
+  const withdrawLogs = eventStore.withdraw;
+
+  // Resolve block timestamps for anything not already cached. Iterates the
+  // full store but `resolveTimestamps` short-circuits on cache hits, so in
+  // steady state this only issues RPC calls for the delta blocks.
   const allBlocks: bigint[] = [
     ...betLogs.map((l) => l.blockNumber!),
     ...marketLogs.map((l) => l.blockNumber!),
@@ -272,8 +366,8 @@ async function aggregate(): Promise<AdminAnalytics> {
     ...feeLogs.map((l) => l.blockNumber!),
     ...withdrawLogs.map((l) => l.blockNumber!),
   ];
-  const tsByBlock = await resolveTimestamps(allBlocks);
-  const tsOf = (bn: bigint) => tsByBlock.get(bn.toString()) ?? 0;
+  await resolveTimestamps(allBlocks);
+  const tsOf = (bn: bigint) => blockTsCache.get(bn.toString()) ?? 0;
 
   // --- Users aggregation ---
   type UserAcc = {
