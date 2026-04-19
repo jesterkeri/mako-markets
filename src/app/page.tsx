@@ -5,7 +5,6 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMarkets } from '@/lib/hooks';
 import { MarketType } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
-import { PriceTicker } from '@/components/PriceTicker';
 import { NewsFeed } from '@/components/NewsFeed';
 import Link from 'next/link';
 
@@ -226,11 +225,6 @@ export default function Home() {
         </aside>
       </div>
 
-      {/* News-channel-style bottom crawl. Fixed to the viewport bottom, the
-          ticker runs across every breakpoint and doesn't push page content.
-          `pb-12` at the outer main keeps the last market card from hiding
-          behind the 36px strip. */}
-      <PriceTicker />
     </main>
   );
 }

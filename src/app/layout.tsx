@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Providers } from '@/components/Providers';
 import { Sidebar } from '@/components/Sidebar';
+import { PriceTicker } from '@/components/PriceTicker';
 import { Analytics } from '@vercel/analytics/next';
 
 // Removed `next/font/google` Inter import to eliminate remote font fetch
@@ -35,6 +36,11 @@ export default function RootLayout({
               {children}
             </div>
           </div>
+          {/* Crypto price crawl. Fixed to the viewport bottom, needs to be
+              inside <Providers> so its useQuery-style fetch has access to
+              the QueryClient. Mounted at layout-level so every route shows
+              it — admin pages, market detail, feed, /me, create, etc. */}
+          <PriceTicker />
         </Providers>
         {/* Vercel Web Analytics — anonymous page-view counters. Only sends
             data from production deploys on Vercel; silent no-op locally. */}
