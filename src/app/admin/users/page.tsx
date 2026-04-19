@@ -8,6 +8,7 @@ import {
   TopBar,
   NotAuthorized,
   DegradedBanner,
+  Honest,
   fourDp,
   short,
   explorerAddress,
@@ -20,13 +21,6 @@ import { useNowSec } from '@/lib/use-now';
  * Addresses link to the Monad testnet explorer (URL read from chain config).
  */
 type SortKey = 'volume' | 'bets' | 'earned' | 'recent';
-
-// Decimal-string fee rank. Float precision is fine here at MON-scale
-// testnet values; BigInt sort stays reserved for the headline VOLUME
-// column because that's the ranking that most visibly misbehaves first.
-function feeRank(decimalStr: string): number {
-  return Number(decimalStr);
-}
 
 export default function AdminUsersPage() {
   const isAdmin = useIsAdmin();
@@ -48,7 +42,14 @@ export default function AdminUsersPage() {
     } else if (sortKey === 'bets') {
       copy.sort((a, b) => b.betCount - a.betCount);
     } else if (sortKey === 'earned') {
-      copy.sort((a, b) => feeRank(b.creatorFeesEarnedMon) - feeRank(a.creatorFeesEarnedMon));
+      // BigInt compare on raw wei, same pattern as volume — avoids the
+      // Number() precision fall-over at higher earning levels.
+      copy.sort((a, b) => {
+        const bw = BigInt(b.creatorFeesEarnedWei);
+        const aw = BigInt(a.creatorFeesEarnedWei);
+        if (bw === aw) return 0;
+        return bw > aw ? 1 : -1;
+      });
     } else {
       copy.sort((a, b) => b.lastSeenSec - a.lastSeenSec);
     }
@@ -75,10 +76,9 @@ export default function AdminUsersPage() {
               : `${data.users.length} USER${data.users.length === 1 ? '' : 'S'}`}
         </h1>
         <p className="text-muted text-[11px] font-bold uppercase tracking-widest mt-2">
-          EVERYONE WHO BET OR CREATED A MARKET
           {data?.window.bounded
-            ? ` · LAST ${Number(data.window.blocksCovered).toLocaleString()} BLOCKS`
-            : null}
+            ? `EVERYONE WHO BET OR CREATED A MARKET IN THE LAST ${Number(data.window.blocksCovered).toLocaleString()} BLOCKS`
+            : 'EVERYONE WHO BET OR CREATED A MARKET'}
         </p>
       </div>
 
@@ -114,7 +114,7 @@ export default function AdminUsersPage() {
             : 'NO USERS IN THIS WINDOW'}
         </div>
       ) : (
-        sortedUsers.map((u) => <UserRow key={u.address} user={u} />)
+        sortedUsers.map((u) => <UserRow key={u.address} user={u} degraded={data?.degraded ?? []} />)
       )}
     </main>
   );
@@ -122,6 +122,7 @@ export default function AdminUsersPage() {
 
 function UserRow({
   user: u,
+  degraded,
 }: {
   user: {
     address: `0x${string}`;
@@ -130,10 +131,12 @@ function UserRow({
     volumeWei: string;
     marketsCreated: number;
     creatorFeesEarnedMon: string;
+    creatorFeesEarnedWei: string;
     claimedMon: string;
     firstSeenSec: number;
     lastSeenSec: number;
   };
+  degraded: string[];
 }) {
   const nowSec = useNowSec();
   return (
@@ -154,21 +157,33 @@ function UserRow({
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[10px] font-black uppercase tracking-widest text-muted">
         <span>
           VOLUME{' '}
-          <span className="text-foreground tabular-nums">{fourDp(u.volumeMon)} MON</span>
+          <span className="text-foreground tabular-nums">
+            <Honest value={`${fourDp(u.volumeMon)} MON`} dependsOn={['bet']} degraded={degraded} />
+          </span>
         </span>
         <span>
-          BETS <span className="text-foreground tabular-nums">{u.betCount}</span>
+          BETS{' '}
+          <span className="text-foreground tabular-nums">
+            <Honest value={u.betCount.toString()} dependsOn={['bet']} degraded={degraded} />
+          </span>
         </span>
         <span>
-          CREATED <span className="text-foreground tabular-nums">{u.marketsCreated}</span>
+          CREATED{' '}
+          <span className="text-foreground tabular-nums">
+            <Honest value={u.marketsCreated.toString()} dependsOn={['market']} degraded={degraded} />
+          </span>
         </span>
         <span>
           EARNED{' '}
-          <span className="text-foreground tabular-nums">{fourDp(u.creatorFeesEarnedMon)} MON</span>
+          <span className="text-foreground tabular-nums">
+            <Honest value={`${fourDp(u.creatorFeesEarnedMon)} MON`} dependsOn={['fee']} degraded={degraded} />
+          </span>
         </span>
         <span>
           CLAIMED{' '}
-          <span className="text-foreground tabular-nums">{fourDp(u.claimedMon)} MON</span>
+          <span className="text-foreground tabular-nums">
+            <Honest value={`${fourDp(u.claimedMon)} MON`} dependsOn={['claim']} degraded={degraded} />
+          </span>
         </span>
       </div>
     </div>

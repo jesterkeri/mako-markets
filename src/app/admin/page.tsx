@@ -128,25 +128,40 @@ export default function AdminOverviewPage() {
             />
           </div>
 
-          <ChartBlock
-            title="USER GROWTH · LAST 30 DAYS"
-            right={
-              data.userGrowth.length > 0
+          {(() => {
+            // When the server has a bounded scan window (public-RPC
+            // fallback, say last 10k blocks ≈ 3h), the chart datapoints
+            // for days outside the window are fabricated zeros. Labeling
+            // that "LAST 30 DAYS" would be a lie. Relabel + retitle.
+            const bounded = data.window.bounded;
+            const growthTitle = bounded
+              ? `USER GROWTH · LAST ${Number(data.window.blocksCovered).toLocaleString()} BLOCKS`
+              : 'USER GROWTH · LAST 30 DAYS';
+            const dauTitle = bounded
+              ? `DAILY ACTIVE WALLETS · LAST ${Number(data.window.blocksCovered).toLocaleString()} BLOCKS`
+              : 'DAILY ACTIVE WALLETS · LAST 30 DAYS';
+            const growthUnavailable =
+              data.degraded.includes('bet') || data.degraded.includes('market');
+            const dauUnavailable = data.degraded.includes('bet');
+            const growthRight = growthUnavailable
+              ? undefined
+              : data.userGrowth.length > 0
                 ? `${data.userGrowth[data.userGrowth.length - 1]!.cumulativeUsers} TOTAL`
-                : ''
-            }
-            unavailable={data.degraded.includes('bet') || data.degraded.includes('market')}
-          >
-            <UserGrowthChart data={data.userGrowth} />
-          </ChartBlock>
-
-          <ChartBlock
-            title="DAILY ACTIVE WALLETS · LAST 30 DAYS"
-            right={`${data.dau.reduce((acc, d) => acc + d.bets, 0)} BETS`}
-            unavailable={data.degraded.includes('bet')}
-          >
-            <DauChart data={data.dau} />
-          </ChartBlock>
+                : undefined;
+            const dauRight = dauUnavailable
+              ? undefined
+              : `${data.dau.reduce((acc, d) => acc + d.bets, 0)} BETS`;
+            return (
+              <>
+                <ChartBlock title={growthTitle} right={growthRight} unavailable={growthUnavailable}>
+                  <UserGrowthChart data={data.userGrowth} />
+                </ChartBlock>
+                <ChartBlock title={dauTitle} right={dauRight} unavailable={dauUnavailable}>
+                  <DauChart data={data.dau} />
+                </ChartBlock>
+              </>
+            );
+          })()}
 
           <div className="px-6 md:px-8 py-6 border-b border-black flex items-center justify-between">
             <div className="text-[10px] font-black uppercase tracking-widest text-muted">

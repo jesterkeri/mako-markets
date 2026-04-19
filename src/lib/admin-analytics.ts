@@ -57,6 +57,8 @@ export type AdminAnalytics = {
     marketsCreated: number;
     /** Cumulative MON earned by this address as a creator (CreatorFeePaid sum). */
     creatorFeesEarnedMon: string;
+    /** Raw wei for the same — use for exact bigint sort on the client. */
+    creatorFeesEarnedWei: string;
     /** Cumulative MON this address claimed from winning bets (Claimed sum). */
     claimedMon: string;
     firstSeenSec: number;

@@ -26,8 +26,13 @@ import type { AdminAnalytics } from '@/lib/admin-analytics';
  * the client's query cache already share-fetches via a single queryKey.
  *
  * Caching:
- *   - Server:  module-scoped memo with 30s TTL + in-flight promise coalesce,
- *              so a burst of concurrent cold-cache requests share one fanout.
+ *   - Server:  module-scoped memo with 30s TTL + in-flight promise coalesce
+ *              — coalesces burst within a SINGLE function instance only.
+ *              Vercel Fluid runs multiple warm instances in parallel; each
+ *              one keeps its own memo, so a 30s refresh can still trigger
+ *              1× RPC fanout per live instance. If that becomes a cost
+ *              problem at scale, add a shared cache layer (Blob / KV / Redis)
+ *              — scope for a later round.
  *   - Client:  TanStack Query `staleTime: 30_000` in `useAdminAnalytics()`.
  *
  * Not using Next.js 16 `"use cache"` because that requires enabling
@@ -46,8 +51,10 @@ const CACHE_TTL_MS = 30_000;
 type Cached = { data: AdminAnalytics; at: number };
 let memo: Cached | null = null;
 // Coalesce concurrent cold-cache requests: every caller awaits the same
-// in-flight promise instead of triggering a parallel full-history scan.
-// Cleared in `finally` so the next stale window starts a fresh attempt.
+// in-flight promise instead of triggering parallel full-history scans.
+// The promise itself writes to `memo` BEFORE clearing `inFlight`, so
+// there's no window where a second caller can see both `inFlight = null`
+// and `memo` stale. Per-instance only — see header note on caching.
 let inFlight: Promise<AdminAnalytics> | null = null;
 
 const DEPLOY_BLOCK_RAW = process.env.NEXT_PUBLIC_MAKO_DEPLOY_BLOCK;
@@ -351,6 +358,7 @@ async function aggregate(): Promise<AdminAnalytics> {
       volumeWei: u.volumeWei.toString(),
       marketsCreated: u.marketsCreated,
       creatorFeesEarnedMon: formatEther(u.creatorFeesEarnedWei),
+      creatorFeesEarnedWei: u.creatorFeesEarnedWei.toString(),
       claimedMon: formatEther(u.claimedWei),
       firstSeenSec: u.firstSeenSec,
       lastSeenSec: u.lastSeenSec,
@@ -575,13 +583,23 @@ export async function GET() {
       });
     }
     // Coalesce concurrent cold-cache callers onto the same aggregation.
+    // Critical: memo is written INSIDE the shared promise chain, BEFORE
+    // `inFlight` gets cleared. Previous version assigned memo in the
+    // outer async body, which left a gap where a second caller could see
+    // `inFlight === null` while memo was still stale and kick off a
+    // redundant aggregate. Doing both atomically inside `.then()` closes
+    // the gap.
     if (!inFlight) {
-      inFlight = aggregate().finally(() => {
-        inFlight = null;
-      });
+      inFlight = aggregate()
+        .then((data) => {
+          memo = { data, at: Date.now() };
+          return data;
+        })
+        .finally(() => {
+          inFlight = null;
+        });
     }
     const data = await inFlight;
-    memo = { data, at: Date.now() };
     return NextResponse.json(data, {
       headers: { 'x-admin-cache': 'MISS' },
     });
