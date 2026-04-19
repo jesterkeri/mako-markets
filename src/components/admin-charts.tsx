@@ -54,7 +54,7 @@ export function DauChart({ data }: { data: DauDatum[] }) {
   return (
     <div className="h-36">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="currentColor" strokeOpacity={0.1} vertical={false} />
           <XAxis
             dataKey="dateISO"
@@ -70,7 +70,7 @@ export function DauChart({ data }: { data: DauDatum[] }) {
             tickLine={false}
             axisLine={false}
             allowDecimals={false}
-            width={28}
+            width={32}
           />
           <Tooltip
             cursor={{ fill: 'currentColor', fillOpacity: 0.08 }}
@@ -105,7 +105,7 @@ export function UserGrowthChart({ data }: { data: GrowthDatum[] }) {
   return (
     <div className="h-48">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+        <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id="mako-user-growth-fill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="currentColor" stopOpacity={0.35} />
@@ -127,7 +127,7 @@ export function UserGrowthChart({ data }: { data: GrowthDatum[] }) {
             tickLine={false}
             axisLine={false}
             allowDecimals={false}
-            width={28}
+            width={32}
           />
           <Tooltip
             cursor={{ stroke: 'currentColor', strokeOpacity: 0.3, strokeDasharray: '2 2' }}
