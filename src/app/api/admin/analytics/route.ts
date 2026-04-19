@@ -479,6 +479,46 @@ async function aggregate(): Promise<AdminAnalytics> {
     bets: slot.bets,
   }));
 
+  // --- Cumulative user growth (30-day window, UTC) ---
+  // "User" = any address that has either bet or created a market. Track
+  // the first day each unique address appeared, then fold into a running
+  // total. Pre-window first-seens land in the baseline (added to the
+  // starting cumulative so the curve doesn't start at zero when we have
+  // users from before the chart window).
+  const firstSeenDay = new Map<string, string>();
+  const noteFirstSeen = (addr: `0x${string}`, blockNumber: bigint) => {
+    const ts = tsOf(blockNumber);
+    if (!ts) return;
+    const day = new Date(ts * 1000).toISOString().slice(0, 10);
+    const key = addr.toLowerCase();
+    const existing = firstSeenDay.get(key);
+    if (!existing || day < existing) firstSeenDay.set(key, day);
+  };
+  for (const l of betLogs) {
+    const a = (l as unknown as { args: { user: `0x${string}` } }).args;
+    noteFirstSeen(a.user, l.blockNumber!);
+  }
+  for (const l of marketLogs) {
+    const a = (l as unknown as { args: { creator: `0x${string}` } }).args;
+    noteFirstSeen(a.creator, l.blockNumber!);
+  }
+
+  const windowStartDay = Array.from(bucket.keys())[0];
+  let cumulative = 0;
+  const newByDay = new Map<string, number>();
+  for (const [, day] of firstSeenDay) {
+    if (day < windowStartDay) {
+      cumulative += 1;
+    } else {
+      newByDay.set(day, (newByDay.get(day) ?? 0) + 1);
+    }
+  }
+  const userGrowth = Array.from(bucket.keys()).map((dateISO) => {
+    const newUsers = newByDay.get(dateISO) ?? 0;
+    cumulative += newUsers;
+    return { dateISO, cumulativeUsers: cumulative, newUsers };
+  });
+
   // --- Totals ---
   const resolvedCount = markets.filter((m) => m.resolved).length;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -523,6 +563,7 @@ async function aggregate(): Promise<AdminAnalytics> {
     markets,
     activity: cappedActivity,
     dau,
+    userGrowth,
   };
 }
 

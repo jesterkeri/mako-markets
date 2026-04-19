@@ -91,6 +91,15 @@ export type AdminAnalytics = {
    * counts so the chart can render a continuous 30-bar strip.
    */
   dau: Array<{ dateISO: string; wallets: number; bets: number }>;
+  /**
+   * Cumulative unique users over the last 30 days. A "user" is any address
+   * that has placed a bet OR created a market (matches the /admin/users
+   * roster). `cumulativeUsers` at each day is the running total of distinct
+   * addresses ever seen up to and including that day — pre-window users
+   * are folded into the first day's count so the curve starts at the real
+   * baseline, not zero. `newUsers` is first-timers that day only.
+   */
+  userGrowth: Array<{ dateISO: string; cumulativeUsers: number; newUsers: number }>;
 };
 
 /**

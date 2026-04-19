@@ -13,6 +13,7 @@ import {
   Honest,
   fourDp,
 } from '@/components/admin-shared';
+import { DauChart, UserGrowthChart } from '@/components/admin-charts';
 
 /**
  * Admin overview hub. Top-level tiles + last 10 activity rows.
@@ -127,13 +128,25 @@ export default function AdminOverviewPage() {
             />
           </div>
 
-          {data.degraded.includes('bet') ? (
-            <div className="border-b border-black px-6 md:px-8 py-6 text-[10px] font-black uppercase tracking-widest text-subtle">
-              DAILY ACTIVE WALLETS · — · BET STREAM UNAVAILABLE
-            </div>
-          ) : (
-            <DauStrip dau={data.dau} />
-          )}
+          <ChartBlock
+            title="USER GROWTH · LAST 30 DAYS"
+            right={
+              data.userGrowth.length > 0
+                ? `${data.userGrowth[data.userGrowth.length - 1]!.cumulativeUsers} TOTAL`
+                : ''
+            }
+            unavailable={data.degraded.includes('bet') || data.degraded.includes('market')}
+          >
+            <UserGrowthChart data={data.userGrowth} />
+          </ChartBlock>
+
+          <ChartBlock
+            title="DAILY ACTIVE WALLETS · LAST 30 DAYS"
+            right={`${data.dau.reduce((acc, d) => acc + d.bets, 0)} BETS`}
+            unavailable={data.degraded.includes('bet')}
+          >
+            <DauChart data={data.dau} />
+          </ChartBlock>
 
           <div className="px-6 md:px-8 py-6 border-b border-black flex items-center justify-between">
             <div className="text-[10px] font-black uppercase tracking-widest text-muted">
@@ -162,49 +175,36 @@ export default function AdminOverviewPage() {
   );
 }
 
-function DauStrip({ dau }: { dau: Array<{ dateISO: string; wallets: number; bets: number }> }) {
-  const maxWallets = dau.reduce((m, d) => Math.max(m, d.wallets), 0);
-  const totalWallets = new Set<string>(); // placeholder; we don't have the actual addresses here
-  const totalBets = dau.reduce((acc, d) => acc + d.bets, 0);
-  // maxWallets drives bar height so a day with 1 bettor still shows on a small platform.
-  // totalWallets is intentionally unused — the real "unique bettors" count is on the tile
-  // above. This strip shows the daily activity curve, not the running total.
-  void totalWallets;
-
+function ChartBlock({
+  title,
+  right,
+  unavailable,
+  children,
+}: {
+  title: string;
+  right?: string;
+  unavailable: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="border-b border-black px-6 md:px-8 py-6">
+    <div className="border-b border-black px-6 md:px-8 py-6 text-foreground">
       <div className="flex items-baseline justify-between mb-4">
         <div className="text-[10px] font-black uppercase tracking-widest text-muted">
-          DAILY ACTIVE WALLETS · LAST 30 DAYS
+          {title}
         </div>
-        <div className="text-[10px] font-black uppercase tracking-widest text-subtle tabular-nums">
-          {totalBets} BETS
+        {right ? (
+          <div className="text-[10px] font-black uppercase tracking-widest text-subtle tabular-nums">
+            {right}
+          </div>
+        ) : null}
+      </div>
+      {unavailable ? (
+        <div className="h-36 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-subtle">
+          — STREAM UNAVAILABLE
         </div>
-      </div>
-      <div className="flex items-end gap-[3px] h-20">
-        {dau.map((d, i) => {
-          const pct = maxWallets === 0 ? 0 : Math.max(4, Math.round((d.wallets / maxWallets) * 100));
-          return (
-            <div
-              key={d.dateISO}
-              className="flex-1 flex flex-col justify-end items-stretch min-w-0"
-              title={`${d.dateISO} · ${d.wallets} wallets · ${d.bets} bets`}
-            >
-              <div
-                className={`dau-bar w-full ${d.wallets === 0 ? 'bg-foreground/10' : 'bg-foreground'}`}
-                style={{
-                  height: `${d.wallets === 0 ? 4 : pct}%`,
-                  ['--i' as string]: i,
-                }}
-              />
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex items-center justify-between mt-2 text-[9px] font-black uppercase tracking-widest text-subtle tabular-nums">
-        <span>{dau[0]?.dateISO ?? ''}</span>
-        <span>TODAY</span>
-      </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
