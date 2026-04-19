@@ -118,8 +118,12 @@ export function BetSheet({
 
   const isBusy = isPending || isWaiting;
 
+  // bottom-9 (36px) clears the fixed PriceTicker (h-9) pinned to the
+  // viewport bottom. Both were at bottom-0 + z-40, so the ticker was
+  // drawing on top of the PLACE BET button. Stacking them vertically
+  // fixes that on mobile and desktop.
   return (
-    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-40 bg-background border-t border-black shadow-[0_-4px_0_rgba(0,0,0,0.05)]">
+    <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 bg-background border-t border-black shadow-[0_-4px_0_rgba(0,0,0,0.05)]">
       {/* Amount input */}
       <div className="px-6 py-3 border-b border-black flex items-center gap-3 bg-surface">
         <label
