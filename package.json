@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:bw": "node scripts/with-bw.mjs pnpm dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "seed": "tsx scripts/seed.mts",
-    "auto-resolver": "tsx scripts/auto-resolver.mts"
+    "seed:bw": "node scripts/with-bw.mjs pnpm run seed",
+    "auto-resolver": "tsx scripts/auto-resolver.mts",
+    "auto-resolver:bw": "node scripts/with-bw.mjs pnpm run auto-resolver"
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.10",
