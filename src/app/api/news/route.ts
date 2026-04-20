@@ -289,7 +289,7 @@ async function fetchCoinDeskRss(limit: number): Promise<NewsItem[]> {
     // serverless starts.
     const res = await fetch('https://www.coindesk.com/arc/outboundfeeds/rss', {
       // A UA is polite for RSS fetches; some feeds 403 the default Node UA.
-      headers: { 'User-Agent': 'Mozilla/5.0 Mako Markets' },
+      headers: { 'User-Agent': 'Mozilla/5.0 Mako Market' },
     });
     if (!res.ok) return [];
     const xml = await res.text();

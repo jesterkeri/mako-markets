@@ -10,7 +10,7 @@ import { Analytics } from '@vercel/analytics/next';
 // defined in globals.css.
 
 export const metadata: Metadata = {
-  title: 'Mako Markets',
+  title: 'Mako Market',
   description: 'Short-form prediction markets on Monad',
 };
 

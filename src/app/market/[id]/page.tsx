@@ -14,7 +14,7 @@ import { humanizeUntil } from '@/lib/time';
  *   1. Awaits the dynamic route params (Next 16 params are a Promise).
  *   2. Fetches the on-chain market via viem so share previews (Twitter,
  *      Discord, iMessage, Slack) get real question text + tag + close
- *      time in the unfurl, instead of the generic "Mako Markets" title.
+ *      time in the unfurl, instead of the generic "Mako Market" title.
  *   3. Renders the client component which then re-subscribes via wagmi
  *      for the live interactive bits.
  *
@@ -73,7 +73,7 @@ export async function generateMetadata({
     /* handled below */
   }
 
-  const baseTitle = 'Mako Markets · Short-form prediction markets on Monad';
+  const baseTitle = 'Mako Market · Short-form prediction markets on Monad';
   const fallback: Metadata = {
     title: baseTitle,
     description:
@@ -81,7 +81,7 @@ export async function generateMetadata({
     openGraph: {
       title: baseTitle,
       url: `${APP_URL}/market/${id}`,
-      siteName: 'Mako Markets',
+      siteName: 'Mako Market',
       type: 'website',
     },
     twitter: { card: 'summary_large_image', title: baseTitle },
@@ -99,7 +99,7 @@ export async function generateMetadata({
     : closeSec > nowSec
       ? `Bets close ${humanizeUntil(closeSec - nowSec)}`
       : 'Awaiting resolution';
-  const title = `${market.question} · Mako Markets`;
+  const title = `${market.question} · Mako Market`;
   const description = `${tag} · ${closeLabel}. Parimutuel prediction market on Monad testnet.`;
   const url = `${APP_URL}/market/${parsedId.toString()}`;
 
@@ -115,7 +115,7 @@ export async function generateMetadata({
       title,
       description,
       url,
-      siteName: 'Mako Markets',
+      siteName: 'Mako Market',
       type: 'website',
       images: [{ url: ogImage, width: 1200, height: 630, alt: market.question }],
     },

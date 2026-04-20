@@ -14,7 +14,7 @@ import { humanizeUntil } from '@/lib/time';
  * unfurl cheaply even on a viral post.
  */
 export const revalidate = 60;
-export const alt = 'Mako Markets — prediction market';
+export const alt = 'Mako Market — prediction market';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
@@ -72,7 +72,7 @@ export default async function Image({ params }: { params: { id: string } }) {
 
   // Branded fallback for bad ids or chain read failures — better than a blank
   // square in someone's Discord preview.
-  const question = market?.question ?? 'Mako Markets';
+  const question = market?.question ?? 'Mako Market';
   const tag = market ? tagFor(market.mType) : 'MAKO';
   const nowSec = Math.floor(Date.now() / 1000);
   const closeSec = market ? Number(market.closeTime) : 0;
@@ -224,7 +224,7 @@ export default async function Image({ params }: { params: { id: string } }) {
               color: COLORS.foreground,
             }}
           >
-            TAP TO BET → MAKO-MARKETS.VERCEL.APP
+            TAP TO BET → MAKOMARKET.XYZ
           </div>
         </div>
       </div>

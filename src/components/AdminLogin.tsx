@@ -38,7 +38,7 @@ export function AdminLogin({ onDone }: { onDone?: () => void }) {
       const siwe = new SiweMessage({
         domain: window.location.host,
         address,
-        statement: 'Sign in to Mako Markets admin dashboard.',
+        statement: 'Sign in to Mako Market admin dashboard.',
         uri: window.location.origin,
         version: '1',
         chainId,
