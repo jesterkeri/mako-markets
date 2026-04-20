@@ -42,3 +42,8 @@ next-env.d.ts
 
 # gstack security reports, learnings, and session state stay local.
 .gstack/
+.env*.local
+
+# Operational handovers / playbooks: keep local only, don't track in git.
+HANDOVER.md
+HANDOVER*.md
