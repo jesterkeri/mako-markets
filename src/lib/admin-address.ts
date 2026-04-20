@@ -6,4 +6,4 @@
  * becomes undefined and the verify route crashes with a 500. Keeping the
  * raw constant in this module avoids the 'use client' boundary.
  */
-export const ADMIN_ADDRESS = '0x774f7559E8fa4EAca55490df4F2F138D53323B9f' as const;
+export const ADMIN_ADDRESS = '0xC8BF886f73E4371CBd8160EEA7683b8Da98190F1' as const;
