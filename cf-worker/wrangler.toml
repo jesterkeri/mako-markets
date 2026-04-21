@@ -1,0 +1,26 @@
+name = "mako-auto-resolver"
+main = "src/index.ts"
+compatibility_date = "2024-11-06"
+compatibility_flags = ["nodejs_compat"]
+
+# Non-secret config. MAKO_ADDRESS is public (it's on-chain); RPC URL is
+# the public Monad testnet endpoint. If the contract ever redeploys,
+# bump MAKO_ADDRESS here + redeploy the Worker.
+[vars]
+MAKO_ADDRESS = "0x9d4d399D2fca1432337C5e606D005DEfa2EB4992"
+MONAD_RPC_URL = "https://testnet-rpc.monad.xyz/"
+
+# Cron: every minute. CF cron is reliable to the minute (unlike GitHub
+# Actions cron which drifts to 1-2 hours under load). Markets with
+# closeTime ≥ 60s will resolve within ~1 tick of close.
+[triggers]
+crons = ["*/1 * * * *"]
+
+# Enable logs so `wrangler tail` shows live tick output.
+[observability]
+enabled = true
+
+# Secrets (set via `wrangler secret put <name>`, NOT in this file):
+#   ADMIN_PRIVATE_KEY       — 0x + 64 hex, the resolver wallet
+#   FOOTBALL_DATA_API_KEY   — football-data.org key (football resolution)
+#   BALLDONTLIE_API_KEY     — balldontlie.io key (NBA resolution)
