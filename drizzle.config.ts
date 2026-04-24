@@ -1,4 +1,8 @@
-import 'dotenv/config';
+// Load .env.local first (Next.js convention), then .env as fallback.
+import { config } from 'dotenv';
+config({ path: '.env.local' });
+config({ path: '.env' });
+
 import type { Config } from 'drizzle-kit';
 
 export default {

@@ -10,7 +10,13 @@
 //   node scripts/with-bw.mjs pnpm db:migrate   (if you stash it in Bitwarden)
 // ----------------------------------------------------------------------------
 
-import 'dotenv/config';
+// Load .env.local first (Next.js convention — overrides .env), then .env as fallback.
+// `dotenv/config`'s default is `.env` only, which misses the Vercel-pulled POSTGRES_*
+// vars that land in .env.local.
+import { config } from 'dotenv';
+config({ path: '.env.local' });
+config({ path: '.env' });
+
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';

@@ -12,7 +12,7 @@
     "seed:bw": "node scripts/with-bw.mjs pnpm run seed",
     "auto-resolver": "tsx scripts/auto-resolver.mts",
     "auto-resolver:bw": "node scripts/with-bw.mjs pnpm run auto-resolver",
-    "verify:safe": "tsx scripts/verify-safe-addresses.ts",
+    "verify:safe": "tsx scripts/verify-safe-addresses.ts && tsx scripts/check-safe-derivation.mts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.mts",
     "db:studio": "drizzle-kit studio"

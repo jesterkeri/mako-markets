@@ -149,16 +149,23 @@ export const allowlistEmails = pgTable(
 );
 
 // ----------------------------------------------------------------------------
-// sessions — HMAC session cookie state. Pattern adapted from admin-session.ts.
-// hmacToken is the full signed cookie value; the `id` field lets us revoke a
-// single session without invalidating every other session the user has open.
+// sessions — session row per live user cookie. The `id` (UUID) is carried in
+// the HMAC-signed cookie and looked up on every request; presence of the row
+// + expiresAt > now is what validates the session. Deleting the row revokes
+// it immediately — HMAC cookies without a matching row fail the DB check
+// regardless of their cryptographic validity.
+//
+// No column stores the cookie itself. Persisting the HMAC-signed token would
+// turn any read-only DB leak into an immediate session-replay primitive
+// (attacker lifts hmac_token values, pastes them into a browser, is signed in
+// as each user without ever needing USER_SESSION_SECRET). The `id` + HMAC
+// pair is the credential; we never want both halves to live in one place.
 // ----------------------------------------------------------------------------
 export const sessions = pgTable('sessions', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
-  hmacToken: text('hmac_token').notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
