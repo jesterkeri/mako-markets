@@ -40,14 +40,14 @@ export function ShareMarketButton({ marketId }: { marketId: bigint }) {
     <button
       type="button"
       onClick={handleShare}
-      className="py-3 px-4 font-black text-[11px] uppercase tracking-widest hover:bg-black hover:text-background transition-colors text-center"
+      className="mako-button mako-label"
       title={shareUrl}
     >
       {status === 'copied'
-        ? '[ ↗ LINK COPIED ]'
+        ? '↗ LINK COPIED'
         : status === 'error'
-          ? '[ ↗ COPY FAILED ]'
-          : '[ ↗ SHARE MARKET ]'}
+          ? '↗ COPY FAILED'
+          : '↗ SHARE'}
     </button>
   );
 }

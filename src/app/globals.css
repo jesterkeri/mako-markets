@@ -1,11 +1,28 @@
 @import "tailwindcss";
 
+/* Variable-axis web fonts — no remote fetch (bundled by fontsource). Must
+ * come before mako-brand.css so the Bricolage/Inter families are registered
+ * before the brand tokens reference them. */
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/inter";
+
+@import "./mako-brand.css";
+@import "./mako-components.css";
+
+/* Expose the brand palette and typography as Tailwind v4 theme tokens so the
+ * Gemini component library's utility classes (bg-paper, text-mako-red,
+ * border-ink, font-display, shadow-brutal, etc.) resolve correctly. */
 @theme {
   --color-background: #EBE5D9;
+  --color-paper: #EBE5D9;
   --color-surface: #EBE5D9;
   --color-surface-elevated: #E1DBCB;
   --color-border: #000000;
   --color-border-strong: #000000;
+
+  --color-ink: #000000;
+  --color-signal: #FACC15;
+  --color-mako-red: #D94A3D;
 
   --color-primary: #000000;
   --color-primary-hover: #111111;
@@ -14,8 +31,8 @@
 
   /* Outcome */
   --color-yes: #000000;
-  --color-no: #000000;
-  --color-warning: #D94A3D; /* Muted red from the image */
+  --color-no: #D94A3D;
+  --color-warning: #D94A3D;
   --color-info: #000000;
 
   /* Typography */
@@ -23,7 +40,18 @@
   --color-muted: #79797A;
   --color-subtle: #A3A19C;
 
-  --font-sans: var(--font-inter);
+  --font-display: "Bricolage Grotesque Variable", "Archivo Black", -apple-system,
+    BlinkMacSystemFont, sans-serif;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Neobrutalist shadow tokens — generate `shadow-brutal` utilities etc. */
+  --shadow-brutal: 4px 4px 0 0 #000000;
+  --shadow-brutal-sm: 2px 2px 0 0 #000000;
+  --shadow-brutal-lg: 6px 6px 0 0 #000000;
+  --shadow-brutal-red: 4px 4px 0 0 #D94A3D;
+  --shadow-brutal-signal: 4px 4px 0 0 #FACC15;
 }
 
 :root {
@@ -87,10 +115,11 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-weight: 500;
   -webkit-font-smoothing: antialiased;
-  
+
   /* Brutalist Paper Grid */
-  background-image: 
+  background-image:
     linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
   background-size: 20px 20px;

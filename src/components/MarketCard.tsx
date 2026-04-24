@@ -1,96 +1,144 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { type MarketWithId, MarketType, Outcome } from '@/lib/contract';
-import { yesMultiplier, noMultiplier, secondsLeft, poolSizeMon } from '@/lib/mocks';
+import { useEffect, useState } from 'react';
+import { formatEther } from 'viem';
+import { type MarketWithId, MarketType } from '@/lib/contract';
+import { poolSizeMon, secondsLeft, yesMultiplier, noMultiplier } from '@/lib/mocks';
 
+function formatTimeLeft(s: number): string {
+  if (s <= 0) return 'CLOSED';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s % 60}s`;
+}
+
+function categoryLabel(t: MarketType): string {
+  if (t === MarketType.FOOTBALL) return 'FOOTBALL';
+  if (t === MarketType.CRYPTO) return 'CRYPTO';
+  if (t === MarketType.BASKETBALL) return 'NBA';
+  return 'EVENT';
+}
+
+/**
+ * Displayable multiplier for a side.
+ *
+ * `yesMultiplier` / `noMultiplier` from mocks.ts return 0 when the pool is
+ * too thin (contract forces refund) — useful for disabling bet math, but
+ * unhelpful on a card where the bettor deserves to see *something*.
+ *
+ * For display: if the pool meets the liquidity ratio, show the raw payout
+ * multiplier. If it's thin enough that the contract will force a refund,
+ * show `1.00x` — the bettor gets their stake back, which is what 1×
+ * literally means.
+ *
+ * A side with zero stake has no multiplier at all (no one to pay it out).
+ */
+function displayMult(sidePool: bigint, raw: number): number {
+  if (sidePool === 0n) return 0;
+  // Non-zero pool, raw returned 0 → contract would refund → 1.00x payout.
+  if (raw === 0) return 1.0;
+  return raw;
+}
+
+function formatMon(wei: bigint): string {
+  const n = Number(formatEther(wei));
+  if (n === 0) return '0';
+  if (n >= 100) return n.toFixed(0);
+  if (n >= 10) return n.toFixed(1);
+  return n.toFixed(2);
+}
+
+/**
+ * Neobrutalist market tile. 2px ink border, 4×4 hard ink shadow, hover
+ * lifts 1px up/left with a 6×6 shadow. YES uses ink fill with paper text;
+ * NO uses mako-red with paper text. Footer carries per-side MON + bettor
+ * counts and the total pool.
+ */
 export function MarketCard({ market }: { market: MarketWithId }) {
   const [timeLeft, setTimeLeft] = useState(() => secondsLeft(market));
 
   useEffect(() => {
-    if (timeLeft <= 0) return;
-    const timer = setInterval(() => {
-      const remaining = secondsLeft(market);
-      setTimeLeft(remaining);
-      if (remaining <= 0) clearInterval(timer);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [market, timeLeft]);
+    const id = setInterval(() => setTimeLeft(secondsLeft(market)), 1000);
+    return () => clearInterval(id);
+  }, [market]);
 
-  const poolSize = poolSizeMon(market);
-  const yesMult = yesMultiplier(market);
-  const noMult = noMultiplier(market);
-  const totalBettors = market.yesBettorCount + market.noBettorCount;
-  
+  const yesMult = displayMult(market.totalYes, yesMultiplier(market));
+  const noMult = displayMult(market.totalNo, noMultiplier(market));
+  const pool = poolSizeMon(market);
   const isClosed = timeLeft <= 0 || market.resolved;
+  const yesMon = formatMon(market.totalYes);
+  const noMon = formatMon(market.totalNo);
 
-  const formatTime = (s: number) => {
-    if (s <= 0) return 'MARKET CLOSED';
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    if (h > 0) return `${h}H ${m}M`;
-    return `${m}M ${s % 60}S`;
-  };
-
-  const badgeText =
-    market.mType === MarketType.FOOTBALL ? 'FOOTBALL' :
-    market.mType === MarketType.CRYPTO ? 'CRYPTO' :
-    market.mType === MarketType.BASKETBALL ? 'NBA' :
-    'EVENT';
+  // Closing-soon sticker appears under 1h; suppressed once the market closes
+  // (the countdown chip already communicates that state).
+  const showClosingSticker = !isClosed && timeLeft > 0 && timeLeft < 3600;
+  // NEW sticker when the market was created within the last 10 minutes —
+  // short enough that it's actually meaningful, not noise.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const ageSec = nowSec - Number(market.createdAt);
+  const showNewSticker = !isClosed && ageSec >= 0 && ageSec < 600;
 
   return (
-    // `h-full` so the card stretches to match the tallest sibling in its
-    // grid row; `flex-col` lets the question section grow while the YES/NO
-    // + POOL footers stay intrinsic-sized. Net effect: all cards in a row
-    // end at the same bottom line even when question lengths vary.
-    <div className="w-full h-full flex border-b border-black flex-col bg-transparent relative hover:bg-black/[0.02] transition-colors cursor-pointer group">
-      {isClosed && (
-        <div className="absolute inset-0 bg-background/50 z-10 pointer-events-none" />
+    <div className="relative block w-full h-full bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] hover:shadow-[6px_6px_0_0_#000000] hover:-translate-y-1 transition-all group overflow-visible">
+      {/* Corner stickers — tilted pills that pop off the card edge */}
+      {showClosingSticker && (
+        <div className="absolute -top-3 -right-2 z-10 bg-mako-red border-2 border-ink rounded-full px-3 py-1 shadow-[2px_2px_0_0_#000000] rotate-6">
+          <span className="mako-label text-paper">CLOSING SOON</span>
+        </div>
+      )}
+      {showNewSticker && !showClosingSticker && (
+        <div className="absolute -top-3 -right-2 z-10 bg-signal border-2 border-ink rounded-full px-3 py-1 shadow-[2px_2px_0_0_#000000] -rotate-6">
+          <span className="mako-label text-ink">NEW</span>
+        </div>
       )}
 
-      {/* Top Header */}
-      <div className="flex justify-between items-center px-8 py-2.5 border-b border-black">
-        <span className={`text-[11px] font-black tracking-widest uppercase ${isClosed ? 'text-muted' : 'text-foreground'}`}>
-          {badgeText}
-        </span>
-        <span className={`text-[11px] font-black tracking-widest uppercase flex gap-1 ${isClosed ? 'text-muted line-through decoration-black' : 'text-warning'}`}>
-          {isClosed ? formatTime(0) : <><span className="text-warning">T-MINUS</span> <span className="text-warning mix-blend-multiply">{formatTime(timeLeft)}</span></>}
-        </span>
-      </div>
+      <div className="p-5 flex flex-col h-full bg-surface-elevated min-h-[260px] rounded-2xl overflow-hidden">
+        {/* Header: category + countdown */}
+        <div className="flex justify-between items-start mb-3">
+          <span className="mako-label text-muted">{categoryLabel(market.mType)}</span>
+          <span className={`mako-label ${isClosed ? 'text-muted' : 'text-mako-red'}`}>
+            {formatTimeLeft(timeLeft)}
+          </span>
+        </div>
 
-      {/* Question — flex-1 so short-question cards absorb the extra row
-          height here rather than leaving a gap above the YES/NO row. */}
-      <div className="flex-1 px-8 py-8 border-b border-black bg-transparent">
-        <h2 className={`text-4xl font-black uppercase leading-[1.05] tracking-tight ${isClosed ? 'text-muted' : 'text-foreground'}`}>
+        {/* Question */}
+        <h3 className="mako-title text-xl mb-6 line-clamp-3 group-hover:underline underline-offset-4 decoration-2">
           {market.question}
-        </h2>
-      </div>
+        </h3>
 
-      {/* Odds Row */}
-      <div className="flex flex-row border-b border-black divide-x divide-black w-full relative z-0">
-        <div className="flex-[0.5] stretch flex flex-col pl-8 pr-4 py-5 hover:bg-black hover:text-background transition-colors">
-          <span className="text-xs font-black uppercase tracking-widest mb-3">YES</span>
-          <span className="text-4xl font-black tabular-nums tracking-tighter leading-none">{yesMult > 0 ? `${yesMult.toFixed(2)}x` : '-'}</span>
+        {/* YES / NO tiles — multiplier only */}
+        <div className="mt-auto grid grid-cols-2 gap-3">
+          <div className="bg-ink text-paper py-3 px-4 border-2 border-ink rounded-lg">
+            <div className="mako-label text-paper/80">YES</div>
+            <div className="mako-display text-3xl tabular-nums mt-1.5">
+              {yesMult > 0 ? `${yesMult.toFixed(2)}x` : '—'}
+            </div>
+          </div>
+          <div className="bg-mako-red text-paper py-3 px-4 border-2 border-ink rounded-lg">
+            <div className="mako-label text-paper/80">NO</div>
+            <div className="mako-display text-3xl tabular-nums mt-1.5">
+              {noMult > 0 ? `${noMult.toFixed(2)}x` : '—'}
+            </div>
+          </div>
         </div>
-        <div className="flex-[0.5] stretch flex flex-col pl-6 pr-8 py-5 hover:bg-black hover:text-background transition-colors">
-          <span className="text-xs font-black uppercase tracking-widest mb-3">NO</span>
-          <span className="text-4xl font-black tabular-nums tracking-tighter leading-none">{noMult > 0 ? `${noMult.toFixed(2)}x` : '-'}</span>
-        </div>
-      </div>
 
-      {/* Footer Cells */}
-      <div className="flex flex-row w-full divide-x divide-black text-[11px] font-black uppercase tracking-widest">
-        <div className="w-[45%] p-3 flex flex-col gap-1.5 pl-8">
-          <span className="text-muted">POOL</span>
-          <span className="text-foreground tabular-nums">${poolSize.toFixed(2)} MON</span>
+        {/* Per-side stake + bettor breakdown */}
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <div className="mako-label text-[10px] text-muted tabular-nums">
+            {yesMon} MON · {market.yesBettorCount}{' '}
+            {market.yesBettorCount === 1 ? 'BET' : 'BETS'}
+          </div>
+          <div className="mako-label text-[10px] text-muted tabular-nums text-right">
+            {noMon} MON · {market.noBettorCount}{' '}
+            {market.noBettorCount === 1 ? 'BET' : 'BETS'}
+          </div>
         </div>
-        <div className="w-[30%] p-3 flex flex-col gap-1.5 pl-6">
-          <span className="text-muted">BETTORS</span>
-          <span className="text-foreground tabular-nums">{totalBettors}</span>
-        </div>
-        <div className="w-[25%] p-3 flex flex-col gap-1.5 pl-4 pr-8">
-          <span className="text-muted">{isClosed ? 'RES' : 'VOL'}</span>
-          <span className="text-foreground">{isClosed ? 'NO_DATA' : 'HIGH'}</span>
+
+        {/* Footer strip — total pool + total bettors */}
+        <div className="mt-3 pt-3 border-t-2 border-ink/10 flex justify-between items-center mako-label text-[10px] text-muted tabular-nums">
+          <span>POOL · {pool.toFixed(2)} MON</span>
+          <span>VOL · {market.yesBettorCount + market.noBettorCount} TOTAL</span>
         </div>
       </div>
     </div>

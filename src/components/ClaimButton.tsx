@@ -18,8 +18,6 @@ import { computeResolvedClaimWei } from '@/lib/bet';
  *   - connected wallet has a position in the winning side (YES/NO)
  *     OR any position on a REFUND outcome
  *   - user hasn't already claimed
- *
- * Calls `claim(id)` → waits for receipt → refetches market.
  */
 export function ClaimButton({
   market,
@@ -62,14 +60,12 @@ export function ClaimButton({
   if (!address || !market.resolved) return null;
   if (!userBetData) return null;
 
-  // getUserBet returns (uint256 yes, uint256 no, bool hasClaimed)
   const [userYes, userNo, hasClaimed] = userBetData as unknown as [bigint, bigint, boolean];
   const feeBps =
     feeData?.[0]?.status === 'success' && feeData?.[1]?.status === 'success'
       ? BigInt(feeData[0].result) + BigInt(feeData[1].result)
       : 300n;
 
-  // Figure out what the user is entitled to claim.
   const outcome = market.outcome;
   let claimableWei = 0n;
   let claimLabel = 'CLAIM';
@@ -95,7 +91,6 @@ export function ClaimButton({
     claimLabel = 'CLAIM WINNINGS';
   }
 
-  // No claimable position → render nothing.
   if (claimableWei === 0n) return null;
 
   const handleClaim = async () => {
@@ -112,9 +107,9 @@ export function ClaimButton({
   const statusText = hasClaimed
     ? 'ALREADY CLAIMED'
     : isPending
-      ? 'CONFIRM IN WALLET...'
+      ? 'CONFIRM IN WALLET…'
       : isWaiting
-        ? 'TX LANDING...'
+        ? 'TX LANDING…'
         : isSuccess
           ? 'CLAIMED ✓'
           : error
@@ -122,38 +117,40 @@ export function ClaimButton({
             : null;
 
   return (
-    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-40 bg-background border-t border-black">
-      <div className="px-6 py-3 border-b border-black bg-surface text-[11px] font-black uppercase tracking-widest">
-        <span className="text-muted">
-          {outcome === Outcome.REFUND ? 'REFUND: ' : 'CLAIMABLE: '}
-        </span>
-        <span className="text-foreground tabular-nums">
-          {Number(formatEther(claimableWei)).toFixed(4)} MON
-        </span>
-      </div>
+    <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 px-4">
+      <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+        <div className="px-5 py-3 border-b-2 border-ink bg-surface-elevated flex justify-between items-center">
+          <span className="mako-label text-muted">
+            {outcome === Outcome.REFUND ? 'REFUND' : 'CLAIMABLE'}
+          </span>
+          <span className="mako-display text-xl tabular-nums">
+            {Number(formatEther(claimableWei)).toFixed(4)} MON
+          </span>
+        </div>
 
-      <button
-        type="button"
-        onClick={handleClaim}
-        disabled={disabled}
-        className={`w-full py-5 font-black uppercase tracking-widest text-base transition-colors ${
-          disabled
-            ? 'bg-black/20 text-muted cursor-not-allowed'
-            : 'bg-black text-background hover:bg-foreground/90'
-        }`}
-      >
-        {isBusy || hasClaimed ? statusText : claimLabel}
-      </button>
-
-      {statusText && !isBusy && !hasClaimed && (
-        <div
-          className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest text-center border-t border-black break-words ${
-            isSuccess ? 'bg-yes/15 text-yes' : 'bg-warning/15 text-warning'
+        <button
+          type="button"
+          onClick={handleClaim}
+          disabled={disabled}
+          className={`w-full py-5 mako-display text-lg uppercase tracking-tight transition-all ${
+            disabled
+              ? 'bg-surface-elevated text-muted cursor-not-allowed'
+              : 'bg-signal text-ink hover:bg-signal/90'
           }`}
         >
-          {statusText}
-        </div>
-      )}
+          {isBusy || hasClaimed ? statusText : claimLabel}
+        </button>
+
+        {statusText && !isBusy && !hasClaimed && (
+          <div
+            className={`px-4 py-2 mako-label text-center border-t-2 border-ink break-words ${
+              isSuccess ? 'bg-signal/30 text-ink' : 'bg-mako-red/15 text-mako-red'
+            }`}
+          >
+            {statusText}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

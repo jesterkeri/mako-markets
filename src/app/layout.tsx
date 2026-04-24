@@ -3,6 +3,7 @@ import './globals.css';
 import { Providers } from '@/components/Providers';
 import { Sidebar } from '@/components/Sidebar';
 import { PriceTicker } from '@/components/PriceTicker';
+import { MarketIntelAside } from '@/components/MarketIntelAside';
 import { Analytics } from '@vercel/analytics/next';
 
 // Removed `next/font/google` Inter import to eliminate remote font fetch
@@ -25,16 +26,13 @@ export default function RootLayout({
         <Providers>
           <div className="w-full min-h-[100dvh] flex flex-col md:flex-row relative bg-transparent transition-all duration-500">
             <Sidebar />
-            {/* overflow-x-clip (not overflow-hidden or overflow-x-hidden)
-                — hidden on any axis makes the element a scroll ancestor,
-                which traps `position: sticky` descendants inside this
-                wrapper (MARKET INTEL panel scrolls with the page instead
-                of pinning). `clip` clips without creating a scroll
-                container, so sticky children keep sticking against the
-                viewport. */}
-            <div className="relative z-10 flex-1 flex flex-col h-full items-stretch w-full max-w-full overflow-x-clip">
+            <div className="relative z-10 flex-1 flex flex-col items-stretch w-full min-w-0 max-w-full">
               {children}
             </div>
+            {/* MARKET INTEL — right-hand column on xl+ screens. Lives at
+                the layout level so every route (home, /me, /create,
+                /market/[id], /admin/*) shows it in desktop mode. */}
+            <MarketIntelAside />
           </div>
           {/* Crypto price crawl. Fixed to the viewport bottom, needs to be
               inside <Providers> so its useQuery-style fetch has access to

@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMarkets } from '@/lib/hooks';
 import { MarketType } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
-import { NewsFeed } from '@/components/NewsFeed';
-import Link from 'next/link';
+import { Logo } from '@/components/Logo';
 
 type Tab = 'all' | 'crypto' | 'football' | 'nba';
 
@@ -16,31 +16,125 @@ const TAB_TO_MTYPE: Partial<Record<Tab, MarketType>> = {
   nba: MarketType.BASKETBALL,
 };
 
-const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'all', label: 'ALL' },
-  { key: 'crypto', label: 'CRYPTO' },
-  { key: 'football', label: 'FOOTBALL' },
-  { key: 'nba', label: 'NBA' },
+/**
+ * Each category pill gets its own base fill so the row reads as a palette,
+ * not a wall of identical buttons. Active state presses 1px up/left with a
+ * 4×4 contrasting shadow to pop. Idle state has a 2px flat shadow so the
+ * chips still feel three-dimensional.
+ *
+ * Color assignment:
+ *  - ALL      → paper (neutral anchor)       · red active shadow
+ *  - FOOTBALL → signal (yellow)              · ink active shadow
+ *  - CRYPTO   → mako-red (destructive accent)· ink active shadow
+ *  - NBA      → ink (negative space)         · signal active shadow
+ */
+const TABS: Array<{
+  key: Tab;
+  label: string;
+  bg: string;
+  text: string;
+  activeShadow: string;
+}> = [
+  {
+    key: 'all',
+    label: 'ALL',
+    bg: 'bg-paper',
+    text: 'text-ink',
+    activeShadow: 'shadow-[4px_4px_0_0_#D94A3D]',
+  },
+  {
+    key: 'football',
+    label: 'FOOTBALL',
+    bg: 'bg-signal',
+    text: 'text-ink',
+    activeShadow: 'shadow-[4px_4px_0_0_#000000]',
+  },
+  {
+    key: 'crypto',
+    label: 'CRYPTO',
+    bg: 'bg-mako-red',
+    text: 'text-paper',
+    activeShadow: 'shadow-[4px_4px_0_0_#000000]',
+  },
+  {
+    key: 'nba',
+    label: 'NBA',
+    bg: 'bg-ink',
+    text: 'text-paper',
+    activeShadow: 'shadow-[4px_4px_0_0_#FACC15]',
+  },
 ];
 
 const EMPTY_COPY: Record<Tab, string> = {
-  all: 'NO OPEN MARKETS · TAP [ + NEW MARKET ]',
-  crypto: 'NO CRYPTO MARKETS OPEN · TAP [ + NEW MARKET ]',
-  football: 'NO FOOTBALL MARKETS OPEN · TAP [ + NEW MARKET ]',
-  nba: 'NO NBA MARKETS OPEN · TAP [ + NEW MARKET ]',
+  all: 'No open markets yet.',
+  crypto: 'No crypto markets open.',
+  football: 'No football markets open.',
+  nba: 'No NBA markets open.',
 };
+
+function MobileHeader() {
+  return (
+    <header className="md:hidden flex items-center justify-between px-4 py-3 bg-paper border-b-2 border-ink sticky top-0 z-40">
+      <Link href="/" className="flex items-center gap-2">
+        <Logo size={28} className="text-ink" title="Mako Markets" />
+        <span className="font-display font-black text-2xl tracking-tight text-ink">MAKO</span>
+      </Link>
+      <ConnectButton.Custom>
+        {({ account, chain, openAccountModal, openConnectModal, mounted }) => {
+          const ready = mounted;
+          const connected = ready && account && chain;
+          if (!connected) {
+            return (
+              <button
+                onClick={openConnectModal}
+                type="button"
+                className="mako-button mako-button--signal mako-label px-3 py-2 text-[11px]"
+              >
+                CONNECT
+              </button>
+            );
+          }
+          return (
+            <button
+              onClick={openAccountModal}
+              type="button"
+              className="mako-button mako-label px-3 py-2 text-[11px]"
+            >
+              {account.displayName}
+            </button>
+          );
+        }}
+      </ConnectButton.Custom>
+    </header>
+  );
+}
+
+function MobileBottomNav() {
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-paper border-t-2 border-ink md:hidden">
+      <div className="flex justify-around items-center h-16 px-2">
+        <Link href="/" className="flex flex-col items-center gap-1 text-mako-red">
+          <div className="w-5 h-5 rounded-sm border-2 border-mako-red bg-mako-red/10" />
+          <span className="mako-label text-[10px] tracking-normal">Markets</span>
+        </Link>
+        <Link href="/me" className="flex flex-col items-center gap-1 text-muted hover:text-ink">
+          <div className="w-5 h-5 rounded-sm border-2 border-current" />
+          <span className="mako-label text-[10px] tracking-normal">Portfolio</span>
+        </Link>
+        <Link href="/create" className="flex flex-col items-center gap-1 text-muted hover:text-ink">
+          <div className="w-5 h-5 rounded-sm border-2 border-current" />
+          <span className="mako-label text-[10px] tracking-normal">Create</span>
+        </Link>
+      </div>
+    </nav>
+  );
+}
 
 export default function Home() {
   const { markets, isLoading } = useMarkets();
-  const [search, setSearch] = useState('');
   const [tab, setTab] = useState<Tab>('all');
-
-  // Tick wall-clock so the filter re-evaluates as markets cross closeTime.
-  // Without this, a market loaded while still bettable stays visible on the
-  // home feed until an unrelated state change forces a re-render — which can
-  // be minutes or never. 10s keeps the "MARKET CLOSED" card off the feed
-  // quickly after it crosses.
   const [nowSec, setNowSec] = useState(() => BigInt(Math.floor(Date.now() / 1000)));
+
   useEffect(() => {
     const id = setInterval(() => {
       setNowSec(BigInt(Math.floor(Date.now() / 1000)));
@@ -48,183 +142,94 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
-  // Home feed shows bettable markets only: unresolved, not yet past closeTime,
-  // matching the active mType tab, and matching the search filter if set.
   const tabMType = TAB_TO_MTYPE[tab];
-  const filteredMarkets = markets.filter((m) => {
+  const filtered = markets.filter((m) => {
     if (m.resolved) return false;
     if (m.closeTime <= nowSec) return false;
     if (tabMType !== undefined && m.mType !== tabMType) return false;
-    if (
-      search.trim() !== ''
-      && !m.question.toLowerCase().includes(search.toLowerCase())
-    ) {
-      return false;
-    }
     return true;
   });
 
   return (
-    <main className="flex-1 flex flex-col w-full bg-transparent min-h-screen pb-12">
-      {/* Mobile Top Navigation — hidden on desktop where Sidebar takes over */}
-      <header className="flex md:hidden items-stretch border-b border-black mix-blend-multiply bg-transparent sticky top-0 z-50 backdrop-blur-md h-[72px]">
-        <div className="aspect-square flex-shrink-0 flex items-center justify-center p-3.5 border-r border-black bg-[var(--color-background)]/80 h-full">
-          <div className="bg-black w-full h-full text-[var(--color-background)] flex items-center justify-center font-black text-2xl">
-            M
-          </div>
-        </div>
-        <div className="flex-1 flex items-center px-4 md:px-5 border-r border-black bg-[var(--color-background)]/80 h-full">
-          <span className="font-black text-3xl tracking-tighter text-foreground uppercase">MAKO</span>
-        </div>
-        <div className="flex flex-col justify-center items-stretch bg-[var(--color-background)]/80 min-w-[120px] h-full">
-          <ConnectButton.Custom>
-            {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
-              const ready = mounted;
-              const connected = ready && account && chain;
-              return (
-                <div
-                  {...(!ready && {
-                    'aria-hidden': true,
-                    style: { opacity: 0, pointerEvents: 'none', userSelect: 'none' },
-                  })}
-                  className="flex-1 flex items-stretch h-full"
-                >
-                  {(() => {
-                    if (!connected) {
-                      return (
-                        <button onClick={openConnectModal} type="button" className="w-full h-full px-4 font-black tracking-widest text-[11px] uppercase hover:bg-black hover:text-[var(--color-background)] transition-colors">
-                           [ CONNECT ]
-                        </button>
-                      );
-                    }
-                    if (chain.unsupported) {
-                      return (
-                        <button onClick={openChainModal} type="button" className="w-full h-full px-4 font-black tracking-widest text-[11px] uppercase hover:bg-black hover:text-[var(--color-background)] transition-colors text-warning">
-                          WRONG NET
-                        </button>
-                      );
-                    }
-                    return (
-                      <button onClick={openAccountModal} type="button" className="w-full h-full px-4 font-black tracking-widest text-[11px] uppercase hover:bg-black hover:text-[var(--color-background)] transition-colors">
-                        {account.displayName}
-                      </button>
-                    );
-                  })()}
-                </div>
-              );
-            }}
-          </ConnectButton.Custom>
-        </div>
-      </header>
+    <main className="flex-1 flex flex-col min-h-screen pb-20 md:pb-0">
+      <MobileHeader />
 
-      {/* Mobile Nav Tabs — hidden on desktop */}
-      <div className="grid md:hidden grid-cols-2 divide-x divide-black border-b border-black bg-surface">
-        <Link
-          href="/create"
-          className="py-4 px-4 font-black text-[11px] uppercase tracking-widest hover:bg-black hover:text-background transition-colors text-center"
-        >
-          [ + NEW MARKET ]
-        </Link>
-        <Link
-          href="/me"
-          className="py-4 px-4 font-black text-[11px] uppercase tracking-widest hover:bg-black hover:text-background transition-colors text-center"
-        >
-          [ MY MARKETS ]
-        </Link>
-      </div>
+      <div className="flex-1 w-full flex flex-col">
+        {/* Top header bar — fixed h-20 matches the Sidebar brand row and
+            MarketIntelAside header so the bottom border line runs
+            continuous across all three columns. Sticky so it stays flush
+            with MarketIntelAside (also sticky) when the feed scrolls. */}
+        <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-20 border-b-2 border-ink bg-paper sticky top-0 z-30">
+          <h1 className="mako-display text-xl lg:text-2xl">LIVE MARKETS</h1>
+          <Link
+            href="/create"
+            className="mako-button mako-button--signal mako-label"
+          >
+            + NEW MARKET
+          </Link>
+        </header>
 
-      <div className="flex flex-col xl:flex-row w-full flex-1 min-h-[calc(100vh-72px)]">
-        {/* Main Feed Container */}
-        <div className="flex-1 flex flex-col pb-16 min-w-0">
-          {/* Search Bar */}
-          <div className="w-full border-b border-black bg-[var(--color-background)]">
-            <div className="flex items-stretch">
-              <div className="flex items-center justify-center px-5 border-r border-black text-muted">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square">
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="M21 21l-4.35-4.35" />
-                </svg>
+        <div className="px-4 sm:px-6 lg:px-8 py-5 md:py-6 max-w-6xl mx-auto w-full">
+            {/* Mobile heading — the desktop version lives in the flush header bar above */}
+            <div className="flex items-baseline justify-between mb-6 md:hidden">
+              <h1 className="mako-display text-3xl">LIVE MARKETS</h1>
+            </div>
+
+            {/* Category tabs — each in its own brand color. See TABS above.
+                flex-wrap + no overflow-x-auto so the active pill's 4×4 red
+                shadow has room to breathe instead of being clipped by the
+                scroll container's implicit overflow-y. */}
+            <nav className="flex items-center gap-3 mb-6 flex-wrap">
+              {TABS.map(({ key, label, bg, text, activeShadow }) => {
+                const isActive = tab === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setTab(key)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`
+                      mako-label px-4 py-2 rounded-full border-2 border-ink transition-all
+                      whitespace-nowrap ${bg} ${text}
+                      ${isActive
+                        ? `${activeShadow} -translate-y-[2px] -translate-x-[2px]`
+                        : 'shadow-[2px_2px_0_0_#000000] hover:shadow-[3px_3px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'}
+                    `}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {isLoading && filtered.length === 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="mako-skeleton h-[220px]" aria-hidden="true" />
+                ))}
               </div>
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="SEARCH MARKETS..."
-                className="flex-1 py-4 px-5 bg-transparent text-sm font-black uppercase tracking-widest placeholder:text-muted/50 outline-none text-foreground"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  className="px-5 border-l border-black font-black text-xs uppercase tracking-widest hover:bg-black hover:text-background transition-colors text-muted"
-                >
-                  CLEAR
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Market-type tab filter. Sits between the search bar and the
-              market list so the user can narrow instantly without scrolling.
-              (The price ticker itself is now a fixed-bottom news-channel-style
-              crawl rendered at the bottom of this page — see below.) */}
-          <div className="grid grid-cols-4 divide-x divide-black border-b border-black">
-            {TABS.map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setTab(key)}
-                className={`py-3 font-black text-xs uppercase tracking-widest transition-colors ${
-                  tab === key ? 'bg-black text-background' : 'hover:bg-black hover:text-background'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {isLoading && filteredMarkets.length === 0 ? (
-            <div className="py-20 text-center font-black uppercase tracking-widest border-b border-black text-muted text-sm bg-surface">
-              LOADING LIVE MARKETS…
-            </div>
-          ) : filteredMarkets.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 w-full bg-transparent">
-              {filteredMarkets.map((market, i) => (
-                <div
-                  key={market.id.toString()}
-                  className="w-full border-b border-black md:border-r overflow-hidden bg-[var(--color-background)] animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both"
-                  style={{ animationDelay: `${i * 50}ms` }}
-                >
+            ) : filtered.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filtered.map((market) => (
                   <Link
+                    key={market.id.toString()}
                     href={`/market/${market.id.toString()}`}
-                    className="w-full h-full block"
+                    className="block h-full"
                   >
                     <MarketCard market={market} />
                   </Link>
+                ))}
+              </div>
+            ) : (
+              <div className="rotate-2 transform mt-12 max-w-md mx-auto">
+                <div className="bg-paper border-2 border-ink rounded-xl shadow-[4px_4px_0_0_#000000] p-6 text-center mako-title text-xl">
+                  {EMPTY_COPY[tab]}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-20 text-center font-black uppercase tracking-widest border-b border-black text-muted text-sm bg-surface px-6">
-              {EMPTY_COPY[tab]}
-            </div>
+              </div>
           )}
         </div>
-
-        {/* Right Pane: News/Intel Feed — sticky so the main market feed can
-            scroll independently on the left. Matches the Sidebar's
-            `h-[calc(100dvh-2.25rem)]` (viewport minus the 36px bottom
-            ticker) so the three columns (sidebar · feed · intel) all end
-            flush with the top of the ticker. Internal overflow-y-auto gives
-            the intel list its own scroll track. */}
-        <aside className="hidden xl:flex flex-col w-80 2xl:w-96 border-l border-black bg-[var(--color-surface)] shrink-0 sticky top-0 self-start h-[calc(100dvh-2.25rem)] overflow-y-auto">
-          <div className="px-6 py-4 border-b border-black sticky top-0 z-40 bg-[var(--color-surface)]">
-            <span className="font-black text-xs uppercase tracking-widest text-foreground">MARKET INTEL</span>
-          </div>
-          <NewsFeed />
-        </aside>
       </div>
 
+      <MobileBottomNav />
     </main>
   );
 }

@@ -16,32 +16,26 @@ import type { AdminAnalytics } from '@/lib/admin-analytics';
  */
 
 export function TopBar() {
-  return (
-    <div className="px-6 md:px-8 py-4 border-b border-black">
-      <Link
-        href="/"
-        className="text-foreground text-sm font-black uppercase tracking-widest hover:bg-black hover:text-background px-2 py-1 -ml-2 inline-block transition-colors"
-      >
-        &lt; BACK
-      </Link>
-    </div>
-  );
+  // Back link removed — sidebar navigation already lets users jump anywhere.
+  // Kept as a no-op so every existing /admin/* import keeps working.
+  return null;
 }
 
 export function NotAuthorized() {
   return (
-    <main className="flex-1 flex flex-col items-center justify-center gap-4 py-16 px-6 text-center">
-      <h1 className="text-3xl font-black uppercase tracking-tight">NOT AUTHORIZED</h1>
-      <p className="text-muted text-xs font-bold uppercase tracking-widest">
-        CONNECT THE ADMIN WALLET TO VIEW THIS PAGE
-      </p>
-      <p className="text-[10px] font-mono text-subtle break-all max-w-xs">
-        ADMIN: {ADMIN_ADDRESS}
-      </p>
-      <Link
-        href="/"
-        className="mt-4 bg-black text-background font-black text-[11px] uppercase tracking-widest px-6 py-3 hover:bg-transparent hover:text-foreground border border-black transition-colors"
-      >
+    <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
+      <div className="-rotate-2">
+        <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] p-8 max-w-sm">
+          <h1 className="mako-display text-3xl mb-3">NOT AUTHORIZED</h1>
+          <p className="mako-body text-muted mb-3">
+            Connect the admin wallet to view this page.
+          </p>
+          <p className="mako-mono text-[10px] text-subtle break-all">
+            ADMIN: {ADMIN_ADDRESS}
+          </p>
+        </div>
+      </div>
+      <Link href="/" className="mako-button mako-button--signal mako-label">
         BACK TO FEED
       </Link>
     </main>
@@ -83,7 +77,7 @@ export function explorerTx(hash: string): string {
 export function DegradedBanner({ streams }: { streams: string[] }) {
   if (streams.length === 0) return null;
   return (
-    <div className="bg-warning/15 border-b border-warning px-6 md:px-8 py-3 text-[10px] font-black uppercase tracking-widest text-warning">
+    <div className="bg-mako-red/15 border-b-2 border-mako-red px-6 py-3 mako-label text-mako-red">
       DEGRADED · MISSING {streams.map((s) => s.toUpperCase()).join(' · ')} STREAM{streams.length > 1 ? 'S' : ''} · FIELDS BELOW SHOW — INSTEAD OF A MISLEADING 0
     </div>
   );
@@ -141,14 +135,16 @@ export function ActivityRow({ activity: a }: { activity: Activity }) {
   }
 
   return (
-    <div className="border-b border-black px-6 md:px-8 py-3 flex items-center gap-4 text-[11px] font-black uppercase tracking-widest">
+    <div className="border-b-2 border-ink/10 px-6 py-3 flex items-center gap-4 mako-label">
       <span className="text-muted w-16 shrink-0">{kindLabel}</span>
-      <span className="flex-1 min-w-0 truncate">{sentence}</span>
+      <span className="flex-1 min-w-0 truncate text-ink normal-case tracking-normal font-semibold text-[12px]">
+        {sentence}
+      </span>
       <a
         href={explorerTx(a.txHash)}
         target="_blank"
         rel="noreferrer noopener"
-        className="text-subtle hover:text-foreground shrink-0 tabular-nums"
+        className="text-subtle hover:text-ink shrink-0 tabular-nums"
       >
         {ago}
       </a>

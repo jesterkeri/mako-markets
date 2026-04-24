@@ -34,18 +34,19 @@ export default function AdminResolvePage() {
 
   if (!isAdmin) {
     return (
-      <main className="flex-1 flex flex-col items-center justify-center gap-4 py-16 px-6 text-center">
-        <h1 className="text-3xl font-black uppercase tracking-tight">NOT AUTHORIZED</h1>
-        <p className="text-muted text-xs font-bold uppercase tracking-widest">
-          CONNECT THE DEPLOYER WALLET TO RESOLVE MARKETS
-        </p>
-        <p className="text-[10px] font-mono text-subtle break-all max-w-xs">
-          ADMIN: {ADMIN_ADDRESS}
-        </p>
-        <Link
-          href="/"
-          className="mt-4 bg-black text-background font-black text-[11px] uppercase tracking-widest px-6 py-3 hover:bg-transparent hover:text-foreground border border-black transition-colors"
-        >
+      <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
+        <div className="-rotate-2">
+          <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] p-8 max-w-sm">
+            <h1 className="mako-display text-3xl mb-3">NOT AUTHORIZED</h1>
+            <p className="mako-body text-muted mb-3">
+              Connect the deployer wallet to resolve markets.
+            </p>
+            <p className="mako-mono text-[10px] text-subtle break-all">
+              ADMIN: {ADMIN_ADDRESS}
+            </p>
+          </div>
+        </div>
+        <Link href="/" className="mako-button mako-button--signal mako-label">
           BACK TO FEED
         </Link>
       </main>
@@ -60,35 +61,24 @@ export default function AdminResolvePage() {
 
   return (
     <main className="flex-1 flex flex-col w-full pb-16">
-      <div className="px-6 md:px-8 py-4 border-b border-black">
-        <Link
-          href="/"
-          className="text-foreground text-sm font-black uppercase tracking-widest hover:bg-black hover:text-background px-2 py-1 -ml-2 inline-block transition-colors"
-        >
-          &lt; BACK
-        </Link>
-      </div>
-
       <AdminNav active="resolve" />
 
-      <div className="px-6 md:px-8 py-8 border-b border-black">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">
-          [ ADMIN · RESOLVE ]
-        </div>
-        <h1 className="text-3xl font-black uppercase tracking-tight">
+      <div className="px-6 lg:px-8 py-8 border-b-2 border-ink">
+        <div className="mako-label text-muted mb-2">ADMIN · RESOLVE</div>
+        <h1 className="mako-display text-3xl md:text-4xl mb-2">
           {pending.length} PENDING
         </h1>
-        <p className="text-muted text-[11px] font-bold uppercase tracking-widest mt-2">
+        <p className="mako-label text-muted">
           MARKET{pending.length !== 1 ? 'S' : ''} PAST CLOSE · AWAITING OUTCOME
         </p>
       </div>
 
       {isLoading && markets.length === 0 ? (
-        <div className="py-20 text-center font-black uppercase tracking-widest text-muted text-sm border-b border-black">
+        <div className="py-20 text-center mako-label text-muted border-b-2 border-ink">
           LOADING MARKETS…
         </div>
       ) : pending.length === 0 ? (
-        <div className="py-20 text-center font-black uppercase tracking-widest text-muted text-sm border-b border-black">
+        <div className="py-20 text-center mako-label text-muted border-b-2 border-ink">
           NO PENDING MARKETS
         </div>
       ) : (
@@ -149,64 +139,66 @@ function ResolveRow({
   const noMon = Number(formatEther(market.totalNo));
 
   return (
-    <div className="border-b border-black">
-      <div className="px-6 md:px-8 py-5">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-1">
-          ID {market.id.toString()} · POOL {poolMon.toFixed(4)} MON
-        </div>
-        <h2 className="text-xl font-black uppercase leading-tight">{market.question}</h2>
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted mt-3 flex gap-6">
-          <span>
-            YES <span className="text-foreground tabular-nums">{yesMon.toFixed(4)}</span>
-          </span>
-          <span>
-            NO <span className="text-foreground tabular-nums">{noMon.toFixed(4)}</span>
-          </span>
-          <span>
-            BETTORS{' '}
-            <span className="text-foreground tabular-nums">
-              {market.yesBettorCount + market.noBettorCount}
+    <div className="border-b-2 border-ink/10 px-4 lg:px-8 py-4">
+      <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+        <div className="px-6 py-5 bg-surface-elevated border-b-2 border-ink">
+          <div className="mako-label text-muted mb-1">
+            ID {market.id.toString()} · POOL {poolMon.toFixed(4)} MON
+          </div>
+          <h2 className="mako-title text-lg leading-tight">{market.question}</h2>
+          <div className="mako-label text-muted mt-3 flex gap-6">
+            <span>
+              YES <span className="text-ink tabular-nums">{yesMon.toFixed(4)}</span>
             </span>
-          </span>
+            <span>
+              NO <span className="text-ink tabular-nums">{noMon.toFixed(4)}</span>
+            </span>
+            <span>
+              BETTORS{' '}
+              <span className="text-ink tabular-nums">
+                {market.yesBettorCount + market.noBettorCount}
+              </span>
+            </span>
+          </div>
         </div>
-      </div>
 
-      <div className="flex flex-row divide-x divide-black border-t border-black">
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => handleResolve(Outcome.YES)}
-          className="flex-1 py-4 font-black uppercase tracking-widest text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-background"
-        >
-          RESOLVE YES
-        </button>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => handleResolve(Outcome.NO)}
-          className="flex-1 py-4 font-black uppercase tracking-widest text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-background"
-        >
-          RESOLVE NO
-        </button>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => handleResolve(Outcome.REFUND)}
-          className="flex-1 py-4 font-black uppercase tracking-widest text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-background"
-        >
-          REFUND
-        </button>
-      </div>
-
-      {statusText && (
-        <div
-          className={`px-6 py-2 border-t border-black text-[10px] font-black uppercase tracking-widest text-center break-words ${
-            isSuccess ? 'bg-yes/15 text-yes' : error ? 'bg-warning/15 text-warning' : 'text-muted'
-          }`}
-        >
-          {statusText}
+        <div className="grid grid-cols-3 border-b-2 border-ink">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => handleResolve(Outcome.YES)}
+            className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-ink hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            RESOLVE YES
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => handleResolve(Outcome.NO)}
+            className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-mako-red hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            RESOLVE NO
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => handleResolve(Outcome.REFUND)}
+            className="py-4 mako-label bg-paper hover:bg-ink hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            REFUND
+          </button>
         </div>
-      )}
+
+        {statusText && (
+          <div
+            className={`px-6 py-2 mako-label text-center break-words ${
+              isSuccess ? 'bg-signal text-ink' : error ? 'bg-mako-red/15 text-mako-red' : 'text-muted bg-paper'
+            }`}
+          >
+            {statusText}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

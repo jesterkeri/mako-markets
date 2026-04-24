@@ -8,7 +8,7 @@ import { BroadcastQrModal } from './BroadcastQrModal';
  *
  * Intentionally distinct from ShareMarketButton: Share = quick link copy for
  * sending to one person. Broadcast = in-room / stream overlay for scanning
- * by a crowd. Two different verbs, two buttons.
+ * by a crowd.
  */
 export function BroadcastButton({
   marketId,
@@ -26,9 +26,9 @@ export function BroadcastButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="py-3 font-black text-sm uppercase tracking-widest hover:bg-black hover:text-background transition-colors"
+        className="mako-button mako-button--signal mako-label"
       >
-        [ ⚡ BROADCAST QR ]
+        ⚡ BROADCAST
       </button>
       <BroadcastQrModal
         open={open}

@@ -201,64 +201,65 @@ export default function CreateMarketPage() {
 
   return (
     <main className="flex-1 flex flex-col w-full pb-16">
-      <div className="px-6 md:px-8 py-4 border-b border-black">
-        <Link
-          href="/"
-          className="text-foreground text-sm font-black uppercase tracking-widest hover:bg-black hover:text-background px-2 py-1 -ml-2 inline-block transition-colors"
-        >
-          &lt; BACK
-        </Link>
-      </div>
-
-      <div className="px-6 md:px-8 py-8 border-b border-black">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">
-          [ NEW MARKET ]
+      <div className="px-4 sm:px-6 lg:px-8 py-6 md:py-10 max-w-3xl mx-auto w-full">
+        <div className="mb-8">
+          <div className="mako-label text-muted mb-2">NEW MARKET</div>
+          <h1 className="mako-display text-4xl md:text-5xl mb-3">CREATE</h1>
+          <p className="mako-body text-muted text-sm">
+            Pick a source, build a question, launch.
+          </p>
         </div>
-        <h1 className="text-3xl font-black uppercase tracking-tight">CREATE</h1>
-        <p className="text-muted text-[11px] font-bold uppercase tracking-widest mt-2">
-          PICK A SOURCE · BUILD A QUESTION · LAUNCH
-        </p>
-      </div>
 
-      {/* Tab bar */}
-      <div className="grid grid-cols-3 divide-x divide-black border-b border-black">
-        {(
-          [
-            { key: 'crypto' as const, label: 'CRYPTO' },
-            { key: 'football' as const, label: 'FOOTBALL' },
-            { key: 'basketball' as const, label: 'NBA' },
-          ]
-        ).map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setTab(key)}
-            disabled={isBusy}
-            className={`py-3 font-black text-xs uppercase tracking-widest transition-colors disabled:opacity-50 ${
-              tab === key ? 'bg-black text-background' : 'hover:bg-black hover:text-background'
+        {/* Tab bar — matches the home feed's colorful category pills */}
+        <div className="flex gap-3 mb-6 flex-wrap">
+          {(
+            [
+              { key: 'crypto' as const, label: 'CRYPTO', bg: 'bg-mako-red', text: 'text-paper', activeShadow: 'shadow-[4px_4px_0_0_#000000]' },
+              { key: 'football' as const, label: 'FOOTBALL', bg: 'bg-signal', text: 'text-ink', activeShadow: 'shadow-[4px_4px_0_0_#000000]' },
+              { key: 'basketball' as const, label: 'NBA', bg: 'bg-ink', text: 'text-paper', activeShadow: 'shadow-[4px_4px_0_0_#FACC15]' },
+            ]
+          ).map(({ key, label, bg, text, activeShadow }) => {
+            const isActive = tab === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                disabled={isBusy}
+                aria-current={isActive ? 'page' : undefined}
+                className={`
+                  mako-label px-4 py-2 rounded-full border-2 border-ink transition-all
+                  whitespace-nowrap disabled:opacity-50 ${bg} ${text}
+                  ${isActive
+                    ? `${activeShadow} -translate-y-[2px] -translate-x-[2px]`
+                    : 'shadow-[2px_2px_0_0_#000000] hover:shadow-[3px_3px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'}
+                `}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+          {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
+          {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
+          {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
+        </div>
+
+        {/* Non-busy status line below the submit button */}
+        {statusText && !isBusy && (
+          <div
+            className={`mt-4 px-4 py-3 mako-label text-center rounded-xl border-2 break-words ${
+              isSuccess && !decodeError
+                ? 'bg-signal/30 text-ink border-ink'
+                : 'bg-mako-red/15 text-mako-red border-mako-red'
             }`}
           >
-            {label}
-          </button>
-        ))}
+            {statusText}
+          </div>
+        )}
       </div>
-
-      {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
-      {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
-      {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
-
-      {/* Non-busy status line below the submit button */}
-      {statusText && !isBusy && (
-        <div
-          className={`px-4 py-3 text-[10px] font-black uppercase tracking-widest text-center border-t border-black break-words ${
-            isSuccess && !decodeError
-              ? 'bg-yes/15 text-yes'
-              : 'bg-warning/15 text-warning'
-          }`}
-        >
-          {statusText}
-        </div>
-      )}
     </main>
   );
 }
@@ -358,26 +359,26 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
   const disabled = isBusy || effectiveStrike <= 0;
 
   return (
-    <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
+    <form onSubmit={handleSubmit} className="flex flex-col">
       {/* Live prices */}
-      <div className="border-b border-black">
-        <div className="px-6 md:px-8 py-3 text-[10px] font-black uppercase tracking-widest text-muted flex justify-between">
-          <span>LIVE PRICES · TAP TO SELECT</span>
-          <span className="text-subtle">REFRESH 10S</span>
+      <div className="border-b-2 border-ink">
+        <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
+          <span className="mako-label text-muted">LIVE PRICES · TAP TO SELECT</span>
+          <span className="mako-label text-subtle">REFRESH 10S</span>
         </div>
-        {/* 10 assets laid out 2×5 on mobile and 5-wide × 2 rows on desktop.
-            Order is driven by the priority field in src/lib/crypto-assets.ts
-            so majors lead and MON sits last. */}
-        <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-y divide-black border-t border-black">
+        {/* 10 assets laid out 2×5 on mobile and 5-wide × 2 rows on desktop. */}
+        <div className="grid grid-cols-2 md:grid-cols-5 border-t-2 border-ink">
           {[...CRYPTO_ASSETS]
             .sort((a, b) => a.priority - b.priority)
-            .map((asset) => {
+            .map((asset, i) => {
               const sym = asset.symbol;
               const price = prices?.[sym];
               const change = price?.change24h ?? 0;
               const arrow = change > 0 ? '▲' : change < 0 ? '▼' : '·';
               const isSelected = selectedSymbol === sym;
               const isTestnet = price?.testnet === true;
+              const col = i % 5;
+              const row = Math.floor(i / 5);
               return (
                 <button
                   key={sym}
@@ -389,27 +390,29 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
                   }}
                   disabled={isBusy}
                   className={`py-5 px-2 flex flex-col items-center justify-center transition-colors disabled:opacity-50 ${
+                    col > 0 ? 'border-l-2 border-ink' : ''
+                  } ${row > 0 ? 'border-t-2 border-ink' : ''} ${
                     isSelected
-                      ? 'bg-black text-background'
-                      : 'hover:bg-black hover:text-background'
+                      ? 'bg-ink text-paper'
+                      : 'bg-paper hover:bg-surface-elevated'
                   }`}
                 >
-                  <span className="text-[11px] font-black uppercase tracking-widest mb-1">{sym}</span>
-                  <span className="text-base font-black tabular-nums">
+                  <span className="mako-label mb-1">{sym}</span>
+                  <span className="mako-display text-base tabular-nums">
                     {price ? formatPriceUsd(price.usd) : '—'}
                   </span>
                   {isTestnet ? (
                     <span
-                      className={`text-[8px] font-black tracking-widest mt-1 ${
-                        isSelected ? 'opacity-80' : 'text-muted'
+                      className={`mako-label text-[8px] mt-1 ${
+                        isSelected ? 'text-paper/70' : 'text-muted'
                       }`}
                     >
                       TESTNET
                     </span>
                   ) : (
                     <span
-                      className={`text-[9px] font-black tabular-nums mt-1 ${
-                        isSelected ? 'opacity-80' : 'text-muted'
+                      className={`mako-label text-[9px] tabular-nums mt-1 ${
+                        isSelected ? 'text-paper/70' : change > 0 ? 'text-ink' : change < 0 ? 'text-mako-red' : 'text-muted'
                       }`}
                     >
                       {arrow} {Math.abs(change).toFixed(2)}%
@@ -422,43 +425,42 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
       </div>
 
       {/* Direction */}
-      <div className="px-6 md:px-8 py-5 border-b border-black">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3">
-          DIRECTION
-        </label>
-        <div className="grid grid-cols-2 border border-black divide-x divide-black">
-          {(['above', 'below'] as const).map((dir) => (
-            <button
-              key={dir}
-              type="button"
-              onClick={() => {
-                setDirection(dir);
-                setStrikeTouched(false);
-                setStrikeInput('');
-              }}
-              disabled={isBusy}
-              className={`py-3 font-black text-xs uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                direction === dir
-                  ? 'bg-black text-background'
-                  : 'hover:bg-black hover:text-background'
-              }`}
-            >
-              {dir === 'above' ? '▲ ABOVE' : '▼ BELOW'}
-            </button>
-          ))}
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">DIRECTION</label>
+        <div className="grid grid-cols-2 gap-3">
+          {(['above', 'below'] as const).map((dir) => {
+            const isActive = direction === dir;
+            return (
+              <button
+                key={dir}
+                type="button"
+                onClick={() => {
+                  setDirection(dir);
+                  setStrikeTouched(false);
+                  setStrikeInput('');
+                }}
+                disabled={isBusy}
+                aria-pressed={isActive}
+                className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
+                  isActive
+                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                }`}
+              >
+                {dir === 'above' ? '▲ ABOVE' : '▼ BELOW'}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Strike */}
-      <div className="px-6 md:px-8 py-5 border-b border-black">
-        <label
-          htmlFor="strike"
-          className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3"
-        >
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label htmlFor="strike" className="mako-label text-muted mb-3 block">
           STRIKE PRICE (USD)
         </label>
-        <div className="flex items-center gap-3 border border-black px-4 py-3">
-          <span className="text-xs font-black uppercase tracking-widest text-muted">$</span>
+        <div className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-paper">
+          <span className="mako-label text-muted">$</span>
           <input
             id="strike"
             type="text"
@@ -469,61 +471,61 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
               setStrikeInput(e.target.value.replace(/[^0-9.]/g, ''));
             }}
             disabled={isBusy}
-            className="flex-1 min-w-0 bg-transparent border-0 outline-none text-2xl font-black tabular-nums text-foreground disabled:opacity-50"
+            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl tabular-nums disabled:opacity-50"
             placeholder={String(defaultStrike || '0')}
           />
         </div>
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted mt-2">
+        <div className="mako-label text-muted mt-2">
           DEFAULT = LIVE PRICE {direction === 'above' ? '× 1.01' : '× 0.99'} · TAP TO EDIT
         </div>
       </div>
 
       {/* Duration — 8 presets spanning the contract's MAX_DURATION (7 days) */}
-      <div className="px-6 md:px-8 py-5 border-b border-black">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3">
-          DURATION
-        </label>
-        <div className="grid grid-cols-4 border border-black divide-x divide-y divide-black">
-          {DURATIONS.map((d) => (
-            <button
-              key={d.seconds}
-              type="button"
-              onClick={() => setDurationSec(d.seconds)}
-              disabled={isBusy}
-              className={`py-3 font-black text-sm uppercase tracking-widest tabular-nums transition-colors disabled:opacity-50 ${
-                durationSec === d.seconds
-                  ? 'bg-black text-background'
-                  : 'hover:bg-black hover:text-background'
-              }`}
-            >
-              {d.short}
-            </button>
-          ))}
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">DURATION</label>
+        <div className="grid grid-cols-4 gap-2">
+          {DURATIONS.map((d) => {
+            const isActive = durationSec === d.seconds;
+            return (
+              <button
+                key={d.seconds}
+                type="button"
+                onClick={() => setDurationSec(d.seconds)}
+                disabled={isBusy}
+                aria-pressed={isActive}
+                className={`py-2.5 mako-label rounded-lg border-2 border-ink transition-all disabled:opacity-50 tabular-nums ${
+                  isActive
+                    ? 'bg-ink text-paper shadow-[3px_3px_0_0_#D94A3D] -translate-y-[1px] -translate-x-[1px]'
+                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px]'
+                }`}
+              >
+                {d.short}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Auto-generated question preview */}
-      <div className="px-6 md:px-8 py-5 border-b border-black bg-surface-elevated">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-2">
+      <div className="px-6 py-5 border-b-2 border-ink bg-surface-elevated">
+        <label className="mako-label text-muted mb-2 block">
           QUESTION (AUTO-GENERATED)
         </label>
-        <p className="text-base font-black uppercase tracking-tight leading-tight">
+        <p className="mako-title text-lg leading-tight">
           {autoQuestion || '—'}
         </p>
       </div>
 
-      <div className="flex-1 min-h-[20px]" />
-
       <button
         type="submit"
         disabled={disabled}
-        className={`w-full py-5 border-t border-black font-black uppercase tracking-widest text-sm transition-colors ${
+        className={`w-full py-5 mako-display text-lg uppercase tracking-tight transition-colors ${
           disabled
-            ? 'bg-black/20 text-muted cursor-not-allowed'
-            : 'bg-black text-background hover:bg-foreground/90'
+            ? 'bg-surface-elevated text-muted cursor-not-allowed'
+            : 'bg-signal text-ink hover:bg-signal/90'
         }`}
       >
-        {isBusy ? statusText ?? '...' : `[ CREATE ${selectedSymbol} MARKET ]`}
+        {isBusy ? statusText ?? '…' : `CREATE ${selectedSymbol} MARKET`}
       </button>
     </form>
   );
@@ -637,30 +639,28 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
   const disabled = isBusy || !selectedFixture || oracleRefTooLong || closeTooSoon;
 
   return (
-    <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
+    <form onSubmit={handleSubmit} className="flex flex-col">
       {/* Fixture list */}
-      <div className="border-b border-black">
-        <div className="px-6 md:px-8 py-3 text-[10px] font-black uppercase tracking-widest text-muted flex justify-between">
-          <span>UPCOMING · PREMIER LEAGUE</span>
-          <span className="text-subtle">TAP TO SELECT</span>
+      <div className="border-b-2 border-ink">
+        <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
+          <span className="mako-label text-muted">UPCOMING · PREMIER LEAGUE</span>
+          <span className="mako-label text-subtle">TAP TO SELECT</span>
         </div>
         {fixtures === null ? (
-          <div className="py-12 text-center font-black uppercase tracking-widest text-muted text-sm border-t border-black">
+          <div className="py-12 text-center mako-label text-muted border-t-2 border-ink">
             LOADING FIXTURES…
           </div>
         ) : fixtures.length === 0 ? (
-          <div className="py-12 text-center border-t border-black px-6">
-            <div className="font-black uppercase tracking-widest text-muted text-sm mb-3">
-              NO FIXTURES AVAILABLE
-            </div>
+          <div className="py-12 text-center border-t-2 border-ink px-6">
+            <div className="mako-label text-muted mb-3">NO FIXTURES AVAILABLE</div>
             {fetchError && (
-              <div className="text-[10px] font-black text-subtle tracking-widest break-words max-w-xs mx-auto leading-relaxed">
+              <div className="mako-label text-[10px] text-subtle break-words max-w-xs mx-auto leading-relaxed">
                 {fetchError.slice(0, 180)}
               </div>
             )}
           </div>
         ) : (
-          <div className="flex flex-col divide-y divide-black border-t border-black">
+          <div className="flex flex-col divide-y-2 divide-ink border-t-2 border-ink">
             {fixtures.map((f) => {
               const isSelected = selectedFixture?.id === f.id;
               return (
@@ -669,18 +669,18 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
                   type="button"
                   onClick={() => setSelectedFixture(f)}
                   disabled={isBusy}
-                  className={`py-4 px-6 md:px-8 flex flex-col items-start text-left transition-colors disabled:opacity-50 ${
+                  className={`py-4 px-6 flex flex-col items-start text-left transition-colors disabled:opacity-50 ${
                     isSelected
-                      ? 'bg-black text-background'
-                      : 'hover:bg-black hover:text-background'
+                      ? 'bg-ink text-paper'
+                      : 'bg-paper hover:bg-surface-elevated'
                   }`}
                 >
-                  <span className="text-base font-black uppercase tracking-tight leading-tight">
-                    {f.homeTeam} VS {f.awayTeam}
+                  <span className="mako-title text-base leading-tight">
+                    {f.homeTeam} vs {f.awayTeam}
                   </span>
                   <span
-                    className={`text-[10px] font-black uppercase tracking-widest mt-1 ${
-                      isSelected ? 'opacity-80' : 'text-muted'
+                    className={`mako-label mt-1 ${
+                      isSelected ? 'text-paper/70' : 'text-muted'
                     }`}
                   >
                     KICKOFF · {f.kickoffLabel}
@@ -693,11 +693,9 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
       </div>
 
       {/* Question type — 2x2 grid */}
-      <div className="px-6 md:px-8 py-5 border-b border-black">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3">
-          QUESTION TYPE
-        </label>
-        <div className="grid grid-cols-2 border border-black divide-x divide-y divide-black">
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">QUESTION TYPE</label>
+        <div className="grid grid-cols-2 gap-3">
           {(
             [
               { key: 'home_win' as const, label: 'HOME WIN' },
@@ -705,39 +703,39 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
               { key: 'draw' as const, label: 'DRAW' },
               { key: 'over' as const, label: 'OVER 2.5' },
             ]
-          ).map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setQuestionType(key)}
-              disabled={isBusy}
-              className={`py-3 font-black text-xs uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                questionType === key
-                  ? 'bg-black text-background'
-                  : 'hover:bg-black hover:text-background'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          ).map(({ key, label }) => {
+            const isActive = questionType === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setQuestionType(key)}
+                disabled={isBusy}
+                aria-pressed={isActive}
+                className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
+                  isActive
+                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Betting window — derived from kickoff, NOT user-picked. A match
-           with a known kickoff has a non-negotiable closeTime (kickoff-10m);
-           the resolver waits until the match goes FINAL before settling. */}
-      <div className="px-6 md:px-8 py-5 border-b border-black">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3">
-          BETS CLOSE
-        </label>
+      {/* Betting window — derived from kickoff, NOT user-picked. */}
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">BETS CLOSE</label>
         {selectedFixture && closeTimeSec !== null ? (
           <div>
-            <div className="font-black text-base tabular-nums">
+            <div className="mako-display text-base tabular-nums">
               {new Date(closeTimeSec * 1000).toUTCString().replace(' GMT', ' UTC')}
             </div>
             <div
-              className={`text-[11px] font-black uppercase tracking-widest mt-1 ${
-                closeTooSoon ? 'text-warning' : 'text-muted'
+              className={`mako-label mt-1 ${
+                closeTooSoon ? 'text-mako-red' : 'text-muted'
               }`}
             >
               {closeTooSoon
@@ -746,39 +744,37 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
             </div>
           </div>
         ) : (
-          <div className="text-[11px] font-black uppercase tracking-widest text-subtle">
+          <div className="mako-label text-subtle">
             SELECT A FIXTURE TO SEE CLOSE TIME
           </div>
         )}
       </div>
 
       {/* Auto-question preview */}
-      <div className="px-6 md:px-8 py-5 border-b border-black bg-surface-elevated">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-2">
+      <div className="px-6 py-5 border-b-2 border-ink bg-surface-elevated">
+        <label className="mako-label text-muted mb-2 block">
           QUESTION (AUTO-GENERATED)
         </label>
-        <p className="text-base font-black uppercase tracking-tight leading-tight">
+        <p className="mako-title text-lg leading-tight">
           {autoQuestion || '—'}
         </p>
         {oracleRefTooLong && (
-          <p className="text-[10px] font-black text-warning tracking-widest uppercase mt-2">
+          <p className="mako-label text-mako-red mt-2">
             ORACLE REF TOO LONG ({oracleRefStr.length} BYTES) · MAX 32 · PICK SHORTER QUESTION TYPE
           </p>
         )}
       </div>
 
-      <div className="flex-1 min-h-[20px]" />
-
       <button
         type="submit"
         disabled={disabled}
-        className={`w-full py-5 border-t border-black font-black uppercase tracking-widest text-sm transition-colors ${
+        className={`w-full py-5 mako-display text-lg uppercase tracking-tight transition-colors ${
           disabled
-            ? 'bg-black/20 text-muted cursor-not-allowed'
-            : 'bg-black text-background hover:bg-foreground/90'
+            ? 'bg-surface-elevated text-muted cursor-not-allowed'
+            : 'bg-signal text-ink hover:bg-signal/90'
         }`}
       >
-        {isBusy ? statusText ?? '...' : '[ CREATE FOOTBALL MARKET ]'}
+        {isBusy ? statusText ?? '…' : 'CREATE FOOTBALL MARKET'}
       </button>
     </form>
   );
@@ -905,29 +901,27 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
     closeTooSoon;
 
   return (
-    <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
-      <div className="border-b border-black">
-        <div className="px-6 md:px-8 py-3 text-[10px] font-black uppercase tracking-widest text-muted flex justify-between">
-          <span>UPCOMING · NBA · NEXT 7 DAYS</span>
-          <span className="text-subtle">TAP TO SELECT</span>
+    <form onSubmit={handleSubmit} className="flex flex-col">
+      <div className="border-b-2 border-ink">
+        <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
+          <span className="mako-label text-muted">UPCOMING · NBA · NEXT 7 DAYS</span>
+          <span className="mako-label text-subtle">TAP TO SELECT</span>
         </div>
         {games === null ? (
-          <div className="py-12 text-center font-black uppercase tracking-widest text-muted text-sm border-t border-black">
+          <div className="py-12 text-center mako-label text-muted border-t-2 border-ink">
             LOADING GAMES…
           </div>
         ) : games.length === 0 ? (
-          <div className="py-12 text-center border-t border-black px-6">
-            <div className="font-black uppercase tracking-widest text-muted text-sm mb-3">
-              NO GAMES AVAILABLE
-            </div>
+          <div className="py-12 text-center border-t-2 border-ink px-6">
+            <div className="mako-label text-muted mb-3">NO GAMES AVAILABLE</div>
             {fetchError && (
-              <div className="text-[10px] font-black text-subtle tracking-widest break-words max-w-xs mx-auto leading-relaxed">
+              <div className="mako-label text-[10px] text-subtle break-words max-w-xs mx-auto leading-relaxed">
                 {fetchError.slice(0, 180)}
               </div>
             )}
           </div>
         ) : (
-          <div className="flex flex-col divide-y divide-black border-t border-black">
+          <div className="flex flex-col divide-y-2 divide-ink border-t-2 border-ink">
             {games.map((g) => {
               const isSelected = selectedGame?.id === g.id;
               return (
@@ -936,18 +930,18 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
                   type="button"
                   onClick={() => setSelectedGame(g)}
                   disabled={isBusy}
-                  className={`py-4 px-6 md:px-8 flex flex-col items-start text-left transition-colors disabled:opacity-50 ${
+                  className={`py-4 px-6 flex flex-col items-start text-left transition-colors disabled:opacity-50 ${
                     isSelected
-                      ? 'bg-black text-background'
-                      : 'hover:bg-black hover:text-background'
+                      ? 'bg-ink text-paper'
+                      : 'bg-paper hover:bg-surface-elevated'
                   }`}
                 >
-                  <span className="text-base font-black uppercase tracking-tight leading-tight">
+                  <span className="mako-title text-base leading-tight">
                     {g.visitorTeam} @ {g.homeTeam}
                   </span>
                   <span
-                    className={`text-[10px] font-black uppercase tracking-widest mt-1 ${
-                      isSelected ? 'opacity-80' : 'text-muted'
+                    className={`mako-label mt-1 ${
+                      isSelected ? 'text-paper/70' : 'text-muted'
                     }`}
                   >
                     TIPOFF · {g.tipoffLabel}
@@ -959,11 +953,9 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
         )}
       </div>
 
-      <div className="px-6 md:px-8 py-5 border-b border-black">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3">
-          QUESTION TYPE
-        </label>
-        <div className="grid grid-cols-2 border border-black divide-x divide-y divide-black">
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">QUESTION TYPE</label>
+        <div className="grid grid-cols-2 gap-3">
           {(
             [
               { key: 'home_win' as const, label: 'HOME WIN' },
@@ -971,33 +963,34 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
               { key: 'over' as const, label: 'OVER TOTAL' },
               { key: 'under' as const, label: 'UNDER TOTAL' },
             ]
-          ).map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setQuestionType(key)}
-              disabled={isBusy}
-              className={`py-3 font-black text-xs uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                questionType === key
-                  ? 'bg-black text-background'
-                  : 'hover:bg-black hover:text-background'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          ).map(({ key, label }) => {
+            const isActive = questionType === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setQuestionType(key)}
+                disabled={isBusy}
+                aria-pressed={isActive}
+                className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
+                  isActive
+                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {isTotalQ && (
-        <div className="px-6 md:px-8 py-5 border-b border-black">
-          <label
-            htmlFor="nba-total"
-            className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3"
-          >
+        <div className="px-6 py-5 border-b-2 border-ink">
+          <label htmlFor="nba-total" className="mako-label text-muted mb-3 block">
             TOTAL POINTS LINE
           </label>
-          <div className="flex items-center gap-3 border border-black px-4 py-3">
+          <div className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-paper">
             <input
               id="nba-total"
               type="text"
@@ -1005,30 +998,28 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
               value={totalInput}
               onChange={(e) => setTotalInput(e.target.value.replace(/[^0-9.]/g, ''))}
               disabled={isBusy}
-              className="flex-1 min-w-0 bg-transparent border-0 outline-none text-2xl font-black tabular-nums text-foreground disabled:opacity-50"
+              className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl tabular-nums disabled:opacity-50"
               placeholder="215.5"
             />
-            <span className="text-xs font-black uppercase tracking-widest text-muted">PTS</span>
+            <span className="mako-label text-muted">PTS</span>
           </div>
-          <div className="text-[10px] font-black uppercase tracking-widest text-muted mt-2">
+          <div className="mako-label text-muted mt-2">
             NBA AVERAGE IS ~220 · ADJUST FOR MATCHUP PACE
           </div>
         </div>
       )}
 
       {/* Betting window — derived from tipoff, NOT user-picked. */}
-      <div className="px-6 md:px-8 py-5 border-b border-black">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-3">
-          BETS CLOSE
-        </label>
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">BETS CLOSE</label>
         {selectedGame && closeTimeSec !== null ? (
           <div>
-            <div className="font-black text-base tabular-nums">
+            <div className="mako-display text-base tabular-nums">
               {new Date(closeTimeSec * 1000).toUTCString().replace(' GMT', ' UTC')}
             </div>
             <div
-              className={`text-[11px] font-black uppercase tracking-widest mt-1 ${
-                closeTooSoon ? 'text-warning' : 'text-muted'
+              className={`mako-label mt-1 ${
+                closeTooSoon ? 'text-mako-red' : 'text-muted'
               }`}
             >
               {closeTooSoon
@@ -1037,38 +1028,36 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
             </div>
           </div>
         ) : (
-          <div className="text-[11px] font-black uppercase tracking-widest text-subtle">
+          <div className="mako-label text-subtle">
             SELECT A GAME TO SEE CLOSE TIME
           </div>
         )}
       </div>
 
-      <div className="px-6 md:px-8 py-5 border-b border-black bg-surface-elevated">
-        <label className="block text-[10px] font-black uppercase tracking-widest text-muted mb-2">
+      <div className="px-6 py-5 border-b-2 border-ink bg-surface-elevated">
+        <label className="mako-label text-muted mb-2 block">
           QUESTION (AUTO-GENERATED)
         </label>
-        <p className="text-base font-black uppercase tracking-tight leading-tight">
+        <p className="mako-title text-lg leading-tight">
           {autoQuestion || '—'}
         </p>
         {oracleRefTooLong && (
-          <p className="text-[10px] font-black text-warning tracking-widest uppercase mt-2">
+          <p className="mako-label text-mako-red mt-2">
             ORACLE REF TOO LONG · PICK A SHORTER TOTAL
           </p>
         )}
       </div>
 
-      <div className="flex-1 min-h-[20px]" />
-
       <button
         type="submit"
         disabled={disabled}
-        className={`w-full py-5 border-t border-black font-black uppercase tracking-widest text-sm transition-colors ${
+        className={`w-full py-5 mako-display text-lg uppercase tracking-tight transition-colors ${
           disabled
-            ? 'bg-black/20 text-muted cursor-not-allowed'
-            : 'bg-black text-background hover:bg-foreground/90'
+            ? 'bg-surface-elevated text-muted cursor-not-allowed'
+            : 'bg-signal text-ink hover:bg-signal/90'
         }`}
       >
-        {isBusy ? statusText ?? '...' : '[ CREATE NBA MARKET ]'}
+        {isBusy ? statusText ?? '…' : 'CREATE NBA MARKET'}
       </button>
     </form>
   );

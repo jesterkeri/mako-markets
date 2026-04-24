@@ -33,12 +33,10 @@ export default function AdminOverviewPage() {
       <AdminNav active="overview" />
       {data ? <DegradedBanner streams={data.degraded} /> : null}
 
-      <div className="px-6 md:px-8 py-8 border-b border-black">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">
-          [ ADMIN · OVERVIEW ]
-        </div>
-        <h1 className="text-3xl font-black uppercase tracking-tight">MAKO MARKETS</h1>
-        <p className="text-muted text-[11px] font-bold uppercase tracking-widest mt-2">
+      <div className="px-6 lg:px-8 py-8 border-b-2 border-ink">
+        <div className="mako-label text-muted mb-2">ADMIN · OVERVIEW</div>
+        <h1 className="mako-display text-3xl md:text-4xl mb-2">MAKO MARKETS</h1>
+        <p className="mako-label text-muted">
           PLATFORM HEALTH · REFRESHED EVERY 30s
           {data?.window.bounded
             ? ` · EVENT SCAN: LAST ${Number(data.window.blocksCovered).toLocaleString()} BLOCKS`
@@ -47,16 +45,16 @@ export default function AdminOverviewPage() {
       </div>
 
       {isLoading && !data ? (
-        <div className="py-20 text-center font-black uppercase tracking-widest text-muted text-sm border-b border-black">
+        <div className="py-20 text-center mako-label text-muted border-b-2 border-ink">
           LOADING…
         </div>
       ) : error && !data ? (
-        <div className="py-20 text-center font-black uppercase tracking-widest text-warning text-sm border-b border-black">
+        <div className="py-20 text-center mako-label text-mako-red border-b-2 border-ink">
           ANALYTICS UNAVAILABLE · RETRY
         </div>
       ) : data ? (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 divide-x divide-y md:divide-y-0 divide-black border-b border-black">
+          <div className="grid grid-cols-2 md:grid-cols-3 divide-x-2 divide-y-2 md:divide-y-0 divide-ink border-b-2 border-ink">
             <Tile
               label="MARKETS"
               value={<>{data.totals.marketCount.toString()}</>}
@@ -92,7 +90,7 @@ export default function AdminOverviewPage() {
             />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 divide-x divide-y md:divide-y-0 divide-black border-b border-black">
+          <div className="grid grid-cols-2 md:grid-cols-3 divide-x-2 divide-y-2 md:divide-y-0 divide-ink border-b-2 border-ink">
             <Tile
               label="PROTOCOL FEES"
               value={
@@ -165,20 +163,18 @@ export default function AdminOverviewPage() {
             );
           })()}
 
-          <div className="px-6 md:px-8 py-6 border-b border-black flex items-center justify-between">
-            <div className="text-[10px] font-black uppercase tracking-widest text-muted">
-              LATEST ACTIVITY
-            </div>
+          <div className="px-6 lg:px-8 py-5 border-b-2 border-ink flex items-center justify-between bg-surface-elevated">
+            <div className="mako-label text-muted">LATEST ACTIVITY</div>
             <Link
               href="/admin/activity"
-              className="text-[10px] font-black uppercase tracking-widest hover:bg-black hover:text-background px-2 py-1 -mr-2 transition-colors"
+              className="mako-label text-muted hover:text-ink transition-colors"
             >
-              VIEW ALL &gt;
+              VIEW ALL →
             </Link>
           </div>
 
           {data.activity.length === 0 ? (
-            <div className="py-20 text-center font-black uppercase tracking-widest text-muted text-sm border-b border-black">
+            <div className="py-20 text-center mako-label text-muted border-b-2 border-ink">
               NO ACTIVITY YET
             </div>
           ) : (
@@ -204,19 +200,15 @@ function ChartBlock({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border-b border-black px-6 md:px-8 py-6 text-foreground">
+    <div className="border-b-2 border-ink px-6 lg:px-8 py-6">
       <div className="flex items-baseline justify-between mb-4">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted">
-          {title}
-        </div>
+        <div className="mako-label text-muted">{title}</div>
         {right ? (
-          <div className="text-[10px] font-black uppercase tracking-widest text-subtle tabular-nums">
-            {right}
-          </div>
+          <div className="mako-label text-subtle tabular-nums">{right}</div>
         ) : null}
       </div>
       {unavailable ? (
-        <div className="h-36 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-subtle">
+        <div className="h-36 flex items-center justify-center mako-label text-subtle">
           — STREAM UNAVAILABLE
         </div>
       ) : (
@@ -236,16 +228,10 @@ function Tile({
   sub?: React.ReactNode;
 }) {
   return (
-    <div className="px-6 py-6">
-      <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">
-        {label}
-      </div>
-      <div className="text-3xl font-black tabular-nums leading-none">{value}</div>
-      {sub ? (
-        <div className="text-[10px] font-black uppercase tracking-widest text-subtle mt-3">
-          {sub}
-        </div>
-      ) : null}
+    <div className="px-6 py-6 bg-paper">
+      <div className="mako-label text-muted mb-2">{label}</div>
+      <div className="mako-display text-3xl tabular-nums leading-none">{value}</div>
+      {sub ? <div className="mako-label text-subtle mt-3">{sub}</div> : null}
     </div>
   );
 }

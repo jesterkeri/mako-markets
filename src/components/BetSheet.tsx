@@ -8,21 +8,16 @@ import { usePlaceBet } from '@/lib/hooks';
 import { computePayoutWei, computeMinLiquidityRatioBps } from '@/lib/bet';
 
 /**
- * Fixed-bottom bet sheet. Renders over the viewport within the mobile
- * container width. Amount input + live client-side bigint payout preview
- * + Place Bet button.
+ * Fixed-bottom bet sheet. Renders within the mobile container width.
+ * Amount input + live bigint payout preview + PLACE BET.
  *
  * The YES / NO side selector lives in the parent detail page — the big
- * multiplier blocks above double as the side picker (cannibal.gg pattern).
- * We accept `side` as a prop rather than owning it locally so there is
- * exactly one selector in the UI, not two.
+ * multiplier blocks above double as the side picker. We accept `side` as
+ * a prop rather than owning it locally so there is exactly one selector.
  *
  * - Reads `protocolFeeBps` + `creatorFeeBps` once on mount (cached).
- * - Recomputes preview on every keystroke via `computePayoutWei` (pure
- *   bigint, no RPC).
+ * - Recomputes preview on every keystroke via `computePayoutWei`.
  * - On submit: `usePlaceBet()` → `useWaitForTransactionReceipt` → refetch.
- * - Detects the thin-liquidity refund path and warns the user that the
- *   pool would refund at settlement instead of paying out.
  */
 export function BetSheet({
   market,
@@ -35,7 +30,6 @@ export function BetSheet({
 }) {
   const [amount, setAmount] = useState('1');
 
-  // Live fee config — one batched read, wagmi caches indefinitely.
   const { data: feeData } = useReadContracts({
     contracts: [
       { ...makoContract, functionName: 'protocolFeeBps' },
@@ -52,7 +46,6 @@ export function BetSheet({
     };
   }, [feeData]);
 
-  // Parse input to wei; fallback to 0 on malformed input so preview clears.
   const betWei = useMemo(() => {
     try {
       return parseEther(amount || '0');
@@ -61,7 +54,6 @@ export function BetSheet({
     }
   }, [amount]);
 
-  // Pure bigint payout preview.
   const payoutWei = useMemo(
     () =>
       computePayoutWei(
@@ -76,13 +68,11 @@ export function BetSheet({
   );
 
   const profitWei = payoutWei > betWei ? payoutWei - betWei : 0n;
-  // computePayoutWei returns betWei as-is when the pool would refund.
   const wouldRefund = betWei > 0n && payoutWei === betWei;
 
   const { placeBet, hash, isPending, error, reset } = usePlaceBet();
   const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  // Fire onSuccess when the tx receipt lands, then reset for next bet.
   useEffect(() => {
     if (!isSuccess) return;
     onSuccess?.();
@@ -99,106 +89,100 @@ export function BetSheet({
         amountMon: amount,
       });
     } catch (e) {
-      // error surfaces via hook state
       console.error('[bet-sheet] placeBet failed:', e);
     }
   };
 
   const disabled = isPending || isWaiting || betWei === 0n;
+  const isBusy = isPending || isWaiting;
 
   const statusText = isPending
-    ? 'CONFIRM IN WALLET...'
+    ? 'CONFIRM IN WALLET…'
     : isWaiting
-      ? 'TX LANDING...'
+      ? 'TX LANDING…'
       : isSuccess
         ? 'BET PLACED ✓'
         : error
           ? `ERROR: ${(error as Error).message.slice(0, 100).toUpperCase()}`
           : null;
 
-  const isBusy = isPending || isWaiting;
-
-  // bottom-9 (36px) clears the fixed PriceTicker (h-9) pinned to the
-  // viewport bottom. Both were at bottom-0 + z-40, so the ticker was
-  // drawing on top of the PLACE BET button. Stacking them vertically
-  // fixes that on mobile and desktop.
+  // bottom-9 (36px) clears the fixed PriceTicker pinned to the viewport
+  // bottom. Stacking them vertically avoids the ticker drawing on top of
+  // the PLACE BET button.
   return (
-    <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 bg-background border-t border-black shadow-[0_-4px_0_rgba(0,0,0,0.05)]">
-      {/* Amount input */}
-      <div className="px-6 py-3 border-b border-black flex items-center gap-3 bg-surface">
-        <label
-          htmlFor="bet-amount"
-          className="text-[10px] font-black uppercase tracking-widest text-muted"
-        >
-          AMOUNT
-        </label>
-        <input
-          id="bet-amount"
-          type="text"
-          inputMode="decimal"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-          disabled={isBusy}
-          className="flex-1 min-w-0 bg-transparent border-0 outline-none text-2xl font-black tabular-nums text-foreground disabled:opacity-50"
-          placeholder="0"
-        />
-        <span className="text-xs font-black uppercase tracking-widest text-muted">MON</span>
-      </div>
+    <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 px-4">
+      <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+        {/* Amount input */}
+        <div className="px-5 py-3 border-b-2 border-ink flex items-center gap-3 bg-surface-elevated">
+          <label htmlFor="bet-amount" className="mako-label text-muted">
+            AMOUNT
+          </label>
+          <input
+            id="bet-amount"
+            type="text"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+            disabled={isBusy}
+            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-3xl tabular-nums disabled:opacity-50"
+            placeholder="0"
+          />
+          <span className="mako-label text-muted">MON</span>
+        </div>
 
-      {/* Payout preview */}
-      <div className="px-6 py-3 border-b border-black bg-surface text-[11px] font-black uppercase tracking-widest leading-relaxed">
-        {betWei === 0n ? (
-          <span className="text-muted">ENTER AMOUNT TO PREVIEW PAYOUT</span>
-        ) : wouldRefund ? (
-          <span className="text-warning">
-            POOL TOO THIN · WOULD REFUND STAKE AT RESOLVE
-          </span>
-        ) : (
-          <div className="flex justify-between gap-4">
-            <div className="text-muted">
-              WIN:{' '}
-              <span className="text-foreground">
-                {Number(formatEther(payoutWei)).toFixed(4)} MON
-              </span>
+        {/* Payout preview */}
+        <div className="px-5 py-3 border-b-2 border-ink bg-paper mako-label leading-relaxed">
+          {betWei === 0n ? (
+            <span className="text-muted">ENTER AMOUNT TO PREVIEW PAYOUT</span>
+          ) : wouldRefund ? (
+            <span className="text-mako-red">POOL TOO THIN · WOULD REFUND AT RESOLVE</span>
+          ) : (
+            <div className="flex justify-between gap-4">
+              <div className="text-muted">
+                WIN{' '}
+                <span className="text-ink tabular-nums ml-1">
+                  {Number(formatEther(payoutWei)).toFixed(4)}
+                </span>
+              </div>
+              <div className="text-muted">
+                PROFIT{' '}
+                <span className="text-ink tabular-nums ml-1">
+                  +{Number(formatEther(profitWei)).toFixed(4)}
+                </span>
+              </div>
             </div>
-            <div className="text-muted">
-              PROFIT:{' '}
-              <span className="text-foreground">
-                +{Number(formatEther(profitWei)).toFixed(4)}
-              </span>
-            </div>
+          )}
+        </div>
+
+        {/* Place Bet button */}
+        <button
+          type="button"
+          onClick={handlePlaceBet}
+          disabled={disabled}
+          className={`w-full py-4 mako-display text-lg uppercase tracking-tight transition-all ${
+            disabled
+              ? 'bg-surface-elevated text-muted cursor-not-allowed'
+              : side === 'yes'
+                ? 'bg-ink text-paper hover:bg-ink/90'
+                : 'bg-mako-red text-paper hover:bg-mako-red/90'
+          }`}
+        >
+          {isBusy
+            ? statusText
+            : `PLACE BET · ${amount || '0'} MON ${side.toUpperCase()}`}
+        </button>
+
+        {/* Non-busy status (success / error) */}
+        {statusText && !isBusy && (
+          <div
+            className={`px-4 py-2 mako-label text-center border-t-2 border-ink break-words ${
+              isSuccess ? 'bg-signal/30 text-ink' : 'bg-mako-red/15 text-mako-red'
+            }`}
+          >
+            {statusText}
           </div>
         )}
       </div>
-
-      {/* Place Bet button */}
-      <button
-        type="button"
-        onClick={handlePlaceBet}
-        disabled={disabled}
-        className={`w-full py-4 font-black uppercase tracking-widest text-sm transition-colors ${
-          disabled
-            ? 'bg-black/20 text-muted cursor-not-allowed'
-            : 'bg-black text-background hover:bg-foreground/90'
-        }`}
-      >
-        {isBusy
-          ? statusText
-          : `PLACE BET · ${amount || '0'} MON ${side.toUpperCase()}`}
-      </button>
-
-      {/* Non-busy status (success / error) */}
-      {statusText && !isBusy && (
-        <div
-          className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest text-center border-t border-black break-words ${
-            isSuccess
-              ? 'bg-yes/15 text-yes'
-              : 'bg-warning/15 text-warning'
-          }`}
-        >
-          {statusText}
-        </div>
-      )}
     </div>
   );
 }

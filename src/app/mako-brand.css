@@ -1,0 +1,366 @@
+/* Mako Markets brand system — neobrutalist design tokens + component classes.
+ * Source of truth: C:\Users\hr\Claude Cowork\mako market design file\
+ * The original tokens/mako-brand.css in the design file was truncated mid-file.
+ * This version reconstructs the full component ruleset from the design file's
+ * README + brand-sheet.html, so every .mako-* class referenced by the Gemini
+ * components resolves. */
+
+:root {
+  --mako-ink: #000000;
+  --mako-paper: #EBE5D9;
+  --mako-surface: #EBE5D9;
+  --mako-surface-elevated: #E1DBCB;
+  --mako-red: #D94A3D;
+  --mako-signal: #FACC15;
+  --mako-muted: #79797A;
+  --mako-subtle: #A3A19C;
+
+  --mako-bg: var(--mako-paper);
+  --mako-fg: var(--mako-ink);
+  --mako-border-color: var(--mako-ink);
+
+  /* Font stacks — the variable axis is provided by @fontsource-variable
+   * packages imported in globals.css. */
+  --mako-font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque",
+    "Archivo Black", -apple-system, BlinkMacSystemFont, sans-serif;
+  --mako-font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mako-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
+
+  --mako-weight-body: 500;
+  --mako-weight-bold: 700;
+  --mako-weight-black: 800;
+
+  --mako-tracking-tight: -0.03em;
+  --mako-tracking-snug: -0.02em;
+  --mako-tracking-normal: 0;
+  --mako-tracking-wide: 0.08em;
+  --mako-tracking-widest: 0.15em;
+
+  --mako-text-xs: 11px;
+  --mako-text-sm: 12px;
+  --mako-text-base: 14px;
+  --mako-text-md: 16px;
+  --mako-text-lg: 20px;
+  --mako-text-xl: 28px;
+  --mako-text-2xl: 40px;
+  --mako-text-3xl: 64px;
+
+  --mako-border-width: 2px;
+  --mako-border: var(--mako-border-width) solid var(--mako-border-color);
+
+  --mako-radius-sm: 8px;
+  --mako-radius-md: 12px;
+  --mako-radius-lg: 16px;
+  --mako-radius-full: 9999px;
+
+  --mako-shadow: 4px 4px 0 0 var(--mako-ink);
+  --mako-shadow-sm: 2px 2px 0 0 var(--mako-ink);
+  --mako-shadow-lg: 6px 6px 0 0 var(--mako-ink);
+  --mako-shadow-red: 4px 4px 0 0 var(--mako-red);
+  --mako-shadow-signal: 4px 4px 0 0 var(--mako-signal);
+
+  --mako-space-1: 4px;
+  --mako-space-2: 8px;
+  --mako-space-3: 12px;
+  --mako-space-4: 16px;
+  --mako-space-5: 20px;
+  --mako-space-6: 24px;
+  --mako-space-8: 32px;
+  --mako-space-10: 40px;
+  --mako-space-12: 48px;
+
+  --mako-press-offset: translate(2px, 2px);
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── *
+ * Deliberately do NOT hardcode color here. Typography classes inherit color
+ * from their parent so Tailwind text utilities (`text-paper`, `text-mako-red`)
+ * win on colored surfaces — e.g., a `.mako-label` inside a `bg-ink text-paper`
+ * tile renders cream, not black-on-black. Body default is ink via <body> in
+ * globals.css, so unstyled surfaces still get the expected ink text. */
+
+.mako-display {
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  letter-spacing: var(--mako-tracking-tight);
+  line-height: 1;
+}
+
+.mako-title {
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  letter-spacing: var(--mako-tracking-snug);
+  line-height: 1.1;
+  font-size: var(--mako-text-lg);
+}
+
+.mako-label {
+  font-family: var(--mako-font-sans);
+  font-weight: var(--mako-weight-black);
+  letter-spacing: var(--mako-tracking-widest);
+  text-transform: uppercase;
+  font-size: var(--mako-text-xs);
+}
+
+.mako-body {
+  font-family: var(--mako-font-sans);
+  font-weight: var(--mako-weight-body);
+  line-height: 1.5;
+  font-size: var(--mako-text-base);
+}
+
+.mako-mono {
+  font-family: var(--mako-font-mono);
+  font-weight: var(--mako-weight-body);
+  letter-spacing: var(--mako-tracking-wide);
+  font-size: var(--mako-text-sm);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.mako-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mako-space-2);
+  border: var(--mako-border);
+  border-radius: var(--mako-radius-md);
+  box-shadow: var(--mako-shadow);
+  padding: 14px 16px;
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  font-size: var(--mako-text-base);
+  color: var(--mako-ink);
+  background: var(--mako-paper);
+  cursor: pointer;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.mako-button:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 0 var(--mako-ink);
+}
+.mako-button:active {
+  transform: var(--mako-press-offset);
+  box-shadow: 2px 2px 0 0 var(--mako-ink);
+}
+.mako-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: var(--mako-shadow);
+}
+
+.mako-button--signal {
+  background: var(--mako-signal);
+  color: var(--mako-ink);
+}
+.mako-button--action {
+  background: var(--mako-red);
+  color: var(--mako-paper);
+}
+.mako-button--yes {
+  background: var(--mako-ink);
+  color: var(--mako-paper);
+  box-shadow: var(--mako-shadow-red);
+}
+.mako-button--yes:hover {
+  box-shadow: 5px 5px 0 0 var(--mako-red);
+}
+.mako-button--yes:active {
+  box-shadow: 2px 2px 0 0 var(--mako-red);
+}
+.mako-button--ghost {
+  background: transparent;
+  box-shadow: none;
+}
+.mako-button--ghost:hover {
+  background: var(--mako-surface-elevated);
+  box-shadow: var(--mako-shadow-sm);
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
+
+.mako-card {
+  background: var(--mako-paper);
+  border: var(--mako-border);
+  border-radius: var(--mako-radius-lg);
+  box-shadow: var(--mako-shadow);
+  padding: var(--mako-space-5);
+}
+.mako-card--elevated {
+  background: var(--mako-surface-elevated);
+}
+.mako-card--signal {
+  background: var(--mako-signal);
+}
+.mako-card--action {
+  background: var(--mako-red);
+  color: var(--mako-paper);
+}
+.mako-card--action .mako-title,
+.mako-card--action .mako-label,
+.mako-card--action .mako-body {
+  color: var(--mako-paper);
+}
+
+/* ── Stickers ────────────────────────────────────────────────────────────── */
+
+.mako-sticker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mako-space-1);
+  background: var(--mako-signal);
+  border: var(--mako-border);
+  border-radius: var(--mako-radius-full);
+  box-shadow: var(--mako-shadow-sm);
+  padding: 6px 14px;
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  font-size: var(--mako-text-sm);
+  color: var(--mako-ink);
+  transform: rotate(-3deg);
+}
+.mako-sticker--red {
+  background: var(--mako-red);
+  color: var(--mako-paper);
+  transform: rotate(6deg);
+}
+.mako-sticker--ink {
+  background: var(--mako-ink);
+  color: var(--mako-paper);
+}
+
+/* ── Metrics ─────────────────────────────────────────────────────────────── */
+
+.mako-metric {
+  background: var(--mako-surface-elevated);
+  border: var(--mako-border);
+  border-radius: var(--mako-radius-lg);
+  box-shadow: var(--mako-shadow);
+  padding: 18px 22px;
+}
+.mako-metric__label {
+  font-family: var(--mako-font-sans);
+  font-weight: var(--mako-weight-black);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mako-ink);
+  opacity: 0.7;
+}
+.mako-metric__value {
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  font-size: var(--mako-text-xl);
+  line-height: 1;
+  color: var(--mako-ink);
+  margin-top: 4px;
+  letter-spacing: var(--mako-tracking-tight);
+}
+.mako-metric__sub {
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  font-size: 13px;
+  color: var(--mako-ink);
+  margin-top: 3px;
+}
+
+/* ── Nav items ───────────────────────────────────────────────────────────── */
+
+.mako-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 18px;
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  font-size: var(--mako-text-base);
+  color: var(--mako-ink);
+  text-decoration: none;
+  background: var(--mako-paper);
+  border-bottom: var(--mako-border);
+  transition: background 100ms ease, color 100ms ease;
+}
+.mako-nav-item:last-child {
+  border-bottom: 0;
+}
+.mako-nav-item:hover {
+  background: var(--mako-surface-elevated);
+}
+.mako-nav-item[aria-current="page"] {
+  background: var(--mako-ink);
+  color: var(--mako-paper);
+  box-shadow: inset 4px 0 0 0 var(--mako-red);
+}
+
+/* ── Bet tiles ───────────────────────────────────────────────────────────── */
+
+.mako-bet-tile {
+  flex: 1;
+  border: var(--mako-border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-family: var(--mako-font-display);
+  font-weight: var(--mako-weight-black);
+  cursor: pointer;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.mako-bet-tile:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--mako-shadow-sm);
+}
+.mako-bet-tile--yes {
+  background: var(--mako-ink);
+  color: var(--mako-paper);
+}
+.mako-bet-tile--no {
+  background: var(--mako-red);
+  color: var(--mako-paper);
+}
+.mako-bet-tile__label {
+  font-family: var(--mako-font-sans);
+  font-weight: var(--mako-weight-black);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.mako-bet-tile__price {
+  font-size: 26px;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+/* ── Tilt utilities ──────────────────────────────────────────────────────── */
+
+.mako-tilt-left {
+  transform: rotate(-2deg);
+}
+.mako-tilt-right {
+  transform: rotate(2deg);
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+
+.mako-input {
+  width: 100%;
+  border: var(--mako-border);
+  border-radius: var(--mako-radius-md);
+  background: var(--mako-paper);
+  padding: 12px 14px;
+  font-family: var(--mako-font-sans);
+  font-weight: var(--mako-weight-body);
+  font-size: var(--mako-text-base);
+  color: var(--mako-ink);
+  outline: none;
+  transition: box-shadow 80ms ease, transform 80ms ease;
+}
+.mako-input:focus-visible {
+  box-shadow: var(--mako-shadow-sm);
+  transform: translate(-1px, -1px);
+}
+.mako-input::placeholder {
+  color: var(--mako-subtle);
+}

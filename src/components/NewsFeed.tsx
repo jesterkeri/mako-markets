@@ -55,23 +55,28 @@ export function NewsFeed() {
   if (failed && !items) {
     return (
       <div className="flex flex-col p-6">
-        <div className="text-[10px] font-black tracking-widest uppercase text-muted">
-          INTEL FEED UNAVAILABLE
-        </div>
+        <div className="mako-label text-paper/50">INTEL FEED UNAVAILABLE</div>
       </div>
     );
   }
 
   if (!items) {
     return (
-      <div className="flex flex-col divide-y divide-black/20 p-6 gap-6">
+      <div className="flex flex-col p-4 gap-3">
         {[0, 1, 2, 3, 4].map((i) => (
-          <div key={i} className="pt-6 first:pt-0">
+          <div key={i} className="p-3 bg-paper/5 rounded-lg border border-paper/10">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-16 h-3 bg-black/10 animate-pulse inline-block" aria-hidden />
-              <span className="w-12 h-3 bg-black/10 animate-pulse inline-block" aria-hidden />
+              <span
+                className="w-14 h-3 bg-paper/10 animate-pulse inline-block rounded"
+                aria-hidden
+              />
+              <span
+                className="w-10 h-3 bg-paper/10 animate-pulse inline-block rounded"
+                aria-hidden
+              />
             </div>
-            <div className="w-full h-4 bg-black/10 animate-pulse" aria-hidden />
+            <div className="w-full h-3 bg-paper/10 animate-pulse mb-1.5 rounded" aria-hidden />
+            <div className="w-2/3 h-3 bg-paper/10 animate-pulse rounded" aria-hidden />
           </div>
         ))}
       </div>
@@ -81,32 +86,34 @@ export function NewsFeed() {
   if (items.length === 0) {
     return (
       <div className="flex flex-col p-6">
-        <div className="text-[10px] font-black tracking-widest uppercase text-muted">
-          INTEL FEED EMPTY
-        </div>
+        <div className="mako-label text-paper/50">INTEL FEED EMPTY</div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col divide-y divide-black/20 p-6 gap-6">
+    <div className="flex flex-col p-4 gap-2">
       {items.map((news, i) => {
+        const chipClass = tagChip(news.tag);
         const content = (
           <>
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[9px] font-black tracking-widest uppercase text-warning bg-warning/10 px-1.5 py-0.5">
+              <span
+                className={`text-[9px] font-black tracking-widest uppercase px-1.5 py-0.5 rounded ${chipClass}`}
+              >
                 {news.tag}
               </span>
-              <span className="text-[9px] font-black tracking-widest uppercase text-muted">
+              <span className="text-[9px] font-black tracking-widest uppercase text-paper/50 tabular-nums">
                 {news.time}
               </span>
               {news.kind === 'event' && (
-                <span className="text-[9px] font-black tracking-widest uppercase text-subtle">
+                <span className="text-[9px] font-black tracking-widest uppercase text-signal flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-signal inline-block animate-pulse" />
                   LIVE
                 </span>
               )}
             </div>
-            <h3 className="text-sm font-black uppercase leading-snug group-hover:text-warning transition-colors">
+            <h3 className="text-sm font-semibold leading-relaxed text-paper group-hover:text-signal transition-colors">
               {news.title}
             </h3>
           </>
@@ -115,22 +122,35 @@ export function NewsFeed() {
         // /api/news. Even if a malicious URL slipped past the server
         // (e.g. cache, middleware, SSRF), never emit a non-http(s) href.
         const safeHref = news.url && /^https?:\/\//i.test(news.url) ? news.url : undefined;
+        const base =
+          'flex flex-col p-3 rounded-lg border border-paper/10 transition-colors';
         return safeHref ? (
           <a
             key={i}
             href={safeHref}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex flex-col pt-6 first:pt-0 group cursor-pointer"
+            className={`${base} hover:bg-paper/5 hover:border-paper/20 group cursor-pointer`}
           >
             {content}
           </a>
         ) : (
-          <div key={i} className="flex flex-col pt-6 first:pt-0 group cursor-default">
+          <div key={i} className={`${base} group cursor-default`}>
             {content}
           </div>
         );
       })}
     </div>
   );
+}
+
+/**
+ * Per-category chip styling. NBA pops red, CRYPTO gets the signal yellow,
+ * FOOTBALL uses cream on ink-border — three distinct looks so the feed
+ * reads as a palette, not a stack of identical tags.
+ */
+function tagChip(tag: Tag): string {
+  if (tag === 'NBA') return 'bg-mako-red text-paper';
+  if (tag === 'CRYPTO') return 'bg-signal text-ink';
+  return 'bg-paper text-ink'; // FOOTBALL
 }

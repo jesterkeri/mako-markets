@@ -46,43 +46,46 @@ export default function AdminMarketsPage() {
       <AdminNav active="markets" />
       {data ? <DegradedBanner streams={data.degraded} /> : null}
 
-      <div className="px-6 md:px-8 py-8 border-b border-black">
-        <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-2">
-          [ ADMIN · MARKETS ]
-        </div>
-        <h1 className="text-3xl font-black uppercase tracking-tight">
+      <div className="px-6 lg:px-8 py-8 border-b-2 border-ink">
+        <div className="mako-label text-muted mb-2">ADMIN · MARKETS</div>
+        <h1 className="mako-display text-3xl md:text-4xl mb-2">
           {data ? `${data.markets.length} TOTAL` : '…'}
         </h1>
-        <p className="text-muted text-[11px] font-bold uppercase tracking-widest mt-2">
-          EVERY MARKET EVER CREATED ON-CHAIN
-        </p>
+        <p className="mako-label text-muted">EVERY MARKET EVER CREATED ON-CHAIN</p>
       </div>
 
-      <div className="flex divide-x divide-black border-b border-black">
-        {(['all', 'open', 'pending', 'resolved'] as const).map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setFilter(k)}
-            className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest transition-colors ${
-              filter === k ? 'bg-black text-background' : 'hover:bg-black hover:text-background'
-            }`}
-          >
-            {k}
-          </button>
-        ))}
+      <div className="px-6 lg:px-8 py-4 border-b-2 border-ink flex gap-3 flex-wrap">
+        {(['all', 'open', 'pending', 'resolved'] as const).map((k) => {
+          const isActive = filter === k;
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setFilter(k)}
+              aria-current={isActive ? 'page' : undefined}
+              className={`
+                mako-label px-4 py-2 rounded-full border-2 border-ink transition-all whitespace-nowrap
+                ${isActive
+                  ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                  : 'bg-paper text-ink shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'}
+              `}
+            >
+              {k.toUpperCase()}
+            </button>
+          );
+        })}
       </div>
 
       {isLoading && !data ? (
-        <div className="py-20 text-center font-black uppercase tracking-widest text-muted text-sm border-b border-black">
+        <div className="py-20 text-center mako-label text-muted border-b-2 border-ink">
           LOADING…
         </div>
       ) : error && !data ? (
-        <div className="py-20 text-center font-black uppercase tracking-widest text-warning text-sm border-b border-black">
+        <div className="py-20 text-center mako-label text-mako-red border-b-2 border-ink">
           ANALYTICS UNAVAILABLE · RETRY
         </div>
       ) : filtered.length === 0 ? (
-        <div className="py-20 text-center font-black uppercase tracking-widest text-muted text-sm border-b border-black">
+        <div className="py-20 text-center mako-label text-muted border-b-2 border-ink">
           NO MARKETS IN THIS FILTER
         </div>
       ) : (
@@ -119,12 +122,12 @@ function MarketRow({
   const statusClass = m.resolved
     ? 'text-subtle'
     : m.closeTimeSec <= nowSec
-      ? 'text-warning'
-      : 'text-yes';
+      ? 'text-mako-red'
+      : 'text-ink';
 
   return (
-    <div className="border-b border-black px-6 md:px-8 py-5">
-      <div className="text-[10px] font-black uppercase tracking-widest text-muted mb-1 flex flex-wrap gap-x-4 gap-y-1">
+    <div className="border-b-2 border-ink/10 px-6 lg:px-8 py-5">
+      <div className="mako-label text-muted mb-1 flex flex-wrap gap-x-4 gap-y-1">
         <span>ID {m.id}</span>
         <span>{typeLabel(m.mType)}</span>
         <span>POOL {fourDp(m.poolMon)} MON</span>
@@ -134,7 +137,7 @@ function MarketRow({
             href={explorerAddress(m.creator)}
             target="_blank"
             rel="noreferrer noopener"
-            className="text-foreground hover:underline"
+            className="text-ink hover:underline"
           >
             {short(m.creator)}
           </a>
@@ -143,20 +146,20 @@ function MarketRow({
 
       <Link
         href={`/market/${m.id}`}
-        className="block text-xl font-black uppercase leading-tight hover:underline"
+        className="block mako-title text-lg leading-tight hover:underline"
       >
         {m.question}
       </Link>
 
-      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[10px] font-black uppercase tracking-widest text-muted">
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 mako-label text-muted">
         <span>
-          YES <span className="text-foreground tabular-nums">{fourDp(m.yesMon)}</span>
+          YES <span className="text-ink tabular-nums">{fourDp(m.yesMon)}</span>
         </span>
         <span>
-          NO <span className="text-foreground tabular-nums">{fourDp(m.noMon)}</span>
+          NO <span className="text-ink tabular-nums">{fourDp(m.noMon)}</span>
         </span>
         <span>
-          BETTORS <span className="text-foreground tabular-nums">{m.bettorCount}</span>
+          BETTORS <span className="text-ink tabular-nums">{m.bettorCount}</span>
         </span>
         <span className={statusClass}>{status}</span>
       </div>

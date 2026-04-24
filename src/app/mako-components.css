@@ -1,0 +1,29 @@
+/* Utility classes added by the Gemini UI pass on top of mako-brand.css.
+ * Kept separate so the brand system file stays a 1:1 copy of the design-file
+ * source of truth. Imported by globals.css after mako-brand.css. */
+
+@layer components {
+  /* Neobrutalist skeleton that matches card styling constraints */
+  .mako-skeleton {
+    @apply animate-pulse border-2 border-ink bg-surface-elevated shadow-[4px_4px_0_0_#000000] rounded-xl;
+  }
+
+  .mako-skeleton-pill {
+    @apply animate-pulse border-2 border-ink bg-surface-elevated shadow-[4px_4px_0_0_#000000] rounded-full;
+  }
+
+  /* Structural flex wrapper standardizing max widths for primary layouts */
+  .mako-container {
+    @apply w-full max-w-4xl mx-auto px-4 sm:px-6;
+  }
+}
+
+/* Hide scrollbar while keeping the element scrollable. Applied to the
+ * MARKET INTEL news feed container so the ink panel stays clean. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE / legacy Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* WebKit (Chrome, Safari, Edge) */
+}
