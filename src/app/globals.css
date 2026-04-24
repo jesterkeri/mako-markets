@@ -1,4 +1,13 @@
-@import "tailwindcss";
+/* Explicitly scope Tailwind v4's content scan to src/ (relative to this
+ * file's location at src/app/globals.css, so "../" = src/). Without this,
+ * Tailwind v4's default behavior is to scan from the current working
+ * directory — which can resolve to the parent workspace when dev is
+ * launched from the wrong cwd, dragging cf-worker/, staged-gemini/, and
+ * every other unrelated project in `C:\Users\hr\My VS code\` into the
+ * content graph. That explodes the Turbopack cache (we saw 2.4 GB) and
+ * OOMs the dev server during cache deserialization. Keeping source()
+ * scoped to src/ means Tailwind only ever walks the app's own tree. */
+@import "tailwindcss" source("../");
 
 /* Variable-axis web fonts — no remote fetch (bundled by fontsource). Must
  * come before mako-brand.css so the Bricolage/Inter families are registered

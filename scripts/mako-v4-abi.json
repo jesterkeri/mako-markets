@@ -56,6 +56,19 @@
   },
   {
     "type": "function",
+    "name": "MIN_DURATION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MIN_RATIO_FLOOR_BPS",
     "inputs": [],
     "outputs": [
@@ -69,6 +82,19 @@
   },
   {
     "type": "function",
+    "name": "MIN_SECONDS_BETWEEN_BETS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "RESOLUTION_GRACE",
     "inputs": [],
     "outputs": [
@@ -76,6 +102,25 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "blocked",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -143,6 +188,11 @@
         "name": "oracleRef",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "bettingCloseTime_",
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "closeTime",
@@ -237,6 +287,11 @@
             "internalType": "uint64"
           },
           {
+            "name": "bettingCloseTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
             "name": "totalYes",
             "type": "uint256",
             "internalType": "uint256"
@@ -270,6 +325,16 @@
             "name": "creatorFeeClaimed",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "protocolFeeBpsSnapshot",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "creatorFeeBpsSnapshot",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -306,6 +371,49 @@
         "name": "hasClaimed",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lastBetTime",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "marketMinLiquidityRatioBps",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -352,6 +460,11 @@
         "internalType": "uint64"
       },
       {
+        "name": "bettingCloseTime",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
         "name": "totalYes",
         "type": "uint256",
         "internalType": "uint256"
@@ -385,6 +498,42 @@
         "name": "creatorFeeClaimed",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "protocolFeeBpsSnapshot",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "creatorFeeBpsSnapshot",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxBetPerWalletPerMarket",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxWalletShareBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -574,6 +723,24 @@
   },
   {
     "type": "function",
+    "name": "setBlocked",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "isBlocked",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setFees",
     "inputs": [
       {
@@ -583,6 +750,32 @@
       },
       {
         "name": "_creatorBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxBetPerWalletPerMarket",
+    "inputs": [
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxWalletShareBps",
+    "inputs": [
+      {
+        "name": "newBps",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -605,6 +798,19 @@
   },
   {
     "type": "function",
+    "name": "setShareCapMinPool",
+    "inputs": [
+      {
+        "name": "newMinPool",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setTreasury",
     "inputs": [
       {
@@ -615,6 +821,43 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "shareCapMinPool",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "suggestedCryptoBettingCloseTime",
+    "inputs": [
+      {
+        "name": "createdAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "resolutionTime",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -757,6 +1000,31 @@
   },
   {
     "type": "event",
+    "name": "CreatorFeeForfeited",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "forgoneAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CreatorFeePaid",
     "inputs": [
       {
@@ -776,6 +1044,37 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FeesChanged",
+    "inputs": [
+      {
+        "name": "oldProtocolBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "oldCreatorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "newProtocolBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "newCreatorBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -844,6 +1143,120 @@
   },
   {
     "type": "event",
+    "name": "MaxBetPerWalletChanged",
+    "inputs": [
+      {
+        "name": "oldValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxWalletShareBpsChanged",
+    "inputs": [
+      {
+        "name": "oldValue",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "newValue",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "oldOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ResolverChanged",
+    "inputs": [
+      {
+        "name": "oldResolver",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newResolver",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ShareCapMinPoolChanged",
+    "inputs": [
+      {
+        "name": "oldValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TreasuryChanged",
+    "inputs": [
+      {
+        "name": "oldTreasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newTreasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TreasuryWithdrawn",
     "inputs": [
       {
@@ -851,6 +1264,25 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletBlockStatusChanged",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "isBlocked",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -877,6 +1309,11 @@
   },
   {
     "type": "error",
+    "name": "BadDuration",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BadOutcome",
     "inputs": []
   },
@@ -888,6 +1325,16 @@
   {
     "type": "error",
     "name": "BelowMin",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BetTooSoon",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BettingClosed",
     "inputs": []
   },
   {
@@ -958,6 +1405,21 @@
   {
     "type": "error",
     "name": "TransferAmountMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WalletCapExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WalletIsBlocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WalletShareCapExceeded",
     "inputs": []
   },
   {
