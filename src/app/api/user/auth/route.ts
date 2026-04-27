@@ -49,6 +49,14 @@ import {
 //   500  config error (missing MAGIC_SECRET_KEY) or unexpected DB failure
 //   502  Magic admin API unreachable / metadata lookup failed
 //
+// Success response shape:
+//   { ok: true, authed: true, email, magicEoa, safeAddress }
+//
+// `ok: true` keeps any caller that checks `body.ok` happy (symmetric with
+// /api/user/logout). The auth payload is included so the client can
+// `setQueryData(['user'], userPayload)` immediately on receipt and avoid
+// an unauthed→authed flash before /api/user/me has been re-fetched.
+//
 // Body parsing intentionally rejects unknown extras quietly — the auth route
 // must never echo browser-supplied fields into the DB. Email + EOA come
 // only from the Magic admin lookup.
@@ -154,7 +162,13 @@ export async function POST(req: Request) {
     maxAge: USER_SESSION_MAX_AGE_SEC,
   });
 
-  return Response.json({ ok: true });
+  return Response.json({
+    ok: true,
+    authed: true,
+    email,
+    magicEoa: eoa,
+    safeAddress,
+  });
 }
 
 /// Pull the safe diagnostic fields off an unknown error for logging. Avoids

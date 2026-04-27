@@ -2,8 +2,10 @@
 
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { getMagic } from '@/lib/magic-browser';
+import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 
 // ----------------------------------------------------------------------------
 // /signup — Phase 1A email auth entry point.
@@ -45,8 +47,11 @@ type SubmitState =
   | { kind: 'retry_available'; didToken: string; message: string }
   | { kind: 'error'; message: string };
 
+type AuthSuccessBody = { ok: true } & AuthedUser;
+
 export default function SignupPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
   /// Synchronous re-entry guard. React state updates queue across renders, so
@@ -75,8 +80,27 @@ export default function SignupPage() {
     }
 
     if (res.ok) {
+      // Pre-populate the ['user'] cache before navigating so the home page
+      // mounts already authed — no unauthed→authed flash even though
+      // useUser uses refetchOnMount: 'always'. The auth route returns the
+      // full canonical payload alongside { ok: true }; we strip `ok` and
+      // pass through the auth fields verbatim.
+      try {
+        const body = (await res.json()) as Partial<AuthSuccessBody>;
+        if (body && body.authed === true && body.email && body.magicEoa && body.safeAddress) {
+          queryClient.setQueryData(USER_QUERY_KEY, {
+            authed: true,
+            email: body.email,
+            magicEoa: body.magicEoa,
+            safeAddress: body.safeAddress,
+          } satisfies AuthedUser);
+        }
+      } catch {
+        // Body parse failure is non-fatal — the home page will refetch on
+        // mount and pick up the live session via /api/user/me. Worst case
+        // is a brief skeleton while that happens.
+      }
       router.replace('/');
-      router.refresh();
       return;
     }
 

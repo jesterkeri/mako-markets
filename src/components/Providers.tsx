@@ -94,9 +94,48 @@ if (typeof window === 'undefined') {
   }
 }
 
-const queryClient = new QueryClient();
+// ---------------------------------------------------------------
+// QueryClient lifetime (TanStack Advanced SSR pattern).
+//
+// Module-scope `new QueryClient()` is wrong under Next App Router because
+// Client Components participate in server prerender, and a single shared
+// instance there leaks cache across requests. Two-track approach:
+//
+//   - Server: every call to getQueryClient() returns a fresh client.
+//     Each request gets its own cache; nothing crosses request boundaries.
+//   - Browser: a single module-scope `browserQueryClient` is reused across
+//     re-renders. Created lazily on first call.
+//
+// Inside the component we call `getQueryClient()` directly — NOT
+// `useState(() => getQueryClient())`. TanStack's docs explicitly warn that
+// useState initialization can be discarded by React if there's no Suspense
+// boundary protecting it; the singleton check inside getQueryClient() is
+// already the correct memoization. Relevant: TanStack Advanced SSR
+// (https://tanstack.com/query/v5/docs/framework/react/guides/advanced-ssr).
+// ---------------------------------------------------------------
+function makeQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        // 30s stale window matches the auth surface refresh expectation —
+        // long enough to dedupe AuthMenu + AuthRail observers, short enough
+        // that a returning tab catches a fresh server view.
+        staleTime: 30_000,
+      },
+    },
+  });
+}
+
+let browserQueryClient: QueryClient | undefined;
+
+function getQueryClient(): QueryClient {
+  if (typeof window === 'undefined') return makeQueryClient();
+  if (!browserQueryClient) browserQueryClient = makeQueryClient();
+  return browserQueryClient;
+}
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const queryClient = getQueryClient();
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>

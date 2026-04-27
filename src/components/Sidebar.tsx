@@ -2,19 +2,20 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Logo } from '@/components/Logo';
+import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 
 /**
  * Neobrutalist hover-expand sidebar.
  *
- * Default state is an 80px icon rail. Hovering the sidebar expands it to
- * 288px with a spring animation; mouse-leave collapses it back. No toggle
- * button — the interaction is pure hover. Icons stay visible in both
- * states so the rail is always legible; the wordmark + labels fade in
- * under AnimatePresence when expanded.
+ * Default: 80px icon rail. Hover anywhere on the aside to spring out to
+ * 288px; mouse-leave collapses back. Auth UI deliberately lives in the
+ * page top header, not here — Joshua redirected during Phase 1F visual
+ * review because the sidebar bottom auth panel made the surface feel
+ * heavy. The sidebar is now a pure nav element.
  */
 
 const EXPANDED_WIDTH = 288;
@@ -66,6 +67,81 @@ const items: NavItem[] = [
   { label: 'Create', path: '/create', icon: <CreateIcon /> },
 ];
 
+/**
+ * Bottom-of-sidebar account block. Renders only for authed users; unauthed
+ * sidebar shows nav only (the SIGN IN CTA lives in the top header). Two
+ * presentations driven by the parent's `hovering` state:
+ *   - collapsed (80px rail): yellow initial-circle as a passive identity
+ *     indicator. Not interactive — sign-out lives behind hover-expand.
+ *   - expanded (288px): truncated email + SIGN OUT button.
+ *
+ * Sign-out flow mirrors AuthMenu's: POST /api/user/logout, write
+ * { authed: false } into the ['user'] cache via setQueryData. No
+ * router.refresh — nothing server-side reads auth in Phase 1F.
+ */
+function SidebarAccount({ hovering }: { hovering: boolean }) {
+  const queryClient = useQueryClient();
+  const { user } = useUser();
+  const [signingOut, setSigningOut] = useState(false);
+
+  if (!user) return null;
+
+  const initial = user.email.trim().charAt(0).toUpperCase() || '?';
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      const res = await fetch('/api/user/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (res.ok) {
+        queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
+      }
+    } catch {
+      // Network error — leave the cache alone so the UI doesn't lie about
+      // auth state. Next mount or refetch will reconcile.
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
+  return (
+    <div className="mt-auto border-t-2 border-ink shrink-0">
+      {hovering ? (
+        <div className="flex flex-col gap-2 p-4">
+          <div
+            className="mako-label text-[10px] text-muted truncate"
+            title={user.email}
+          >
+            {user.email}
+          </div>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="mako-button mako-label w-full px-3! py-1.5! text-[11px]! disabled:opacity-60"
+            aria-label={`Sign out ${user.email}`}
+          >
+            {signingOut ? 'SIGNING OUT…' : 'SIGN OUT'}
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-center py-3">
+          <div
+            className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-ink bg-signal text-ink font-display font-black text-sm"
+            aria-label={`Signed in as ${user.email}`}
+            title={user.email}
+          >
+            {initial}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const [hovering, setHovering] = useState(false);
@@ -79,12 +155,15 @@ export function Sidebar() {
       onHoverEnd={() => setHovering(false)}
       className="hidden md:flex flex-col shrink-0 border-r-2 border-ink bg-paper sticky top-0 self-start h-[calc(100dvh-2.25rem)] overflow-y-auto overflow-x-hidden no-scrollbar z-40"
     >
-      {/* Brand row */}
+      {/* Brand row — centered when collapsed (matches the icon-only nav rail
+          beneath it); shifts to a left-aligned logo + wordmark when expanded. */}
       <Link
         href="/"
-        className="flex items-center gap-3 h-20 border-b-2 border-ink shrink-0 px-5 hover:bg-surface-elevated transition-colors min-w-0"
+        className={`flex items-center h-12 border-b-2 border-ink shrink-0 hover:bg-surface-elevated transition-colors min-w-0 ${
+          hovering ? 'justify-start gap-3 px-5' : 'justify-center px-0'
+        }`}
       >
-        <Logo size={32} className="text-ink shrink-0" title="Mako Markets" />
+        <Logo size={22} className="text-ink shrink-0" title="Mako Markets" />
         <AnimatePresence initial={false}>
           {hovering && (
             <motion.span
@@ -93,7 +172,7 @@ export function Sidebar() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="font-display font-black text-2xl tracking-tight leading-none text-ink whitespace-nowrap"
+              className="font-display font-black text-base tracking-tight leading-none text-ink whitespace-nowrap"
             >
               MAKO
             </motion.span>
@@ -101,8 +180,10 @@ export function Sidebar() {
         </AnimatePresence>
       </Link>
 
-      {/* Nav */}
-      <nav className="p-4 flex flex-col gap-1">
+      {/* Nav. Wrapped in flex-1 so SidebarAccount's mt-auto pins it to the
+          bottom whenever an authed account block is rendered; unauthed users
+          just see nav with empty space below. */}
+      <nav className="p-4 flex flex-col gap-1 flex-1">
         {items.map((item) => {
           const isActive = pathname === item.path;
           // Red inset stripe is an expanded-only accent — it looks awkward on
@@ -144,80 +225,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Wallet — fades in only when expanded (icon rail has no room for a full button) */}
-      <div className="mt-auto border-t-2 border-ink bg-surface-elevated">
-        <AnimatePresence initial={false}>
-          {hovering && (
-            <motion.div
-              key="wallet"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-            >
-              <ConnectButton.Custom>
-                {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
-                  const ready = mounted;
-                  const connected = ready && account && chain;
-                  return (
-                    <div
-                      {...(!ready && {
-                        'aria-hidden': true,
-                        style: { opacity: 0, pointerEvents: 'none', userSelect: 'none' },
-                      })}
-                      className="flex flex-col gap-1 p-4"
-                    >
-                      {!connected && (
-                        <button
-                          onClick={openConnectModal}
-                          type="button"
-                          className="mako-button mako-button--signal w-full mako-label text-ink"
-                        >
-                          CONNECT WALLET
-                        </button>
-                      )}
-                      {connected && chain.unsupported && (
-                        <button
-                          onClick={openChainModal}
-                          type="button"
-                          className="mako-button mako-button--action w-full mako-label"
-                        >
-                          WRONG NETWORK
-                        </button>
-                      )}
-                      {connected && !chain.unsupported && (
-                        <>
-                          <button
-                            onClick={openChainModal}
-                            type="button"
-                            className="mako-button w-full mako-label justify-start"
-                          >
-                            {chain.hasIcon && chain.iconUrl && (
-                              <img
-                                alt={chain.name ?? 'Chain icon'}
-                                src={chain.iconUrl}
-                                style={{ width: 14, height: 14, borderRadius: 999 }}
-                              />
-                            )}
-                            <span className="truncate">{chain.name}</span>
-                          </button>
-                          <button
-                            onClick={openAccountModal}
-                            type="button"
-                            className="mako-button w-full mako-label truncate"
-                          >
-                            {account.displayName}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  );
-                }}
-              </ConnectButton.Custom>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+      <SidebarAccount hovering={hovering} />
     </motion.aside>
   );
 }

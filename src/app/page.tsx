@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMarkets } from '@/lib/hooks';
+import { useUser } from '@/lib/use-user';
 import { MarketType } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
 import { Logo } from '@/components/Logo';
+import { AuthMenu } from '@/components/AuthMenu';
 
 type Tab = 'all' | 'crypto' | 'football' | 'nba';
 
@@ -79,32 +80,11 @@ function MobileHeader() {
         <Logo size={28} className="text-ink" title="Mako Markets" />
         <span className="font-display font-black text-2xl tracking-tight text-ink">MAKO</span>
       </Link>
-      <ConnectButton.Custom>
-        {({ account, chain, openAccountModal, openConnectModal, mounted }) => {
-          const ready = mounted;
-          const connected = ready && account && chain;
-          if (!connected) {
-            return (
-              <button
-                onClick={openConnectModal}
-                type="button"
-                className="mako-button mako-button--signal mako-label px-3 py-2 text-[11px]"
-              >
-                CONNECT
-              </button>
-            );
-          }
-          return (
-            <button
-              onClick={openAccountModal}
-              type="button"
-              className="mako-button mako-label px-3 py-2 text-[11px]"
-            >
-              {account.displayName}
-            </button>
-          );
-        }}
-      </ConnectButton.Custom>
+      {/* Single SIGN IN / SIGN OUT button surfaces the email-first flow.
+          External-wallet (RainbowKit) connection lives on /me, where the
+          wagmi-driven wallet UI already runs — keeping the home header
+          to one auth action only. */}
+      <AuthMenu className="px-3 py-2 text-[11px]" />
     </header>
   );
 }
@@ -132,6 +112,7 @@ function MobileBottomNav() {
 
 export default function Home() {
   const { markets, isLoading } = useMarkets();
+  const { user } = useUser();
   const [tab, setTab] = useState<Tab>('all');
   const [nowSec, setNowSec] = useState(() => BigInt(Math.floor(Date.now() / 1000)));
 
@@ -155,18 +136,25 @@ export default function Home() {
       <MobileHeader />
 
       <div className="flex-1 w-full flex flex-col">
-        {/* Top header bar — fixed h-20 matches the Sidebar brand row and
+        {/* Top header bar — fixed h-12 matches the Sidebar brand row and
             MarketIntelAside header so the bottom border line runs
             continuous across all three columns. Sticky so it stays flush
             with MarketIntelAside (also sticky) when the feed scrolls. */}
-        <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-20 border-b-2 border-ink bg-paper sticky top-0 z-30">
-          <h1 className="mako-display text-xl lg:text-2xl">LIVE MARKETS</h1>
-          <Link
-            href="/create"
-            className="mako-button mako-button--signal mako-label"
-          >
-            + NEW MARKET
-          </Link>
+        <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-ink bg-paper sticky top-0 z-30">
+          <h1 className="mako-display text-sm lg:text-base">LIVE MARKETS</h1>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/create"
+              className="mako-button mako-button--signal mako-label px-3! py-1.5! text-[11px]!"
+            >
+              + NEW MARKET
+            </Link>
+            {/* Top-header auth slot is acquisition-only: SIGN IN when unauthed,
+                nothing when authed (the post-auth account UI lives in the
+                sidebar). Loading state renders nothing here so there's no
+                skeleton-to-empty flash for already-authed users on cold load. */}
+            {!user && <AuthMenu className="px-3! py-1.5! text-[11px]!" />}
+          </div>
         </header>
 
         <div className="px-4 sm:px-6 lg:px-8 py-5 md:py-6 max-w-6xl mx-auto w-full">
