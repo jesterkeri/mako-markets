@@ -1,5 +1,7 @@
-// Load .env.local first (Next.js convention), then .env as fallback.
+// Load env files in Next.js precedence order (highest priority first).
+// `vercel env pull` writes to .env.development.local.
 import { config } from 'dotenv';
+config({ path: '.env.development.local' });
 config({ path: '.env.local' });
 config({ path: '.env' });
 
@@ -10,7 +12,7 @@ export default {
   out: './src/db/migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.POSTGRES_URL ?? '',
+    url: process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? '',
   },
   // Stronger safety default: generate a migration file rather than pushing
   // schema changes directly to the DB. Run `pnpm db:generate` to create a

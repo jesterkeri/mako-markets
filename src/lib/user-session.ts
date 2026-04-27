@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { eq } from 'drizzle-orm';
 
-import { db } from '@/db/client';
+import { db, type DbOrTx } from '@/db/client';
 import { sessions, users } from '@/db/schema';
 
 // ----------------------------------------------------------------------------
@@ -106,13 +106,24 @@ export function verifySessionToken(
  * value the caller should set on the response. Session id is pre-generated
  * so the INSERT lands complete (no mid-flight orphan rows if the process
  * dies between INSERT and UPDATE).
+ *
+ * Pass `opts.tx` when calling from inside a `db.transaction(...)` block so
+ * the session insert participates in the same atomic unit as upstream user /
+ * user_safes writes. Without it, the session row could be inserted while a
+ * sibling write rolls back, leaving a session that points at a half-onboarded
+ * user. Default behavior (no tx) is unchanged for any future standalone
+ * caller.
  */
-export async function createSession(userId: string): Promise<string> {
+export async function createSession(
+  userId: string,
+  opts?: { tx?: DbOrTx },
+): Promise<string> {
   const sid = randomUUID();
   const expiresAt = new Date(Date.now() + USER_SESSION_MAX_AGE_SEC * 1000);
   const token = signSessionToken(sid);
 
-  await db.insert(sessions).values({
+  const writer = opts?.tx ?? db;
+  await writer.insert(sessions).values({
     id: sid,
     userId,
     expiresAt,

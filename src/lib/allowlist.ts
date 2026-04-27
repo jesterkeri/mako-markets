@@ -4,6 +4,7 @@ import { eq, desc } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { allowlistEmails } from '@/db/schema';
+import { normalizeEmail } from './email';
 
 // ----------------------------------------------------------------------------
 // src/lib/allowlist.ts
@@ -40,17 +41,6 @@ function currentStage(): AllowlistStage {
     );
   }
   return raw as AllowlistStage;
-}
-
-/// Normalize before read or write. Trim + lowercase handle the 99% case of
-/// "did the user type the same email twice with different capitalization /
-/// leading space". Unicode NFC normalization handles the rare case where the
-/// same glyph can be encoded two ways (e.g., 'é' as one codepoint vs 'e' +
-/// combining acute). We deliberately do NOT punycode/canonicalize the domain
-/// or strip '+tag' — those are policy decisions (alias merging, IDN support)
-/// we'd rather make explicitly when we know we need them.
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase().normalize('NFC');
 }
 
 /**

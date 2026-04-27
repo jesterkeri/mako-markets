@@ -10,10 +10,12 @@
 //   node scripts/with-bw.mjs pnpm db:migrate   (if you stash it in Bitwarden)
 // ----------------------------------------------------------------------------
 
-// Load .env.local first (Next.js convention — overrides .env), then .env as fallback.
-// `dotenv/config`'s default is `.env` only, which misses the Vercel-pulled POSTGRES_*
-// vars that land in .env.local.
+// Load env files in Next.js precedence order (highest priority first).
+// `vercel env pull` writes to .env.development.local; manual secrets live in
+// .env.local; .env is the committed defaults file. dotenv's default is `.env`
+// only, which would miss everything Vercel-pulled or manually placed.
 import { config } from 'dotenv';
+config({ path: '.env.development.local' });
 config({ path: '.env.local' });
 config({ path: '.env' });
 
@@ -21,9 +23,13 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 
-const url = process.env.POSTGRES_URL;
+// Vercel + Neon's newer integration uses DATABASE_URL; the older Vercel
+// Postgres product used POSTGRES_URL. Accept either.
+const url = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
 if (!url) {
-  console.error('POSTGRES_URL is not set. See .env.local.example.');
+  console.error(
+    'No Postgres connection string found. Set DATABASE_URL or POSTGRES_URL. See .env.local.example.',
+  );
   process.exit(1);
 }
 

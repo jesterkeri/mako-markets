@@ -24,3 +24,18 @@ export const monadTestnet = {
     },
   },
 } as const satisfies Chain;
+
+/// Numeric chain ids for the chains Mako tracks Safe addresses on. Used by
+/// `user_safes` upserts at signup time. Path X locks every chain to the same
+/// derived Safe address, but the rows are still keyed `(user_id, chain_id)`
+/// so the schema can pivot to Path Y (different addresses per chain) without
+/// a migration if a future chain breaks Path X.
+export const MONAD_TESTNET_ID = 10143 as const;
+export const BASE_SEPOLIA_ID = 84532 as const;
+
+/// The set of chain ids a user gets a Safe row for at signup. Keep this in
+/// sync with the chains the rest of the app reads balances from.
+export const SAFE_TRACKED_CHAIN_IDS = [
+  MONAD_TESTNET_ID,
+  BASE_SEPOLIA_ID,
+] as const;

@@ -28,6 +28,13 @@ import * as schema from './schema';
 type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
 type PgClient = ReturnType<typeof postgres>;
 
+/// Either the top-level `db` instance or the transaction client passed into a
+/// `db.transaction(async (tx) => ...)` callback. Use this as the parameter
+/// type for helpers that should be callable from inside or outside a tx —
+/// pass the `tx` argument when atomicity matters, or fall back to `db` when
+/// the helper stands alone.
+export type DbOrTx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0] | DrizzleDb;
+
 // `globalThis` cache: survives HMR in dev, no-op in production (each Vercel
 // function instance starts fresh anyway).
 const globalForDb = globalThis as unknown as {
@@ -36,10 +43,16 @@ const globalForDb = globalThis as unknown as {
 };
 
 function client(): DrizzleDb {
-  const connectionString = process.env.POSTGRES_URL;
+  // Vercel + Neon's newer integration provisions DATABASE_URL; the older
+  // first-party Vercel Postgres product used POSTGRES_URL. Accept either —
+  // priority is DATABASE_URL because that's what `vercel env pull` injects
+  // for any new project, and the older name remains available so legacy
+  // `.env.local` files keep working.
+  const connectionString =
+    process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
   if (!connectionString) {
     throw new Error(
-      'POSTGRES_URL is not set. See .env.local.example for the Phase-1 env vars.',
+      'No Postgres connection string found. Set DATABASE_URL (preferred) or POSTGRES_URL in .env.local. See .env.local.example for Phase-1 env vars.',
     );
   }
   if (!globalForDb.__makoDrizzle) {
