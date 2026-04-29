@@ -5,10 +5,14 @@ import { useQuery } from '@tanstack/react-query';
 /**
  * Shape returned by `/api/admin/analytics`.
  *
- * All `bigint` values are pre-formatted to decimal strings on the server
- * so the payload is pure JSON-safe. `volumeWei` stays as a bigint-shaped
- * string (unformatted) alongside `volumeMon` so the client can sort by
- * raw wei without going through float.
+ * All USDC values are pre-formatted to decimal strings on the server so
+ * the payload is pure JSON-safe. The `*BaseUnits` siblings stay as
+ * bigint-shaped strings (unformatted, 6-decimal base units) so the
+ * client can sort exactly without going through float.
+ *
+ * USDC denomination: every `*Usdc` field is a string formatted via
+ * `formatUsdcExact` (full 6dp precision) so downstream `parseFloat(...)`
+ * sums and sort keys don't lose sub-cent precision.
  */
 export type AdminAnalytics = {
   /**
@@ -23,7 +27,7 @@ export type AdminAnalytics = {
    * Effective block range the server scanned. When `bounded` is true, the
    * scan is clipped by a lookback window (public RPC mitigation); volume-
    * and user-shape numbers that derive from event logs only cover this
-   * window. Lifetime contract-state numbers (marketCount, treasuryMon)
+   * window. Lifetime contract-state numbers (marketCount, treasuryUsdc)
    * still reflect the whole chain because they come from eth_call, not logs.
    */
   window: {
@@ -37,30 +41,30 @@ export type AdminAnalytics = {
     resolvedCount: number;
     unresolvedOpenCount: number;
     pendingResolveCount: number;
-    totalVolumeMon: string;
+    totalVolumeUsdc: string;
     uniqueBettors: number;
     uniqueCreators: number;
-    /** Current MON sitting in the contract awaiting `withdrawTreasury()`. */
-    treasuryMon: string;
-    /** Cumulative MON paid out to creators via CreatorFeePaid events. */
-    creatorFeesPaidMon: string;
-    /** Cumulative protocol fees: treasuryMon + everything ever withdrawn. */
-    totalProtocolFeesMon: string;
+    /** Current USDC sitting in the contract awaiting `withdrawTreasury()`. */
+    treasuryUsdc: string;
+    /** Cumulative USDC paid out to creators via CreatorFeePaid events. */
+    creatorFeesPaidUsdc: string;
+    /** Cumulative protocol fees: treasuryUsdc + everything ever withdrawn. */
+    totalProtocolFeesUsdc: string;
     fetchedAtSec: number;
   };
   users: Array<{
     address: `0x${string}`;
     betCount: number;
-    volumeMon: string;
-    /** Raw wei as a decimal string. Use for exact bigint sort on the client. */
-    volumeWei: string;
+    volumeUsdc: string;
+    /** Raw 6-decimal base units as a decimal string. Use for exact bigint sort. */
+    volumeBaseUnits: string;
     marketsCreated: number;
-    /** Cumulative MON earned by this address as a creator (CreatorFeePaid sum). */
-    creatorFeesEarnedMon: string;
-    /** Raw wei for the same — use for exact bigint sort on the client. */
-    creatorFeesEarnedWei: string;
-    /** Cumulative MON this address claimed from winning bets (Claimed sum). */
-    claimedMon: string;
+    /** Cumulative USDC earned by this address as a creator (CreatorFeePaid sum). */
+    creatorFeesEarnedUsdc: string;
+    /** Raw 6-decimal base units for the same — use for exact bigint sort. */
+    creatorFeesEarnedBaseUnits: string;
+    /** Cumulative USDC this address claimed from winning bets (Claimed sum). */
+    claimedUsdc: string;
     firstSeenSec: number;
     lastSeenSec: number;
   }>;
@@ -71,19 +75,20 @@ export type AdminAnalytics = {
     question: string;
     createdAtSec: number;
     closeTimeSec: number;
-    poolMon: string;
-    yesMon: string;
-    noMon: string;
+    bettingCloseTimeSec: number;
+    poolUsdc: string;
+    yesUsdc: string;
+    noUsdc: string;
     bettorCount: number;
     outcome: 0 | 1 | 2 | 3;
     resolved: boolean;
   }>;
   activity: Array<
-    | { kind: 'bet'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountMon: string; isYes: boolean }
+    | { kind: 'bet'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountUsdc: string; isYes: boolean }
     | { kind: 'market'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}` }
     | { kind: 'resolve'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; outcome: 0 | 1 | 2 | 3 }
-    | { kind: 'claim'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountMon: string }
-    | { kind: 'fee'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountMon: string }
+    | { kind: 'claim'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountUsdc: string }
+    | { kind: 'fee'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountUsdc: string }
   >;
   /**
    * Daily active wallets for the last 30 days.

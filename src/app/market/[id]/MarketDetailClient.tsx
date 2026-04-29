@@ -6,8 +6,14 @@ import { useWaitForTransactionReceipt } from 'wagmi';
 import { useMarket, useResolveMarket } from '@/lib/hooks';
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import { useIsAdmin } from '@/lib/admin';
-import { yesMultiplier, noMultiplier, secondsLeft, poolSizeMon } from '@/lib/mocks';
-import { formatEther } from 'viem';
+import {
+  yesMultiplier,
+  noMultiplier,
+  secondsLeft,
+  secondsUntilBettingClose,
+  poolSizeUsdc,
+} from '@/lib/mocks';
+import { formatUsdc } from '@/lib/usdc';
 import { BetSheet } from '@/components/BetSheet';
 import { ClaimButton } from '@/components/ClaimButton';
 import { ShareMarketButton } from '@/components/ShareMarketButton';
@@ -19,9 +25,9 @@ import { formatTime, humanizeUntil } from '@/lib/time';
  * page.tsx owns metadata (og:title / og:image) + awaits the dynamic route
  * params; we just receive the stringified id and render the wagmi-driven UI.
  *
- * Visual layer: neobrutalist — 2px ink borders, 4×4 hard offset shadows,
- * YES (ink) / NO (mako-red) tiles, cream surface. Pool + bettor counts
- * live in a 2×2 metric grid.
+ * **v4 timestamp split** — `bettingClosed` (the bet-button gate) reads
+ * `bettingCloseTime`. The "AWAITING RESOLUTION" banner reads `closeTime`
+ * (resolution legality). For sports, the two sit hours apart.
  */
 export function MarketDetailClient({ id }: { id: string }) {
   let parsedId: bigint | null = null;
@@ -58,13 +64,18 @@ export function MarketDetailClient({ id }: { id: string }) {
     return <NotFound reason={`Market #${id} not found on-chain.`} />;
   }
 
-  const poolSize = poolSizeMon(market);
+  const poolSize = poolSizeUsdc(market);
   const yesMult = yesMultiplier(market);
   const noMult = noMultiplier(market);
-  const timeLeft = secondsLeft(market);
+  const bettingTimeLeft = secondsUntilBettingClose(market);
+  const resolutionTimeLeft = secondsLeft(market);
   const totalBettors = market.yesBettorCount + market.noBettorCount;
-  const isWarning = timeLeft > 0 && timeLeft <= 15;
-  const isClosed = timeLeft <= 0 || market.resolved;
+  const isWarning = bettingTimeLeft > 0 && bettingTimeLeft <= 15;
+  const bettingClosed = bettingTimeLeft <= 0 || market.resolved;
+  // Resolution legality is gated on closeTime, NOT bettingCloseTime —
+  // the AwaitingResolutionPanel only appears once the contract would
+  // accept a resolveMarket call.
+  const awaitingResolution = !market.resolved && resolutionTimeLeft <= 0;
 
   const badgeText =
     market.mType === MarketType.FOOTBALL ? 'FOOTBALL'
@@ -74,8 +85,8 @@ export function MarketDetailClient({ id }: { id: string }) {
 
   const statusLabel = market.resolved
     ? `RESOLVED: ${Outcome[market.outcome]}`
-    : timeLeft > 0
-      ? formatTime(timeLeft)
+    : bettingTimeLeft > 0
+      ? formatTime(bettingTimeLeft)
       : 'AWAITING RESOLUTION';
 
   return (
@@ -86,7 +97,7 @@ export function MarketDetailClient({ id }: { id: string }) {
           <span className="mako-label text-muted">{badgeText}</span>
           <span
             className={`mako-label ${
-              isWarning ? 'text-mako-red' : isClosed ? 'text-muted' : 'text-mako-red'
+              isWarning ? 'text-mako-red' : bettingClosed ? 'text-muted' : 'text-mako-red'
             }`}
           >
             {statusLabel}
@@ -105,7 +116,7 @@ export function MarketDetailClient({ id }: { id: string }) {
           <button
             type="button"
             onClick={() => setBetSide('yes')}
-            disabled={isClosed}
+            disabled={bettingClosed}
             aria-pressed={betSide === 'yes'}
             className={`p-5 border-2 border-ink rounded-2xl transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed ${
               betSide === 'yes'
@@ -120,14 +131,14 @@ export function MarketDetailClient({ id }: { id: string }) {
               {yesMult > 0 ? `${yesMult.toFixed(2)}x` : '—'}
             </div>
             <div className={`mako-mono text-[11px] mt-2 tabular-nums ${betSide === 'yes' ? 'text-paper/60' : 'text-muted'}`}>
-              {formatEther(market.totalYes)} MON
+              {formatUsdc(market.totalYes)} USDC
             </div>
           </button>
 
           <button
             type="button"
             onClick={() => setBetSide('no')}
-            disabled={isClosed}
+            disabled={bettingClosed}
             aria-pressed={betSide === 'no'}
             className={`p-5 border-2 border-ink rounded-2xl transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed ${
               betSide === 'no'
@@ -142,7 +153,7 @@ export function MarketDetailClient({ id }: { id: string }) {
               {noMult > 0 ? `${noMult.toFixed(2)}x` : '—'}
             </div>
             <div className={`mako-mono text-[11px] mt-2 tabular-nums ${betSide === 'no' ? 'text-paper/60' : 'text-muted'}`}>
-              {formatEther(market.totalNo)} MON
+              {formatUsdc(market.totalNo)} USDC
             </div>
           </button>
         </div>
@@ -152,7 +163,7 @@ export function MarketDetailClient({ id }: { id: string }) {
           <div className="mako-metric">
             <div className="mako-metric__label">POOL</div>
             <div className="mako-metric__value tabular-nums">{poolSize.toFixed(2)}</div>
-            <div className="mako-metric__sub text-muted">MON</div>
+            <div className="mako-metric__sub text-muted">USDC</div>
           </div>
           <div className="mako-metric">
             <div className="mako-metric__label">BETTORS</div>
@@ -174,7 +185,7 @@ export function MarketDetailClient({ id }: { id: string }) {
           <BroadcastButton
             marketId={market.id}
             question={market.question}
-            closeTimeSec={market.closeTime}
+            bettingCloseTimeSec={market.bettingCloseTime}
           />
           <Link href="/create" className="mako-button mako-label">
             NEW MARKET
@@ -187,7 +198,7 @@ export function MarketDetailClient({ id }: { id: string }) {
         </div>
 
         {/* Awaiting resolution banner + admin inline resolve */}
-        {!market.resolved && isClosed && (
+        {awaitingResolution && (
           <AwaitingResolutionPanel market={market} onResolved={refetch} />
         )}
       </div>
@@ -195,7 +206,7 @@ export function MarketDetailClient({ id }: { id: string }) {
       {/* Fixed-bottom action UI */}
       {market.resolved ? (
         <ClaimButton market={market} onSuccess={refetch} />
-      ) : !isClosed ? (
+      ) : !bettingClosed ? (
         <BetSheet market={market} side={betSide} onSuccess={refetch} />
       ) : null}
     </main>
@@ -279,7 +290,7 @@ function AwaitingResolutionPanel({
       <div className="px-5 py-4 text-center">
         <div className="mako-label mb-1">ADMIN · PICK OUTCOME</div>
         <div className="mako-body text-[12px] text-ink/80">
-          One tap to resolve. Contract forces refund on one-sided pools.
+          One tap to resolve. Contract refunds on one-sided pools.
         </div>
       </div>
       <div className="grid grid-cols-3 border-t-2 border-ink">

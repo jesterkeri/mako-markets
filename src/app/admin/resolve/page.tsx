@@ -7,7 +7,7 @@ import { useMarkets, useResolveMarket } from '@/lib/hooks';
 import { Outcome, type MarketWithId } from '@/lib/contract';
 import { useIsAdmin, ADMIN_ADDRESS } from '@/lib/admin';
 import { useAdminSession } from '@/lib/use-admin-session';
-import { formatEther } from 'viem';
+import { formatUsdc } from '@/lib/usdc';
 import { AdminNav } from '@/components/AdminNav';
 import { AdminLogin } from '@/components/AdminLogin';
 
@@ -134,24 +134,24 @@ function ResolveRow({
           ? `ERROR: ${(error as Error).message.slice(0, 100).toUpperCase()}`
           : null;
 
-  const poolMon = Number(formatEther(market.totalYes + market.totalNo));
-  const yesMon = Number(formatEther(market.totalYes));
-  const noMon = Number(formatEther(market.totalNo));
+  const poolUsdc = formatUsdc(market.totalYes + market.totalNo, 4);
+  const yesUsdc = formatUsdc(market.totalYes, 4);
+  const noUsdc = formatUsdc(market.totalNo, 4);
 
   return (
     <div className="border-b-2 border-ink/10 px-4 lg:px-8 py-4">
       <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
         <div className="px-6 py-5 bg-surface-elevated border-b-2 border-ink">
           <div className="mako-label text-muted mb-1">
-            ID {market.id.toString()} · POOL {poolMon.toFixed(4)} MON
+            ID {market.id.toString()} · POOL {poolUsdc} USDC
           </div>
           <h2 className="mako-title text-lg leading-tight">{market.question}</h2>
           <div className="mako-label text-muted mt-3 flex gap-6">
             <span>
-              YES <span className="text-ink tabular-nums">{yesMon.toFixed(4)}</span>
+              YES <span className="text-ink tabular-nums">{yesUsdc}</span>
             </span>
             <span>
-              NO <span className="text-ink tabular-nums">{noMon.toFixed(4)}</span>
+              NO <span className="text-ink tabular-nums">{noUsdc}</span>
             </span>
             <span>
               BETTORS{' '}

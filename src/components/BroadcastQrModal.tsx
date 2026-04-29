@@ -24,13 +24,18 @@ export function BroadcastQrModal({
   onClose,
   marketId,
   question,
-  closeTimeSec,
+  bettingCloseTimeSec,
 }: {
   open: boolean;
   onClose: () => void;
   marketId: bigint;
   question: string;
-  closeTimeSec: bigint;
+  /**
+   * v4 betting cutoff. The QR overlay countdown lives here because the
+   * "scan and bet" flow only makes sense while bets are still legal —
+   * `closeTime` (resolution legality) sits hours later for sports.
+   */
+  bettingCloseTimeSec: bigint;
 }) {
   // Live countdown state — re-renders every second so the viewer watches
   // the clock tick down. Only runs while `open` is true.
@@ -72,8 +77,8 @@ export function BroadcastQrModal({
 
   if (!open) return null;
 
-  const closeTimeNum = Number(closeTimeSec);
-  const delta = closeTimeNum - nowSec;
+  const bettingCloseTimeNum = Number(bettingCloseTimeSec);
+  const delta = bettingCloseTimeNum - nowSec;
   const countdownLabel =
     delta > 0 ? `CLOSES ${humanizeUntil(delta).toUpperCase()}` : 'CLOSED — RESOLVING';
 

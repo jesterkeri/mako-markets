@@ -1,16 +1,15 @@
 'use client';
 
 import { useEffect } from 'react';
-import { formatEther } from 'viem';
 import {
   useAccount,
   useReadContract,
-  useReadContracts,
   useWaitForTransactionReceipt,
 } from 'wagmi';
 import { makoContract, Outcome, type MarketWithId } from '@/lib/contract';
 import { useClaim } from '@/lib/hooks';
-import { computeResolvedClaimWei } from '@/lib/bet';
+import { computeResolvedClaim } from '@/lib/bet';
+import { formatUsdc } from '@/lib/usdc';
 
 /**
  * Fixed-bottom claim button. Renders only if:
@@ -18,6 +17,12 @@ import { computeResolvedClaimWei } from '@/lib/bet';
  *   - connected wallet has a position in the winning side (YES/NO)
  *     OR any position on a REFUND outcome
  *   - user hasn't already claimed
+ *
+ * **Per-market fee snapshots feed `computeResolvedClaim` SEPARATELY.**
+ * Summing protocol+creator up front loses v4's creator-fee-forfeit rule
+ * — on a skewed pool the helper drops the creator fee to 0, so the live
+ * claim is bigger than a pre-summed `feeBps` would suggest. The v3 path
+ * read live globals via `useReadContracts`; that's removed.
  */
 export function ClaimButton({
   market,
@@ -36,15 +41,6 @@ export function ClaimButton({
       enabled: !!address && market.resolved,
     },
   });
-  const { data: feeData } = useReadContracts({
-    contracts: [
-      { ...makoContract, functionName: 'protocolFeeBps' },
-      { ...makoContract, functionName: 'creatorFeeBps' },
-    ],
-    query: {
-      enabled: market.resolved,
-    },
-  });
 
   const { claim, hash, isPending, error, reset } = useClaim();
   const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash });
@@ -61,37 +57,38 @@ export function ClaimButton({
   if (!userBetData) return null;
 
   const [userYes, userNo, hasClaimed] = userBetData as unknown as [bigint, bigint, boolean];
-  const feeBps =
-    feeData?.[0]?.status === 'success' && feeData?.[1]?.status === 'success'
-      ? BigInt(feeData[0].result) + BigInt(feeData[1].result)
-      : 300n;
+
+  const protocolBps = BigInt(market.protocolFeeBpsSnapshot);
+  const creatorBps = BigInt(market.creatorFeeBpsSnapshot);
 
   const outcome = market.outcome;
-  let claimableWei = 0n;
+  let claimableUsdc = 0n;
   let claimLabel = 'CLAIM';
 
   if (outcome === Outcome.REFUND) {
-    claimableWei = userYes + userNo;
+    claimableUsdc = userYes + userNo;
     claimLabel = 'CLAIM REFUND';
   } else if (outcome === Outcome.YES && userYes > 0n) {
-    claimableWei = computeResolvedClaimWei(
+    claimableUsdc = computeResolvedClaim(
       market.totalYes,
       market.totalNo,
       userYes,
-      feeBps,
+      protocolBps,
+      creatorBps,
     );
     claimLabel = 'CLAIM WINNINGS';
   } else if (outcome === Outcome.NO && userNo > 0n) {
-    claimableWei = computeResolvedClaimWei(
+    claimableUsdc = computeResolvedClaim(
       market.totalNo,
       market.totalYes,
       userNo,
-      feeBps,
+      protocolBps,
+      creatorBps,
     );
     claimLabel = 'CLAIM WINNINGS';
   }
 
-  if (claimableWei === 0n) return null;
+  if (claimableUsdc === 0n) return null;
 
   const handleClaim = async () => {
     try {
@@ -124,7 +121,7 @@ export function ClaimButton({
             {outcome === Outcome.REFUND ? 'REFUND' : 'CLAIMABLE'}
           </span>
           <span className="mako-display text-xl tabular-nums">
-            {Number(formatEther(claimableWei)).toFixed(4)} MON
+            {formatUsdc(claimableUsdc)} USDC
           </span>
         </div>
 

@@ -73,7 +73,7 @@ const DURATION_HOURS = Math.max(1, Math.min(168, Number(process.env.DURATION_HOU
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const abiJson = JSON.parse(
   readFileSync(
-    resolve(__dirname, '../../mako-contracts/out/MakoMarkets.sol/MakoMarkets.json'),
+    resolve(__dirname, '../../mako-contracts/out/MakoMarketsV4.sol/MakoMarketsV4.json'),
     'utf-8',
   ),
 ) as { abi: readonly unknown[] };
@@ -171,6 +171,24 @@ for (const p of picked) {
 const now = Math.floor(Date.now() / 1000);
 const closeTime = BigInt(now + DURATION_HOURS * 3600);
 
+// MIRROR of src/lib/market-timing.ts:suggestedCryptoBettingCloseTimeMirror —
+// inlined to dodge tsx/ESM import boundary. If the lib changes, update here.
+function suggestedCryptoBettingCloseTimeMirror(
+  createdAtSec: number,
+  resolutionTimeSec: number,
+): bigint {
+  if (resolutionTimeSec <= createdAtSec) return BigInt(createdAtSec);
+  const duration = resolutionTimeSec - createdAtSec;
+  let pctBps: number;
+  if (duration <= 60 * 60) pctBps = 5000;
+  else if (duration <= 24 * 60 * 60) pctBps = 6000;
+  else if (duration <= 3 * 24 * 60 * 60) pctBps = 7000;
+  else pctBps = 8500;
+  return BigInt(createdAtSec + Math.floor((duration * pctBps) / 10000));
+}
+
+const bettingCloseTime = suggestedCryptoBettingCloseTimeMirror(now, Number(closeTime));
+
 interface Spec {
   symbol: string;
   strike: number;
@@ -231,7 +249,7 @@ for (const s of specs) {
     address: MAKO_ADDRESS,
     abi: makoAbi,
     functionName: 'createMarket',
-    args: [MarketType.CRYPTO, s.oracleRef, closeTime, s.question],
+    args: [MarketType.CRYPTO, s.oracleRef, bettingCloseTime, closeTime, s.question],
   });
   console.log(`[seed-crypto]        tx: ${hash}`);
   const receipt = await publicClient.waitForTransactionReceipt({ hash });

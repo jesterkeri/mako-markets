@@ -10,6 +10,15 @@ import { useCreateMarket } from '@/lib/hooks';
 import { toBytes32 } from '@/lib/oracle';
 import { humanizeUntil } from '@/lib/time';
 import {
+  FOOTBALL_DURATION_SEC,
+  BASKETBALL_DURATION_SEC,
+  MAX_DURATION_SEC,
+  TX_LANDING_BUFFER_SEC,
+  sportsTimestamps,
+  suggestedCryptoBettingCloseTimeMirror,
+  validateMarketTimestamps,
+} from '@/lib/market-timing';
+import {
   CRYPTO_ASSETS,
   roundStrike,
   formatStrikeForDisplay,
@@ -18,15 +27,20 @@ import {
 } from '@/lib/crypto-assets';
 
 /**
- * /create — three-tab market creation form.
+ * /create -- three-tab market creation form.
  *
- * Tab 1: CRYPTO — live CoinGecko prices. Encodes `SYMBOL:gt:STRIKE` in bytes32.
- * Tab 2: FOOTBALL — EPL fixtures via football-data.org.
- * Tab 3: BASKETBALL — NBA games via balldontlie. home/away win + over/under total points.
+ * Tab 1: CRYPTO -- live CoinGecko prices. Encodes `SYMBOL:gt:STRIKE` in bytes32.
+ * Tab 2: FOOTBALL -- EPL fixtures via football-data.org.
+ * Tab 3: BASKETBALL -- NBA games via balldontlie. home/away win + over/under total points.
  *
- * All tabs share the same tx pipeline (useCreateMarket + useWaitForTransactionReceipt
- * + decodeEventLog) and redirect to /market/{id} on success, extracting `id` from the
- * receipt's MarketCreated event so we never have to guess `nextMarketId - 1`.
+ * v4 takes TWO timestamps per market:
+ *   - `bettingCloseTime` is when placeBet stops (sports: kickoff - 10 min;
+ *     crypto: per the contract's tier rule via market-timing mirror).
+ *   - `closeTime` is when resolveMarket becomes legal (sports: event end +
+ *     duration buffer; crypto: the user-picked evaluation moment).
+ *
+ * Do NOT thread the same timestamp into both args (the v3 model). Sports
+ * markets would become legally resolvable before the event ends.
  */
 
 type Tab = 'crypto' | 'football' | 'basketball';
@@ -99,14 +113,16 @@ type CryptoPrices = Partial<Record<CryptoSymbol, CryptoPrice>>;
 type CreateArgs = {
   mType: MarketType;
   oracleRef: Hex;
+  bettingCloseTime: bigint;
   closeTime: bigint;
   question: string;
 };
 
 // Crypto-only duration presets. 5 minutes is the floor (below that the
 // window is too narrow for spot to move meaningfully). 7 days is the
-// ceiling set by MAX_DURATION in MakoMarkets.sol. Football/NBA markets
-// don't use this — their closeTime is derived from kickoff.
+// ceiling set by MAX_DURATION in MakoMarketsV4.sol. Football/NBA markets
+// don't use this. Their (bettingCloseTime, closeTime) split is derived
+// from kickoff/tipoff via sportsTimestamps.
 const DURATIONS: Array<{ label: string; short: string; seconds: number }> = [
   { label: '5 minutes', short: '5M', seconds: 300 },
   { label: '10 minutes', short: '10M', seconds: 600 },
@@ -117,11 +133,6 @@ const DURATIONS: Array<{ label: string; short: string; seconds: number }> = [
   { label: '3 days', short: '3D', seconds: 259200 },
   { label: '7 days', short: '7D', seconds: 604800 },
 ];
-
-// Betting window must close BEFORE an event starts. 10-minute buffer so
-// users can't slip a bet in as the ball is being kicked / ball is being
-// tipped. Matches the seed scripts (scripts/seed-nba.mts, seed-football.mts).
-const PRE_EVENT_BUFFER_SEC = 10 * 60;
 
 export default function CreateMarketPage() {
   const router = useRouter();
@@ -159,7 +170,7 @@ export default function CreateMarketPage() {
       newId,
       error:
         newId === null
-          ? 'TX SUCCEEDED BUT MARKET ID NOT FOUND IN RECEIPT · CHECK EXPLORER'
+          ? 'TX SUCCEEDED BUT MARKET ID NOT FOUND IN RECEIPT * CHECK EXPLORER'
           : null,
     };
   }, [isSuccess, receipt]);
@@ -194,7 +205,7 @@ export default function CreateMarketPage() {
       : decodeError
         ? decodeError
         : isSuccess
-          ? 'MARKET CREATED · REDIRECTING...'
+          ? 'MARKET CREATED * REDIRECTING...'
           : error
             ? friendlyWriteError(error as Error)
             : null;
@@ -210,7 +221,7 @@ export default function CreateMarketPage() {
           </p>
         </div>
 
-        {/* Tab bar — matches the home feed's colorful category pills */}
+        {/* Tab bar -- matches the home feed's colorful category pills */}
         <div className="flex gap-3 mb-6 flex-wrap">
           {(
             [
@@ -265,7 +276,7 @@ export default function CreateMarketPage() {
 }
 
 // ======================================================================
-// CRYPTO TAB — live CoinGecko prices + strike/direction/duration form
+// CRYPTO TAB -- live CoinGecko prices + strike/direction/duration form
 // ======================================================================
 
 type TabProps = {
@@ -281,6 +292,17 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
   const [strikeInput, setStrikeInput] = useState('');
   const [strikeTouched, setStrikeTouched] = useState(false);
   const [durationSec, setDurationSec] = useState(300);
+
+  // Wall clock for the bettingCloseTime preview. The contract view
+  // `suggestedCryptoBettingCloseTime(createdAt, resolutionTime)` is pure,
+  // and the local mirror in `market-timing.ts` produces byte-identical
+  // results. We use the mirror so the preview re-renders on every
+  // duration / wall-clock tick without an RPC round-trip per change.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 10_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Poll CoinGecko (server-proxied) every 10s. Fetch on mount, then interval.
   useEffect(() => {
@@ -310,10 +332,10 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
     return prices[selectedSymbol]?.usd ?? 0;
   }, [prices, selectedSymbol]);
 
-  // Default strike = current price × 1.01 (above) or × 0.99 (below),
+  // Default strike = current price * 1.01 (above) or * 0.99 (below),
   // rounded with asset-scale precision so sub-dollar assets (DOGE, MON)
-  // don't collapse to $0. See roundStrike in src/lib/crypto-assets.ts —
-  // same function used by scripts/seed-crypto.mts so UI-created and
+  // don't collapse to $0. See roundStrike in src/lib/crypto-assets.ts.
+  // Same function used by scripts/seed-crypto.mts so UI-created and
   // seeded markets always pass the resolver's `strike > 0` guard.
   const defaultStrike = useMemo(() => {
     if (!currentPrice) return 0;
@@ -326,6 +348,15 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
     const parsed = Number(strikeInput);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultStrike;
   }, [strikeTouched, strikeInput, defaultStrike]);
+
+  // Reactive (closeTime, bettingCloseTime) preview. Recomputed on every
+  // duration / wall-clock change so the displayed bettingCloseTime
+  // tracks the current selection and never goes stale.
+  const closeTimeSec = nowSec + durationSec;
+  const bettingCloseSec = useMemo(
+    () => Number(suggestedCryptoBettingCloseTimeMirror(nowSec, closeTimeSec)),
+    [nowSec, closeTimeSec],
+  );
 
   const autoQuestion = useMemo(() => {
     if (effectiveStrike <= 0) return '';
@@ -346,11 +377,36 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
     const op = direction === 'above' ? 'gt' : 'lt';
     const oracleRefStr = `${selectedSymbol}:${op}:${effectiveStrike}`;
     const oracleRef = toBytes32(oracleRefStr);
-    const closeTime = BigInt(Math.floor(Date.now() / 1000) + durationSec);
+
+    // Recompute timestamps at submit using the freshest wall clock.
+    // Ticking state is only refreshed every 10s. We add TX_LANDING_BUFFER_SEC
+    // to the duration so a market picked at the MIN_DURATION floor (5M)
+    // doesn't revert with BadDuration when the tx takes a few seconds to
+    // mine. The user-visible "5 minutes" question stays honest within
+    // the buffer; closeTime ends up at 5min 60s on chain.
+    const submitNowSec = Math.floor(Date.now() / 1000);
+    const submitCloseSec = submitNowSec + durationSec + TX_LANDING_BUFFER_SEC;
+    const submitBettingCloseSec = Number(
+      suggestedCryptoBettingCloseTimeMirror(submitNowSec, submitCloseSec),
+    );
+
+    const closeTime = BigInt(submitCloseSec);
+    const bettingCloseTime = BigInt(submitBettingCloseSec);
+
+    const validation = validateMarketTimestamps({
+      nowSec: submitNowSec,
+      bettingCloseTime,
+      closeTime,
+    });
+    if (validation) {
+      console.error('[create-crypto] validation failed:', validation);
+      return;
+    }
 
     await onSubmit({
       mType: MarketType.CRYPTO,
       oracleRef,
+      bettingCloseTime,
       closeTime,
       question: autoQuestion,
     });
@@ -363,10 +419,10 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
       {/* Live prices */}
       <div className="border-b-2 border-ink">
         <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
-          <span className="mako-label text-muted">LIVE PRICES · TAP TO SELECT</span>
+          <span className="mako-label text-muted">LIVE PRICES * TAP TO SELECT</span>
           <span className="mako-label text-subtle">REFRESH 10S</span>
         </div>
-        {/* 10 assets laid out 2×5 on mobile and 5-wide × 2 rows on desktop. */}
+        {/* 10 assets laid out 2x5 on mobile and 5-wide x 2 rows on desktop. */}
         <div className="grid grid-cols-2 md:grid-cols-5 border-t-2 border-ink">
           {[...CRYPTO_ASSETS]
             .sort((a, b) => a.priority - b.priority)
@@ -374,7 +430,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
               const sym = asset.symbol;
               const price = prices?.[sym];
               const change = price?.change24h ?? 0;
-              const arrow = change > 0 ? '▲' : change < 0 ? '▼' : '·';
+              const arrow = change > 0 ? 'UP' : change < 0 ? 'DN' : '*';
               const isSelected = selectedSymbol === sym;
               const isTestnet = price?.testnet === true;
               const col = i % 5;
@@ -399,7 +455,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
                 >
                   <span className="mako-label mb-1">{sym}</span>
                   <span className="mako-display text-base tabular-nums">
-                    {price ? formatPriceUsd(price.usd) : '—'}
+                    {price ? formatPriceUsd(price.usd) : '-'}
                   </span>
                   {isTestnet ? (
                     <span
@@ -447,7 +503,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
                     : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
                 }`}
               >
-                {dir === 'above' ? '▲ ABOVE' : '▼ BELOW'}
+                {dir === 'above' ? 'UP / ABOVE' : 'DN / BELOW'}
               </button>
             );
           })}
@@ -476,11 +532,11 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
           />
         </div>
         <div className="mako-label text-muted mt-2">
-          DEFAULT = LIVE PRICE {direction === 'above' ? '× 1.01' : '× 0.99'} · TAP TO EDIT
+          DEFAULT = LIVE PRICE {direction === 'above' ? 'x 1.01' : 'x 0.99'} * TAP TO EDIT
         </div>
       </div>
 
-      {/* Duration — 8 presets spanning the contract's MAX_DURATION (7 days) */}
+      {/* Duration -- 8 presets spanning the contract's MAX_DURATION (7 days) */}
       <div className="px-6 py-5 border-b-2 border-ink">
         <label className="mako-label text-muted mb-3 block">DURATION</label>
         <div className="grid grid-cols-4 gap-2">
@@ -504,6 +560,14 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
             );
           })}
         </div>
+        {/* Reactive bettingCloseTime preview. Updates whenever the user
+            changes duration or the wall clock ticks. */}
+        <div className="mako-label text-muted mt-3 leading-relaxed">
+          BETS CLOSE {humanizeUntil(bettingCloseSec - nowSec).toUpperCase()} * RESOLVES {humanizeUntil(closeTimeSec - nowSec).toUpperCase()}
+        </div>
+        <div className="mako-label text-subtle text-[10px] mt-1 leading-relaxed">
+          Betting closes early to stop pile-ons after the price is decided.
+        </div>
       </div>
 
       {/* Auto-generated question preview */}
@@ -512,7 +576,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
           QUESTION (AUTO-GENERATED)
         </label>
         <p className="mako-title text-lg leading-tight">
-          {autoQuestion || '—'}
+          {autoQuestion || '-'}
         </p>
       </div>
 
@@ -525,14 +589,14 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
             : 'bg-signal text-ink hover:bg-signal/90'
         }`}
       >
-        {isBusy ? statusText ?? '…' : `CREATE ${selectedSymbol} MARKET`}
+        {isBusy ? statusText ?? '...' : `CREATE ${selectedSymbol} MARKET`}
       </button>
     </form>
   );
 }
 
 // ======================================================================
-// FOOTBALL TAB — EPL fixtures from football-data.org + question builder
+// FOOTBALL TAB -- EPL fixtures from football-data.org + question builder
 // ======================================================================
 
 function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
@@ -540,29 +604,38 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedFixture, setSelectedFixture] = useState<FootballFixture | null>(null);
   const [questionType, setQuestionType] = useState<FootballQuestionType>('home_win');
-  // Track wall-clock to re-render the "closes in …" countdown. 10s is tight
-  // enough to keep the displayed countdown honest near the cutoff; the real
-  // guard against a stale-state race at submit time lives in handleSubmit
-  // (see the fresh Date.now() check there).
+  // Track wall-clock to re-render the "closes in ..." countdown. 10s is tight
+  // enough to keep the displayed countdown honest near the cutoff. The real
+  // guard against a stale-state race at submit time lives in handleSubmit.
+  // See the fresh Date.now() check there.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 10_000);
     return () => clearInterval(id);
   }, []);
 
-  // Derive closeTime from the selected fixture's kickoff. Bets close 10
-  // minutes before the first whistle — the resolver takes over from there
-  // and waits for the match to go FINAL before calling resolveMarket.
-  // If kickoff - 10min is already past, the fixture is un-bettable.
-  const closeTimeSec = useMemo(() => {
+  // v4 timestamp split: bettingCloseTime is kickoff - 10 min (existing v3
+  // derivation, repurposed). closeTime is kickoff + 150 min so the resolver
+  // can fire after FT + extra-time + injury, not 10 min before kickoff.
+  const timestamps = useMemo(() => {
     if (!selectedFixture) return null;
     const kickoffMs = new Date(selectedFixture.kickoffIso).getTime();
-    if (!Number.isFinite(kickoffMs)) return null; // malformed ISO → treat as unsettable
-    return Math.floor(kickoffMs / 1000) - PRE_EVENT_BUFFER_SEC;
+    if (!Number.isFinite(kickoffMs)) return null; // malformed ISO
+    const eventStartSec = Math.floor(kickoffMs / 1000);
+    const { bettingCloseTime, closeTime } = sportsTimestamps(eventStartSec, 'football');
+    return {
+      bettingCloseSec: Number(bettingCloseTime),
+      closeSec: Number(closeTime),
+      bettingCloseTime,
+      closeTime,
+    };
   }, [selectedFixture]);
-  const closeTooSoon = closeTimeSec !== null && closeTimeSec <= nowSec;
 
-  // Fetch fixtures once on mount — football-data.org changes slowly, no poll.
+  const closeTooSoon = timestamps !== null && timestamps.bettingCloseSec <= nowSec;
+  const tooFarOut =
+    timestamps !== null && timestamps.closeSec - nowSec > MAX_DURATION_SEC;
+
+  // Fetch fixtures once on mount. football-data.org changes slowly, no poll.
   useEffect(() => {
     let cancelled = false;
     const fetchFixtures = async () => {
@@ -615,40 +688,58 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFixture || isBusy || oracleRefTooLong || closeTimeSec === null) {
+    if (
+      !selectedFixture
+      || isBusy
+      || oracleRefTooLong
+      || timestamps === null
+      || tooFarOut
+    ) {
       return;
     }
 
-    // Fresh wall-clock check — the `nowSec` state is only refreshed every 10s,
-    // so `closeTooSoon` could be stale by up to ~10s. The contract's
-    // BadCloseTime revert would catch this but at the cost of a wallet popup
-    // and wasted gas — block it client-side with a real-time comparison.
-    if (closeTimeSec <= Math.floor(Date.now() / 1000)) return;
+    // Fresh wall-clock check. `nowSec` only ticks every 10s.
+    const submitNowSec = Math.floor(Date.now() / 1000);
+    const validation = validateMarketTimestamps({
+      nowSec: submitNowSec,
+      bettingCloseTime: timestamps.bettingCloseTime,
+      closeTime: timestamps.closeTime,
+      strictBettingBeforeClose: true,
+    });
+    if (validation) {
+      console.error('[create-football] validation failed:', validation);
+      return;
+    }
 
     const oracleRef = toBytes32(oracleRefStr);
-    const closeTime = BigInt(closeTimeSec);
 
     await onSubmit({
       mType: MarketType.FOOTBALL,
       oracleRef,
-      closeTime,
+      bettingCloseTime: timestamps.bettingCloseTime,
+      closeTime: timestamps.closeTime,
       question: autoQuestion,
     });
   };
 
-  const disabled = isBusy || !selectedFixture || oracleRefTooLong || closeTooSoon;
+  const disabled =
+    isBusy
+    || !selectedFixture
+    || oracleRefTooLong
+    || closeTooSoon
+    || tooFarOut;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
       {/* Fixture list */}
       <div className="border-b-2 border-ink">
         <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
-          <span className="mako-label text-muted">UPCOMING · PREMIER LEAGUE</span>
+          <span className="mako-label text-muted">UPCOMING * PREMIER LEAGUE</span>
           <span className="mako-label text-subtle">TAP TO SELECT</span>
         </div>
         {fixtures === null ? (
           <div className="py-12 text-center mako-label text-muted border-t-2 border-ink">
-            LOADING FIXTURES…
+            LOADING FIXTURES...
           </div>
         ) : fixtures.length === 0 ? (
           <div className="py-12 text-center border-t-2 border-ink px-6">
@@ -683,7 +774,7 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
                       isSelected ? 'text-paper/70' : 'text-muted'
                     }`}
                   >
-                    KICKOFF · {f.kickoffLabel}
+                    KICKOFF * {f.kickoffLabel}
                   </span>
                 </button>
               );
@@ -692,7 +783,7 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
         )}
       </div>
 
-      {/* Question type — 2x2 grid */}
+      {/* Question type -- 2x2 grid */}
       <div className="px-6 py-5 border-b-2 border-ink">
         <label className="mako-label text-muted mb-3 block">QUESTION TYPE</label>
         <div className="grid grid-cols-2 gap-3">
@@ -725,13 +816,13 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
         </div>
       </div>
 
-      {/* Betting window — derived from kickoff, NOT user-picked. */}
+      {/* Betting window -- derived from kickoff, NOT user-picked. */}
       <div className="px-6 py-5 border-b-2 border-ink">
-        <label className="mako-label text-muted mb-3 block">BETS CLOSE</label>
-        {selectedFixture && closeTimeSec !== null ? (
+        <label className="mako-label text-muted mb-3 block">BETTING WINDOW</label>
+        {selectedFixture && timestamps !== null ? (
           <div>
             <div className="mako-display text-base tabular-nums">
-              {new Date(closeTimeSec * 1000).toUTCString().replace(' GMT', ' UTC')}
+              BETS CLOSE * {new Date(timestamps.bettingCloseSec * 1000).toUTCString().replace(' GMT', ' UTC')}
             </div>
             <div
               className={`mako-label mt-1 ${
@@ -739,8 +830,10 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
               }`}
             >
               {closeTooSoon
-                ? 'KICKOFF TOO SOON · PICK A LATER FIXTURE'
-                : `${humanizeUntil(closeTimeSec - nowSec)} · RESOLVES AFTER FULL TIME`}
+                ? 'KICKOFF TOO SOON * PICK A LATER FIXTURE'
+                : tooFarOut
+                  ? 'EVENT TOO FAR OUT * MAKO MARKETS SETTLE WITHIN 7 DAYS'
+                  : `${humanizeUntil(timestamps.bettingCloseSec - nowSec)} * RESOLVES ~${Math.round(FOOTBALL_DURATION_SEC / 60)} MIN AFTER KICKOFF`}
             </div>
           </div>
         ) : (
@@ -756,11 +849,11 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
           QUESTION (AUTO-GENERATED)
         </label>
         <p className="mako-title text-lg leading-tight">
-          {autoQuestion || '—'}
+          {autoQuestion || '-'}
         </p>
         {oracleRefTooLong && (
           <p className="mako-label text-mako-red mt-2">
-            ORACLE REF TOO LONG ({oracleRefStr.length} BYTES) · MAX 32 · PICK SHORTER QUESTION TYPE
+            ORACLE REF TOO LONG ({oracleRefStr.length} BYTES) * MAX 32 * PICK SHORTER QUESTION TYPE
           </p>
         )}
       </div>
@@ -774,14 +867,14 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
             : 'bg-signal text-ink hover:bg-signal/90'
         }`}
       >
-        {isBusy ? statusText ?? '…' : 'CREATE FOOTBALL MARKET'}
+        {isBusy ? statusText ?? '...' : 'CREATE FOOTBALL MARKET'}
       </button>
     </form>
   );
 }
 
 // ======================================================================
-// BASKETBALL TAB — NBA games from balldontlie + home/away/total points
+// BASKETBALL TAB -- NBA games from balldontlie + home/away/total points
 // ======================================================================
 
 function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
@@ -790,26 +883,31 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
   const [selectedGame, setSelectedGame] = useState<BasketballGame | null>(null);
   const [questionType, setQuestionType] = useState<BasketballQuestionType>('home_win');
   const [totalInput, setTotalInput] = useState<string>('215.5');
-  // Track wall-clock to re-render the "closes in …" countdown. 10s is tight
-  // enough to keep the displayed countdown honest near the cutoff; the real
-  // guard against a stale-state race at submit time lives in handleSubmit
-  // (see the fresh Date.now() check there).
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 10_000);
     return () => clearInterval(id);
   }, []);
 
-  // Derive closeTime from the selected game's tipoff. Bets close 10 minutes
-  // before tip — the resolver waits for the game to go FINAL, which includes
-  // any OT, before settling.
-  const closeTimeSec = useMemo(() => {
+  // v4 timestamp split: bettingCloseTime is tipoff - 10 min. closeTime is
+  // tipoff + 180 min so the resolver fires after regulation + OT + breaks.
+  const timestamps = useMemo(() => {
     if (!selectedGame) return null;
     const tipoffMs = new Date(selectedGame.tipoffIso).getTime();
-    if (!Number.isFinite(tipoffMs)) return null; // malformed ISO → treat as unsettable
-    return Math.floor(tipoffMs / 1000) - PRE_EVENT_BUFFER_SEC;
+    if (!Number.isFinite(tipoffMs)) return null;
+    const eventStartSec = Math.floor(tipoffMs / 1000);
+    const { bettingCloseTime, closeTime } = sportsTimestamps(eventStartSec, 'basketball');
+    return {
+      bettingCloseSec: Number(bettingCloseTime),
+      closeSec: Number(closeTime),
+      bettingCloseTime,
+      closeTime,
+    };
   }, [selectedGame]);
-  const closeTooSoon = closeTimeSec !== null && closeTimeSec <= nowSec;
+
+  const closeTooSoon = timestamps !== null && timestamps.bettingCloseSec <= nowSec;
+  const tooFarOut =
+    timestamps !== null && timestamps.closeSec - nowSec > MAX_DURATION_SEC;
 
   useEffect(() => {
     let cancelled = false;
@@ -873,22 +971,31 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
       isBusy ||
       oracleRefTooLong ||
       (isTotalQ && totalNumber <= 0) ||
-      closeTimeSec === null
+      timestamps === null ||
+      tooFarOut
     ) {
       return;
     }
 
-    // Fresh wall-clock check (see FootballTab comment) — defends against
-    // the 10s stale-state window between setInterval ticks.
-    if (closeTimeSec <= Math.floor(Date.now() / 1000)) return;
+    const submitNowSec = Math.floor(Date.now() / 1000);
+    const validation = validateMarketTimestamps({
+      nowSec: submitNowSec,
+      bettingCloseTime: timestamps.bettingCloseTime,
+      closeTime: timestamps.closeTime,
+      strictBettingBeforeClose: true,
+    });
+    if (validation) {
+      console.error('[create-basketball] validation failed:', validation);
+      return;
+    }
 
     const oracleRef = toBytes32(oracleRefStr);
-    const closeTime = BigInt(closeTimeSec);
 
     await onSubmit({
       mType: MarketType.BASKETBALL,
       oracleRef,
-      closeTime,
+      bettingCloseTime: timestamps.bettingCloseTime,
+      closeTime: timestamps.closeTime,
       question: autoQuestion,
     });
   };
@@ -898,18 +1005,19 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
     !selectedGame ||
     oracleRefTooLong ||
     (isTotalQ && totalNumber <= 0) ||
-    closeTooSoon;
+    closeTooSoon ||
+    tooFarOut;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
       <div className="border-b-2 border-ink">
         <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
-          <span className="mako-label text-muted">UPCOMING · NBA · NEXT 7 DAYS</span>
+          <span className="mako-label text-muted">UPCOMING * NBA * NEXT 7 DAYS</span>
           <span className="mako-label text-subtle">TAP TO SELECT</span>
         </div>
         {games === null ? (
           <div className="py-12 text-center mako-label text-muted border-t-2 border-ink">
-            LOADING GAMES…
+            LOADING GAMES...
           </div>
         ) : games.length === 0 ? (
           <div className="py-12 text-center border-t-2 border-ink px-6">
@@ -944,7 +1052,7 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
                       isSelected ? 'text-paper/70' : 'text-muted'
                     }`}
                   >
-                    TIPOFF · {g.tipoffLabel}
+                    TIPOFF * {g.tipoffLabel}
                   </span>
                 </button>
               );
@@ -1004,18 +1112,18 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
             <span className="mako-label text-muted">PTS</span>
           </div>
           <div className="mako-label text-muted mt-2">
-            NBA AVERAGE IS ~220 · ADJUST FOR MATCHUP PACE
+            NBA AVERAGE IS ~220 * ADJUST FOR MATCHUP PACE
           </div>
         </div>
       )}
 
-      {/* Betting window — derived from tipoff, NOT user-picked. */}
+      {/* Betting window -- derived from tipoff, NOT user-picked. */}
       <div className="px-6 py-5 border-b-2 border-ink">
-        <label className="mako-label text-muted mb-3 block">BETS CLOSE</label>
-        {selectedGame && closeTimeSec !== null ? (
+        <label className="mako-label text-muted mb-3 block">BETTING WINDOW</label>
+        {selectedGame && timestamps !== null ? (
           <div>
             <div className="mako-display text-base tabular-nums">
-              {new Date(closeTimeSec * 1000).toUTCString().replace(' GMT', ' UTC')}
+              BETS CLOSE * {new Date(timestamps.bettingCloseSec * 1000).toUTCString().replace(' GMT', ' UTC')}
             </div>
             <div
               className={`mako-label mt-1 ${
@@ -1023,8 +1131,10 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
               }`}
             >
               {closeTooSoon
-                ? 'TIPOFF TOO SOON · PICK A LATER GAME'
-                : `${humanizeUntil(closeTimeSec - nowSec)} · RESOLVES AFTER FINAL BUZZER`}
+                ? 'TIPOFF TOO SOON * PICK A LATER GAME'
+                : tooFarOut
+                  ? 'EVENT TOO FAR OUT * MAKO MARKETS SETTLE WITHIN 7 DAYS'
+                  : `${humanizeUntil(timestamps.bettingCloseSec - nowSec)} * RESOLVES ~${Math.round(BASKETBALL_DURATION_SEC / 60)} MIN AFTER TIPOFF`}
             </div>
           </div>
         ) : (
@@ -1039,11 +1149,11 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
           QUESTION (AUTO-GENERATED)
         </label>
         <p className="mako-title text-lg leading-tight">
-          {autoQuestion || '—'}
+          {autoQuestion || '-'}
         </p>
         {oracleRefTooLong && (
           <p className="mako-label text-mako-red mt-2">
-            ORACLE REF TOO LONG · PICK A SHORTER TOTAL
+            ORACLE REF TOO LONG * PICK A SHORTER TOTAL
           </p>
         )}
       </div>
@@ -1057,7 +1167,7 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
             : 'bg-signal text-ink hover:bg-signal/90'
         }`}
       >
-        {isBusy ? statusText ?? '…' : 'CREATE NBA MARKET'}
+        {isBusy ? statusText ?? '...' : 'CREATE NBA MARKET'}
       </button>
     </form>
   );

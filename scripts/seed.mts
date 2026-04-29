@@ -43,7 +43,7 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const abiJson = JSON.parse(
   readFileSync(
-    resolve(__dirname, '../../mako-contracts/out/MakoMarkets.sol/MakoMarkets.json'),
+    resolve(__dirname, '../../mako-contracts/out/MakoMarketsV4.sol/MakoMarketsV4.json'),
     'utf-8',
   ),
 ) as { abi: readonly unknown[] };
@@ -71,6 +71,64 @@ function toBytes32(s: string): Hex {
     throw new Error(`oracleRef "${s}" is ${byteLength} bytes, max is 32`);
   }
   return pad(hex, { size: 32, dir: 'right' });
+}
+
+// ---------------------------------------------------------------
+// MIRROR of src/lib/market-timing.ts — inlined to dodge tsx/ESM
+// import boundary; see toBytes32 above for the same precedent. If
+// the lib values change, update here too. Drift-check: the lib
+// MUST hold PRE_EVENT_BUFFER_SEC=600, FOOTBALL_DURATION_SEC=9000,
+// BASKETBALL_DURATION_SEC=10800, MAX_DURATION_SEC=604800,
+// MIN_DURATION_SEC=300.
+// ---------------------------------------------------------------
+const PRE_EVENT_BUFFER_SEC = 10 * 60;
+const FOOTBALL_DURATION_SEC = 150 * 60;
+const BASKETBALL_DURATION_SEC = 180 * 60;
+const MAX_DURATION_SEC = 7 * 24 * 60 * 60;
+const MIN_DURATION_SEC = 5 * 60;
+
+type SportsMarketType = 'football' | 'basketball';
+
+function sportsTimestamps(
+  eventStartSec: number,
+  sport: SportsMarketType,
+): { bettingCloseTime: bigint; closeTime: bigint } {
+  const duration = sport === 'football' ? FOOTBALL_DURATION_SEC : BASKETBALL_DURATION_SEC;
+  return {
+    bettingCloseTime: BigInt(eventStartSec - PRE_EVENT_BUFFER_SEC),
+    closeTime: BigInt(eventStartSec + duration),
+  };
+}
+
+function suggestedCryptoBettingCloseTimeMirror(
+  createdAtSec: number,
+  resolutionTimeSec: number,
+): bigint {
+  if (resolutionTimeSec <= createdAtSec) return BigInt(createdAtSec);
+  const duration = resolutionTimeSec - createdAtSec;
+  let pctBps: number;
+  if (duration <= 60 * 60) pctBps = 5000;
+  else if (duration <= 24 * 60 * 60) pctBps = 6000;
+  else if (duration <= 3 * 24 * 60 * 60) pctBps = 7000;
+  else pctBps = 8500;
+  return BigInt(createdAtSec + Math.floor((duration * pctBps) / 10000));
+}
+
+function assertTimestamps(
+  nowSec: number,
+  bettingCloseTime: bigint,
+  closeTime: bigint,
+  strict: boolean,
+): void {
+  const now = BigInt(nowSec);
+  if (bettingCloseTime <= now) fail('bettingCloseTime must be in the future');
+  if (closeTime <= now) fail('closeTime must be in the future');
+  if (strict ? bettingCloseTime >= closeTime : bettingCloseTime > closeTime) {
+    fail('bettingCloseTime must be on or before closeTime');
+  }
+  const durationSec = Number(closeTime - now);
+  if (durationSec < MIN_DURATION_SEC) fail('event too soon (< MIN_DURATION)');
+  if (durationSec > MAX_DURATION_SEC) fail('event too far out (> MAX_DURATION)');
 }
 
 // ---------------------------------------------------------------
@@ -266,43 +324,64 @@ const ethStrike = Math.round(ethPrice * 0.99);
 type MarketSpec = {
   mType: MType;
   oracleRef: Hex;
+  bettingCloseTime: bigint;
   closeTime: bigint;
   question: string;
 };
+
+// Synthetic kickoff for the curated football fixtures (no real schedule
+// data baked in). Use 3h from now as kickoff so the v4 timestamp split
+// produces realistic bettingCloseTime / closeTime.
+const fbKickoff = now + 3 * 3600;
+const fb = sportsTimestamps(fbKickoff, 'football');
+
+// Crypto curated: 2h evaluation horizon. bettingCloseTime mirrors the
+// v4 contract's tier rule (≤1d window → 60% of duration).
+const cryptoCloseTime = inHours(2);
+const cryptoBettingClose = suggestedCryptoBettingCloseTimeMirror(now, Number(cryptoCloseTime));
 
 const markets: MarketSpec[] = [
   {
     mType: MType.FOOTBALL,
     oracleRef: toBytes32('514237:home_win:0'),
-    closeTime: inHours(3),
+    bettingCloseTime: fb.bettingCloseTime,
+    closeTime: fb.closeTime,
     question: 'Will Arsenal beat Chelsea?',
   },
   {
     mType: MType.FOOTBALL,
     oracleRef: toBytes32('514238:over:2.5'),
-    closeTime: inHours(3),
+    bettingCloseTime: fb.bettingCloseTime,
+    closeTime: fb.closeTime,
     question: 'Over 2.5 goals in Man City vs Liverpool?',
   },
   {
     mType: MType.CRYPTO,
     oracleRef: toBytes32(`BTC:gt:${btcStrike}`),
-    closeTime: inHours(2),
+    bettingCloseTime: cryptoBettingClose,
+    closeTime: cryptoCloseTime,
     question: `Will BTC close above $${btcStrike.toLocaleString()} in 2 hours?`,
   },
   {
     mType: MType.CRYPTO,
     oracleRef: toBytes32(`ETH:gt:${ethStrike}`),
-    closeTime: inHours(2),
+    bettingCloseTime: cryptoBettingClose,
+    closeTime: cryptoCloseTime,
     question: `Will ETH close above $${ethStrike.toLocaleString()} in 2 hours?`,
   },
   // NBA: best-effort — appended only if balldontlie returned upcoming games.
-  // closeTime is 10 minutes before tip-off; resolver takes over from there.
-  ...nbaGames.map((g): MarketSpec => ({
-    mType: MType.BASKETBALL,
-    oracleRef: toBytes32(`${g.id}:home_win:0`),
-    closeTime: BigInt(Math.floor(g.kickoff.getTime() / 1000) - 600),
-    question: `Will the ${g.home} beat the ${g.away}?`,
-  })),
+  // bettingCloseTime is 10 min before tip-off; closeTime is tip-off + 3h.
+  ...nbaGames.map((g): MarketSpec => {
+    const tipoffSec = Math.floor(g.kickoff.getTime() / 1000);
+    const ts = sportsTimestamps(tipoffSec, 'basketball');
+    return {
+      mType: MType.BASKETBALL,
+      oracleRef: toBytes32(`${g.id}:home_win:0`),
+      bettingCloseTime: ts.bettingCloseTime,
+      closeTime: ts.closeTime,
+      question: `Will the ${g.home} beat the ${g.away}?`,
+    };
+  }),
 ];
 
 // ---------------------------------------------------------------
@@ -315,11 +394,14 @@ console.log('');
 
 for (const m of markets) {
   console.log(`[seed] [${nextId}] "${m.question}"`);
+  // Validate before signing — burning gas on a known-revert tx is just
+  // bad ergonomics during seed iteration.
+  assertTimestamps(now, m.bettingCloseTime, m.closeTime, m.mType !== MType.CRYPTO);
   const hash = await walletClient.writeContract({
     address: MAKO_ADDRESS,
     abi: makoAbi,
     functionName: 'createMarket',
-    args: [m.mType, m.oracleRef, m.closeTime, m.question],
+    args: [m.mType, m.oracleRef, m.bettingCloseTime, m.closeTime, m.question],
   });
   console.log(`[seed]        tx: ${hash}`);
 

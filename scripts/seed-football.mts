@@ -71,7 +71,7 @@ const LIMIT = Math.max(1, Math.min(10, Number(process.env.LIMIT ?? '2')));
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const abiJson = JSON.parse(
   readFileSync(
-    resolve(__dirname, '../../mako-contracts/out/MakoMarkets.sol/MakoMarkets.json'),
+    resolve(__dirname, '../../mako-contracts/out/MakoMarketsV4.sol/MakoMarketsV4.json'),
     'utf-8',
   ),
 ) as { abi: readonly unknown[] };
@@ -239,19 +239,49 @@ console.log('');
 // Create each market
 // ---------------------------------------------------------------
 
+// MIRROR of src/lib/market-timing.ts:sportsTimestamps('football', ...) +
+// validateMarketTimestamps — inlined because tsx/ESM can't import from
+// src/. PRE_EVENT_BUFFER_SEC=600, FOOTBALL_DURATION_SEC=9000 (2h30),
+// MAX_DURATION_SEC=604800 (7d), MIN_DURATION_SEC=300 (5m). If the lib
+// changes, update here.
+const PRE_EVENT_BUFFER_SEC = 10 * 60;
+const FOOTBALL_DURATION_SEC = 150 * 60;
+const MAX_DURATION_SEC = 7 * 24 * 60 * 60;
+const MIN_DURATION_SEC = 5 * 60;
+
+function assertSportsTimestamps(
+  nowSec: number,
+  bettingCloseTime: bigint,
+  closeTime: bigint,
+): void {
+  const now = BigInt(nowSec);
+  if (bettingCloseTime <= now) fail('bettingCloseTime must be in the future');
+  if (closeTime <= now) fail('closeTime must be in the future');
+  if (bettingCloseTime >= closeTime) fail('bettingCloseTime must be strictly before closeTime');
+  const durationSec = Number(closeTime - now);
+  if (durationSec < MIN_DURATION_SEC) fail('event too soon (< MIN_DURATION)');
+  if (durationSec > MAX_DURATION_SEC) fail('event too far out (> MAX_DURATION)');
+}
+
 let placedAt = Number(nextId);
 for (const m of toSeed) {
-  const closeTimeSec = BigInt(Math.floor(m.kickoff.getTime() / 1000) - 600);
+  const kickoffSec = Math.floor(m.kickoff.getTime() / 1000);
+  const bettingCloseTime = BigInt(kickoffSec - PRE_EVENT_BUFFER_SEC);
+  const closeTime = BigInt(kickoffSec + FOOTBALL_DURATION_SEC);
   const question = `Will ${m.home} beat ${m.away}?`;
   if (question.length > 200) fail(`question exceeds 200 chars: "${question}"`);
   const oracleRef = toBytes32(`${m.id}:home_win:0`);
+
+  // Validate before broadcasting — burning gas on a known-revert tx is
+  // bad ergonomics during seed iteration.
+  assertSportsTimestamps(Math.floor(Date.now() / 1000), bettingCloseTime, closeTime);
 
   console.log(`[seed-football] [${placedAt}] "${question}"`);
   const hash = await walletClient.writeContract({
     address: MAKO_ADDRESS,
     abi: makoAbi,
     functionName: 'createMarket',
-    args: [MarketType.FOOTBALL, oracleRef, closeTimeSec, question],
+    args: [MarketType.FOOTBALL, oracleRef, bettingCloseTime, closeTime, question],
   });
   console.log(`[seed-football]        tx: ${hash}`);
   const receipt = await publicClient.waitForTransactionReceipt({ hash });

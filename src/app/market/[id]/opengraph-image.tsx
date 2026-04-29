@@ -19,7 +19,7 @@ export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
 const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS ??
-  '0x9d4d399D2fca1432337C5e606D005DEfa2EB4992') as `0x${string}`;
+  '0xf9853d7ad6601deF4367524A5802B41227ea5c43') as `0x${string}`;
 const RPC_URL = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
 
 const monadTestnet = {
@@ -75,13 +75,18 @@ export default async function Image({ params }: { params: { id: string } }) {
   const question = market?.question ?? 'Mako Market';
   const tag = market ? tagFor(market.mType) : 'MAKO';
   const nowSec = Math.floor(Date.now() / 1000);
-  const closeSec = market ? Number(market.closeTime) : 0;
+  // v4 splits "betting still open?" (bettingCloseTime) from "resolution
+  // legal?" (closeTime). The unfurl reads bettingCloseTime so social
+  // previews don't tell readers betting is still open during the
+  // post-bettingClose / pre-resolution window (sports markets sit there
+  // for the duration of the event).
+  const bettingCloseSec = market ? Number(market.bettingCloseTime) : 0;
   const closeLabel = !market
     ? 'Short-form prediction markets on Monad'
     : market.resolved
       ? 'MARKET RESOLVED'
-      : closeSec > nowSec
-        ? `BETS CLOSE ${humanizeUntil(closeSec - nowSec).toUpperCase()}`
+      : bettingCloseSec > nowSec
+        ? `BETS CLOSE ${humanizeUntil(bettingCloseSec - nowSec).toUpperCase()}`
         : 'AWAITING RESOLUTION';
 
   // Font size tapers with question length so long strings still fit on one

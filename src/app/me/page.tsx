@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAccount, useReadContracts } from 'wagmi';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMarkets } from '@/lib/hooks';
 import { makoContract, type MarketWithId } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
@@ -81,6 +82,11 @@ export default function MyMarketsPage() {
             </p>
           </div>
         </div>
+        {/* Temporary RainbowKit Connect entry point. The full /profile redesign
+            in Phase 1E gives this its own polished surface; until then this
+            is the only place to wire wagmi up so external-wallet bet flow
+            (Phase 1C) is reachable. */}
+        <ConnectButton />
         <Link href="/" className="mako-button mako-button--signal mako-label">
           BACK TO FEED
         </Link>

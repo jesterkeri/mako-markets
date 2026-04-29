@@ -1,16 +1,15 @@
 'use client';
 
 import { useEffect } from 'react';
-import { formatEther } from 'viem';
 import {
   useAccount,
   useReadContract,
-  useReadContracts,
   useWaitForTransactionReceipt,
 } from 'wagmi';
 import { makoContract, Outcome, type MarketWithId } from '@/lib/contract';
 import { useClaim } from '@/lib/hooks';
-import { computeResolvedClaimWei } from '@/lib/bet';
+import { computeResolvedClaim } from '@/lib/bet';
+import { formatUsdc } from '@/lib/usdc';
 
 /**
  * Inline claim row for /me's CLOSED tab.
@@ -24,6 +23,9 @@ import { computeResolvedClaimWei } from '@/lib/bet';
  * Click handler uses `e.stopPropagation` so the tap doesn't bubble
  * to the parent <Link> wrapper (which would navigate to the detail
  * page instead of firing the claim).
+ *
+ * **Per-market fee snapshots feed the claim helper SEPARATELY** — see
+ * note in `ClaimButton.tsx` for why summing them is wrong under v4.
  */
 export function MarketClaimAction({
   market,
@@ -41,15 +43,6 @@ export function MarketClaimAction({
     query: {
       enabled: !!address && market.resolved,
       refetchInterval: 5000,
-    },
-  });
-  const { data: feeData } = useReadContracts({
-    contracts: [
-      { ...makoContract, functionName: 'protocolFeeBps' },
-      { ...makoContract, functionName: 'creatorFeeBps' },
-    ],
-    query: {
-      enabled: market.resolved,
     },
   });
 
@@ -82,38 +75,35 @@ export function MarketClaimAction({
     return null;
   }
 
-  // Figure out what's claimable given the resolved outcome.
-  const feeBps =
-    feeData?.[0]?.status === 'success' && feeData?.[1]?.status === 'success'
-      ? BigInt(feeData[0].result) + BigInt(feeData[1].result)
-      : 300n;
+  const protocolBps = BigInt(market.protocolFeeBpsSnapshot);
+  const creatorBps = BigInt(market.creatorFeeBpsSnapshot);
   const outcome = market.outcome;
-  let claimableWei = 0n;
+  let claimableUsdc = 0n;
   let label = 'CLAIM';
   if (outcome === Outcome.REFUND) {
-    claimableWei = userYes + userNo;
+    claimableUsdc = userYes + userNo;
     label = 'CLAIM REFUND';
   } else if (outcome === Outcome.YES && userYes > 0n) {
-    claimableWei = computeResolvedClaimWei(
+    claimableUsdc = computeResolvedClaim(
       market.totalYes,
       market.totalNo,
       userYes,
-      feeBps,
+      protocolBps,
+      creatorBps,
     );
     label = 'CLAIM WINNINGS';
   } else if (outcome === Outcome.NO && userNo > 0n) {
-    claimableWei = computeResolvedClaimWei(
+    claimableUsdc = computeResolvedClaim(
       market.totalNo,
       market.totalYes,
       userNo,
-      feeBps,
+      protocolBps,
+      creatorBps,
     );
     label = 'CLAIM WINNINGS';
   }
 
-  // No claimable position → render nothing (user lost, never bet, or
-  // already claimed and the refetch hasn't flipped hasClaimed yet).
-  if (claimableWei === 0n) return null;
+  if (claimableUsdc === 0n) return null;
 
   const handleClaim = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -154,7 +144,7 @@ export function MarketClaimAction({
       >
         {isBusy || hasClaimed
           ? statusText
-          : `${label} · ${Number(formatEther(claimableWei)).toFixed(4)} MON`}
+          : `${label} · ${formatUsdc(claimableUsdc)} USDC`}
       </button>
       {statusText && !isBusy && !hasClaimed && (
         <div

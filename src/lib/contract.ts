@@ -1,16 +1,17 @@
 import { makoAbi } from './MakoMarkets.abi';
+import { usdcContract } from './usdc';
 
 /**
- * Deployed address of MakoMarkets on Monad testnet.
+ * Deployed address of MakoMarketsV4 on Monad testnet.
  *
  * Set `NEXT_PUBLIC_MAKO_ADDRESS` in `.env.local` after running
- * `forge script script/Deploy.s.sol:Deploy` in `../mako-contracts/`.
+ * `forge script script/DeployV4.s.sol:DeployV4` in `../mako-contracts/`.
  *
- * Defaults to the zero address so the app still compiles and renders
- * the ConnectButton before the contract exists on-chain.
+ * Defaults to the live v4 deploy so the app still compiles and renders
+ * if the env var is unset.
  */
 export const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS
-  || '0x0000000000000000000000000000000000000000') as `0x${string}`;
+  || '0xf9853d7ad6601deF4367524A5802B41227ea5c43') as `0x${string}`;
 
 /**
  * Pre-composed contract object for wagmi's useReadContract / useWriteContract.
@@ -28,9 +29,10 @@ export const makoContract = {
 } as const;
 
 export { makoAbi };
+export { usdcContract };
 
 // ============================================================
-// Enums — must match MakoMarkets.sol exactly
+// Enums — must match MakoMarketsV4.sol exactly
 // ============================================================
 
 /** Market type. Matches `MarketType` enum in the contract.
@@ -51,13 +53,20 @@ export enum Outcome {
 }
 
 // ============================================================
-// Market shape — mirrors the Solidity `Market` struct 1:1.
-// Use this for mock data so the switch to live contract reads is a no-op.
+// Market shape — mirrors the Solidity v4 `Market` struct 1:1.
+//
+// Field order matches the Solidity struct verbatim — bettingCloseTime
+// is between closeTime and totalYes; protocolFeeBpsSnapshot and
+// creatorFeeBpsSnapshot are after creatorFeeClaimed. Wagmi decodes by
+// name, so the order is documentation, but any positional/tuple
+// destructure (`const [creator, mType, ...rest] = result`) silently
+// reads wrong fields if the order drifts.
 // ============================================================
 
 /**
  * One row in the contract's `markets` mapping.
  * uint256 amounts are `bigint` because JS `Number` overflows at 2^53.
+ * USDC base-unit amounts use 6 decimals (1 USDC = 1_000_000n).
  */
 export type Market = {
   creator: `0x${string}`;
@@ -65,14 +74,17 @@ export type Market = {
   oracleRef: `0x${string}`;        // bytes32
   question: string;
   createdAt: bigint;               // uint64 seconds since epoch
-  closeTime: bigint;               // uint64 seconds since epoch
-  totalYes: bigint;                // uint256 wei
-  totalNo: bigint;                 // uint256 wei
+  closeTime: bigint;               // uint64 seconds since epoch — gates resolveMarket
+  bettingCloseTime: bigint;        // uint64 seconds since epoch — gates placeBet
+  totalYes: bigint;                // uint256 USDC base units (6 decimals)
+  totalNo: bigint;                 // uint256 USDC base units (6 decimals)
   yesBettorCount: number;          // uint32 fits in JS number
   noBettorCount: number;           // uint32 fits in JS number
   outcome: Outcome;
   resolved: boolean;
   creatorFeeClaimed: boolean;
+  protocolFeeBpsSnapshot: number;  // uint16 — frozen at createMarket
+  creatorFeeBpsSnapshot: number;   // uint16 — frozen at createMarket
 };
 
 /** Market + its on-chain id, convenient for list rendering. */

@@ -53,7 +53,7 @@ import { dirname, resolve as pathResolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const foundryAbiPath = pathResolve(
   __dirname,
-  '../../mako-contracts/out/MakoMarkets.sol/MakoMarkets.json',
+  '../../mako-contracts/out/MakoMarketsV4.sol/MakoMarketsV4.json',
 );
 const vendoredAbiPath = pathResolve(__dirname, './mako-abi.json');
 const abiPath = existsSync(foundryAbiPath) ? foundryAbiPath : vendoredAbiPath;
@@ -180,6 +180,10 @@ const BASKETBALL_VOID_SUBSTRINGS = ['postpon', 'cancel'];
 // 24h RESOLUTION_GRACE (so the orphan refund always beats forceRefund).
 const ORPHAN_REFUND_DELAY_SEC = 2n * 60n * 60n;
 
+// v4 Market struct shape — bettingCloseTime sits between closeTime and
+// totalYes; protocolFeeBpsSnapshot + creatorFeeBpsSnapshot follow
+// creatorFeeClaimed. Read by named field; positional/tuple destructure
+// breaks under the v3→v4 field-order change.
 type Market = {
   creator: Address;
   mType: number;
@@ -187,6 +191,7 @@ type Market = {
   question: string;
   createdAt: bigint;
   closeTime: bigint;
+  bettingCloseTime: bigint;
   totalYes: bigint;
   totalNo: bigint;
   yesBettorCount: number;
@@ -194,6 +199,8 @@ type Market = {
   outcome: number;
   resolved: boolean;
   creatorFeeClaimed: boolean;
+  protocolFeeBpsSnapshot: number;
+  creatorFeeBpsSnapshot: number;
 };
 
 // MIRROR_CRYPTO_ASSETS — duplicated from src/lib/crypto-assets.ts because

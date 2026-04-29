@@ -48,3 +48,7 @@ next-env.d.ts
 # Operational handovers / playbooks: keep local only, don't track in git.
 HANDOVER.md
 HANDOVER*.md
+
+# Claude scratch dir for in-flight plans, review notes, and draft artifacts.
+# Contents are session-scoped, never shipped.
+.claude-tmp/

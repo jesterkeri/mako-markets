@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { formatEther } from 'viem';
 import { type MarketWithId, MarketType } from '@/lib/contract';
-import { poolSizeMon, secondsLeft, yesMultiplier, noMultiplier } from '@/lib/mocks';
+import { poolSizeUsdc, secondsUntilBettingClose, yesMultiplier, noMultiplier } from '@/lib/mocks';
+import { formatUsdc } from '@/lib/usdc';
 
 function formatTimeLeft(s: number): string {
   if (s <= 0) return 'CLOSED';
@@ -23,52 +23,47 @@ function categoryLabel(t: MarketType): string {
 /**
  * Displayable multiplier for a side.
  *
- * `yesMultiplier` / `noMultiplier` from mocks.ts return 0 when the pool is
- * too thin (contract forces refund) — useful for disabling bet math, but
- * unhelpful on a card where the bettor deserves to see *something*.
+ * `yesMultiplier` / `noMultiplier` return 0 in two cases under v4:
+ *   - the side itself has no stake (no winners → no payout to display)
+ *   - the OPPOSITE side has no stake (empty-side rule — contract's
+ *     `previewPayout` returns the bettor's stake at 1×, market settles
+ *     via REFUND outcome at resolution)
  *
- * For display: if the pool meets the liquidity ratio, show the raw payout
- * multiplier. If it's thin enough that the contract will force a refund,
- * show `1.00x` — the bettor gets their stake back, which is what 1×
- * literally means.
- *
- * A side with zero stake has no multiplier at all (no one to pay it out).
+ * For display we collapse the second case to `1.00x` because the bettor
+ * gets their stake back, which is what 1× literally means. A side with
+ * zero stake of its own has no displayable multiplier.
  */
 function displayMult(sidePool: bigint, raw: number): number {
   if (sidePool === 0n) return 0;
-  // Non-zero pool, raw returned 0 → contract would refund → 1.00x payout.
   if (raw === 0) return 1.0;
   return raw;
-}
-
-function formatMon(wei: bigint): string {
-  const n = Number(formatEther(wei));
-  if (n === 0) return '0';
-  if (n >= 100) return n.toFixed(0);
-  if (n >= 10) return n.toFixed(1);
-  return n.toFixed(2);
 }
 
 /**
  * Neobrutalist market tile. 2px ink border, 4×4 hard ink shadow, hover
  * lifts 1px up/left with a 6×6 shadow. YES uses ink fill with paper text;
- * NO uses mako-red with paper text. Footer carries per-side MON + bettor
+ * NO uses mako-red with paper text. Footer carries per-side USDC + bettor
  * counts and the total pool.
+ *
+ * **Time semantic:** the countdown chip reads `bettingCloseTime`, NOT
+ * `closeTime`. v4 splits the two — bettingCloseTime is when placing bets
+ * stops being legal, closeTime is when resolution becomes legal. For
+ * sports they're hours apart; the bettor cares about the former.
  */
 export function MarketCard({ market }: { market: MarketWithId }) {
-  const [timeLeft, setTimeLeft] = useState(() => secondsLeft(market));
+  const [timeLeft, setTimeLeft] = useState(() => secondsUntilBettingClose(market));
 
   useEffect(() => {
-    const id = setInterval(() => setTimeLeft(secondsLeft(market)), 1000);
+    const id = setInterval(() => setTimeLeft(secondsUntilBettingClose(market)), 1000);
     return () => clearInterval(id);
   }, [market]);
 
   const yesMult = displayMult(market.totalYes, yesMultiplier(market));
   const noMult = displayMult(market.totalNo, noMultiplier(market));
-  const pool = poolSizeMon(market);
+  const pool = poolSizeUsdc(market);
   const isClosed = timeLeft <= 0 || market.resolved;
-  const yesMon = formatMon(market.totalYes);
-  const noMon = formatMon(market.totalNo);
+  const yesUsdc = formatUsdc(market.totalYes);
+  const noUsdc = formatUsdc(market.totalNo);
 
   // Closing-soon sticker appears under 1h; suppressed once the market closes
   // (the countdown chip already communicates that state).
@@ -126,18 +121,18 @@ export function MarketCard({ market }: { market: MarketWithId }) {
         {/* Per-side stake + bettor breakdown */}
         <div className="grid grid-cols-2 gap-3 mt-3">
           <div className="mako-label text-[10px] text-muted tabular-nums">
-            {yesMon} MON · {market.yesBettorCount}{' '}
+            {yesUsdc} USDC · {market.yesBettorCount}{' '}
             {market.yesBettorCount === 1 ? 'BET' : 'BETS'}
           </div>
           <div className="mako-label text-[10px] text-muted tabular-nums text-right">
-            {noMon} MON · {market.noBettorCount}{' '}
+            {noUsdc} USDC · {market.noBettorCount}{' '}
             {market.noBettorCount === 1 ? 'BET' : 'BETS'}
           </div>
         </div>
 
         {/* Footer strip — total pool + total bettors */}
         <div className="mt-3 pt-3 border-t-2 border-ink/10 flex justify-between items-center mako-label text-[10px] text-muted tabular-nums">
-          <span>POOL · {pool.toFixed(2)} MON</span>
+          <span>POOL · {pool.toFixed(2)} USDC</span>
           <span>VOL · {market.yesBettorCount + market.noBettorCount} TOTAL</span>
         </div>
       </div>

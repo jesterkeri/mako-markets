@@ -13,11 +13,12 @@ import { BroadcastQrModal } from './BroadcastQrModal';
 export function BroadcastButton({
   marketId,
   question,
-  closeTimeSec,
+  bettingCloseTimeSec,
 }: {
   marketId: bigint;
   question: string;
-  closeTimeSec: bigint;
+  /** v4 betting cutoff. Distinct from `closeTime` (resolution legality). */
+  bettingCloseTimeSec: bigint;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -35,7 +36,7 @@ export function BroadcastButton({
         onClose={() => setOpen(false)}
         marketId={marketId}
         question={question}
-        closeTimeSec={closeTimeSec}
+        bettingCloseTimeSec={bettingCloseTimeSec}
       />
     </>
   );

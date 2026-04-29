@@ -62,7 +62,7 @@ export default function AdminOverviewPage() {
             />
             <Tile
               label="VOLUME"
-              value={<>{fourDp(data.totals.totalVolumeMon)} MON</>}
+              value={<>{fourDp(data.totals.totalVolumeUsdc)} USDC</>}
               sub={
                 <Honest
                   value={`${data.totals.uniqueBettors} UNIQUE BETTORS`}
@@ -95,18 +95,18 @@ export default function AdminOverviewPage() {
               label="PROTOCOL FEES"
               value={
                 <Honest
-                  value={`${fourDp(data.totals.totalProtocolFeesMon)} MON`}
+                  value={`${fourDp(data.totals.totalProtocolFeesUsdc)} USDC`}
                   dependsOn={['withdraw']}
                   degraded={data.degraded}
                 />
               }
-              sub={`${fourDp(data.totals.treasuryMon)} MON IN TREASURY NOW`}
+              sub={`${fourDp(data.totals.treasuryUsdc)} USDC IN TREASURY NOW`}
             />
             <Tile
               label="CREATOR FEES PAID"
               value={
                 <Honest
-                  value={`${fourDp(data.totals.creatorFeesPaidMon)} MON`}
+                  value={`${fourDp(data.totals.creatorFeesPaidUsdc)} USDC`}
                   dependsOn={['fee']}
                   degraded={data.degraded}
                 />
@@ -118,8 +118,8 @@ export default function AdminOverviewPage() {
               value={
                 <Honest
                   value={`${fourDp(
-                    (parseFloat(data.totals.totalProtocolFeesMon) + parseFloat(data.totals.creatorFeesPaidMon)).toString(),
-                  )} MON`}
+                    (parseFloat(data.totals.totalProtocolFeesUsdc) + parseFloat(data.totals.creatorFeesPaidUsdc)).toString(),
+                  )} USDC`}
                   dependsOn={['fee', 'withdraw']}
                   degraded={data.degraded}
                 />

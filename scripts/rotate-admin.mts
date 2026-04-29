@@ -1,24 +1,30 @@
 /**
- * One-shot admin rotation for MakoMarkets on Monad testnet.
+ * One-shot admin rotation for MakoMarketsV4 on Monad testnet.
  *
  * Reads the (compromised) ADMIN_PRIVATE_KEY from .env.local, then in order:
- *   1. withdrawTreasury()          — sweeps 0.09 MON treasury to current treasury (old wallet)
+ *   1. withdrawTreasury()          — sweeps USDC treasury to current treasury (old wallet)
  *   2. setTreasury(NEW)
  *   3. setResolver(NEW)
  *   4. transferOwnership(NEW)      — irreversible without NEW's signature; run last
- *   5. send (oldWalletBalance - gasReserve) → NEW
+ *   5. send (oldWalletBalance - gasReserve MON for gas) → NEW
  *
  * Each tx waits for receipt before the next. Uses a small gas-price bump
  * on the first tx to outrun a potential sweeper bot. Logs everything for audit.
  *
  * Usage:
- *   pnpm tsx scripts/rotate-admin.mts
+ *   pnpm exec tsx scripts/rotate-admin.mts
  *
  * Or with --dry to print the plan without broadcasting:
- *   pnpm tsx scripts/rotate-admin.mts --dry
+ *   pnpm exec tsx scripts/rotate-admin.mts --dry
  */
 import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
+// `parseEther` / `formatEther` here are deliberately retained for
+// **native MON** (18 decimals) — gas-wallet balances and the MON sweep
+// from the old admin to the new one. They do NOT touch USDC (6 decimals,
+// which uses `formatUsdc` below) or any bet-currency value. v4 treasury
+// balance moves USDC; signer + new-admin wallet balances are MON because
+// that's the chain's gas currency.
 import {
   createPublicClient,
   createWalletClient,
@@ -26,11 +32,14 @@ import {
   parseAbi,
   parseEther,
   formatEther,
+  formatUnits,
   type Hex,
   isAddress,
   getAddress,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+
+const formatUsdc = (base: bigint): string => formatUnits(base, 6);
 
 const DRY_RUN = process.argv.includes('--dry');
 
@@ -40,7 +49,7 @@ function fail(msg: string): never {
 }
 
 const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS ??
-  '0x9d4d399D2fca1432337C5e606D005DEfa2EB4992') as `0x${string}`;
+  '0xf9853d7ad6601deF4367524A5802B41227ea5c43') as `0x${string}`;
 const RPC = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
 const rawKey = process.env.ADMIN_PRIVATE_KEY;
 if (!rawKey) fail('ADMIN_PRIVATE_KEY missing from .env.local');
@@ -114,8 +123,8 @@ async function main() {
   console.log(`  owner:    ${before.owner}`);
   console.log(`  resolver: ${before.resolver}`);
   console.log(`  treasury: ${before.treasury}`);
-  console.log(`  treasury bal: ${formatEther(before.tBal)} MON`);
-  console.log(`  signer bal:   ${formatEther(before.wBal)} MON`);
+  console.log(`  treasury bal: ${formatUsdc(before.tBal)} USDC`);
+  console.log(`  signer bal:   ${formatEther(before.wBal)} MON  (gas wallet)`);
 
   if (before.owner.toLowerCase() !== account.address.toLowerCase()) {
     fail('signer is not owner — aborting (maybe already rotated?)');
@@ -162,10 +171,10 @@ async function main() {
   console.log(`  owner:    ${after.owner}`);
   console.log(`  resolver: ${after.resolver}`);
   console.log(`  treasury: ${after.treasury}`);
-  console.log(`  treasury bal: ${formatEther(after.tBal)} MON`);
+  console.log(`  treasury bal: ${formatUsdc(after.tBal)} USDC`);
   console.log(`  signer bal:   ${formatEther(after.wBal)} MON  (old wallet, should be near 0)`);
   const newBal = await pub.getBalance({ address: NEW_ADMIN });
-  console.log(`  new admin bal: ${formatEther(newBal)} MON`);
+  console.log(`  new admin bal: ${formatEther(newBal)} MON  (gas wallet)`);
 
   const migrated =
     after.owner.toLowerCase() === NEW_ADMIN.toLowerCase() &&

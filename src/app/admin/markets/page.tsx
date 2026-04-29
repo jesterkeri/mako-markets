@@ -105,9 +105,10 @@ function MarketRow({
     question: string;
     createdAtSec: number;
     closeTimeSec: number;
-    poolMon: string;
-    yesMon: string;
-    noMon: string;
+    bettingCloseTimeSec: number;
+    poolUsdc: string;
+    yesUsdc: string;
+    noUsdc: string;
     bettorCount: number;
     outcome: 0 | 1 | 2 | 3;
     resolved: boolean;
@@ -130,7 +131,7 @@ function MarketRow({
       <div className="mako-label text-muted mb-1 flex flex-wrap gap-x-4 gap-y-1">
         <span>ID {m.id}</span>
         <span>{typeLabel(m.mType)}</span>
-        <span>POOL {fourDp(m.poolMon)} MON</span>
+        <span>POOL {fourDp(m.poolUsdc)} USDC</span>
         <span>
           BY{' '}
           <a
@@ -153,10 +154,10 @@ function MarketRow({
 
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 mako-label text-muted">
         <span>
-          YES <span className="text-ink tabular-nums">{fourDp(m.yesMon)}</span>
+          YES <span className="text-ink tabular-nums">{fourDp(m.yesUsdc)}</span>
         </span>
         <span>
-          NO <span className="text-ink tabular-nums">{fourDp(m.noMon)}</span>
+          NO <span className="text-ink tabular-nums">{fourDp(m.noUsdc)}</span>
         </span>
         <span>
           BETTORS <span className="text-ink tabular-nums">{m.bettorCount}</span>

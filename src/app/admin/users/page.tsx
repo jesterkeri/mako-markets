@@ -35,8 +35,8 @@ export default function AdminUsersPage() {
       // BigInt comparison on the raw wei string avoids the Number() float
       // precision pitfall that shows up once volumes get large.
       copy.sort((a, b) => {
-        const bw = BigInt(b.volumeWei);
-        const aw = BigInt(a.volumeWei);
+        const bw = BigInt(b.volumeBaseUnits);
+        const aw = BigInt(a.volumeBaseUnits);
         if (bw === aw) return 0;
         return bw > aw ? 1 : -1;
       });
@@ -46,8 +46,8 @@ export default function AdminUsersPage() {
       // BigInt compare on raw wei, same pattern as volume — avoids the
       // Number() precision fall-over at higher earning levels.
       copy.sort((a, b) => {
-        const bw = BigInt(b.creatorFeesEarnedWei);
-        const aw = BigInt(a.creatorFeesEarnedWei);
+        const bw = BigInt(b.creatorFeesEarnedBaseUnits);
+        const aw = BigInt(a.creatorFeesEarnedBaseUnits);
         if (bw === aw) return 0;
         return bw > aw ? 1 : -1;
       });
@@ -132,12 +132,12 @@ function UserRow({
   user: {
     address: `0x${string}`;
     betCount: number;
-    volumeMon: string;
-    volumeWei: string;
+    volumeUsdc: string;
+    volumeBaseUnits: string;
     marketsCreated: number;
-    creatorFeesEarnedMon: string;
-    creatorFeesEarnedWei: string;
-    claimedMon: string;
+    creatorFeesEarnedUsdc: string;
+    creatorFeesEarnedBaseUnits: string;
+    claimedUsdc: string;
     firstSeenSec: number;
     lastSeenSec: number;
   };
@@ -163,7 +163,7 @@ function UserRow({
         <span>
           VOLUME{' '}
           <span className="text-ink tabular-nums">
-            <Honest value={`${fourDp(u.volumeMon)} MON`} dependsOn={['bet']} degraded={degraded} />
+            <Honest value={`${fourDp(u.volumeUsdc)} USDC`} dependsOn={['bet']} degraded={degraded} />
           </span>
         </span>
         <span>
@@ -181,13 +181,13 @@ function UserRow({
         <span>
           EARNED{' '}
           <span className="text-ink tabular-nums">
-            <Honest value={`${fourDp(u.creatorFeesEarnedMon)} MON`} dependsOn={['fee']} degraded={degraded} />
+            <Honest value={`${fourDp(u.creatorFeesEarnedUsdc)} USDC`} dependsOn={['fee']} degraded={degraded} />
           </span>
         </span>
         <span>
           CLAIMED{' '}
           <span className="text-ink tabular-nums">
-            <Honest value={`${fourDp(u.claimedMon)} MON`} dependsOn={['claim']} degraded={degraded} />
+            <Honest value={`${fourDp(u.claimedUsdc)} USDC`} dependsOn={['claim']} degraded={degraded} />
           </span>
         </span>
       </div>

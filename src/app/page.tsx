@@ -124,9 +124,13 @@ export default function Home() {
   }, []);
 
   const tabMType = TAB_TO_MTYPE[tab];
+  // v4 splits "betting open?" (bettingCloseTime) from "resolution legal?"
+  // (closeTime). The home feed shows still-bettable markets, so the filter
+  // gates on bettingCloseTime — markets sitting in their resolution window
+  // (sports between bettingCloseTime and closeTime) drop out of the feed.
   const filtered = markets.filter((m) => {
     if (m.resolved) return false;
-    if (m.closeTime <= nowSec) return false;
+    if (m.bettingCloseTime <= nowSec) return false;
     if (tabMType !== undefined && m.mType !== tabMType) return false;
     return true;
   });

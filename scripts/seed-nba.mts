@@ -81,7 +81,7 @@ const LIMIT = Math.max(1, Math.min(10, Number(process.env.LIMIT ?? '2')));
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const abiJson = JSON.parse(
   readFileSync(
-    resolve(__dirname, '../../mako-contracts/out/MakoMarkets.sol/MakoMarkets.json'),
+    resolve(__dirname, '../../mako-contracts/out/MakoMarketsV4.sol/MakoMarketsV4.json'),
     'utf-8',
   ),
 ) as { abi: readonly unknown[] };
@@ -239,18 +239,46 @@ console.log('');
 // 3. Create each market: oracleRef=<gameId>:home_win:0, closeTime=kickoff-10m
 // ---------------------------------------------------------------
 
+// MIRROR of src/lib/market-timing.ts:sportsTimestamps('basketball', ...) +
+// validateMarketTimestamps — inlined because tsx/ESM can't import from
+// src/. PRE_EVENT_BUFFER_SEC=600, BASKETBALL_DURATION_SEC=10800 (3h),
+// MAX_DURATION_SEC=604800 (7d), MIN_DURATION_SEC=300 (5m). If the lib
+// changes, update here.
+const PRE_EVENT_BUFFER_SEC = 10 * 60;
+const BASKETBALL_DURATION_SEC = 180 * 60;
+const MAX_DURATION_SEC = 7 * 24 * 60 * 60;
+const MIN_DURATION_SEC = 5 * 60;
+
+function assertSportsTimestamps(
+  nowSec: number,
+  bettingCloseTime: bigint,
+  closeTime: bigint,
+): void {
+  const now = BigInt(nowSec);
+  if (bettingCloseTime <= now) fail('bettingCloseTime must be in the future');
+  if (closeTime <= now) fail('closeTime must be in the future');
+  if (bettingCloseTime >= closeTime) fail('bettingCloseTime must be strictly before closeTime');
+  const durationSec = Number(closeTime - now);
+  if (durationSec < MIN_DURATION_SEC) fail('event too soon (< MIN_DURATION)');
+  if (durationSec > MAX_DURATION_SEC) fail('event too far out (> MAX_DURATION)');
+}
+
 let placedAt = Number(nextId);
 for (const g of toSeed) {
-  const closeTimeSec = BigInt(Math.floor(g.kickoff.getTime() / 1000) - 600);
+  const tipoffSec = Math.floor(g.kickoff.getTime() / 1000);
+  const bettingCloseTime = BigInt(tipoffSec - PRE_EVENT_BUFFER_SEC);
+  const closeTime = BigInt(tipoffSec + BASKETBALL_DURATION_SEC);
   const question = `Will the ${g.home} beat the ${g.away}?`;
   const oracleRef = toBytes32(`${g.id}:home_win:0`);
+
+  assertSportsTimestamps(Math.floor(Date.now() / 1000), bettingCloseTime, closeTime);
 
   console.log(`[seed-nba] [${placedAt}] "${question}"`);
   const hash = await walletClient.writeContract({
     address: MAKO_ADDRESS,
     abi: makoAbi,
     functionName: 'createMarket',
-    args: [MarketType.BASKETBALL, oracleRef, closeTimeSec, question],
+    args: [MarketType.BASKETBALL, oracleRef, bettingCloseTime, closeTime, question],
   });
   console.log(`[seed-nba]        tx: ${hash}`);
   const receipt = await publicClient.waitForTransactionReceipt({ hash });

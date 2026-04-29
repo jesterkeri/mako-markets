@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import {
   createPublicClient,
-  formatEther,
   http,
   parseAbiItem,
   type AbiEvent,
@@ -9,6 +8,7 @@ import {
 } from 'viem';
 import { monadTestnet } from '@/lib/chain';
 import { makoAbi, MAKO_ADDRESS } from '@/lib/contract';
+import { formatUsdcExact } from '@/lib/usdc';
 import type { AdminAnalytics } from '@/lib/admin-analytics';
 import { getAdminSession } from '@/lib/admin-session';
 
@@ -263,7 +263,7 @@ async function aggregate(): Promise<AdminAnalytics> {
 
   // Sum volume in wei during the mapping pass — keep bigints until we
   // stringify. parseFloat round-trips would lose precision at higher totals.
-  let totalVolumeWei = 0n;
+  let totalVolumeBaseUnits = 0n;
 
   const markets = marketResults
     .map((r, i) => {
@@ -275,6 +275,7 @@ async function aggregate(): Promise<AdminAnalytics> {
         question: string;
         createdAt: bigint;
         closeTime: bigint;
+        bettingCloseTime: bigint;
         totalYes: bigint;
         totalNo: bigint;
         yesBettorCount: number;
@@ -282,8 +283,10 @@ async function aggregate(): Promise<AdminAnalytics> {
         outcome: number;
         resolved: boolean;
         creatorFeeClaimed: boolean;
+        protocolFeeBpsSnapshot: number;
+        creatorFeeBpsSnapshot: number;
       };
-      totalVolumeWei += m.totalYes + m.totalNo;
+      totalVolumeBaseUnits += m.totalYes + m.totalNo;
       return {
         id: BigInt(i).toString(),
         mType: m.mType as 0 | 1 | 2,
@@ -291,9 +294,10 @@ async function aggregate(): Promise<AdminAnalytics> {
         question: m.question,
         createdAtSec: Number(m.createdAt),
         closeTimeSec: Number(m.closeTime),
-        poolMon: formatEther(m.totalYes + m.totalNo),
-        yesMon: formatEther(m.totalYes),
-        noMon: formatEther(m.totalNo),
+        bettingCloseTimeSec: Number(m.bettingCloseTime),
+        poolUsdc: formatUsdcExact(m.totalYes + m.totalNo),
+        yesUsdc: formatUsdcExact(m.totalYes),
+        noUsdc: formatUsdcExact(m.totalNo),
         bettorCount: m.yesBettorCount + m.noBettorCount,
         outcome: m.outcome as 0 | 1 | 2 | 3,
         resolved: m.resolved,
@@ -374,10 +378,10 @@ async function aggregate(): Promise<AdminAnalytics> {
   type UserAcc = {
     address: `0x${string}`;
     betCount: number;
-    volumeWei: bigint;
+    volumeBaseUnits: bigint;
     marketsCreated: number;
-    creatorFeesEarnedWei: bigint;
-    claimedWei: bigint;
+    creatorFeesEarnedBaseUnits: bigint;
+    claimedBaseUnits: bigint;
     firstSeenSec: number;
     lastSeenSec: number;
   };
@@ -390,10 +394,10 @@ async function aggregate(): Promise<AdminAnalytics> {
       const fresh: UserAcc = {
         address: addr,
         betCount: 0,
-        volumeWei: 0n,
+        volumeBaseUnits: 0n,
         marketsCreated: 0,
-        creatorFeesEarnedWei: 0n,
-        claimedWei: 0n,
+        creatorFeesEarnedBaseUnits: 0n,
+        claimedBaseUnits: 0n,
         firstSeenSec: ts || 0,
         lastSeenSec: ts || 0,
       };
@@ -414,7 +418,7 @@ async function aggregate(): Promise<AdminAnalytics> {
     const args = (l as unknown as { args: { id: bigint; user: `0x${string}`; isYes: boolean; amount: bigint } }).args;
     const acc = touch(args.user, tsOf(l.blockNumber!));
     acc.betCount += 1;
-    acc.volumeWei += args.amount;
+    acc.volumeBaseUnits += args.amount;
     uniqueBettors.add(args.user.toLowerCase());
   }
   for (const l of marketLogs) {
@@ -429,32 +433,33 @@ async function aggregate(): Promise<AdminAnalytics> {
   for (const l of claimLogs) {
     const args = (l as unknown as { args: { id: bigint; user: `0x${string}`; amount: bigint } }).args;
     const acc = touch(args.user, tsOf(l.blockNumber!));
-    acc.claimedWei += args.amount;
+    acc.claimedBaseUnits += args.amount;
   }
-  let creatorFeesPaidWei = 0n;
+  let creatorFeesPaidBaseUnits = 0n;
   for (const l of feeLogs) {
     const args = (l as unknown as { args: { id: bigint; creator: `0x${string}`; amount: bigint } }).args;
     const acc = touch(args.creator, tsOf(l.blockNumber!));
-    acc.creatorFeesEarnedWei += args.amount;
-    creatorFeesPaidWei += args.amount;
+    acc.creatorFeesEarnedBaseUnits += args.amount;
+    creatorFeesPaidBaseUnits += args.amount;
   }
 
-  // Sort by raw wei (exact bigint compare, no float precision loss),
+  // Sort by raw base units (exact bigint compare, no float precision loss),
   // then by lastSeen as tie-breaker.
   const usersArray = Array.from(users.values())
     .sort((a, b) => {
-      if (a.volumeWei !== b.volumeWei) return b.volumeWei > a.volumeWei ? 1 : -1;
+      if (a.volumeBaseUnits !== b.volumeBaseUnits)
+        return b.volumeBaseUnits > a.volumeBaseUnits ? 1 : -1;
       return b.lastSeenSec - a.lastSeenSec;
     })
     .map((u) => ({
       address: u.address,
       betCount: u.betCount,
-      volumeMon: formatEther(u.volumeWei),
-      volumeWei: u.volumeWei.toString(),
+      volumeUsdc: formatUsdcExact(u.volumeBaseUnits),
+      volumeBaseUnits: u.volumeBaseUnits.toString(),
       marketsCreated: u.marketsCreated,
-      creatorFeesEarnedMon: formatEther(u.creatorFeesEarnedWei),
-      creatorFeesEarnedWei: u.creatorFeesEarnedWei.toString(),
-      claimedMon: formatEther(u.claimedWei),
+      creatorFeesEarnedUsdc: formatUsdcExact(u.creatorFeesEarnedBaseUnits),
+      creatorFeesEarnedBaseUnits: u.creatorFeesEarnedBaseUnits.toString(),
+      claimedUsdc: formatUsdcExact(u.claimedBaseUnits),
       firstSeenSec: u.firstSeenSec,
       lastSeenSec: u.lastSeenSec,
     }));
@@ -486,7 +491,7 @@ async function aggregate(): Promise<AdminAnalytics> {
       blockNumber: l.blockNumber!.toString(),
       tsSec: tsOf(l.blockNumber!),
       user: a.user,
-      amountMon: formatEther(a.amount),
+      amountUsdc: formatUsdcExact(a.amount),
       isYes: a.isYes,
       ...chainKey(l),
     });
@@ -524,7 +529,7 @@ async function aggregate(): Promise<AdminAnalytics> {
       blockNumber: l.blockNumber!.toString(),
       tsSec: tsOf(l.blockNumber!),
       user: a.user,
-      amountMon: formatEther(a.amount),
+      amountUsdc: formatUsdcExact(a.amount),
       ...chainKey(l),
     });
   }
@@ -537,7 +542,7 @@ async function aggregate(): Promise<AdminAnalytics> {
       blockNumber: l.blockNumber!.toString(),
       tsSec: tsOf(l.blockNumber!),
       user: a.creator,
-      amountMon: formatEther(a.amount),
+      amountUsdc: formatUsdcExact(a.amount),
       ...chainKey(l),
     });
   }
@@ -627,11 +632,11 @@ async function aggregate(): Promise<AdminAnalytics> {
   const nowSec = Math.floor(Date.now() / 1000);
   const pendingResolveCount = markets.filter((m) => !m.resolved && m.closeTimeSec <= nowSec).length;
   const unresolvedOpenCount = markets.filter((m) => !m.resolved && m.closeTimeSec > nowSec).length;
-  const treasuryWei = treasuryBn as bigint;
+  const treasuryBaseUnits = treasuryBn as bigint;
   // `treasuryBalance()` is "what's in the contract now" — once the owner
   // calls `withdrawTreasury()` the balance resets. Summing TreasuryWithdrawn
   // events + the current balance gives cumulative protocol fees ever earned.
-  const withdrawnWei = withdrawLogs.reduce((acc, l) => {
+  const withdrawnBaseUnits = withdrawLogs.reduce((acc, l) => {
     const args = (l as unknown as { args: { amount: bigint } }).args;
     return acc + args.amount;
   }, 0n);
@@ -654,12 +659,12 @@ async function aggregate(): Promise<AdminAnalytics> {
       resolvedCount,
       unresolvedOpenCount,
       pendingResolveCount,
-      totalVolumeMon: formatEther(totalVolumeWei),
+      totalVolumeUsdc: formatUsdcExact(totalVolumeBaseUnits),
       uniqueBettors: uniqueBettors.size,
       uniqueCreators: uniqueCreators.size,
-      treasuryMon: formatEther(treasuryWei),
-      creatorFeesPaidMon: formatEther(creatorFeesPaidWei),
-      totalProtocolFeesMon: formatEther(treasuryWei + withdrawnWei),
+      treasuryUsdc: formatUsdcExact(treasuryBaseUnits),
+      creatorFeesPaidUsdc: formatUsdcExact(creatorFeesPaidBaseUnits),
+      totalProtocolFeesUsdc: formatUsdcExact(treasuryBaseUnits + withdrawnBaseUnits),
       fetchedAtSec: nowSec,
     },
     users: usersArray,

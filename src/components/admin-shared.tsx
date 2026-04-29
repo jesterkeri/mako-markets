@@ -114,7 +114,7 @@ export function ActivityRow({ activity: a }: { activity: Activity }) {
   switch (a.kind) {
     case 'bet':
       kindLabel = 'BET';
-      sentence = `${short(a.user)} BET ${fourDp(a.amountMon)} MON ${a.isYes ? 'YES' : 'NO'} ON #${a.marketId}`;
+      sentence = `${short(a.user)} BET ${fourDp(a.amountUsdc)} USDC ${a.isYes ? 'YES' : 'NO'} ON #${a.marketId}`;
       break;
     case 'market':
       kindLabel = 'MARKET';
@@ -126,11 +126,11 @@ export function ActivityRow({ activity: a }: { activity: Activity }) {
       break;
     case 'claim':
       kindLabel = 'CLAIM';
-      sentence = `${short(a.user)} CLAIMED ${fourDp(a.amountMon)} MON ON #${a.marketId}`;
+      sentence = `${short(a.user)} CLAIMED ${fourDp(a.amountUsdc)} USDC ON #${a.marketId}`;
       break;
     case 'fee':
       kindLabel = 'FEE';
-      sentence = `${short(a.user)} CLAIMED ${fourDp(a.amountMon)} MON CREATOR FEE ON #${a.marketId}`;
+      sentence = `${short(a.user)} CLAIMED ${fourDp(a.amountUsdc)} USDC CREATOR FEE ON #${a.marketId}`;
       break;
   }
 

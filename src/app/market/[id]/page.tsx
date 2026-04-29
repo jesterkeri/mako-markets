@@ -25,7 +25,7 @@ import { humanizeUntil } from '@/lib/time';
 export const revalidate = 60;
 
 const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS ??
-  '0x9d4d399D2fca1432337C5e606D005DEfa2EB4992') as `0x${string}`;
+  '0xf9853d7ad6601deF4367524A5802B41227ea5c43') as `0x${string}`;
 const RPC_URL = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ?? 'https://mako-markets.vercel.app';
@@ -77,7 +77,7 @@ export async function generateMetadata({
   const fallback: Metadata = {
     title: baseTitle,
     description:
-      'Parimutuel prediction markets on Monad testnet. Bet MON on sports and crypto outcomes.',
+      'Parimutuel prediction markets on Monad testnet. Bet USDC on sports and crypto outcomes.',
     openGraph: {
       title: baseTitle,
       url: `${APP_URL}/market/${id}`,
@@ -93,11 +93,13 @@ export async function generateMetadata({
 
   const tag = tagFor(market.mType);
   const nowSec = Math.floor(Date.now() / 1000);
-  const closeSec = Number(market.closeTime);
+  // v4 unfurl: "Bets close" copy reads bettingCloseTime; the
+  // "Awaiting resolution" branch reads closeTime (resolution legality).
+  const bettingCloseSec = Number(market.bettingCloseTime);
   const closeLabel = market.resolved
     ? 'Market resolved'
-    : closeSec > nowSec
-      ? `Bets close ${humanizeUntil(closeSec - nowSec)}`
+    : bettingCloseSec > nowSec
+      ? `Bets close ${humanizeUntil(bettingCloseSec - nowSec)}`
       : 'Awaiting resolution';
   const title = `${market.question} · Mako Market`;
   const description = `${tag} · ${closeLabel}. Parimutuel prediction market on Monad testnet.`;

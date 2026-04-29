@@ -90,6 +90,10 @@ enum Outcome {
   REFUND = 3,
 }
 
+// v4 Market struct shape — bettingCloseTime sits between closeTime and
+// totalYes; protocolFeeBpsSnapshot + creatorFeeBpsSnapshot follow
+// creatorFeeClaimed. Read by named field; positional/tuple destructure
+// breaks under the v3→v4 field-order change.
 type Market = {
   creator: Address;
   mType: number;
@@ -97,6 +101,7 @@ type Market = {
   question: string;
   createdAt: bigint;
   closeTime: bigint;
+  bettingCloseTime: bigint;
   totalYes: bigint;
   totalNo: bigint;
   yesBettorCount: number;
@@ -104,6 +109,8 @@ type Market = {
   outcome: number;
   resolved: boolean;
   creatorFeeClaimed: boolean;
+  protocolFeeBpsSnapshot: number;
+  creatorFeeBpsSnapshot: number;
 };
 
 // MIRROR_CRYPTO_ASSETS — duplicated from src/lib/crypto-assets.ts. If you
