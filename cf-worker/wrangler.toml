@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 # the public Monad testnet endpoint. If the contract ever redeploys,
 # bump MAKO_ADDRESS here + redeploy the Worker.
 [vars]
-MAKO_ADDRESS = "0x9d4d399D2fca1432337C5e606D005DEfa2EB4992"
+MAKO_ADDRESS = "0xf9853d7ad6601deF4367524A5802B41227ea5c43"
 MONAD_RPC_URL = "https://testnet-rpc.monad.xyz/"
 
 # Cron: every minute. CF cron is reliable to the minute (unlike GitHub
