@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { useWaitForTransactionReceipt } from 'wagmi';
 import { decodeEventLog, type Hex } from 'viem';
 import { makoAbi, MarketType } from '@/lib/contract';
 import { useCreateMarket } from '@/lib/hooks';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { toBytes32 } from '@/lib/oracle';
 import { humanizeUntil } from '@/lib/time';
 import {
@@ -212,10 +212,18 @@ export default function CreateMarketPage() {
 
   return (
     <main className="flex-1 flex flex-col w-full pb-16">
+      {/* Sticky chrome header — matches the home page LIVE MARKETS bar.
+          Title condenses NEW MARKET / CREATE / tagline trio into a single
+          NEW MARKET label; the tagline reappears on mobile only. */}
+      <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
+        <h1 className="mako-display text-sm lg:text-base text-chrome-fg">NEW MARKET</h1>
+        <ThemeToggle />
+      </header>
+
       <div className="px-4 sm:px-6 lg:px-8 py-6 md:py-10 max-w-3xl mx-auto w-full">
-        <div className="mb-8">
-          <div className="mako-label text-muted mb-2">NEW MARKET</div>
-          <h1 className="mako-display text-4xl md:text-5xl mb-3">CREATE</h1>
+        {/* Mobile-only title — desktop title lives in the sticky header above */}
+        <div className="md:hidden mb-6">
+          <h1 className="mako-display text-3xl mb-2 text-canvas-fg">NEW MARKET</h1>
           <p className="mako-body text-muted text-sm">
             Pick a source, build a question, launch.
           </p>
@@ -225,8 +233,8 @@ export default function CreateMarketPage() {
         <div className="flex gap-3 mb-6 flex-wrap">
           {(
             [
-              { key: 'crypto' as const, label: 'CRYPTO', bg: 'bg-mako-red', text: 'text-paper', activeShadow: 'shadow-[4px_4px_0_0_#000000]' },
-              { key: 'football' as const, label: 'FOOTBALL', bg: 'bg-signal', text: 'text-ink', activeShadow: 'shadow-[4px_4px_0_0_#000000]' },
+              { key: 'crypto' as const, label: 'CRYPTO', bg: 'bg-mako-red', text: 'text-paper', activeShadow: 'shadow-brutal' },
+              { key: 'football' as const, label: 'FOOTBALL', bg: 'bg-signal', text: 'text-ink', activeShadow: 'shadow-brutal' },
               { key: 'basketball' as const, label: 'NBA', bg: 'bg-ink', text: 'text-paper', activeShadow: 'shadow-[4px_4px_0_0_#FACC15]' },
             ]
           ).map(({ key, label, bg, text, activeShadow }) => {
@@ -243,7 +251,7 @@ export default function CreateMarketPage() {
                   whitespace-nowrap disabled:opacity-50 ${bg} ${text}
                   ${isActive
                     ? `${activeShadow} -translate-y-[2px] -translate-x-[2px]`
-                    : 'shadow-[2px_2px_0_0_#000000] hover:shadow-[3px_3px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'}
+                    : 'shadow-brutal-sm hover:shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'}
                 `}
               >
                 {label}
@@ -252,7 +260,7 @@ export default function CreateMarketPage() {
           })}
         </div>
 
-        <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+        <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
           {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
           {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
           {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
@@ -499,8 +507,8 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
                   isActive
-                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
-                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                    ? 'bg-ink text-canvas-fg shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
                 }`}
               >
                 {dir === 'above' ? 'UP / ABOVE' : 'DN / BELOW'}
@@ -551,8 +559,8 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-2.5 mako-label rounded-lg border-2 border-ink transition-all disabled:opacity-50 tabular-nums ${
                   isActive
-                    ? 'bg-ink text-paper shadow-[3px_3px_0_0_#D94A3D] -translate-y-[1px] -translate-x-[1px]'
-                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px]'
+                    ? 'bg-ink text-canvas-fg shadow-[3px_3px_0_0_#D94A3D] -translate-y-[1px] -translate-x-[1px]'
+                    : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px]'
                 }`}
               >
                 {d.short}
@@ -805,8 +813,8 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
                   isActive
-                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
-                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                    ? 'bg-ink text-canvas-fg shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
                 }`}
               >
                 {label}
@@ -1082,8 +1090,8 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
                   isActive
-                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
-                    : 'bg-paper shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                    ? 'bg-ink text-canvas-fg shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
                 }`}
               >
                 {label}

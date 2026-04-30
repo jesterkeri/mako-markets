@@ -6,6 +6,7 @@ import '@rainbow-me/rainbowkit/styles.css';
 import { WagmiProvider } from 'wagmi';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { config } from '@/lib/wagmi';
+import { ThemeProvider } from '@/lib/use-theme';
 
 // ---------------------------------------------------------------
 // SSR localStorage polyfill.
@@ -139,12 +140,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={darkTheme({
-          accentColor: '#FACC15',
-          accentColorForeground: 'black',
-        })}>
-          {children}
-        </RainbowKitProvider>
+        <ThemeProvider>
+          <RainbowKitProvider theme={darkTheme({
+            accentColor: '#FACC15',
+            accentColorForeground: 'black',
+          })}>
+            {children}
+          </RainbowKitProvider>
+        </ThemeProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

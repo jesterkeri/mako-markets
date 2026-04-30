@@ -229,7 +229,7 @@ export default function SignupPage() {
             disabled={isBusy || isRetryAvailable}
             required
             autoComplete="email"
-            className="w-full rounded-xl border-2 border-ink bg-paper px-4 py-3 mako-body text-ink shadow-[2px_2px_0_0_#000000] placeholder:text-subtle focus:border-ink focus:outline-none focus:ring-2 focus:ring-signal disabled:opacity-50"
+            className="w-full rounded-xl border-2 border-ink bg-paper px-4 py-3 mako-body text-ink shadow-brutal-sm placeholder:text-subtle focus:border-ink focus:outline-none focus:ring-2 focus:ring-signal disabled:opacity-50"
           />
 
           <button

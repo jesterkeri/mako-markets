@@ -8,6 +8,7 @@ import { MarketType } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
 import { Logo } from '@/components/Logo';
 import { AuthMenu } from '@/components/AuthMenu';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 type Tab = 'all' | 'crypto' | 'football' | 'nba';
 
@@ -48,14 +49,14 @@ const TABS: Array<{
     label: 'FOOTBALL',
     bg: 'bg-signal',
     text: 'text-ink',
-    activeShadow: 'shadow-[4px_4px_0_0_#000000]',
+    activeShadow: 'shadow-brutal',
   },
   {
     key: 'crypto',
     label: 'CRYPTO',
     bg: 'bg-mako-red',
     text: 'text-paper',
-    activeShadow: 'shadow-[4px_4px_0_0_#000000]',
+    activeShadow: 'shadow-brutal',
   },
   {
     key: 'nba',
@@ -75,33 +76,36 @@ const EMPTY_COPY: Record<Tab, string> = {
 
 function MobileHeader() {
   return (
-    <header className="md:hidden flex items-center justify-between px-4 py-3 bg-paper border-b-2 border-ink sticky top-0 z-40">
+    <header className="md:hidden flex items-center justify-between px-4 py-3 bg-chrome text-chrome-fg border-b-2 border-chrome-divider sticky top-0 z-40">
       <Link href="/" className="flex items-center gap-2">
-        <Logo size={28} className="text-ink" title="Mako Markets" />
-        <span className="font-display font-black text-2xl tracking-tight text-ink">MAKO</span>
+        <Logo size={28} className="text-chrome-fg" title="Mako Markets" />
+        <span className="font-display font-black text-2xl tracking-tight text-chrome-fg">MAKO</span>
       </Link>
       {/* Single SIGN IN / SIGN OUT button surfaces the email-first flow.
           External-wallet (RainbowKit) connection lives on /me, where the
           wagmi-driven wallet UI already runs — keeping the home header
           to one auth action only. */}
-      <AuthMenu className="px-3 py-2 text-[11px]" />
+      <div className="flex items-center gap-2">
+        <ThemeToggle />
+        <AuthMenu className="px-3 py-2 text-[11px]" />
+      </div>
     </header>
   );
 }
 
 function MobileBottomNav() {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-paper border-t-2 border-ink md:hidden">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-chrome border-t-2 border-chrome-divider md:hidden">
       <div className="flex justify-around items-center h-16 px-2">
         <Link href="/" className="flex flex-col items-center gap-1 text-mako-red">
           <div className="w-5 h-5 rounded-sm border-2 border-mako-red bg-mako-red/10" />
           <span className="mako-label text-[10px] tracking-normal">Markets</span>
         </Link>
-        <Link href="/me" className="flex flex-col items-center gap-1 text-muted hover:text-ink">
+        <Link href="/me" className="flex flex-col items-center gap-1 text-muted hover:text-chrome-fg">
           <div className="w-5 h-5 rounded-sm border-2 border-current" />
           <span className="mako-label text-[10px] tracking-normal">Portfolio</span>
         </Link>
-        <Link href="/create" className="flex flex-col items-center gap-1 text-muted hover:text-ink">
+        <Link href="/create" className="flex flex-col items-center gap-1 text-muted hover:text-chrome-fg">
           <div className="w-5 h-5 rounded-sm border-2 border-current" />
           <span className="mako-label text-[10px] tracking-normal">Create</span>
         </Link>
@@ -144,9 +148,10 @@ export default function Home() {
             MarketIntelAside header so the bottom border line runs
             continuous across all three columns. Sticky so it stays flush
             with MarketIntelAside (also sticky) when the feed scrolls. */}
-        <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-ink bg-paper sticky top-0 z-30">
-          <h1 className="mako-display text-sm lg:text-base">LIVE MARKETS</h1>
+        <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
+          <h1 className="mako-display text-sm lg:text-base text-chrome-fg">LIVE MARKETS</h1>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Link
               href="/create"
               className="mako-button mako-button--signal mako-label px-3! py-1.5! text-[11px]!"
@@ -164,7 +169,7 @@ export default function Home() {
         <div className="px-4 sm:px-6 lg:px-8 py-5 md:py-6 max-w-6xl mx-auto w-full">
             {/* Mobile heading — the desktop version lives in the flush header bar above */}
             <div className="flex items-baseline justify-between mb-6 md:hidden">
-              <h1 className="mako-display text-3xl">LIVE MARKETS</h1>
+              <h1 className="mako-display text-3xl text-canvas-fg">LIVE MARKETS</h1>
             </div>
 
             {/* Category tabs — each in its own brand color. See TABS above.
@@ -184,7 +189,7 @@ export default function Home() {
                       whitespace-nowrap ${bg} ${text}
                       ${isActive
                         ? `${activeShadow} -translate-y-[2px] -translate-x-[2px]`
-                        : 'shadow-[2px_2px_0_0_#000000] hover:shadow-[3px_3px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'}
+                        : 'shadow-brutal-sm hover:shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'}
                     `}
                   >
                     {label}
@@ -213,7 +218,7 @@ export default function Home() {
               </div>
             ) : (
               <div className="rotate-2 transform mt-12 max-w-md mx-auto">
-                <div className="bg-paper border-2 border-ink rounded-xl shadow-[4px_4px_0_0_#000000] p-6 text-center mako-title text-xl">
+                <div className="bg-paper border-2 border-ink rounded-xl shadow-brutal p-6 text-center mako-title text-xl">
                   {EMPTY_COPY[tab]}
                 </div>
               </div>

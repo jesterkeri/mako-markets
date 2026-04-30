@@ -36,7 +36,7 @@ export default function AdminResolvePage() {
     return (
       <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
         <div className="-rotate-2">
-          <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] p-8 max-w-sm">
+          <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal p-8 max-w-sm">
             <h1 className="mako-display text-3xl mb-3">NOT AUTHORIZED</h1>
             <p className="mako-body text-muted mb-3">
               Connect the deployer wallet to resolve markets.
@@ -65,7 +65,7 @@ export default function AdminResolvePage() {
 
       <div className="px-6 lg:px-8 py-8 border-b-2 border-ink">
         <div className="mako-label text-muted mb-2">ADMIN · RESOLVE</div>
-        <h1 className="mako-display text-3xl md:text-4xl mb-2">
+        <h1 className="mako-display text-3xl md:text-4xl mb-2 text-canvas-fg">
           {pending.length} PENDING
         </h1>
         <p className="mako-label text-muted">
@@ -140,7 +140,7 @@ function ResolveRow({
 
   return (
     <div className="border-b-2 border-ink/10 px-4 lg:px-8 py-4">
-      <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+      <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
         <div className="px-6 py-5 bg-surface-elevated border-b-2 border-ink">
           <div className="mako-label text-muted mb-1">
             ID {market.id.toString()} · POOL {poolUsdc} USDC
@@ -167,7 +167,7 @@ function ResolveRow({
             type="button"
             disabled={disabled}
             onClick={() => handleResolve(Outcome.YES)}
-            className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-ink hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-ink hover:text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             RESOLVE YES
           </button>
@@ -175,7 +175,7 @@ function ResolveRow({
             type="button"
             disabled={disabled}
             onClick={() => handleResolve(Outcome.NO)}
-            className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-mako-red hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-mako-red hover:text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             RESOLVE NO
           </button>
@@ -183,7 +183,7 @@ function ResolveRow({
             type="button"
             disabled={disabled}
             onClick={() => handleResolve(Outcome.REFUND)}
-            className="py-4 mako-label bg-paper hover:bg-ink hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="py-4 mako-label bg-paper hover:bg-ink hover:text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             REFUND
           </button>

@@ -36,15 +36,15 @@ function TickerItem({ label, price }: { label: string; price: CoinPrice }) {
   const up = price.change24h > 0;
   const down = price.change24h < 0;
   const arrow = up ? '↑' : down ? '↓' : '·';
-  const deltaClass = up ? 'text-background' : down ? 'text-warning' : 'text-subtle';
+  const deltaClass = up ? 'text-chrome-fg' : down ? 'text-warning' : 'text-subtle';
   return (
-    <div className="flex items-baseline gap-2 px-6 border-r border-background/20 shrink-0 tabular-nums">
-      <span className="text-[10px] font-black uppercase tracking-widest text-background/60">
+    <div className="flex items-baseline gap-2 px-6 border-r border-chrome-divider shrink-0 tabular-nums">
+      <span className="text-[10px] font-black uppercase tracking-widest text-chrome-fg/60">
         {label}
       </span>
-      <span className="text-sm font-black text-background">{formatPriceUsd(price.usd)}</span>
+      <span className="text-sm font-black text-chrome-fg">{formatPriceUsd(price.usd)}</span>
       {price.testnet ? (
-        <span className="text-[10px] font-black uppercase tracking-widest text-background/40">
+        <span className="text-[10px] font-black uppercase tracking-widest text-chrome-fg/40">
           TESTNET
         </span>
       ) : (
@@ -91,12 +91,12 @@ export function PriceTicker() {
   // the inner track re-enables them, so hover-to-pause still works but a
   // stray click on the strip won't block the content behind it.
   const wrapperBase =
-    'fixed bottom-0 left-0 right-0 z-40 h-9 bg-black overflow-hidden border-t border-black';
+    'fixed bottom-0 left-0 right-0 z-40 h-9 bg-chrome overflow-hidden border-t border-chrome-divider';
 
   if (error && !prices) {
     return (
       <div className={wrapperBase}>
-        <div className="h-full flex items-center px-6 text-[10px] font-black uppercase tracking-widest text-background/70">
+        <div className="h-full flex items-center px-6 text-[10px] font-black uppercase tracking-widest text-chrome-fg/70">
           PRICES UNAVAILABLE
         </div>
       </div>
@@ -106,7 +106,7 @@ export function PriceTicker() {
   if (!prices) {
     return (
       <div className={wrapperBase}>
-        <div className="h-full flex items-center px-6 text-[10px] font-black uppercase tracking-widest text-background/50">
+        <div className="h-full flex items-center px-6 text-[10px] font-black uppercase tracking-widest text-chrome-fg/50">
           LOADING PRICES…
         </div>
       </div>

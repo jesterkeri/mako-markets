@@ -36,7 +36,7 @@ export function AdminNav({ active }: { active: AdminSection }) {
                 mako-label px-4 py-2 rounded-full border-2 border-ink transition-all whitespace-nowrap
                 ${isActive
                   ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
-                  : 'bg-paper text-ink shadow-[2px_2px_0_0_#000000] hover:shadow-[3px_3px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'}
+                  : 'bg-paper text-ink shadow-brutal-sm hover:shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'}
               `}
             >
               {tab.label}

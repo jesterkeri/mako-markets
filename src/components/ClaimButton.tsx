@@ -115,7 +115,7 @@ export function ClaimButton({
 
   return (
     <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 px-4">
-      <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+      <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
         <div className="px-5 py-3 border-b-2 border-ink bg-surface-elevated flex justify-between items-center">
           <span className="mako-label text-muted">
             {outcome === Outcome.REFUND ? 'REFUND' : 'CLAIMABLE'}

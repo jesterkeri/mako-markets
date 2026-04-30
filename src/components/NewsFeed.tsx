@@ -55,7 +55,7 @@ export function NewsFeed() {
   if (failed && !items) {
     return (
       <div className="flex flex-col p-6">
-        <div className="mako-label text-paper/50">INTEL FEED UNAVAILABLE</div>
+        <div className="mako-label text-chrome-fg/50">INTEL FEED UNAVAILABLE</div>
       </div>
     );
   }
@@ -64,19 +64,19 @@ export function NewsFeed() {
     return (
       <div className="flex flex-col p-4 gap-3">
         {[0, 1, 2, 3, 4].map((i) => (
-          <div key={i} className="p-3 bg-paper/5 rounded-lg border border-paper/10">
+          <div key={i} className="p-3 bg-chrome-fg/5 rounded-lg border border-chrome-divider">
             <div className="flex items-center gap-2 mb-2">
               <span
-                className="w-14 h-3 bg-paper/10 animate-pulse inline-block rounded"
+                className="w-14 h-3 bg-chrome-fg/10 animate-pulse inline-block rounded"
                 aria-hidden
               />
               <span
-                className="w-10 h-3 bg-paper/10 animate-pulse inline-block rounded"
+                className="w-10 h-3 bg-chrome-fg/10 animate-pulse inline-block rounded"
                 aria-hidden
               />
             </div>
-            <div className="w-full h-3 bg-paper/10 animate-pulse mb-1.5 rounded" aria-hidden />
-            <div className="w-2/3 h-3 bg-paper/10 animate-pulse rounded" aria-hidden />
+            <div className="w-full h-3 bg-chrome-fg/10 animate-pulse mb-1.5 rounded" aria-hidden />
+            <div className="w-2/3 h-3 bg-chrome-fg/10 animate-pulse rounded" aria-hidden />
           </div>
         ))}
       </div>
@@ -86,7 +86,7 @@ export function NewsFeed() {
   if (items.length === 0) {
     return (
       <div className="flex flex-col p-6">
-        <div className="mako-label text-paper/50">INTEL FEED EMPTY</div>
+        <div className="mako-label text-chrome-fg/50">INTEL FEED EMPTY</div>
       </div>
     );
   }
@@ -103,7 +103,7 @@ export function NewsFeed() {
               >
                 {news.tag}
               </span>
-              <span className="text-[9px] font-black tracking-widest uppercase text-paper/50 tabular-nums">
+              <span className="text-[9px] font-black tracking-widest uppercase text-chrome-fg/50 tabular-nums">
                 {news.time}
               </span>
               {news.kind === 'event' && (
@@ -113,7 +113,7 @@ export function NewsFeed() {
                 </span>
               )}
             </div>
-            <h3 className="text-sm font-semibold leading-relaxed text-paper group-hover:text-signal transition-colors">
+            <h3 className="text-sm font-semibold leading-relaxed text-chrome-fg group-hover:text-link-hover transition-colors">
               {news.title}
             </h3>
           </>
@@ -123,14 +123,14 @@ export function NewsFeed() {
         // (e.g. cache, middleware, SSRF), never emit a non-http(s) href.
         const safeHref = news.url && /^https?:\/\//i.test(news.url) ? news.url : undefined;
         const base =
-          'flex flex-col p-3 rounded-lg border border-paper/10 transition-colors';
+          'flex flex-col p-3 rounded-lg border border-chrome-divider transition-colors';
         return safeHref ? (
           <a
             key={i}
             href={safeHref}
             target="_blank"
             rel="noopener noreferrer"
-            className={`${base} hover:bg-paper/5 hover:border-paper/20 group cursor-pointer`}
+            className={`${base} hover:bg-chrome-fg/5 hover:border-chrome-divider group cursor-pointer`}
           >
             {content}
           </a>
@@ -152,5 +152,5 @@ export function NewsFeed() {
 function tagChip(tag: Tag): string {
   if (tag === 'NBA') return 'bg-mako-red text-paper';
   if (tag === 'CRYPTO') return 'bg-signal text-ink';
-  return 'bg-paper text-ink'; // FOOTBALL
+  return 'bg-chrome-fg text-chrome'; // FOOTBALL — auto-inverts with theme
 }

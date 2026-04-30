@@ -68,7 +68,7 @@ export default function AdminUsersPage() {
 
       <div className="px-6 lg:px-8 py-8 border-b-2 border-ink">
         <div className="mako-label text-muted mb-2">ADMIN · USERS</div>
-        <h1 className="mako-display text-3xl md:text-4xl mb-2">
+        <h1 className="mako-display text-3xl md:text-4xl mb-2 text-canvas-fg">
           {!data
             ? '…'
             : data.degraded.includes('bet') || data.degraded.includes('market')
@@ -94,8 +94,8 @@ export default function AdminUsersPage() {
               className={`
                 mako-label px-4 py-2 rounded-full border-2 border-ink transition-all whitespace-nowrap
                 ${isActive
-                  ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
-                  : 'bg-paper text-ink shadow-[2px_2px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'}
+                  ? 'bg-ink text-canvas-fg shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                  : 'bg-paper text-ink shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'}
               `}
             >
               SORT · {k === 'volume' ? 'VOLUME' : k === 'bets' ? 'BETS' : k === 'earned' ? 'EARNED' : 'RECENT'}

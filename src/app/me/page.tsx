@@ -9,6 +9,7 @@ import { makoContract, type MarketWithId } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
 import { MarketResolveActions } from '@/components/MarketResolveActions';
 import { MarketClaimAction } from '@/components/MarketClaimAction';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useIsAdmin } from '@/lib/admin';
 
 type PositionsTab = 'active' | 'closed';
@@ -75,7 +76,7 @@ export default function MyMarketsPage() {
     return (
       <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
         <div className="-rotate-2">
-          <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] p-8">
+          <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal p-8">
             <h1 className="mako-display text-2xl md:text-3xl mb-3">NOT CONNECTED</h1>
             <p className="mako-body text-muted max-w-xs">
               Connect your wallet to see markets you have a position in.
@@ -96,22 +97,30 @@ export default function MyMarketsPage() {
 
   return (
     <main className="flex-1 flex flex-col w-full pb-20 md:pb-10">
-      <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10">
-        <div className="mb-8">
-          <div className="mako-label text-muted mb-2">PORTFOLIO</div>
-          <h1 className="mako-display text-4xl md:text-5xl mb-3">MY MARKETS</h1>
-          <p className="mako-mono text-[11px] text-muted break-all">
+      {/* Sticky chrome header — matches the home page's LIVE MARKETS bar
+          (h-12, chrome surface, full-width border). Title shifts from
+          PORTFOLIO/MY MARKETS double-stack to a single MY MARKETS label. */}
+      <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
+        <h1 className="mako-display text-sm lg:text-base text-chrome-fg">MY MARKETS</h1>
+        <div className="flex items-center gap-3">
+          <span className="mako-mono text-[10px] text-muted">
             {address.slice(0, 6)}…{address.slice(-4)}
-          </p>
+          </span>
+          <ThemeToggle />
         </div>
+      </header>
+
+      <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10">
+        {/* Mobile-only title — desktop title lives in the sticky header above */}
+        <h1 className="md:hidden mako-display text-3xl mb-6 text-canvas-fg">MY MARKETS</h1>
 
         {/* Tabs */}
-        <div className="flex gap-3 mb-8 border-b-2 border-ink pb-4">
+        <div className="flex gap-3 mb-8 border-b-2 border-canvas-divider pb-4">
           <button
             type="button"
             onClick={() => setTab('active')}
             aria-current={tab === 'active' ? 'page' : undefined}
-            className="mako-label px-4 py-2 rounded-full border-2 border-transparent hover:border-ink aria-[current=page]:border-ink aria-[current=page]:bg-surface-elevated aria-[current=page]:shadow-[2px_2px_0_0_#D94A3D] transition-all"
+            className="mako-label px-4 py-2 rounded-full border-2 border-transparent text-canvas-fg hover:border-canvas-fg aria-[current=page]:border-ink aria-[current=page]:bg-surface-elevated aria-[current=page]:text-ink aria-[current=page]:shadow-[2px_2px_0_0_#D94A3D] transition-all"
           >
             ACTIVE · {active.length}
           </button>
@@ -119,7 +128,7 @@ export default function MyMarketsPage() {
             type="button"
             onClick={() => setTab('closed')}
             aria-current={tab === 'closed' ? 'page' : undefined}
-            className="mako-label px-4 py-2 rounded-full border-2 border-transparent hover:border-ink aria-[current=page]:border-ink aria-[current=page]:bg-surface-elevated aria-[current=page]:shadow-[2px_2px_0_0_#D94A3D] transition-all"
+            className="mako-label px-4 py-2 rounded-full border-2 border-transparent text-canvas-fg hover:border-canvas-fg aria-[current=page]:border-ink aria-[current=page]:bg-surface-elevated aria-[current=page]:text-ink aria-[current=page]:shadow-[2px_2px_0_0_#D94A3D] transition-all"
           >
             CLOSED · {closed.length}
           </button>
@@ -141,7 +150,7 @@ export default function MyMarketsPage() {
           </div>
         ) : shown.length === 0 ? (
           <div className="rotate-2 transform mt-12 max-w-md mx-auto">
-            <div className="bg-paper border-2 border-ink rounded-xl shadow-[4px_4px_0_0_#000000] p-6 text-center">
+            <div className="bg-paper border-2 border-ink rounded-xl shadow-brutal p-6 text-center">
               <div className="mako-title text-xl mb-2">
                 {tab === 'active' ? 'No active positions' : 'No closed positions'}
               </div>

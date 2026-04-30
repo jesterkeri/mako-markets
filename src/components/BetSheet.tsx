@@ -164,7 +164,7 @@ export function BetSheet({
 
   return (
     <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 px-4">
-      <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+      <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
         {/* Balance pill — only when wallet connected */}
         {address && (
           <div className="px-5 py-2 border-b-2 border-ink bg-paper flex items-center justify-between">

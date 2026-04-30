@@ -18,11 +18,56 @@
 @import "./mako-brand.css";
 @import "./mako-components.css";
 
-/* Expose the brand palette and typography as Tailwind v4 theme tokens so the
- * Gemini component library's utility classes (bg-paper, text-mako-red,
- * border-ink, font-display, shadow-brutal, etc.) resolve correctly. */
+/* ── THEME TOKENS ─────────────────────────────────────────────────────────
+ * Two themes: light (cream canvas + ink chrome) and dark (ink canvas +
+ * cream-ish chrome). Switched at runtime via `<html data-theme="light|dark">`
+ * by the ThemeProvider. Components reference SEMANTIC tokens (canvas, chrome,
+ * shadow-brutal) — never hardcode #000000 or #EBE5D9 for chrome surfaces.
+ *
+ * Fixed palette (NEVER theme-aware): paper, ink, signal, mako-red. These are
+ * concrete brand colors used for content elements (cream cards on any canvas,
+ * yellow/red accents). Cards stay cream in both modes by design.
+ */
+:root, [data-theme="light"] {
+  --mako-canvas: #EBE5D9;
+  --mako-canvas-fg: #000000;
+  --mako-canvas-divider: rgba(0, 0, 0, 0.1);
+  --mako-chrome: #EBE5D9;          /* sidebar + headers in light mode */
+  --mako-chrome-fg: #000000;
+  --mako-chrome-divider: rgba(0, 0, 0, 0.15);
+  --mako-shadow: #000000;          /* brutalist drop shadow */
+  --mako-grid: rgba(0, 0, 0, 0.05);
+  --mako-accent: #000000;          /* subtle CTA accent (ink in light) */
+  --mako-link-hover: #D94A3D;      /* red reads better on cream than signal yellow */
+}
+
+[data-theme="dark"] {
+  --mako-canvas: #000000;
+  --mako-canvas-fg: #EBE5D9;
+  --mako-canvas-divider: rgba(235, 229, 217, 0.2);
+  --mako-chrome: #000000;
+  --mako-chrome-fg: #EBE5D9;
+  --mako-chrome-divider: rgba(235, 229, 217, 0.2);
+  --mako-shadow: #EBE5D9;
+  --mako-grid: rgba(255, 255, 255, 0.05);
+  --mako-accent: #FACC15;          /* signal yellow in dark */
+  --mako-link-hover: #FACC15;      /* signal yellow holds up on ink */
+}
+
+/* Expose tokens as Tailwind v4 theme so utilities like `bg-canvas`,
+ * `text-chrome-fg`, `border-chrome-divider`, `shadow-brutal` resolve. */
 @theme {
-  --color-background: #EBE5D9;
+  --color-background: var(--mako-canvas);
+  --color-foreground: var(--mako-canvas-fg);
+  --color-canvas: var(--mako-canvas);
+  --color-canvas-fg: var(--mako-canvas-fg);
+  --color-canvas-divider: var(--mako-canvas-divider);
+  --color-chrome: var(--mako-chrome);
+  --color-chrome-fg: var(--mako-chrome-fg);
+  --color-chrome-divider: var(--mako-chrome-divider);
+  --color-accent: var(--mako-accent);
+  --color-link-hover: var(--mako-link-hover);
+
   --color-paper: #EBE5D9;
   --color-surface: #EBE5D9;
   --color-surface-elevated: #E1DBCB;
@@ -45,7 +90,6 @@
   --color-info: #000000;
 
   /* Typography */
-  --color-foreground: #000000;
   --color-muted: #79797A;
   --color-subtle: #A3A19C;
 
@@ -55,17 +99,12 @@
     Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Neobrutalist shadow tokens — generate `shadow-brutal` utilities etc. */
-  --shadow-brutal: 4px 4px 0 0 #000000;
-  --shadow-brutal-sm: 2px 2px 0 0 #000000;
-  --shadow-brutal-lg: 6px 6px 0 0 #000000;
+  /* Neobrutalist shadow tokens — auto-flip with theme via --mako-shadow. */
+  --shadow-brutal: 4px 4px 0 0 var(--mako-shadow);
+  --shadow-brutal-sm: 2px 2px 0 0 var(--mako-shadow);
+  --shadow-brutal-lg: 6px 6px 0 0 var(--mako-shadow);
   --shadow-brutal-red: 4px 4px 0 0 #D94A3D;
   --shadow-brutal-signal: 4px 4px 0 0 #FACC15;
-}
-
-:root {
-  --background: #EBE5D9;
-  --foreground: #000000;
 }
 
 html {
@@ -120,17 +159,26 @@ html {
   }
 }
 
+/* Cards are always cream in BOTH themes (a design invariant), so any
+ * `bg-paper` surface establishes ink as its default text color. Without
+ * this, text on a card inherits canvas-fg from <body>, which is cream in
+ * dark mode — invisible on a cream card. Explicit `text-*` utilities still
+ * win because Tailwind utilities load after this rule. */
+.bg-paper {
+  color: var(--mako-ink);
+}
+
 body {
-  background: var(--color-background);
-  color: var(--color-foreground);
+  background: var(--mako-canvas);
+  color: var(--mako-canvas-fg);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
   font-weight: 500;
   -webkit-font-smoothing: antialiased;
 
-  /* Brutalist Paper Grid */
+  /* Brutalist paper grid — line color flips with theme via --mako-grid. */
   background-image:
-    linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+    linear-gradient(var(--mako-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mako-grid) 1px, transparent 1px);
   background-size: 20px 20px;
   background-position: center top;
 }

@@ -131,15 +131,15 @@ export function MarketClaimAction({
             : null;
 
   return (
-    <div className="border-t border-black bg-yes/5">
+    <div className="rounded-xl border border-canvas-fg overflow-hidden">
       <button
         type="button"
         onClick={handleClaim}
         disabled={disabled}
-        className={`w-full py-4 font-black uppercase tracking-widest text-[11px] transition-colors ${
+        className={`w-full py-2.5 font-black uppercase tracking-widest text-[11px] transition-colors ${
           disabled
-            ? 'bg-black/10 text-muted cursor-not-allowed'
-            : 'bg-black text-background hover:bg-foreground/90'
+            ? 'text-muted cursor-not-allowed'
+            : 'text-accent hover:bg-canvas-fg/5'
         }`}
       >
         {isBusy || hasClaimed
@@ -148,8 +148,8 @@ export function MarketClaimAction({
       </button>
       {statusText && !isBusy && !hasClaimed && (
         <div
-          className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest text-center border-t border-black break-words ${
-            isSuccess ? 'bg-yes/15 text-yes' : 'bg-warning/15 text-warning'
+          className={`px-4 py-1.5 text-[10px] font-black uppercase tracking-widest text-center border-t border-canvas-divider break-words ${
+            isSuccess ? 'text-accent' : 'text-mako-red'
           }`}
         >
           {statusText}

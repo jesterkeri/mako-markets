@@ -5,11 +5,11 @@
 @layer components {
   /* Neobrutalist skeleton that matches card styling constraints */
   .mako-skeleton {
-    @apply animate-pulse border-2 border-ink bg-surface-elevated shadow-[4px_4px_0_0_#000000] rounded-xl;
+    @apply animate-pulse border-2 border-ink bg-surface-elevated shadow-brutal rounded-xl;
   }
 
   .mako-skeleton-pill {
-    @apply animate-pulse border-2 border-ink bg-surface-elevated shadow-[4px_4px_0_0_#000000] rounded-full;
+    @apply animate-pulse border-2 border-ink bg-surface-elevated shadow-brutal rounded-full;
   }
 
   /* Structural flex wrapper standardizing max widths for primary layouts */

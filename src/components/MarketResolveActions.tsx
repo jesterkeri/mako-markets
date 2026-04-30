@@ -68,12 +68,12 @@ export function MarketResolveActions({
       <div className="px-6 md:px-8 py-2.5 text-[10px] font-black uppercase tracking-widest text-warning text-center">
         [ ADMIN · PICK OUTCOME ]
       </div>
-      <div className="flex flex-row divide-x divide-black border-t border-black">
+      <div className="flex flex-row divide-x divide-canvas-divider border-t border-canvas-divider">
         <button
           type="button"
           disabled={disabled}
           onClick={(e) => handleResolve(e, Outcome.YES)}
-          className="flex-1 py-3 font-black uppercase tracking-widest text-[11px] transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-background"
+          className="flex-1 py-3 font-black uppercase tracking-widest text-[11px] text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-canvas-fg hover:text-canvas"
         >
           RESOLVE YES
         </button>
@@ -81,7 +81,7 @@ export function MarketResolveActions({
           type="button"
           disabled={disabled}
           onClick={(e) => handleResolve(e, Outcome.NO)}
-          className="flex-1 py-3 font-black uppercase tracking-widest text-[11px] transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-background"
+          className="flex-1 py-3 font-black uppercase tracking-widest text-[11px] text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-canvas-fg hover:text-canvas"
         >
           RESOLVE NO
         </button>
@@ -89,14 +89,14 @@ export function MarketResolveActions({
           type="button"
           disabled={disabled}
           onClick={(e) => handleResolve(e, Outcome.REFUND)}
-          className="flex-1 py-3 font-black uppercase tracking-widest text-[11px] transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black hover:text-background"
+          className="flex-1 py-3 font-black uppercase tracking-widest text-[11px] text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-canvas-fg hover:text-canvas"
         >
           REFUND
         </button>
       </div>
       {statusText && (
         <div
-          className={`px-6 py-2 border-t border-black text-[10px] font-black uppercase tracking-widest text-center break-words ${
+          className={`px-6 py-2 border-t border-canvas-divider text-[10px] font-black uppercase tracking-widest text-center break-words ${
             isSuccess
               ? 'bg-yes/15 text-yes'
               : error

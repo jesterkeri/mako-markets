@@ -105,7 +105,7 @@ export function MarketDetailClient({ id }: { id: string }) {
         </div>
 
         {/* Question card */}
-        <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] p-6 md:p-8 mb-6">
+        <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal p-6 md:p-8 mb-6">
           <h1 className="mako-display text-3xl md:text-5xl leading-[1.05]">
             {market.question}
           </h1>
@@ -121,7 +121,7 @@ export function MarketDetailClient({ id }: { id: string }) {
             className={`p-5 border-2 border-ink rounded-2xl transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed ${
               betSide === 'yes'
                 ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
-                : 'bg-paper text-ink shadow-[4px_4px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                : 'bg-paper text-ink shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'
             }`}
           >
             <div className={`mako-label ${betSide === 'yes' ? 'text-paper/80' : 'text-muted'}`}>
@@ -142,8 +142,8 @@ export function MarketDetailClient({ id }: { id: string }) {
             aria-pressed={betSide === 'no'}
             className={`p-5 border-2 border-ink rounded-2xl transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed ${
               betSide === 'no'
-                ? 'bg-mako-red text-paper shadow-[4px_4px_0_0_#000000] -translate-y-[2px] -translate-x-[2px]'
-                : 'bg-paper text-ink shadow-[4px_4px_0_0_#000000] hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                ? 'bg-mako-red text-paper shadow-brutal -translate-y-[2px] -translate-x-[2px]'
+                : 'bg-paper text-ink shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'
             }`}
           >
             <div className={`mako-label ${betSide === 'no' ? 'text-paper/80' : 'text-muted'}`}>
@@ -286,7 +286,7 @@ function AwaitingResolutionPanel({
   }
 
   return (
-    <div className="bg-signal border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] overflow-hidden">
+    <div className="bg-signal border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
       <div className="px-5 py-4 text-center">
         <div className="mako-label mb-1">ADMIN · PICK OUTCOME</div>
         <div className="mako-body text-[12px] text-ink/80">
@@ -336,7 +336,7 @@ function NotFound({ reason }: { reason: string }) {
   return (
     <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
       <div className="-rotate-2">
-        <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] p-8">
+        <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal p-8">
           <h1 className="mako-display text-3xl mb-3">MARKET NOT FOUND</h1>
           <p className="mako-body text-muted">{reason}</p>
         </div>

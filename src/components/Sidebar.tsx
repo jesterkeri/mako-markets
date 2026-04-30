@@ -108,7 +108,7 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
   }
 
   return (
-    <div className="mt-auto border-t-2 border-ink shrink-0">
+    <div className="mt-auto border-t-2 border-chrome-divider shrink-0">
       {hovering ? (
         <div className="flex flex-col gap-2 p-4">
           <div
@@ -130,7 +130,7 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
       ) : (
         <div className="flex items-center justify-center py-3">
           <div
-            className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-ink bg-signal text-ink font-display font-black text-sm"
+            className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm"
             aria-label={`Signed in as ${user.email}`}
             title={user.email}
           >
@@ -153,17 +153,17 @@ export function Sidebar() {
       transition={{ type: 'spring', stiffness: 300, damping: 32 }}
       onHoverStart={() => setHovering(true)}
       onHoverEnd={() => setHovering(false)}
-      className="hidden md:flex flex-col shrink-0 border-r-2 border-ink bg-paper sticky top-0 self-start h-[calc(100dvh-2.25rem)] overflow-y-auto overflow-x-hidden no-scrollbar z-40"
+      className="hidden md:flex flex-col shrink-0 border-r-2 border-chrome-divider bg-chrome sticky top-0 self-start h-[calc(100dvh-2.25rem)] overflow-y-auto overflow-x-hidden no-scrollbar z-40"
     >
       {/* Brand row — centered when collapsed (matches the icon-only nav rail
           beneath it); shifts to a left-aligned logo + wordmark when expanded. */}
       <Link
         href="/"
-        className={`flex items-center h-12 border-b-2 border-ink shrink-0 hover:bg-surface-elevated transition-colors min-w-0 ${
+        className={`flex items-center h-12 border-b-2 border-chrome-divider shrink-0 hover:bg-chrome-fg/10 transition-colors min-w-0 ${
           hovering ? 'justify-start gap-3 px-5' : 'justify-center px-0'
         }`}
       >
-        <Logo size={22} className="text-ink shrink-0" title="Mako Markets" />
+        <Logo size={22} className="text-chrome-fg shrink-0" title="Mako Markets" />
         <AnimatePresence initial={false}>
           {hovering && (
             <motion.span
@@ -172,7 +172,7 @@ export function Sidebar() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="font-display font-black text-base tracking-tight leading-none text-ink whitespace-nowrap"
+              className="font-display font-black text-base tracking-tight leading-none text-chrome-fg whitespace-nowrap"
             >
               MAKO
             </motion.span>
@@ -190,9 +190,9 @@ export function Sidebar() {
           // a square icon tile. When collapsed, active just gets the ink fill.
           const activeClass = isActive
             ? hovering
-              ? 'border-ink bg-ink text-paper shadow-[inset_4px_0_0_0_#D94A3D]'
-              : 'border-ink bg-ink text-paper'
-            : 'border-transparent text-ink hover:border-ink hover:bg-surface-elevated';
+              ? 'border-chrome-fg bg-chrome-fg text-chrome shadow-[inset_4px_0_0_0_#D94A3D]'
+              : 'border-chrome-fg bg-chrome-fg text-chrome'
+            : 'border-transparent text-chrome-fg hover:border-chrome-divider hover:bg-chrome-fg/10';
           return (
             <Link
               key={item.path}

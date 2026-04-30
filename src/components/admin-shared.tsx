@@ -25,7 +25,7 @@ export function NotAuthorized() {
   return (
     <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
       <div className="-rotate-2">
-        <div className="bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] p-8 max-w-sm">
+        <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal p-8 max-w-sm">
           <h1 className="mako-display text-3xl mb-3">NOT AUTHORIZED</h1>
           <p className="mako-body text-muted mb-3">
             Connect the admin wallet to view this page.

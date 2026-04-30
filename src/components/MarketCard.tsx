@@ -75,15 +75,15 @@ export function MarketCard({ market }: { market: MarketWithId }) {
   const showNewSticker = !isClosed && ageSec >= 0 && ageSec < 600;
 
   return (
-    <div className="relative block w-full h-full bg-paper border-2 border-ink rounded-2xl shadow-[4px_4px_0_0_#000000] hover:shadow-[6px_6px_0_0_#000000] hover:-translate-y-1 transition-all group overflow-visible">
+    <div className="relative block w-full h-full bg-paper border-2 border-ink rounded-2xl shadow-brutal hover:shadow-brutal-lg hover:-translate-y-1 transition-all group overflow-visible">
       {/* Corner stickers — tilted pills that pop off the card edge */}
       {showClosingSticker && (
-        <div className="absolute -top-3 -right-2 z-10 bg-mako-red border-2 border-ink rounded-full px-3 py-1 shadow-[2px_2px_0_0_#000000] rotate-6">
+        <div className="absolute -top-3 -right-2 z-10 bg-mako-red border-2 border-ink rounded-full px-3 py-1 shadow-brutal-sm rotate-6">
           <span className="mako-label text-paper">CLOSING SOON</span>
         </div>
       )}
       {showNewSticker && !showClosingSticker && (
-        <div className="absolute -top-3 -right-2 z-10 bg-signal border-2 border-ink rounded-full px-3 py-1 shadow-[2px_2px_0_0_#000000] -rotate-6">
+        <div className="absolute -top-3 -right-2 z-10 bg-signal border-2 border-ink rounded-full px-3 py-1 shadow-brutal-sm -rotate-6">
           <span className="mako-label text-ink">NEW</span>
         </div>
       )}
