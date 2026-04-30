@@ -47,9 +47,13 @@ function scrub(text: string): string {
       .replace(/apikey=[a-zA-Z0-9_-]+/gi, `apikey=${REDACTED}`)
       // `pim_` prefixed Pimlico keys anywhere in the message
       .replace(/pim_[a-zA-Z0-9_-]+/g, REDACTED)
-      // Raw JSON-RPC bodies are heuristically detected by the leading
-      // {"jsonrpc"... pattern. Drop the body, keep the surrounding context.
-      .replace(/\{"jsonrpc"[\s\S]*?\}(?=\s|$)/g, REDACTED)
+      // Raw JSON-RPC bodies. Nested objects make balanced-brace matching
+      // non-regex-friendly, so be conservatively aggressive: from
+      // `{"jsonrpc"` through the end of the LINE. Single-line log
+      // entries get the whole body redacted regardless of trailing
+      // punctuation (`, status=400`, `;` continuation, etc.); multi-line
+      // logs lose only the JSON-RPC line and keep subsequent lines.
+      .replace(/\{"jsonrpc"[^\n]*/gi, REDACTED)
   );
 }
 
@@ -142,14 +146,35 @@ function classify(scrubbed: string): AaErrorCode {
  * structured log entry if more detail is needed.
  */
 export function summarizeAaError(e: unknown): AaErrorSummary {
+  const { code, message } = summarizeAaErrorWithCause(e);
+  // Strip `scrubbedDetail` at runtime so JSON.stringify on the result
+  // can't accidentally leak server-side detail to the browser.
+  return { code, message };
+}
+
+/**
+ * Server-side variant of `summarizeAaError` that ALSO returns the scrubbed
+ * full error text. Use this when writing a server log line where you want
+ * both the short user-facing summary AND the underlying detail (with the
+ * Pimlico API key + URL stripped). Never includes the raw thrown value
+ * verbatim — the `scrubbedDetail` field has already passed through `scrub()`.
+ *
+ * Do NOT return `scrubbedDetail` to the browser. Use it for `console.error`,
+ * structured log lines, and ambiguous-op runbook output.
+ *
+ * Never throws. Same input semantics as `summarizeAaError`.
+ */
+export function summarizeAaErrorWithCause(e: unknown): AaErrorSummary & {
+  scrubbedDetail: string;
+} {
   let raw: string;
   try {
     if (e instanceof Error) {
-      raw = `${e.name}: ${e.message}`;
+      raw = serializeError(e);
     } else if (typeof e === 'string') {
       raw = e;
     } else if (e && typeof e === 'object') {
-      raw = JSON.stringify(e);
+      raw = safeStringify(e);
     } else {
       raw = String(e);
     }
@@ -158,5 +183,69 @@ export function summarizeAaError(e: unknown): AaErrorSummary {
   }
   const scrubbed = scrub(raw);
   const code = classify(scrubbed);
-  return { code, message: userSafeMessage(code) };
+  return {
+    code,
+    message: userSafeMessage(code),
+    scrubbedDetail: scrubbed,
+  };
+}
+
+/// Serialize an Error including its `cause` chain and own enumerable
+/// fields (e.g. JsonRpcRejectError.code/.data). The default
+/// `${e.name}: ${e.message}` form drops these, which matters for AA-flow
+/// errors that carry the actual AA code in `.data`. Conservative: never
+/// throws, caps depth, and serializes through `safeStringify` so a
+/// circular `data` field doesn't crash the log path.
+function serializeError(e: Error): string {
+  const parts: string[] = [`${e.name}: ${e.message}`];
+
+  // Own enumerable fields. JsonRpcRejectError.code, .data, .method live
+  // here — capturing them recovers AA codes that the bare message drops.
+  try {
+    const ownKeys = Object.keys(e);
+    if (ownKeys.length > 0) {
+      const own: Record<string, unknown> = {};
+      for (const key of ownKeys) {
+        own[key] = (e as unknown as Record<string, unknown>)[key];
+      }
+      parts.push(`fields=${safeStringify(own)}`);
+    }
+  } catch {
+    // Field enumeration failed somehow; skip the fields slice rather
+    // than throwing.
+  }
+
+  // `cause` chain. Cap to 3 hops so a malformed cyclic chain can't
+  // produce unbounded output.
+  let cause: unknown = (e as { cause?: unknown }).cause;
+  for (let depth = 0; depth < 3 && cause !== undefined; depth++) {
+    if (cause instanceof Error) {
+      parts.push(`caused by ${cause.name}: ${cause.message}`);
+      cause = (cause as { cause?: unknown }).cause;
+    } else {
+      parts.push(`caused by ${safeStringify(cause)}`);
+      cause = undefined;
+    }
+  }
+
+  return parts.join(' | ');
+}
+
+/// `JSON.stringify` with a circular-ref guard. Returns the empty string
+/// on any failure rather than throwing — `summarizeAaError` MUST never
+/// throw, so the serialization path can't either.
+function safeStringify(value: unknown): string {
+  try {
+    const seen = new WeakSet<object>();
+    return JSON.stringify(value, (_key, v) => {
+      if (typeof v === 'bigint') return `${v.toString()}n`;
+      if (typeof v === 'object' && v !== null) {
+        if (seen.has(v as object)) return '[circular]';
+        seen.add(v as object);
+      }
+      return v;
+    });
+  } catch {
+    return '';
+  }
 }

@@ -16,6 +16,8 @@
     "verify:safe": "tsx scripts/verify-safe-addresses.ts && tsx scripts/check-safe-derivation.mts",
     "probe:pimlico": "tsx scripts/probe-pimlico.mts",
     "verify:safe-init": "tsx scripts/verify-init-code-parity.mts",
+    "test:aa": "vitest run src/lib/__tests__",
+    "test:aa:watch": "vitest src/lib/__tests__",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.mts",
     "db:studio": "drizzle-kit studio"
@@ -52,6 +54,7 @@
     "eslint-config-next": "16.2.3",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }
