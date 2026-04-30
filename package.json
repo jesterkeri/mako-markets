@@ -14,6 +14,7 @@
     "auto-resolver": "tsx scripts/auto-resolver.mts",
     "auto-resolver:bw": "node scripts/with-bw.mjs pnpm run auto-resolver",
     "verify:safe": "tsx scripts/verify-safe-addresses.ts && tsx scripts/check-safe-derivation.mts",
+    "probe:pimlico": "tsx scripts/probe-pimlico.mts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.mts",
     "db:studio": "drizzle-kit studio"
