@@ -12,6 +12,14 @@
 // browser bundle. The server proxy at `/api/aa/sponsor` is what client code
 // talks to instead.
 //
+// `import 'server-only'` below is enforced by Next's bundler for client
+// imports. Standalone scripts (anything under `scripts/` run via tsx) MUST
+// NOT runtime-import this module — they have no Next bundler and the
+// `server-only` package will be a no-op or unresolved. Scripts that need
+// Pimlico URLs should compose them locally with their own env access. The
+// `verify-init-code-parity.mts` script is fine because it only type-imports
+// `SupportedAaChainId` (erased at compile time, never loaded at runtime).
+//
 // ── Pimlico dashboard policy mirror (mako-testnet, locked 2026-04-30) ──
 // Chain:                       Monad testnet (10143). UI doesn't expose
 //                              per-testnet checkboxes, so the dashboard
@@ -31,30 +39,20 @@
 // Webhook:                      OFF.
 // ----------------------------------------------------------------------------
 
+import 'server-only';
+
 import { SAFE_CONFIG } from './safe-config';
 import { MONAD_TESTNET_ID } from './chain';
 import type { Address } from 'viem';
 
 /// Re-export from safe-config so 4337-layer code has one import surface for
 /// "the EntryPoint + module that this app uses." Both addresses are Path X
-/// invariants — same on every chain we support.
+/// invariants — same on every chain we support. No drift assertion here:
+/// these are direct references to `SAFE_CONFIG`, so any "drift check" against
+/// the same source would be tautological. The real guard is that nobody
+/// hardcodes addresses in this file — review on PRs that touch it.
 export const ENTRY_POINT_V07: Address = SAFE_CONFIG.entryPoint as Address;
 export const SAFE_4337_MODULE_V030: Address = SAFE_CONFIG.module4337 as Address;
-
-/// Belt-and-suspenders: cross-check at module load that the AA-layer constants
-/// match the Path-X-locked values in `safe-config.ts`. If a future edit
-/// hardcodes a different address into either file, this assertion is the
-/// loudest possible failure mode (build-time, not runtime user-op signing).
-if (ENTRY_POINT_V07 !== (SAFE_CONFIG.entryPoint as Address)) {
-  throw new Error(
-    `aa-config: ENTRY_POINT_V07 drifted from SAFE_CONFIG.entryPoint`,
-  );
-}
-if (SAFE_4337_MODULE_V030 !== (SAFE_CONFIG.module4337 as Address)) {
-  throw new Error(
-    `aa-config: SAFE_4337_MODULE_V030 drifted from SAFE_CONFIG.module4337`,
-  );
-}
 
 /// Chain IDs the AA layer is willing to operate on. Mirrors the Pimlico
 /// dashboard policy (which over-enables all testnets due to UI granularity)
@@ -71,17 +69,20 @@ export function isSupportedAaChainId(value: number): value is SupportedAaChainId
 /// The chainId path segment routes to the right network; the apikey query
 /// param authenticates and selects the policy.
 function pimlicoUrl(chainId: number, apiKey: string): string {
-  return `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${apiKey}`;
+  return `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${encodeURIComponent(apiKey)}`;
 }
 
 /// Per-chain env var lookup for the Pimlico API key. Keeps the namespace
 /// scoped — adding Base later means adding `PIMLICO_API_KEY_BASE`, not
-/// reusing one global key.
+/// reusing one global key. Trims whitespace because copy-pasted env values
+/// commonly carry a trailing newline that turns into %0A under URL encoding
+/// and surfaces as a confusing AUTH error.
 function readPimlicoKey(chainId: number): string {
-  const key =
+  const raw =
     chainId === MONAD_TESTNET_ID
       ? process.env.PIMLICO_API_KEY_MONAD || process.env.PIMLICO_API_KEY || ''
       : '';
+  const key = raw.trim();
   if (!key) {
     throw new Error(
       `aa-config: missing Pimlico API key for chainId ${chainId} (expected PIMLICO_API_KEY_MONAD or PIMLICO_API_KEY in env)`,

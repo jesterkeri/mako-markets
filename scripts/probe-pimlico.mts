@@ -144,10 +144,18 @@ function packPaymasterAndData(args: {
 /// Big-endian 6-byte encoding of a uint48 with overflow assertion.
 /// Mirrors the production helper that will live in src/lib/encoding.ts.
 function uint48ToBytes6BE(value: bigint): Hex {
-  if (value < 0n) throw new Error('uint48ToBytes6BE: negative value');
-  if (value > 0xFFFFFFFFFFFFn)
-    throw new Error('uint48ToBytes6BE: value exceeds 2^48 - 1');
+  assertUint48(value);
   return pad(toHex(value), { size: 6 }) as Hex;
+}
+
+/// Range-check a uint48 input. Used both by uint48ToBytes6BE and by the
+/// SafeOp hash computation (which has to convert bigint → number for viem's
+/// uint48 ABI encoder; uint48 max fits below Number.MAX_SAFE_INTEGER but the
+/// cast is silent on overflow without this guard).
+function assertUint48(value: bigint): void {
+  if (value < 0n) throw new Error('uint48: negative value');
+  if (value > 0xFFFFFFFFFFFFn)
+    throw new Error('uint48: value exceeds 2^48 - 1');
 }
 
 /// EntryPoint v0.7 PackedUserOperation, excluding the signature. Used for the
@@ -195,6 +203,11 @@ function computeSafeOpHash(args: {
       'EIP712Domain(uint256 chainId,address verifyingContract)',
     ),
   );
+
+  // Range-check the validity-window inputs before we cast them through
+  // Number() into viem's uint48 ABI encoder. Cast is silent on overflow.
+  assertUint48(args.validAfter);
+  assertUint48(args.validUntil);
 
   const paymasterAndData = packPaymasterAndData({
     paymaster: args.userOp.paymaster,

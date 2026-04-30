@@ -101,6 +101,19 @@ function classify(scrubbed: string): AaErrorCode {
   ) {
     return 'PAYMASTER_EMPTY';
   }
+  // AA21 = "didn't pay prefund" — usually means missing/empty sponsorship,
+  // but can also mean broken sender/paymaster/gas plumbing. Only attribute
+  // to PAYMASTER_EMPTY when the message specifically mentions paymaster /
+  // deposit / funds; otherwise route to SIMULATION_REVERT below so we don't
+  // mislead the user when the real cause is a code bug.
+  if (
+    lower.includes('aa21') &&
+    (lower.includes('paymaster') ||
+      lower.includes('deposit') ||
+      lower.includes('funds'))
+  ) {
+    return 'PAYMASTER_EMPTY';
+  }
   if (lower.includes('aa24') || lower.includes('signature error')) {
     return 'SIG_VALIDATION';
   }

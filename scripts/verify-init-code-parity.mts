@@ -28,13 +28,13 @@ loadEnv({ path: '.env.local' });
 import {
   createPublicClient,
   http,
-  hexToBigInt,
+  decodeFunctionResult,
   type Address,
 } from 'viem';
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
 
-import { SAFE_CONFIG } from '../src/lib/safe-config';
-import { deriveSafeAddress, buildSafeInitialization } from '../src/lib/safe';
+import { deriveSafeAddress } from '../src/lib/safe';
+import { buildSafeProxyInitCode } from '../src/lib/safe-init';
 import { monadTestnet } from '../src/lib/chain';
 
 const SAFE_PROXY_FACTORY_ABI = [
@@ -63,8 +63,7 @@ async function main() {
   });
 
   console.log('Path X initcode parity check on Monad testnet');
-  console.log('  rpc:     ' + rpcUrl);
-  console.log('  factory: ' + SAFE_CONFIG.proxyFactory);
+  console.log('  rpc:       ' + rpcUrl);
   console.log('  test eoas: ' + NUM_TEST_EOAS);
   console.log('────────────────────────────────────────────────────────────');
 
@@ -74,32 +73,39 @@ async function main() {
     const pk = generatePrivateKey();
     const eoa = privateKeyToAccount(pk).address;
     const predicted = deriveSafeAddress(eoa);
-    const { setupCalldata, saltNonce } = buildSafeInitialization(eoa);
 
-    // Simulate the factory's createProxyWithNonce. The factory returns the
-    // proxy address; simulation runs the same CREATE2 math the factory would
-    // commit, but without state changes. If our predicted address matches
-    // the factory's simulation result, the setup payload Joshua's code
-    // assumes is the one the factory will actually use.
-    const sim = await client.simulateContract({
-      address: SAFE_CONFIG.proxyFactory as Address,
+    // Exercise the production safe-init.ts packing — NOT a duplicated
+    // factoryData encoding. If safe-init.ts drifts (factory address, function
+    // selector, arg encoding, salt domain), this script catches it.
+    const { factory, factoryData } = buildSafeProxyInitCode(eoa);
+
+    // Send the factoryData blob raw to the factory via eth_call. This avoids
+    // re-decoding factoryData and re-passing the args through simulateContract
+    // — that path would re-encode and silently fix any encoding bug we're
+    // trying to catch. Raw call → raw return → decode the return as Address.
+    const raw = await client.call({
+      to: factory,
+      data: factoryData,
+    });
+    if (!raw.data) {
+      throw new Error(
+        `factory returned no data for eoa ${eoa} — factoryData may be malformed`,
+      );
+    }
+    const onChain = decodeFunctionResult({
       abi: SAFE_PROXY_FACTORY_ABI,
       functionName: 'createProxyWithNonce',
-      args: [
-        SAFE_CONFIG.singleton as Address,
-        setupCalldata,
-        hexToBigInt(saltNonce),
-      ],
-    });
+      data: raw.data,
+    }) as Address;
 
-    const onChain = sim.result as Address;
     const ok = onChain.toLowerCase() === predicted.toLowerCase();
     if (!ok) allPass = false;
 
     console.log(`[${i + 1}/${NUM_TEST_EOAS}] ${ok ? 'OK' : 'FAIL'}`);
     console.log('  eoa:        ' + eoa);
+    console.log('  factory:    ' + factory);
     console.log('  predicted:  ' + predicted);
-    console.log('  factory:    ' + onChain);
+    console.log('  on-chain:   ' + onChain);
   }
 
   console.log('────────────────────────────────────────────────────────────');

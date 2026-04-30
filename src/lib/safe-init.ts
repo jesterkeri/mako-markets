@@ -34,11 +34,8 @@ import {
 
 import { SAFE_CONFIG } from './safe-config';
 import { buildSafeInitialization } from './safe';
-import {
-  monadTestnet,
-  MONAD_TESTNET_ID,
-  SAFE_TRACKED_CHAIN_IDS,
-} from './chain';
+import { monadTestnet, MONAD_TESTNET_ID } from './chain';
+import type { SupportedAaChainId } from './aa-config';
 
 /// SafeProxyFactory v1.4.1 ABI — single function, only `createProxyWithNonce`
 /// is needed for initCode packing.
@@ -55,8 +52,6 @@ const SAFE_PROXY_FACTORY_ABI = [
     type: 'function',
   },
 ] as const;
-
-type SupportedChainId = (typeof SAFE_TRACKED_CHAIN_IDS)[number];
 
 /// Per-chain public client cache. Reused across `isSafeDeployed` calls so we
 /// don't open a new HTTP transport on every poll.
@@ -124,7 +119,7 @@ export function buildSafeProxyInitCode(eoa: Address): {
 const DEPLOYED_CACHE = new Set<string>();
 
 export async function isSafeDeployed(
-  chainId: SupportedChainId,
+  chainId: SupportedAaChainId,
   safeAddress: Address,
 ): Promise<boolean> {
   const cacheKey = `${chainId}:${safeAddress.toLowerCase()}`;
@@ -146,7 +141,7 @@ export async function isSafeDeployed(
  * RPC payload (EntryPoint v0.7 expects absent rather than zero/empty).
  */
 export async function getInitCodeForFirstOp(args: {
-  chainId: SupportedChainId;
+  chainId: SupportedAaChainId;
   eoa: Address;
   safeAddress: Address;
 }): Promise<{ factory: Address; factoryData: Hex; initCode: Hex } | null> {
