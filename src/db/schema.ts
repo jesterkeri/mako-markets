@@ -16,6 +16,7 @@ import {
   pgEnum,
   uuid,
   text,
+  varchar,
   integer,
   bigint,
   timestamp,
@@ -24,7 +25,11 @@ import {
   uniqueIndex,
   index,
   numeric,
+  date,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
+
+import type { StoredSplitFormUserOp } from '@/lib/user-op-types';
 
 // ----------------------------------------------------------------------------
 // Enums
@@ -89,6 +94,20 @@ export const providerWebhookStatusEnum = pgEnum('provider_webhook_status', [
   'active',
   'failed',
   'disabled',
+]);
+
+// Phase 1B sub-phase C: ERC-4337 user-op state machine. The full transition
+// graph + invariants live in src/lib/aa-pending-user-ops.ts; this enum lists
+// every legal status the partial unique index + CHECK constraints recognise.
+export const aaPendingStatusEnum = pgEnum('aa_pending_status', [
+  'pending',
+  'sending',
+  'submitted',
+  'sent',
+  'reverted',
+  'failed_pre_submit',
+  'expired',
+  'ambiguous',
 ]);
 
 // ----------------------------------------------------------------------------
@@ -399,6 +418,75 @@ export const chainState = pgTable('chain_state', {
 });
 
 // ----------------------------------------------------------------------------
+// aa_pending_user_ops — source of truth for in-flight + terminal ERC-4337
+// state. The partial unique index `aa_pending_one_in_flight` (created in the
+// migration, NOT here — Drizzle's index DSL doesn't emit `WHERE` clauses
+// safely on every version we've seen) is the only concurrency primitive:
+// one row per (chain_id, safe_address) in any of the in-flight statuses
+// (`pending`, `sending`, `submitted`, `ambiguous`).
+//
+// CHECK constraints + the partial unique index are emitted as raw SQL in the
+// migration to avoid Drizzle's generator rewriting subtle predicates. Schema
+// types here are 1:1 with the migration so types stay accurate; the
+// constraint enforcement lives at the DB layer.
+// ----------------------------------------------------------------------------
+export const aaPendingUserOps = pgTable(
+  'aa_pending_user_ops',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    chainId: integer('chain_id').notNull(),
+    safeAddress: varchar('safe_address', { length: 42 }).notNull(),
+    magicEoa: varchar('magic_eoa', { length: 42 }).notNull(),
+    userOp: jsonb('user_op').$type<StoredSplitFormUserOp>().notNull(),
+    nonceHex: varchar('nonce_hex', { length: 66 }).notNull(),
+    safeOpHash: varchar('safe_op_hash', { length: 66 }).notNull(),
+    status: aaPendingStatusEnum('status').notNull().default('pending'),
+    userOpHash: varchar('user_op_hash', { length: 66 }),
+    txHash: varchar('tx_hash', { length: 66 }),
+    failureReason: text('failure_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    sendingStartedAt: timestamp('sending_started_at', { withTimezone: true }),
+    statusUpdatedAt: timestamp('status_updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    userIdx: index('aa_pending_user_id').on(t.userId),
+    pendingExpiresIdx: index('aa_pending_pending_expires').on(t.expiresAt),
+    sendingStartedIdx: index('aa_pending_sending_started').on(t.sendingStartedAt),
+    submittedAgeIdx: index('aa_pending_submitted_age').on(t.statusUpdatedAt),
+    ambiguousAgeIdx: index('aa_pending_ambiguous_age').on(t.statusUpdatedAt),
+  }),
+);
+
+// ----------------------------------------------------------------------------
+// aa_sponsor_limits — atomic-increment rate-limit table for Pimlico sponsor
+// requests. The DB CHECK `count >= 0` plus `GREATEST(count - 1, 0)` in the
+// refund SQL guards against double-refund bugs.
+// ----------------------------------------------------------------------------
+export const aaSponsorLimits = pgTable(
+  'aa_sponsor_limits',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    chainId: integer('chain_id').notNull(),
+    day: date('day').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.chainId, t.day] }),
+    dayIdx: index('aa_sponsor_limits_day').on(t.day),
+  }),
+);
+
+// ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
 // ----------------------------------------------------------------------------
@@ -419,3 +507,7 @@ export type NewWithdrawal = typeof withdrawals.$inferInsert;
 export type KycRecord = typeof kycRecords.$inferSelect;
 export type ProviderWebhook = typeof providerWebhooks.$inferSelect;
 export type ChainState = typeof chainState.$inferSelect;
+export type AaPendingUserOp = typeof aaPendingUserOps.$inferSelect;
+export type NewAaPendingUserOp = typeof aaPendingUserOps.$inferInsert;
+export type AaPendingStatus = AaPendingUserOp['status'];
+export type AaSponsorLimit = typeof aaSponsorLimits.$inferSelect;

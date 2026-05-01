@@ -25,6 +25,9 @@ export type AaErrorCode =
   | 'SIG_VALIDATION'
   | 'SIMULATION_REVERT'
   | 'NETWORK'
+  | 'CAP_EXCEEDED'
+  | 'NOT_ALLOWED'
+  | 'IN_FLIGHT'
   | 'UNKNOWN';
 
 export type AaErrorSummary = {
@@ -73,6 +76,12 @@ function userSafeMessage(code: AaErrorCode): string {
       return 'The transaction would fail on chain. Check the operation and try again.';
     case 'NETWORK':
       return 'A network error happened reaching the sponsor. Try again.';
+    case 'CAP_EXCEEDED':
+      return 'Daily sponsored-op cap reached. Try again tomorrow or fund the Safe directly.';
+    case 'NOT_ALLOWED':
+      return 'This operation is not allowed under the current sponsorship policy.';
+    case 'IN_FLIGHT':
+      return 'Another operation is already in flight for this Safe. Wait for it to settle, then retry.';
     case 'UNKNOWN':
     default:
       return 'Something went wrong submitting the operation. Try again.';

@@ -15,6 +15,13 @@
       "when": 1777036411249,
       "tag": "0001_long_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777635853582,
+      "tag": "0002_aa_pending_user_ops",
+      "breakpoints": true
     }
   ]
 }

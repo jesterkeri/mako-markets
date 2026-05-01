@@ -52,3 +52,7 @@ HANDOVER*.md
 # Claude scratch dir for in-flight plans, review notes, and draft artifacts.
 # Contents are session-scoped, never shipped.
 .claude-tmp/
+
+# Operator audit log for ambiguous AA pending-op resolutions
+# (scripts/resolve-ambiguous-op.mts). Local to the operator's machine.
+.local-ops/

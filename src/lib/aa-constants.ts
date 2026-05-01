@@ -53,3 +53,15 @@ export const SUBMITTED_RESOLVER_MAX_AGE_MS = 30 * 60_000;
 /// uint48 fits below Number.MAX_SAFE_INTEGER, but keep this as bigint so
 /// callers don't accidentally cast it through a lossy intermediate.
 export const VALIDITY_WINDOW_MAX_UINT48 = 0xFFFFFFFFFFFFn;
+
+/// DB-side TTL on a `pending` row: after this window the cron resolver flips
+/// the row to `expired` and frees the partial unique index slot. 5 min covers
+/// a leisurely user signing flow (Magic OTP + click-through) without leaving
+/// abandoned rows occupying the in-flight slot indefinitely.
+export const PENDING_TTL_MS = 5 * 60_000;
+
+/// Daily sponsored-op cap per (user, chain). Count-based — Pimlico's policy
+/// server enforces dollar caps independently. This second layer is coarse
+/// (5 ops/day in 1B) and exists so a single user can't burn the global
+/// monthly budget through repeated retries on the same day. Tunable.
+export const SPONSOR_CAP_PER_USER_PER_DAY = 5;

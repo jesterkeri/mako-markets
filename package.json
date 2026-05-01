@@ -20,7 +20,9 @@
     "test:aa:watch": "vitest src/lib/__tests__",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.mts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "verify:aa-tables": "tsx scripts/verify-aa-tables.mts",
+    "resolve:ambiguous": "tsx scripts/resolve-ambiguous-op.mts"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",
@@ -41,7 +43,8 @@
     "recharts": "^3.8.1",
     "siwe": "^3.0.0",
     "viem": "^2.47.12",
-    "wagmi": "^2.19.5"
+    "wagmi": "^2.19.5",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
