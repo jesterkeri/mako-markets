@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { encodeFunctionData, type Address, type Hex } from 'viem';
+import { encodeFunctionData, type Address } from 'viem';
 
 import { runDisallowedOp, runSponsoredOp, type RunOutcome } from '@/lib/aa-client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';

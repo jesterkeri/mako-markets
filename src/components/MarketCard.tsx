@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { type MarketWithId, MarketType } from '@/lib/contract';
 import { poolSizeUsdc, secondsUntilBettingClose, yesMultiplier, noMultiplier } from '@/lib/mocks';
 import { formatUsdc } from '@/lib/usdc';
+import { useNowSec } from '@/lib/use-now';
 
 function formatTimeLeft(s: number): string {
   if (s <= 0) return 'CLOSED';
@@ -69,8 +70,9 @@ export function MarketCard({ market }: { market: MarketWithId }) {
   // (the countdown chip already communicates that state).
   const showClosingSticker = !isClosed && timeLeft > 0 && timeLeft < 3600;
   // NEW sticker when the market was created within the last 10 minutes —
-  // short enough that it's actually meaningful, not noise.
-  const nowSec = Math.floor(Date.now() / 1000);
+  // short enough that it's actually meaningful, not noise. `useNowSec`
+  // satisfies React's purity rule by storing now in state and ticking it.
+  const nowSec = useNowSec();
   const ageSec = nowSec - Number(market.createdAt);
   const showNewSticker = !isClosed && ageSec >= 0 && ageSec < 600;
 

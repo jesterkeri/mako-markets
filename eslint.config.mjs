@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Gemini's staged reference components — not wired into the app yet.
+    // Lint when integrated. See memory: "Isolate Gemini staged components".
+    "staged-gemini/**",
   ]),
 ]);
 
