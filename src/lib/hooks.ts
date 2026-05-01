@@ -23,9 +23,11 @@ import {
   MarketType,
   Outcome,
 } from './contract';
-import { usdcContract } from './usdc';
+import { USDC_ADDRESS, usdcContract } from './usdc';
 import { parseUsdc } from './usdc';
-import { monadTestnet } from './chain';
+import { monadTestnet, MONAD_TESTNET_ID } from './chain';
+import { runPlaceBet, type RunOutcome } from './aa-client';
+import { useUser } from './use-user';
 
 /**
  * Pre-write chain guard.
@@ -213,7 +215,14 @@ export type PlaceBetPhase =
   | 'betting'
   | 'awaitingBet'
   | 'success'
-  | 'error';
+  | 'error'
+  /// Magic flow only. The bundler accepted the user op but the receipt
+  /// poll didn't confirm within 90s. The cron resolver settles within
+  /// ~5min via on-chain truth. UI treats this as a NON-BLOCKING info
+  /// state — the user can dismiss + retry later, OR check /me to see if
+  /// the bet eventually landed. Mirrors plan v4 §"BetSheet copy table"
+  /// info-level treatment for `submitted`. Group 5 round-1 MAJOR 2 fix.
+  | 'submitted';
 
 /**
  * Decode a viem simulate/write rejection into a short user-facing message.
@@ -240,26 +249,36 @@ function decodeContractError(err: unknown): Error {
 }
 
 /**
- * Place a bet on a v4 market.
+ * Place a bet on a v4 market. Branches on auth mode (Phase 1D Group 5):
  *
- * **External-wallet flow only.** Embedded Magic + ERC-4337 batched
- * single-signature flow lands in Phase 1D as a sibling hook.
+ *   Magic-authed user (has a Safe via Phase 1A): uses the AA flow —
+ *     ONE Magic signature, gas sponsored by Mako, approve+placeBet
+ *     batched into a single user op when allowance is short. Returns
+ *     phase 'preparing' → 'betting' → 'awaitingBet' → 'success' (no
+ *     'approving' step exposed — the batched call is opaque to the UI).
  *
- * Steps:
+ *   Wallet-connected user (no Magic session): unchanged 2-tx wagmi
+ *     flow — approve (if needed) + placeBet, two MetaMask popups.
+ *
+ * Both branches share the same `{ placeBet, phase, approveHash, betHash,
+ * error, reset, flow }` return shape so BetSheet can render copy
+ * conditional on `flow` without rewiring state.
+ *
+ * Wallet flow steps (unchanged from Phase 1C):
  *   1. ensureChain — switch wallet to Monad testnet if needed
  *   2. allowance check — approve `MaxUint256` if `allowance < amount`
- *      (infinite approval; standard pattern, see header note in BetSheet)
  *   3. simulateContract pre-flight — surfaces v4 anti-abuse reverts
- *      (WalletIsBlocked, BetTooSoon, WalletCapExceeded,
- *      WalletShareCapExceeded, BettingClosed) with decoded error names
- *      BEFORE the user signs the bet tx
+ *      with decoded error names BEFORE the user signs the bet tx
  *   4. writeContract placeBet — submit the bet
  *   5. waitForTransactionReceipt — surface mined-receipt failures
  *
- * Phase state machine drives BetSheet button copy without the hook
- * having to know about the UI.
+ * Magic flow steps:
+ *   1. Read USDC.allowance(safe, MAKO) once via the public client.
+ *   2. Call runPlaceBet → /api/aa/sponsor → Magic signs → /api/aa/send.
+ *   3. Translate RunOutcome → phase state.
  */
 export function usePlaceBet() {
+  const { user, isLoading: userLoading } = useUser();
   const { writeContractAsync } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
   // Pin the public client to Monad testnet so allowance reads, simulate
@@ -317,8 +336,133 @@ export function usePlaceBet() {
       inFlightRef.current = false;
       return;
     }
+
+    // ── Magic-authed branch (Phase 1D bet flow) ────────────────────────
+    // If the user has a Magic session (and thus a derived Safe), route
+    // through /api/aa/sponsor + /api/aa/send. ONE Magic signature, gas
+    // sponsored by Mako. Wallet-connected users without a Magic session
+    // fall through to the existing wagmi 2-tx path below.
+    if (user && !userLoading) {
+      try {
+        const amount = parseUsdc(amountUsdc);
+        const safeAddress = user.safeAddress as `0x${string}`;
+        const magicEoa = user.magicEoa as `0x${string}`;
+
+        // Read current allowance(safe, MAKO) so runPlaceBet can decide
+        // single-call vs batched. Idempotent: a stale-low read just
+        // costs a redundant approve(MaxUint256) on chain (Pimlico pays).
+        const currentAllowance = (await publicClient.readContract({
+          ...usdcContract,
+          functionName: 'allowance',
+          args: [safeAddress, MAKO_ADDRESS],
+        })) as bigint;
+
+        // Magic flow doesn't surface a separate approve step to the UI —
+        // even when the batched [approve, placeBet] op runs, the user
+        // sees a single Magic prompt. Phase goes preparing → betting →
+        // awaitingBet → success/error, skipping approving/awaitingApprove.
+        setPhase('betting');
+        const outcome: RunOutcome = await runPlaceBet({
+          chainId: MONAD_TESTNET_ID,
+          marketId: id,
+          isYes,
+          amountUsdc: amount,
+          usdcAddress: USDC_ADDRESS,
+          makoAddress: MAKO_ADDRESS,
+          magicEoa,
+          currentAllowance,
+        });
+
+        setPhase('awaitingBet');
+        switch (outcome.kind) {
+          case 'sent':
+            setBetHash(outcome.txHash);
+            setPhase('success');
+            return;
+          case 'reverted':
+            setBetHash(outcome.txHash);
+            setPhase('error');
+            setError(
+              new Error(
+                'Bet reverted on chain. Your USDC is safe; please retry. (You may want to refresh first.)',
+              ),
+            );
+            return;
+          case 'submitted':
+            // Bundler accepted; receipt poll didn't confirm in 90s. The
+            // cron resolver settles within ~5min via on-chain truth.
+            // Non-blocking info state — `submitted` is rendered with
+            // visible explanatory copy, NOT as a busy button label that
+            // hides the message. Bet hash isn't available yet (no on-
+            // chain receipt), so we can't surface a tx link; userOpHash
+            // gives the operator something to grep.
+            setPhase('submitted');
+            return;
+          case 'failed_pre_submit':
+            setPhase('error');
+            setError(
+              new Error(`Bundler rejected the bet: ${outcome.failureReason}`),
+            );
+            return;
+          case 'in_progress':
+            setPhase('error');
+            setError(
+              new Error(
+                `Already sending — please wait ${outcome.retryAfterSeconds}s and try again.`,
+              ),
+            );
+            return;
+          case 'expired':
+            setPhase('error');
+            setError(
+              new Error('Confirmation took too long; please retry.'),
+            );
+            return;
+          case 'manual_review':
+            setPhase('error');
+            setError(
+              new Error(
+                'This bet needs operator review. We will follow up; no action needed.',
+              ),
+            );
+            return;
+          case 'sponsor_failed':
+            setPhase('error');
+            setError(
+              new Error(
+                outcome.error === 'CAP_EXCEEDED'
+                  ? "You've reached today's sponsored-op limit (5/day). Try again tomorrow, or use a connected wallet."
+                  : outcome.error === 'SPONSOR_UNAVAILABLE'
+                    ? 'Sponsorship temporarily unavailable. Try again shortly, or use a connected wallet.'
+                    : outcome.error === 'NOT_ALLOWED'
+                      ? `Bet rejected by sponsorship policy${outcome.reason ? ` (${outcome.reason})` : ''}.`
+                      : `Sponsorship failed: ${outcome.detail ?? outcome.error}`,
+              ),
+            );
+            return;
+          case 'send_failed':
+            setPhase('error');
+            setError(
+              new Error(
+                outcome.error === 'SIG_VALIDATION'
+                  ? 'Could not verify your signature. Please retry.'
+                  : `Send failed: ${outcome.detail ?? outcome.error}`,
+              ),
+            );
+            return;
+        }
+      } catch (e) {
+        setPhase('error');
+        setError(e instanceof Error ? e : new Error(String(e)));
+        return;
+      } finally {
+        inFlightRef.current = false;
+      }
+    }
+
+    // ── Wallet-connected branch (existing wagmi flow) ──────────────────
     if (!address) {
-      const e = new Error('Connect a wallet to place a bet.');
+      const e = new Error('Connect a wallet or sign in with email to place a bet.');
       setPhase('error');
       setError(e);
       inFlightRef.current = false;
@@ -401,7 +545,13 @@ export function usePlaceBet() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [publicClient, address, ensureChain, writeContractAsync]);
+  }, [publicClient, address, ensureChain, writeContractAsync, user, userLoading]);
+
+  const flow: 'magic' | 'wallet' | 'loading' = userLoading
+    ? 'loading'
+    : user
+      ? 'magic'
+      : 'wallet';
 
   return {
     placeBet,
@@ -410,6 +560,22 @@ export function usePlaceBet() {
     betHash,
     error,
     reset,
+    /// Discriminator the UI uses to render auth-aware copy. `magic` =
+    /// Phase 1D AA flow (one Magic signature, gas sponsored). `wallet` =
+    /// existing wagmi 2-tx flow. `loading` = the `useUser` query is
+    /// still in flight; treat as busy.
+    flow,
+    /// The address whose USDC balance + allowance matter for THIS flow.
+    /// For Magic users that's the Safe (since the placeBet pulls from
+    /// the Safe via transferFrom); for wallet users it's the connected
+    /// wallet address. BetSheet uses this for its balance pill,
+    /// allowance check, and first-approval banner condition so a Magic
+    /// user with an underfunded connected wallet doesn't see
+    /// "INSUFFICIENT USDC" against the wrong account (round-1 MAJOR 1
+    /// fix from Group 5 review).
+    bettingAccount: (flow === 'magic'
+      ? (user!.safeAddress as `0x${string}`)
+      : address) as `0x${string}` | undefined,
   };
 }
 

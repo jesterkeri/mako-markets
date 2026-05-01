@@ -9,6 +9,8 @@ import {
 } from '@/lib/aa-constants';
 import { isSupportedAaChainId } from '@/lib/aa-config';
 import {
+  assertBetBatchedCalls,
+  assertBetSingleCall,
   assertSponsorableCall,
   NotAllowedError,
 } from '@/lib/aa-call-allowlist';
@@ -37,17 +39,23 @@ import { storedToPacked } from '@/lib/user-op-types';
 // hash + userOpHash so the browser can sign via Magic and post the result
 // back to /api/aa/send.
 //
-// Steps (mirror plan v6 §"/api/aa/sponsor flow (v2)"):
+// Steps (mirror plan v4 §"/api/aa/sponsor flow"):
 //   0. checkSameOrigin (CSRF gate — same as /api/user/auth)
 //   1. getUserSession → 401 if absent
-//   2. zod-validate body
+//   2. zod-validate body via SponsorRequest discriminatedUnion('kind', […])
 //   3. chainId allowlist (Monad testnet only)
 //   4. user_safes lookup → 403 if absent
-//   5. assertSponsorableCall → 403 NOT_ALLOWED on mismatch
+//   5. Validator dispatch on parsed.data.kind, all → 403 NOT_ALLOWED on mismatch:
+//        smoke       → assertSponsorableCall  (USDC.transfer self 0n|1n)
+//        bet_single  → assertBetSingleCall    (placeBet to MAKO)
+//        bet_batched → assertBetBatchedCalls  (tuple [approve(MAKO, MaxUint256), placeBet(...)])
 //   6. PRECHECK in-flight row; same-user own-pending → 200 with full
 //      payload (`recovered: true`); cross-user OR non-pending → 409
 //   7. Atomic aa_sponsor_limits increment; >cap → 429
-//   8. buildSponsoredUserOp; PathXMismatchError → refund + 500;
+//   8. buildSponsoredUserOp; arg shape mirrors the kind:
+//        smoke / bet_single → { call }
+//        bet_batched        → { calls }   (lib emits MultiSend wrapper)
+//      PathXMismatchError → refund + 500;
 //      JsonRpcReject → 503; transport → 502
 //   9. INSERT aa_pending_user_ops ON CONFLICT DO NOTHING; race-loss →
 //      refund + reload + serializeExistingInFlight
@@ -167,9 +175,10 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { chainId, call } = parsed.data;
 
-  // Step 3: chainId allowlist.
+  const { chainId } = parsed.data;
+
+  // Step 3: chainId allowlist. Same gate for every `kind`.
   if (!isSupportedAaChainId(chainId) || chainId !== MONAD_TESTNET_ID) {
     return Response.json(
       { error: 'NOT_ALLOWED', reason: 'chain_unsupported' },
@@ -177,7 +186,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // Step 4: user_safes lookup.
+  // Step 4: user_safes lookup. Same gate for every `kind`.
   const safeRows = await db
     .select({ safeAddress: userSafes.safeAddress })
     .from(userSafes)
@@ -197,14 +206,59 @@ export async function POST(req: Request) {
   }
   const safeAddress = userSafe.safeAddress as Address;
 
-  // Step 5: callData allowlist (decoded inner intent).
-  const callValue = hexToBigInt(call.value as Hex);
+  // Step 5: callData allowlist + per-kind builder args.
+  //
+  // Phase 1D Group 4: dispatch on `kind`. Each branch validates the
+  // kind-specific shape and prepares the args for buildSponsoredUserOp.
+  // The common middle (precheck / rate-limit / INSERT / conflict) is
+  // shared below.
+  type Call = { to: Address; value: bigint; data: Hex };
+  let buildArgs:
+    | { kind: 'smoke' | 'bet_single'; call: Call }
+    | { kind: 'bet_batched'; calls: readonly [Call, Call] };
   try {
-    assertSponsorableCall({
-      chainId,
-      safeAddress,
-      call: { to: call.to as Address, value: callValue, data: call.data as Hex },
-    });
+    switch (parsed.data.kind) {
+      case 'smoke': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertSponsorableCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'smoke', call };
+        break;
+      }
+      case 'bet_single': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertBetSingleCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'bet_single', call };
+        break;
+      }
+      case 'bet_batched': {
+        const [a, b] = parsed.data.calls;
+        const calls: readonly [Call, Call] = [
+          {
+            to: a.to as Address,
+            value: hexToBigInt(a.value as Hex),
+            data: a.data as Hex,
+          },
+          {
+            to: b.to as Address,
+            value: hexToBigInt(b.value as Hex),
+            data: b.data as Hex,
+          },
+        ];
+        assertBetBatchedCalls({ chainId, safeAddress, calls });
+        buildArgs = { kind: 'bet_batched', calls };
+        break;
+      }
+    }
   } catch (e) {
     if (e instanceof NotAllowedError) {
       return Response.json(
@@ -238,19 +292,25 @@ export async function POST(req: Request) {
     );
   }
 
-  // Step 8: buildSponsoredUserOp.
+  // Step 8: buildSponsoredUserOp. Branch on the discriminated buildArgs
+  // so TypeScript's discriminated-union arg type narrows correctly.
   let built: Awaited<ReturnType<typeof buildSponsoredUserOp>>;
   try {
-    built = await buildSponsoredUserOp({
-      chainId,
-      safeAddress,
-      magicEoa: session.magicEoa as Address,
-      call: {
-        to: call.to as Address,
-        value: callValue,
-        data: call.data as Hex,
-      },
-    });
+    if (buildArgs.kind === 'bet_batched') {
+      built = await buildSponsoredUserOp({
+        chainId,
+        safeAddress,
+        magicEoa: session.magicEoa as Address,
+        calls: buildArgs.calls,
+      });
+    } else {
+      built = await buildSponsoredUserOp({
+        chainId,
+        safeAddress,
+        magicEoa: session.magicEoa as Address,
+        call: buildArgs.call,
+      });
+    }
   } catch (e) {
     // Refund policy: PathXMismatch (pre-RPC code-side bug) refunds. All
     // Pimlico-side failures preserve the count (the user's attempt counted

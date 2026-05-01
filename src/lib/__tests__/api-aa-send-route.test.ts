@@ -4,10 +4,16 @@
 // Route-level wiring test for /api/aa/send. The full route happy-path /
 // recovery-matrix coverage requires a live Postgres test DB and is
 // deferred (see plan §"Route tests"). What this file locks in is the
-// specific wiring round-1 added: `assertSponsoredCallData` is invoked
-// with the row's persisted callData BEFORE `sendSignedUserOp`, and a
-// `bad_operation` callData (operation=1, delegatecall) returns 403
-// NOT_ALLOWED with the reason in the body.
+// specific wiring sub-phase D round-1 added: `assertSponsoredCallData`
+// is invoked with the row's persisted callData BEFORE `sendSignedUserOp`.
+//
+// Phase 1D Group 2 changed the reason code: the original strict op=0
+// rule (any op=1 → `bad_operation`) was relaxed so op=1 is allowed when
+// wrapper.to is the canonical MultiSendCallOnly. This test fixture's
+// op=1 wrapper targets USDC (a non-MultiSendCallOnly address), which
+// now rejects with the more specific `bad_multisend_target`. The
+// security boundary is unchanged — the wrapper would still never have
+// been sponsored — but the reason code is more informative.
 //
 // Modules mocked at the boundary so the route can run under vitest with
 // no DB / no Magic / no Pimlico: csrf, user-session, aa-pending-user-ops
@@ -180,7 +186,16 @@ afterEach(() => {
 });
 
 describe('/api/aa/send — assertSponsoredCallData wiring', () => {
-  it('returns 403 NOT_ALLOWED bad_operation when persisted callData has operation=1, BEFORE sendSignedUserOp', async () => {
+  it('returns 403 NOT_ALLOWED bad_multisend_target when persisted callData has operation=1 + non-MultiSendCallOnly target, BEFORE sendSignedUserOp', async () => {
+    // Sub-phase D's original test asserted op=1 → bad_operation (the
+    // original strict rule was "operation must be 0"). Phase 1D Group 2
+    // relaxed that: op=1 is now ALLOWED but only when wrapper.to is the
+    // canonical MultiSendCallOnly. The fixture's wrapper targets USDC
+    // (the smoke surface's transfer target), which is NOT
+    // MultiSendCallOnly — so the validator now rejects with
+    // `bad_multisend_target`. The semantics are equivalent (this exact
+    // shape would never be sponsored), the reason code just got more
+    // specific.
     mocks.getUserSession.mockResolvedValue({
       userId: 'user-1',
       email: 'a@b.com',
@@ -195,7 +210,7 @@ describe('/api/aa/send — assertSponsoredCallData wiring', () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error?: string; reason?: string };
     expect(body.error).toBe('NOT_ALLOWED');
-    expect(body.reason).toBe('bad_operation');
+    expect(body.reason).toBe('bad_multisend_target');
 
     // Critical: sendSignedUserOp must NOT have been invoked. The whole
     // point of the round-1 wiring is to short-circuit before signing.

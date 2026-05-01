@@ -12,6 +12,15 @@ import { z } from 'zod';
 // prefix + 65 bytes ECDSA signature = 77 bytes = 154 hex chars + `0x`.
 // `HexBigint` is `0x` + 1+ hex digits (no length cap) so we can carry
 // uint256 values over the wire without lossy `Number` round-tripping.
+//
+// Phase 1D shape: `SponsorRequest` is a zod `discriminatedUnion('kind', ...)`
+// over three variants — the `kind` field is REQUIRED and the only
+// discriminator. No env-aware default, no fallback. The three variants are:
+//   - `SmokeRequest` (kind='smoke')          single-call USDC.transfer self
+//   - `BetSingleRequest` (kind='bet_single') single-call placeBet
+//   - `BetBatchedRequest` (kind='bet_batched') tuple [approve, placeBet]
+// `.strict()` on each rejects unknown keys so a malicious body can't carry
+// both `call` and `calls` to confuse the route's branching.
 // ----------------------------------------------------------------------------
 
 const Hex32 = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
@@ -22,18 +31,59 @@ const HexBytes = z.string().regex(/^0x[0-9a-fA-F]*$/);
 
 import { MONAD_TESTNET_ID } from './chain';
 
-export const SponsorRequest = z.object({
-  chainId: z.literal(MONAD_TESTNET_ID),
-  call: z.object({
+const CallShape = z
+  .object({
     to: Address,
     /// Browser sends value as 0x-hex; the route converts to bigint via
     /// viem's `hexToBigInt` before the allowlist + lib calls.
     value: HexBigint,
     data: HexBytes,
-  }),
-});
+  })
+  .strict();
+
+const SmokeRequest = z
+  .object({
+    kind: z.literal('smoke'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Smoke flow: single inner call against the strict
+    /// USDC.transfer(self, 0n|1n) allowlist (sub-phase D's
+    /// `assertSponsorableCall`). Kept unchanged for the dev surface.
+    call: CallShape,
+  })
+  .strict();
+
+const BetSingleRequest = z
+  .object({
+    kind: z.literal('bet_single'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Phase 1D bet flow, no batching needed (allowance >= amount):
+    /// single `placeBet(marketId, side, amount)` call to MakoMarketsV4.
+    call: CallShape,
+  })
+  .strict();
+
+const BetBatchedRequest = z
+  .object({
+    kind: z.literal('bet_batched'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Phase 1D bet flow, first-bet path (allowance < amount):
+    /// exactly two calls — `approve(MAKO, MaxUint256)` then
+    /// `placeBet(...)`. The route validates the tuple; the lib's
+    /// `buildSponsoredUserOp` builds the MultiSend wrapper.
+    calls: z.tuple([CallShape, CallShape]),
+  })
+  .strict();
+
+export const SponsorRequest = z.discriminatedUnion('kind', [
+  SmokeRequest,
+  BetSingleRequest,
+  BetBatchedRequest,
+]);
 
 export type SponsorRequest = z.infer<typeof SponsorRequest>;
+export type SmokeRequest = z.infer<typeof SmokeRequest>;
+export type BetSingleRequest = z.infer<typeof BetSingleRequest>;
+export type BetBatchedRequest = z.infer<typeof BetBatchedRequest>;
 
 export const SendRequest = z.object({
   pendingUserOpId: z.string().uuid(),
@@ -44,4 +94,4 @@ export const SendRequest = z.object({
 export type SendRequest = z.infer<typeof SendRequest>;
 
 // Re-export the primitives in case downstream tests need them.
-export { Hex32, Hex77, Address, HexBigint, HexBytes };
+export { Hex32, Hex77, Address, HexBigint, HexBytes, CallShape };

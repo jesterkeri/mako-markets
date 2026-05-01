@@ -277,8 +277,13 @@ describe('assertSponsoredCallData (wrapper-decoded path)', () => {
     }
   });
 
-  it('rejects bad_operation: wrapper operation !== 0 (delegatecall)', () => {
-    // Hand-encode the wrapper with operation=1 (DELEGATECALL).
+  it('rejects op=1 wrapper to non-MultiSendCallOnly target with bad_multisend_target', () => {
+    // Sub-phase D's strict rule was "op=0 only" (any op=1 → bad_operation).
+    // Phase 1D Group 2 relaxed this: op=1 is allowed but ONLY when
+    // wrapper.to is the canonical MultiSendCallOnly. A delegatecall to
+    // USDC (or any other address) still rejects, but the reason is now
+    // the more specific `bad_multisend_target`. The bet-flow allowlist
+    // file has positive coverage for the canonical-target accept path.
     const wrapped = encodeFunctionData({
       abi: SAFE_WRAPPER_ABI,
       functionName: 'executeUserOp',
@@ -292,7 +297,7 @@ describe('assertSponsoredCallData (wrapper-decoded path)', () => {
       });
       throw new Error('should have thrown');
     } catch (e) {
-      expect((e as NotAllowedError).reason).toBe('bad_operation');
+      expect((e as NotAllowedError).reason).toBe('bad_multisend_target');
     }
   });
 });

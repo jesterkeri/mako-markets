@@ -37,8 +37,11 @@
 import 'server-only';
 
 import {
+  concat,
   encodeFunctionData,
+  pad,
   recoverMessageAddress,
+  toHex,
   type Address,
   type Hex,
 } from 'viem';
@@ -62,6 +65,7 @@ import { getUserOperationGasPrice } from './aa-rpc';
 import { summarizeAaError } from './aa-errors';
 import { parseSafeOpEnvelope } from './aa-signature';
 import { deriveSafeAddress } from './safe';
+import { SAFE_CONFIG } from './safe-config';
 import { getInitCodeForFirstOp } from './safe-init';
 import { computeSafeOpHash } from './safe-op-hash';
 import { computeUserOpHash } from './user-op-hash';
@@ -119,16 +123,52 @@ const DUMMY_SIGNATURE: Hex =
     '00'.repeat(12) + // validAfter (6) + validUntil (6) zero-padded
     'ff'.repeat(65)) as Hex;
 
+// ── MultiSend bytes encoder (Phase 1D) ──────────────────────────────────────
+
+/// Encode a sequence of `[op, to, value, dataLen, data]` tuples in Safe's
+/// MultiSend format for the bet-flow's batched user op:
+///   tuple = op(1) || to(20) || value(32 BE) || dataLen(32 BE) || data
+///
+/// All sub-calls are emitted with `op=0` (CALL only) — MultiSendCallOnly
+/// rejects op=1 internally, so this is both correct and defensive. The
+/// send-side `assertSponsoredCallData` parses these bytes back and
+/// validates the same shape; the encoder + parser must agree.
+///
+/// Plan v4 §"Architectural decisions": only the canonical
+/// `MultiSendCallOnly` is permitted as the wrapper target. The wrapper
+/// itself is built in `buildSponsoredUserOp` step 4 — this function only
+/// produces the `data` argument.
+export function encodeMultiSendBytes(
+  calls: readonly { to: Address; value: bigint; data: Hex }[],
+): Hex {
+  const parts: Hex[] = [];
+  for (const call of calls) {
+    const dataHex = (
+      call.data.startsWith('0x') ? call.data.slice(2) : call.data
+    ) as string;
+    const dataLen = BigInt(dataHex.length / 2);
+    parts.push(
+      concat([
+        toHex(0, { size: 1 }), // op = CALL
+        call.to,
+        pad(toHex(call.value), { size: 32 }),
+        pad(toHex(dataLen), { size: 32 }),
+        call.data,
+      ]) as Hex,
+    );
+  }
+  return concat(parts) as Hex;
+}
+
 // ── buildSponsoredUserOp ─────────────────────────────────────────────────────
 
-export type BuildSponsoredUserOpArgs = {
+/// Inner-call shape shared between the single + batched arg variants.
+type Call = { to: Address; value: bigint; data: Hex };
+
+type BuildSponsoredUserOpBase = {
   chainId: SupportedAaChainId;
   safeAddress: Address;
   magicEoa: Address;
-  /// Single call for Phase 1B. Phase 1D will extend to a batch that
-  /// fans through Safe.execTransaction or multiSend; for now the
-  /// wrapper is `Safe.executeUserOp(to, value, data, 0)`.
-  call: { to: Address; value: bigint; data: Hex };
   /// Defaults to 0 (always-valid lower bound).
   validAfter?: bigint;
   /// Defaults to 2^48 - 1 (always-valid upper bound). The DB-side
@@ -136,6 +176,18 @@ export type BuildSponsoredUserOpArgs = {
   /// only the SafeOp's signature validity window.
   validUntil?: bigint;
 };
+
+/// `BuildSponsoredUserOpArgs` is a discriminated union — exactly ONE of
+/// `call` (single inner call: Phase 1B smoke, Phase 1D bet_single) or
+/// `calls` (two-element tuple: Phase 1D bet_batched). Using
+/// `({ call; calls?: never } | { calls; call?: never })` makes TypeScript
+/// reject "both set" or "neither set" callers at compile time. The
+/// runtime XOR check inside the function body is belt-and-suspenders.
+export type BuildSponsoredUserOpArgs = BuildSponsoredUserOpBase &
+  (
+    | { call: Call; calls?: never }
+    | { calls: readonly [Call, Call]; call?: never }
+  );
 
 export type BuildSponsoredUserOpResult = {
   userOp: StoredSplitFormUserOp;
@@ -192,12 +244,47 @@ export async function buildSponsoredUserOp(
   const factory: Address | null = initData?.factory ?? null;
   const factoryData: Hex | null = initData?.factoryData ?? null;
 
-  // 4. Wrapper callData: Safe.executeUserOp(call.to, call.value, call.data, 0).
-  const wrapperCallData = encodeFunctionData({
-    abi: SAFE_4337_MODULE_ABI,
-    functionName: 'executeUserOp',
-    args: [args.call.to, args.call.value, args.call.data, 0],
-  });
+  // 4. Wrapper callData. Two shapes:
+  //
+  //    Single call (smoke / bet_single):
+  //      Safe.executeUserOp(call.to, call.value, call.data, op=0)
+  //
+  //    Batched (bet_batched, Phase 1D):
+  //      Safe.executeUserOp(MultiSendCallOnly, 0, multiSendBytes, op=1)
+  //      where multiSendBytes = concat([
+  //        op(1) || to(20) || value(32) || dataLen(32) || data,
+  //        op(1) || to(20) || value(32) || dataLen(32) || data,
+  //      ])
+  //
+  //    Outer op=1 (delegatecall) is unavoidable for the batched path:
+  //    Safe must delegatecall MultiSendCallOnly to dispatch into its
+  //    sub-calls. MultiSendCallOnly enforces sub-call op=0 internally,
+  //    so there's no escalation surface.
+  const hasSingle = args.call !== undefined;
+  const hasBatched = args.calls !== undefined;
+  if (hasSingle === hasBatched) {
+    throw new Error(
+      'user-op: buildSponsoredUserOp requires exactly one of `call` or `calls` (got ' +
+        (hasSingle ? 'both' : 'neither') +
+        ').',
+    );
+  }
+  const wrapperCallData: Hex = hasSingle
+    ? encodeFunctionData({
+        abi: SAFE_4337_MODULE_ABI,
+        functionName: 'executeUserOp',
+        args: [args.call!.to, args.call!.value, args.call!.data, 0],
+      })
+    : encodeFunctionData({
+        abi: SAFE_4337_MODULE_ABI,
+        functionName: 'executeUserOp',
+        args: [
+          SAFE_CONFIG.multiSendCallOnly,
+          0n,
+          encodeMultiSendBytes(args.calls!),
+          1,
+        ],
+      });
 
   // 5. Base userOp scaffold — no gas, no paymaster yet. Sponsor will
   //    fill both. Field shape mirrors `scripts/probe-pimlico.mts`.

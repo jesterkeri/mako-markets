@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useAccount } from 'wagmi';
 import { type MarketWithId } from '@/lib/contract';
 import { usePlaceBet, useUsdcAllowance, useUsdcBalance } from '@/lib/hooks';
 import { computePreviewPayout } from '@/lib/bet';
@@ -14,23 +13,31 @@ import { parseUsdc, formatUsdc } from '@/lib/usdc';
 const MIN_BET_USDC_BASE = 1_000_000n;
 
 /**
- * Fixed-bottom bet sheet for an external-wallet (RainbowKit) flow.
+ * Fixed-bottom bet sheet for both auth flows.
  *
- * v4 bet path:
- *   1. user types amount → live `computePreviewPayout` shows expected return
- *   2. on submit, `usePlaceBet` runs ensure-allowance-then-bet (2 sequential
- *      txs: approve once if needed, then placeBet)
- *   3. simulate-time reverts (`BettingClosed`, `WalletCapExceeded`, etc.) are
- *      decoded into a clean error message and shown without the user spending
- *      gas on a known-revert bet tx
+ * **Magic AA flow (Phase 1D):** one Magic signature, gas sponsored by Mako,
+ * approve+placeBet batched into a single user op when allowance is short.
+ * The `bettingAccount` exposed by `usePlaceBet` is the user's Safe address.
+ * This is what funds the bet — NOT a connected wallet, even if one is
+ * present. Balance + allowance lookups MUST run against the Safe so a
+ * Magic user with an underfunded connected wallet isn't blocked by a
+ * bogus INSUFFICIENT USDC banner.
  *
- * Per-market fee snapshots flow into `computePreviewPayout` SEPARATELY (NOT
- * summed) so the helper can apply v4's creator-fee-forfeit rule on skewed pools.
+ * **Wallet 2-tx flow (Phase 1C, unchanged):** user types amount; the hook
+ * runs ensure-allowance-then-bet (2 sequential txs: approve once if
+ * needed, then placeBet). Simulate-time reverts are decoded into clean
+ * error messages.
  *
- * **Approval policy:** infinite (`MaxUint256`). One approve covers all future
- * bets — standard pattern (Uniswap, Polymarket). Trade-off: if MakoMarkets
- * is later compromised, the approval lets it drain the wallet's USDC.
- * Acceptable for testnet beta; production cutover should reconsider.
+ * Per-market fee snapshots flow into `computePreviewPayout` SEPARATELY
+ * (NOT summed) so the helper can apply v4's creator-fee-forfeit rule on
+ * skewed pools.
+ *
+ * **Approval policy:** infinite (`MaxUint256`) for both flows — matches
+ * the existing wagmi behavior. Trade-off: if MakoMarketsV4 is compromised,
+ * the approval lets it drain the user's USDC (from the connected wallet
+ * for the wallet flow, from the Safe for the Magic flow). Audited
+ * contract is the mitigation; first-approval copy below the button warns
+ * the Magic user explicitly.
  */
 export function BetSheet({
   market,
@@ -42,10 +49,6 @@ export function BetSheet({
   onSuccess?: () => void;
 }) {
   const [amount, setAmount] = useState('1');
-  const { address } = useAccount();
-
-  const { data: balance, refetch: refetchBalance } = useUsdcBalance(address);
-  const { data: allowance, refetch: refetchAllowance } = useUsdcAllowance(address);
 
   const betUsdc = useMemo(() => {
     try {
@@ -85,7 +88,23 @@ export function BetSheet({
   const wouldRefund =
     betUsdc > 0n && (side === 'yes' ? market.totalNo === 0n : market.totalYes === 0n);
 
-  const { placeBet, phase, betHash, error, reset } = usePlaceBet();
+  const {
+    placeBet,
+    phase,
+    betHash,
+    error,
+    reset,
+    flow,
+    bettingAccount,
+  } = usePlaceBet();
+
+  // Balance + allowance run against `bettingAccount` — the address that
+  // ACTUALLY funds the bet. For Magic users that's the Safe; for wallet
+  // users it's `walletAddress`. Group 5 round-1 MAJOR 1 fix.
+  const { data: balance, refetch: refetchBalance } =
+    useUsdcBalance(bettingAccount);
+  const { data: allowance, refetch: refetchAllowance } =
+    useUsdcAllowance(bettingAccount);
 
   // Refetch allowance the moment the hook leaves the approval phases
   // (regardless of whether the bet later succeeds or fails). Without
@@ -117,11 +136,11 @@ export function BetSheet({
   const validation: Validation = useMemo<Validation>(() => {
     if (betUsdc === 0n) return { ok: false, reason: 'enter' };
     if (betUsdc < MIN_BET_USDC_BASE) return { ok: false, reason: 'min' };
-    if (address && betUsdc > balanceBn) return { ok: false, reason: 'balance' };
+    if (bettingAccount && betUsdc > balanceBn) return { ok: false, reason: 'balance' };
     return { ok: true };
-  }, [betUsdc, balanceBn, address]);
+  }, [betUsdc, balanceBn, bettingAccount]);
 
-  const needsApprove = address ? allowanceBn < betUsdc : true;
+  const needsApprove = bettingAccount ? allowanceBn < betUsdc : true;
 
   const handlePlaceBet = async () => {
     if (!validation.ok) return;
@@ -138,12 +157,35 @@ export function BetSheet({
     phase === 'awaitingApprove' ||
     phase === 'betting' ||
     phase === 'awaitingBet';
+  // Treat the auth-loading window as busy too — `flow === 'loading'`
+  // means useUser hasn't resolved yet; clicking would fall through to
+  // the wallet branch and surface a confusing "Connect a wallet…" error
+  // even if the user's Magic session is about to load. Round-1 MINOR 2
+  // fix from Group 5 review.
+  const authLoading = flow === 'loading';
   // Also disable while showing the post-success "BET PLACED ✓" badge so a
   // click during the 2.5s success window can't fire a second placeBet
   // before reset() flips us back to idle.
-  const disabled = isBusy || phase === 'success' || !validation.ok;
+  const disabled =
+    isBusy || authLoading || phase === 'success' || !validation.ok;
 
   const buttonLabel = (() => {
+    if (authLoading) return 'CHECKING AUTH…';
+    // Magic flow: single-signature, no separate approve step. Phase 1D
+    // copy table — see plan v4 §"BetSheet edit section" for the full
+    // RunOutcome → copy mapping. The hook collapses sponsor/sign/send
+    // into the existing phase machine: preparing → betting → awaitingBet.
+    if (flow === 'magic') {
+      if (phase === 'preparing') return 'PREPARING…';
+      if (phase === 'betting') return 'AWAITING SIGNATURE…';
+      if (phase === 'awaitingBet') return 'CONFIRMING ON CHAIN…';
+      if (phase === 'success') return 'BET PLACED ✓';
+      if (phase === 'submitted') return 'BET SUBMITTED';
+      if (validation.reason === 'min') return 'MIN BET 1 USDC';
+      if (validation.reason === 'balance') return 'INSUFFICIENT USDC';
+      return `CONFIRM BET · ${amount || '0'} USDC ${side.toUpperCase()}`;
+    }
+    // Wallet flow (existing 2-tx path, unchanged):
     if (phase === 'preparing') return 'PREPARING…';
     if (phase === 'approving') return 'APPROVE IN WALLET…';
     if (phase === 'awaitingApprove') return 'APPROVE TX LANDING…';
@@ -160,13 +202,25 @@ export function BetSheet({
   const errorText = phase === 'error' && error
     ? error.message.slice(0, 140).toUpperCase()
     : null;
-  const statusText = isBusy ? buttonLabel : successText ?? errorText;
+  // Submitted = non-blocking info (round-1 MAJOR 2 fix from Group 5
+  // review). Bundler accepted; receipt poll didn't confirm in 90s. The
+  // cron resolver settles within ~5min via on-chain truth. User can
+  // dismiss via the Reset button, or just wait + check /me later.
+  const submittedText =
+    phase === 'submitted'
+      ? 'BET SUBMITTED · CONFIRMING ON CHAIN — MAY TAKE UP TO 5 MIN. CHECK /me TO SEE IF IT LANDED.'
+      : null;
+  const statusText = isBusy
+    ? buttonLabel
+    : successText ?? errorText ?? submittedText;
 
   return (
     <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 px-4">
       <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
-        {/* Balance pill — only when wallet connected */}
-        {address && (
+        {/* Balance pill — shows whenever a betting account exists, which
+            is true for both Magic users (Safe address) and wallet users
+            (connected wallet address). */}
+        {bettingAccount && (
           <div className="px-5 py-2 border-b-2 border-ink bg-paper flex items-center justify-between">
             <span className="mako-label text-muted">BAL</span>
             <span className="mako-display text-sm tabular-nums">
@@ -233,15 +287,55 @@ export function BetSheet({
           {buttonLabel}
         </button>
 
-        {/* Non-busy status (success / error) */}
+        {/* First-approval copy (Magic users only, allowance < amount).
+            Phase 1D plan v4 round-2 MINOR 2 fix — broadened condition
+            from `allowance == 0` to `allowance < amount` since the
+            batched MaxUint256 approval grants unlimited spend in either
+            case. Also serves as the "gas covered by Mako" note. */}
+        {flow === 'magic' && betUsdc > 0n && allowanceBn < betUsdc && phase === 'idle' && (
+          <div className="px-4 py-2 mako-label text-[11px] text-muted text-center border-t-2 border-ink break-words leading-relaxed">
+            FIRST-TIME APPROVAL: GRANTS UNLIMITED USDC SPEND TO MAKO ·
+            GAS COVERED BY MAKO
+          </div>
+        )}
+        {flow === 'magic' && (allowanceBn >= betUsdc || betUsdc === 0n) && phase === 'idle' && (
+          <div className="px-4 py-2 mako-label text-[11px] text-muted text-center border-t-2 border-ink">
+            GAS COVERED BY MAKO
+          </div>
+        )}
+
+        {/* Non-busy status (success / error / submitted-info).
+            `submitted` is the Magic-flow non-blocking case where the
+            bundler accepted but receipt poll timed out — visually
+            distinct from error so the user understands the bet is
+            probably fine, just slow. Group 5 round-1 MAJOR 2 fix. */}
         {statusText && !isBusy && (
           <div
             className={`px-4 py-2 mako-label text-center border-t-2 border-ink break-words ${
-              phase === 'success' ? 'bg-signal/30 text-ink' : 'bg-mako-red/15 text-mako-red'
+              phase === 'success'
+                ? 'bg-signal/30 text-ink'
+                : phase === 'submitted'
+                  ? 'bg-paper text-muted'
+                  : 'bg-mako-red/15 text-mako-red'
             }`}
           >
             {statusText}
           </div>
+        )}
+
+        {/* Dismiss button for the submitted state so the user isn't
+            visually stuck. Resets to idle, freeing the BetSheet for
+            another bet (the partial unique index will block until the
+            cron resolves the in-flight row, but that's the route's
+            problem, not the UI's). */}
+        {phase === 'submitted' && (
+          <button
+            type="button"
+            onClick={reset}
+            className="w-full px-4 py-2 mako-label text-[11px] text-center border-t-2 border-ink bg-paper hover:bg-surface-elevated"
+          >
+            DISMISS
+          </button>
         )}
 
         {/* Tx hash chips for debugging — hidden in release polish */}

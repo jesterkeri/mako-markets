@@ -27,14 +27,21 @@
 // surface as a positive control on the allowlist.
 // ----------------------------------------------------------------------------
 
-import type { Address, Hex } from 'viem';
+import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
 
 import { signSafeOpHash } from './magic-browser';
 
-export type SponsorRequestBody = {
-  chainId: number;
-  call: { to: Address; value: Hex; data: Hex };
-};
+/// Wire shape for POST /api/aa/sponsor. Mirrors the zod
+/// `SponsorRequest` discriminated union in `aa-route-schemas.ts` —
+/// three variants on the `kind` discriminator. Group 5 will use the
+/// `bet_single` and `bet_batched` variants from `runPlaceBet`; today
+/// only `smoke` is exercised by `runSponsoredOp` and `runDisallowedOp`.
+type Call = { to: Address; value: Hex; data: Hex };
+
+export type SponsorRequestBody =
+  | { kind: 'smoke'; chainId: number; call: Call }
+  | { kind: 'bet_single'; chainId: number; call: Call }
+  | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
 export type SponsorResponse = {
@@ -122,8 +129,11 @@ export type RunSponsoredOpArgs = {
 export async function runSponsoredOp(
   args: RunSponsoredOpArgs,
 ): Promise<RunOutcome> {
-  // 1. Sponsor.
+  // 1. Sponsor. Phase 1D added a `kind` discriminator to the wire schema;
+  // smoke flow always sends `kind: 'smoke'` to route through the strict
+  // `assertSponsorableCall` validator (USDC.transfer self, 0n|1n only).
   const sponsor = await postJson('/api/aa/sponsor', {
+    kind: 'smoke',
     chainId: args.chainId,
     call: args.call,
   });
@@ -264,6 +274,10 @@ export async function runDisallowedOp(args: {
   to: Address;
 }): Promise<RunOutcome> {
   const sponsor = await postJson('/api/aa/sponsor', {
+    // Phase 1D: smoke variant routes through the strict
+    // `assertSponsorableCall` validator. The whole point of this helper
+    // is to exercise that validator with a deliberately disallowed shape.
+    kind: 'smoke',
     chainId: args.chainId,
     call: {
       to: args.to,
@@ -280,6 +294,220 @@ export async function runDisallowedOp(args: {
     reason: (sponsor.body as { reason?: string }).reason,
     detail: (sponsor.body as { message?: string }).message,
   };
+}
+
+// ── Bet-flow ABI fragments ──────────────────────────────────────────────────
+//
+// Browser-side encoding of the inner calls. Kept as minimal local fragments
+// to avoid pulling the full v4 ABI into every client bundle that imports
+// this module. The server-side `aa-call-allowlist.ts` decodes the same
+// shapes; encoder + decoder must agree.
+
+const APPROVE_ABI = [
+  {
+    type: 'function',
+    name: 'approve',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+const PLACEBET_ABI = [
+  {
+    type: 'function',
+    name: 'placeBet',
+    inputs: [
+      { name: 'id', type: 'uint256' },
+      { name: 'isYes', type: 'bool' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+// ── Bet flow (Phase 1D Group 5) ─────────────────────────────────────────────
+
+export type RunPlaceBetArgs = {
+  chainId: number;
+  /// MakoMarketsV4.placeBet(id, isYes, amount) — the on-chain bet that
+  /// will land if everything succeeds.
+  marketId: bigint;
+  isYes: boolean;
+  amountUsdc: bigint;
+  /// USDC address (where `approve` is called when allowance is short).
+  usdcAddress: Address;
+  /// MakoMarketsV4 address (where `placeBet` is called and where the
+  /// approve's `spender` argument points).
+  makoAddress: Address;
+  /// Magic-derived EOA — passed to signSafeOpHash so the personal_sign
+  /// prompt addresses the right account.
+  magicEoa: Address;
+  /// Pre-fetched allowance(safe, MAKO). The hook reads this via wagmi
+  /// useReadContract and passes it in. Determines whether we need the
+  /// batched [approve, placeBet] flow (allowance < amount) or the
+  /// single-call placeBet flow (allowance >= amount).
+  currentAllowance: bigint;
+};
+
+/// Place a bet via the AA stack. Three failure modes the caller must
+/// handle:
+///   1. `kind: 'sponsor_failed'` — Pimlico or our policy rejected. Caller
+///      shows a retry / fallback prompt (see BetSheet copy table).
+///   2. `kind: 'reverted'` — bundler accepted, on-chain placeBet reverted.
+///      Most likely cause is allowance staleness or balance shortfall.
+///      Caller invalidates `['userData']` cache and shows a retry copy.
+///   3. `kind: 'send_failed'` — sig validation, drift guard, or post-
+///      callback failure. Same retry path as `reverted`.
+///
+/// Plan v4 §"Architecture flow" + §"Architectural decisions":
+///   - allowance-stale revert path is documented as the main failure mode
+///     for single-owner Safes (1D scope).
+///   - approve amount is always MaxUint256 (matches existing wagmi flow,
+///     reduces gas-per-bet vs per-bet approval, audit-validated contract).
+export async function runPlaceBet(args: RunPlaceBetArgs): Promise<RunOutcome> {
+  const placeBetData = encodeFunctionData({
+    abi: PLACEBET_ABI,
+    functionName: 'placeBet',
+    args: [args.marketId, args.isYes, args.amountUsdc],
+  });
+
+  // Branch on allowance. Idempotent: a stale-low read just costs a
+  // redundant approve(MaxUint256) on chain (Pimlico pays gas).
+  const body =
+    args.currentAllowance >= args.amountUsdc
+      ? {
+          kind: 'bet_single' as const,
+          chainId: args.chainId,
+          call: {
+            to: args.makoAddress,
+            value: '0x0' as Hex,
+            data: placeBetData,
+          },
+        }
+      : {
+          kind: 'bet_batched' as const,
+          chainId: args.chainId,
+          calls: [
+            {
+              to: args.usdcAddress,
+              value: '0x0' as Hex,
+              data: encodeFunctionData({
+                abi: APPROVE_ABI,
+                functionName: 'approve',
+                args: [args.makoAddress, maxUint256],
+              }),
+            },
+            {
+              to: args.makoAddress,
+              value: '0x0' as Hex,
+              data: placeBetData,
+            },
+          ] as const,
+        };
+
+  // 1. Sponsor.
+  const sponsor = await postJson('/api/aa/sponsor', body);
+  if (!sponsor.ok) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: (sponsor.body as { error?: string }).error ?? 'unknown',
+      reason: (sponsor.body as { reason?: string }).reason,
+      detail: (sponsor.body as { message?: string }).message,
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
+
+  // 2. Magic personal_sign over the SafeOp hash.
+  const validAfter = BigInt(sponsored.validAfter);
+  const validUntil = BigInt(sponsored.validUntil);
+  const signature = await signSafeOpHash({
+    hash: sponsored.safeOpHash,
+    magicEoa: args.magicEoa,
+    validAfter,
+    validUntil,
+  });
+
+  // 3. Send.
+  const send = await postJson('/api/aa/send', {
+    pendingUserOpId: sponsored.pendingUserOpId,
+    signature,
+  });
+
+  if (!send.ok) {
+    const sendBody = send.body as {
+      error?: string;
+      message?: string;
+      status?: string;
+      retryAfterSeconds?: number;
+    };
+    if (send.status === 202 && sendBody.status === 'send_in_progress') {
+      return {
+        kind: 'in_progress',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
+      };
+    }
+    if (send.status === 410) {
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    }
+    if (send.status === 423) {
+      return {
+        kind: 'manual_review',
+        pendingUserOpId: sponsored.pendingUserOpId,
+      };
+    }
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: sendBody.error ?? 'unknown',
+      detail: sendBody.message,
+    };
+  }
+
+  const sendBody = send.body as {
+    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
+    txHash?: Hex;
+    userOpHash?: Hex;
+    failureReason?: string;
+  };
+  switch (sendBody.status) {
+    case 'sent':
+      return {
+        kind: 'sent',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        recovered: sponsored.recovered,
+      };
+    case 'reverted':
+      return {
+        kind: 'reverted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        failureReason: sendBody.failureReason ?? 'on-chain revert',
+      };
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        userOpHash: sendBody.userOpHash as Hex,
+      };
+    case 'failed_pre_submit':
+      return {
+        kind: 'failed_pre_submit',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        failureReason: sendBody.failureReason ?? 'bundler reject',
+      };
+    case 'expired':
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────
