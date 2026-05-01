@@ -1,0 +1,84 @@
+# ----------------------------------------------------------------------------
+# CI for mako-markets
+#
+# Runs on every push to main / v4-onboarding and on every PR. Four gates:
+#   1. lint     — ESLint
+#   2. typecheck — `tsc --noEmit` (catches type errors before Vercel build)
+#   3. test     — vitest (`pnpm test:aa`, currently 141 tests)
+#   4. build    — `pnpm build` (catches Next-side errors that tsc misses;
+#                  client bundle composition, route-segment config, etc.)
+#
+# Build step uses safe placeholder NEXT_PUBLIC_* env vars. Real values live
+# in Vercel project env (production + preview); CI only needs values that
+# satisfy `process.env.X` reads at build time, not values that work
+# end-to-end. Server-only env (PIMLICO_API_KEY_*, USER_SESSION_SECRET, etc.)
+# is intentionally NOT provided — every server module that reads it is
+# `dynamic = 'force-dynamic'` so the build never evaluates server env.
+#
+# DB tests are deferred (need a Postgres instance). Once we add a test DB
+# (Postgres service container in this workflow + a separate db:migrate
+# step), expand `pnpm test:aa` to include the route-level recovery /
+# refund / CHECK-constraint suites that the plan §"Verification" lists.
+# ----------------------------------------------------------------------------
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - v4-onboarding
+
+# Cancel in-flight runs for the same ref when a new commit lands. Saves
+# CI minutes when force-pushing rapid iterations during review rounds.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Build-time placeholders. None are real values — they only need to
+      # satisfy the `process.env.X` reads in the client bundle so
+      # `next build` doesn't choke. Production env lives in Vercel.
+      NEXT_PUBLIC_MAKO_ADDRESS: '0x0000000000000000000000000000000000000000'
+      NEXT_PUBLIC_MAKO_DEPLOY_BLOCK: '0'
+      NEXT_PUBLIC_USDC_ADDRESS_MONAD_TESTNET: '0x0000000000000000000000000000000000000000'
+      NEXT_PUBLIC_PROJECT_ID: 'ci-placeholder'
+      NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+      NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY: 'pk_live_ci_placeholder'
+      MAKO_STAGE: 'production'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run AA tests
+        run: pnpm test:aa
+
+      - name: Build
+        run: pnpm build

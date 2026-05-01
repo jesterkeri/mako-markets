@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "seed": "tsx scripts/seed.mts",
     "seed:bw": "node scripts/with-bw.mjs pnpm run seed",
     "auto-resolver": "tsx scripts/auto-resolver.mts",
