@@ -65,3 +65,11 @@ export const PENDING_TTL_MS = 5 * 60_000;
 /// (5 ops/day in 1B) and exists so a single user can't burn the global
 /// monthly budget through repeated retries on the same day. Tunable.
 export const SPONSOR_CAP_PER_USER_PER_DAY = 5;
+
+/// Phase 1E send-USDC per-op cap, in USDC base units (6 decimals).
+/// 100 USDC for testnet. Defends Pimlico's per-op sponsorship budget
+/// against runaway-amount user error and limits blast radius if a
+/// session is compromised. Tunable via this constant; mainnet rollout
+/// should revisit alongside the contract restrictions on the Pimlico
+/// dashboard.
+export const SEND_USDC_MAX_PER_OP_BASE_UNITS = 100n * 1_000_000n;

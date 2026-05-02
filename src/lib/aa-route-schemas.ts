@@ -13,12 +13,14 @@ import { z } from 'zod';
 // `HexBigint` is `0x` + 1+ hex digits (no length cap) so we can carry
 // uint256 values over the wire without lossy `Number` round-tripping.
 //
-// Phase 1D shape: `SponsorRequest` is a zod `discriminatedUnion('kind', ...)`
-// over three variants — the `kind` field is REQUIRED and the only
-// discriminator. No env-aware default, no fallback. The three variants are:
+// Phase 1D + 1E shape: `SponsorRequest` is a zod `discriminatedUnion('kind', ...)`
+// over four variants — the `kind` field is REQUIRED and the only
+// discriminator. No env-aware default, no fallback. The four variants are:
 //   - `SmokeRequest` (kind='smoke')          single-call USDC.transfer self
 //   - `BetSingleRequest` (kind='bet_single') single-call placeBet
 //   - `BetBatchedRequest` (kind='bet_batched') tuple [approve, placeBet]
+//   - `SendUsdcRequest` (kind='send_usdc')   single-call USDC.transfer to
+//                                            arbitrary recipient (Phase 1E)
 // `.strict()` on each rejects unknown keys so a malicious body can't carry
 // both `call` and `calls` to confuse the route's branching.
 // ----------------------------------------------------------------------------
@@ -74,16 +76,41 @@ const BetBatchedRequest = z
   })
   .strict();
 
+const SendUsdcRequest = z
+  .object({
+    kind: z.literal('send_usdc'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Phase 1E /profile send flow: single-call
+    /// `USDC.transfer(arbitraryRecipient, amount)` from the Safe.
+    /// The allowlist enforces:
+    ///   - inner.to === USDC_ADDRESS
+    ///   - inner.value === 0n
+    ///   - decoded transfer.recipient !== safeAddress (no self-sends —
+    ///     they're a no-op that still costs sponsorship budget)
+    ///   - decoded transfer.recipient !== USDC_ADDRESS (catches paste-
+    ///     into-the-token-contract user error before chain)
+    ///   - decoded transfer.recipient !== MAKO_ADDRESS (catches paste-
+    ///     into-the-Mako-contract user error before chain)
+    ///   - decoded transfer.amount > 0n
+    ///   - decoded transfer.amount <= SEND_USDC_MAX_PER_OP_BASE_UNITS
+    ///     (per-op cap; route may also apply daily caps via
+    ///     aa_sponsor_limits)
+    call: CallShape,
+  })
+  .strict();
+
 export const SponsorRequest = z.discriminatedUnion('kind', [
   SmokeRequest,
   BetSingleRequest,
   BetBatchedRequest,
+  SendUsdcRequest,
 ]);
 
 export type SponsorRequest = z.infer<typeof SponsorRequest>;
 export type SmokeRequest = z.infer<typeof SmokeRequest>;
 export type BetSingleRequest = z.infer<typeof BetSingleRequest>;
 export type BetBatchedRequest = z.infer<typeof BetBatchedRequest>;
+export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
 
 export const SendRequest = z.object({
   pendingUserOpId: z.string().uuid(),

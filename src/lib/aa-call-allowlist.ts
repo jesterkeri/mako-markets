@@ -55,6 +55,7 @@ import { MAKO_ADDRESS } from './contract';
 import { MONAD_TESTNET_ID } from './chain';
 import { SAFE_CONFIG } from './safe-config';
 import { USDC_ADDRESS } from './usdc';
+import { SEND_USDC_MAX_PER_OP_BASE_UNITS } from './aa-constants';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -76,7 +77,11 @@ export type NotAllowedReason =
   | 'bad_subcall_op'
   | 'bad_approval_target'
   | 'bad_approval_amount'
-  | 'bad_placebet_args';
+  | 'bad_placebet_args'
+  // Phase 1E send flow:
+  | 'bad_send_args'
+  | 'bad_send_recipient'
+  | 'bad_send_amount';
 
 export class NotAllowedError extends Error {
   constructor(public readonly reason: NotAllowedReason, message?: string) {
@@ -380,6 +385,87 @@ export function assertBetBatchedCalls(args: {
   decodeAndAssertPlaceBet(args.calls[1]);
 }
 
+// ── Send-USDC validator (Phase 1E /profile send flow) ──────────────────────
+
+/// Decode `transfer(recipient, amount)` and assert the send-USDC invariants.
+/// Used by:
+///   - assertSendUsdcCall      (sponsor-time, kind='send_usdc')
+///   - assertSponsoredCallData (send-time, op=0 dispatch when wrapper.to is
+///                              USDC and the inner shape isn't the
+///                              smoke-flow's transfer-to-self)
+function decodeAndAssertSendUsdc(args: {
+  call: { to: Address; value: bigint; data: Hex };
+  safeAddress: Address;
+}): void {
+  if (args.call.to.toLowerCase() !== USDC_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('bad_send_args');
+  }
+  if (args.call.value !== 0n) {
+    throw new NotAllowedError('bad_value');
+  }
+
+  let decoded: { args: readonly [Address, bigint] };
+  try {
+    const result = decodeFunctionData({
+      abi: TRANSFER_ABI,
+      data: args.call.data,
+    });
+    if (result.functionName !== 'transfer') {
+      throw new NotAllowedError('bad_send_args');
+    }
+    decoded = result as unknown as { args: readonly [Address, bigint] };
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('bad_send_args');
+  }
+
+  const [recipient, amount] = decoded.args;
+
+  // Recipient invariants. The order matters for operator-log clarity:
+  // self-send first (most likely user error — paste own address),
+  // then known-protocol-contract destinations (USDC + MAKO catch the
+  // "I pasted the contract by mistake" footgun). All map to
+  // bad_send_recipient so the UI can show one consistent error.
+  if (recipient.toLowerCase() === args.safeAddress.toLowerCase()) {
+    throw new NotAllowedError('bad_send_recipient');
+  }
+  if (recipient.toLowerCase() === USDC_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('bad_send_recipient');
+  }
+  if (recipient.toLowerCase() === MAKO_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('bad_send_recipient');
+  }
+
+  // Amount invariants. amount > 0 (zero-amount is a no-op that still
+  // burns sponsorship budget). amount <= per-op cap (defense in depth
+  // alongside the daily aa_sponsor_limits cap).
+  if (amount <= 0n) {
+    throw new NotAllowedError('bad_send_amount');
+  }
+  if (amount > SEND_USDC_MAX_PER_OP_BASE_UNITS) {
+    throw new NotAllowedError('bad_send_amount');
+  }
+}
+
+/// Validate a single `USDC.transfer(recipient, amount)` call from the Safe
+/// to an arbitrary recipient (sponsor-time, kind='send_usdc'). Used by
+/// /api/aa/sponsor for the Phase 1E /profile send flow.
+///
+/// Distinct from `assertSponsorableCall` (smoke flow), which only allows
+/// transfers to the user's OWN safe with amount in {0n, 1n}. The send
+/// flow rejects exactly those self-transfers and accepts arbitrary
+/// recipients within the per-op USDC cap.
+export function assertSendUsdcCall(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('bad_send_args');
+  }
+  decodeAndAssertSendUsdc({ call: args.call, safeAddress: args.safeAddress });
+}
+
 // ── MultiSend bytes parser (send-time only) ─────────────────────────────────
 
 /// Safe MultiSend tuple format (packed):
@@ -525,16 +611,56 @@ export function assertSponsoredCallData(args: {
   const [to, value, data, operation] = decoded.args;
 
   if (operation === 0) {
-    // CALL — single inner call. Smoke flow → assertSponsorableCall;
-    // bet_single → decodeAndAssertPlaceBet. We dispatch by `to`: USDC
-    // means smoke (the only sponsor-time path that hits USDC), MAKO
-    // means bet_single, anything else → bad_to.
+    // CALL — single inner call. Three flows can produce op=0:
+    //   smoke      → USDC.transfer(self, 0n|1n)        (assertSponsorableCall)
+    //   bet_single → MakoMarketsV4.placeBet(...)       (decodeAndAssertPlaceBet)
+    //   send_usdc  → USDC.transfer(arbitraryRecipient, amount)  (assertSendUsdcCall)
+    //
+    // Dispatch by wrapper.to first, then for the USDC case dispatch by
+    // inner `transfer.recipient` — smoke ALWAYS sends to self; send_usdc
+    // ALWAYS sends to a non-self recipient. The two validators are
+    // orthogonal in what they accept, so a deterministic dispatch on
+    // `recipient === safeAddress` is sufficient. Both validators
+    // independently re-check value, selector, and bounds.
     if (to.toLowerCase() === USDC_ADDRESS.toLowerCase()) {
-      assertSponsorableCall({
-        chainId: args.chainId,
-        safeAddress: args.safeAddress,
-        call: { to, value, data },
-      });
+      // Inner-call decode happens once here to discriminate. The chosen
+      // validator decodes again — this duplicates ~1 microsecond of
+      // ABI parsing in exchange for keeping each validator's invariants
+      // self-contained. Cheap and operationally clearer.
+      let dispatchToSmoke: boolean;
+      try {
+        const innerDecoded = decodeFunctionData({
+          abi: TRANSFER_ABI,
+          data,
+        });
+        if (innerDecoded.functionName !== 'transfer') {
+          // Wrong selector; let the smoke validator surface
+          // `bad_selector` for consistency with the sponsor route.
+          dispatchToSmoke = true;
+        } else {
+          const [recipient] = innerDecoded.args as readonly [Address, bigint];
+          dispatchToSmoke =
+            recipient.toLowerCase() === args.safeAddress.toLowerCase();
+        }
+      } catch {
+        // Decode failure → smoke validator will throw bad_selector
+        // and surface a coherent reason code.
+        dispatchToSmoke = true;
+      }
+
+      if (dispatchToSmoke) {
+        assertSponsorableCall({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: { to, value, data },
+        });
+      } else {
+        assertSendUsdcCall({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: { to, value, data },
+        });
+      }
       return;
     }
     if (to.toLowerCase() === MAKO_ADDRESS.toLowerCase()) {

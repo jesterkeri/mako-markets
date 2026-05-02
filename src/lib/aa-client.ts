@@ -41,7 +41,8 @@ type Call = { to: Address; value: Hex; data: Hex };
 export type SponsorRequestBody =
   | { kind: 'smoke'; chainId: number; call: Call }
   | { kind: 'bet_single'; chainId: number; call: Call }
-  | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] };
+  | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] }
+  | { kind: 'send_usdc'; chainId: number; call: Call };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
 export type SponsorResponse = {
@@ -409,6 +410,160 @@ export async function runPlaceBet(args: RunPlaceBetArgs): Promise<RunOutcome> {
             },
           ] as const,
         };
+
+  // 1. Sponsor.
+  const sponsor = await postJson('/api/aa/sponsor', body);
+  if (!sponsor.ok) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: (sponsor.body as { error?: string }).error ?? 'unknown',
+      reason: (sponsor.body as { reason?: string }).reason,
+      detail: (sponsor.body as { message?: string }).message,
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
+
+  // 2. Magic personal_sign over the SafeOp hash.
+  const validAfter = BigInt(sponsored.validAfter);
+  const validUntil = BigInt(sponsored.validUntil);
+  const signature = await signSafeOpHash({
+    hash: sponsored.safeOpHash,
+    magicEoa: args.magicEoa,
+    validAfter,
+    validUntil,
+  });
+
+  // 3. Send.
+  const send = await postJson('/api/aa/send', {
+    pendingUserOpId: sponsored.pendingUserOpId,
+    signature,
+  });
+
+  if (!send.ok) {
+    const sendBody = send.body as {
+      error?: string;
+      message?: string;
+      status?: string;
+      retryAfterSeconds?: number;
+    };
+    if (send.status === 202 && sendBody.status === 'send_in_progress') {
+      return {
+        kind: 'in_progress',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
+      };
+    }
+    if (send.status === 410) {
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    }
+    if (send.status === 423) {
+      return {
+        kind: 'manual_review',
+        pendingUserOpId: sponsored.pendingUserOpId,
+      };
+    }
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: sendBody.error ?? 'unknown',
+      detail: sendBody.message,
+    };
+  }
+
+  const sendBody = send.body as {
+    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
+    txHash?: Hex;
+    userOpHash?: Hex;
+    failureReason?: string;
+  };
+  switch (sendBody.status) {
+    case 'sent':
+      return {
+        kind: 'sent',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        recovered: sponsored.recovered,
+      };
+    case 'reverted':
+      return {
+        kind: 'reverted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        failureReason: sendBody.failureReason ?? 'on-chain revert',
+      };
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        userOpHash: sendBody.userOpHash as Hex,
+      };
+    case 'failed_pre_submit':
+      return {
+        kind: 'failed_pre_submit',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        failureReason: sendBody.failureReason ?? 'bundler reject',
+      };
+    case 'expired':
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
+}
+
+// ── runSendUsdc (Phase 1E /profile send flow) ──────────────────────────────
+
+/// Args for `runSendUsdc`. Mirrors the bet-flow shape but for outbound
+/// USDC transfers from the user's Safe to an arbitrary recipient.
+export type RunSendUsdcArgs = {
+  chainId: number;
+  /// Destination of the transfer. Validated server-side: must not be
+  /// safeAddress, USDC contract, or MAKO contract.
+  recipient: Address;
+  /// Amount in USDC base units (6 decimals). Validated server-side
+  /// against SEND_USDC_MAX_PER_OP_BASE_UNITS plus daily caps via
+  /// aa_sponsor_limits.
+  amountUsdc: bigint;
+  /// USDC contract address on the active chain. Read from env so the
+  /// caller can swap for tests.
+  usdcAddress: Address;
+  /// Magic-derived EOA — passed to signSafeOpHash so the personal_sign
+  /// call goes through Magic's RPC provider.
+  magicEoa: Address;
+};
+
+const TRANSFER_ABI = [
+  {
+    type: 'function',
+    name: 'transfer',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// Browser-side end-to-end: build the inner USDC.transfer call →
+/// /api/aa/sponsor (kind='send_usdc') → Magic personal_sign → /api/aa/send.
+/// Outcome shape matches `runPlaceBet` so UI state machines can share.
+export async function runSendUsdc(args: RunSendUsdcArgs): Promise<RunOutcome> {
+  const transferData = encodeFunctionData({
+    abi: TRANSFER_ABI,
+    functionName: 'transfer',
+    args: [args.recipient, args.amountUsdc],
+  });
+
+  const body: SponsorRequestBody = {
+    kind: 'send_usdc',
+    chainId: args.chainId,
+    call: {
+      to: args.usdcAddress,
+      value: '0x0' as Hex,
+      data: transferData,
+    },
+  };
 
   // 1. Sponsor.
   const sponsor = await postJson('/api/aa/sponsor', body);

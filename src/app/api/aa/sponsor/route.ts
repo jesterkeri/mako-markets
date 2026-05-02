@@ -11,6 +11,7 @@ import { isSupportedAaChainId } from '@/lib/aa-config';
 import {
   assertBetBatchedCalls,
   assertBetSingleCall,
+  assertSendUsdcCall,
   assertSponsorableCall,
   NotAllowedError,
 } from '@/lib/aa-call-allowlist';
@@ -214,7 +215,7 @@ export async function POST(req: Request) {
   // shared below.
   type Call = { to: Address; value: bigint; data: Hex };
   let buildArgs:
-    | { kind: 'smoke' | 'bet_single'; call: Call }
+    | { kind: 'smoke' | 'bet_single' | 'send_usdc'; call: Call }
     | { kind: 'bet_batched'; calls: readonly [Call, Call] };
   try {
     switch (parsed.data.kind) {
@@ -256,6 +257,17 @@ export async function POST(req: Request) {
         ];
         assertBetBatchedCalls({ chainId, safeAddress, calls });
         buildArgs = { kind: 'bet_batched', calls };
+        break;
+      }
+      case 'send_usdc': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertSendUsdcCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'send_usdc', call };
         break;
       }
     }
