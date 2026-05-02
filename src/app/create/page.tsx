@@ -393,7 +393,15 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
     // mine. The user-visible "5 minutes" question stays honest within
     // the buffer; closeTime ends up at 5min 60s on chain.
     const submitNowSec = Math.floor(Date.now() / 1000);
-    const submitCloseSec = submitNowSec + durationSec + TX_LANDING_BUFFER_SEC;
+    // Clamp at MAX_DURATION_SEC so a user pick AT the cap (7d) doesn't
+    // get bumped over by the 60s tx-landing buffer and fail validation.
+    // Buffer exists to defend the MIN_DURATION edge (slow mining
+    // shrinks contract-seen duration below the floor); at the MAX edge,
+    // slow mining only REDUCES contract-seen duration, so dropping the
+    // buffer here is safe.
+    const submitCloseSec =
+      submitNowSec +
+      Math.min(durationSec + TX_LANDING_BUFFER_SEC, MAX_DURATION_SEC);
     const submitBettingCloseSec = Number(
       suggestedCryptoBettingCloseTimeMirror(submitNowSec, submitCloseSec),
     );
