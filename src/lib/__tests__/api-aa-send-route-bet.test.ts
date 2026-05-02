@@ -31,10 +31,9 @@ import {
   type Hex,
 } from 'viem';
 
-import { encodeMultiSendBytes } from '../user-op';
 import { MAKO_ADDRESS } from '../contract';
-import { SAFE_CONFIG } from '../safe-config';
 import { USDC_ADDRESS } from '../usdc';
+import { encodeBatchedExecuteUserOpCallData } from './aa-test-helpers';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 const SAFE: Address = '0x1111111111111111111111111111111111111111';
@@ -67,21 +66,6 @@ const PLACEBET_ABI = [
   },
 ] as const;
 
-const SAFE_WRAPPER_ABI = [
-  {
-    type: 'function',
-    name: 'executeUserOp',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'value', type: 'uint256' },
-      { name: 'data', type: 'bytes' },
-      { name: 'operation', type: 'uint8' },
-    ],
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const;
-
 function encodeApprove(spender: Address, amount: bigint): Hex {
   return encodeFunctionData({
     abi: APPROVE_ABI,
@@ -99,21 +83,18 @@ function encodePlaceBet(id: bigint, isYes: boolean, amount: bigint): Hex {
 }
 
 /// Build a batched-shape outer wrapper exactly the way
-/// `buildSponsoredUserOp({ calls })` does: MultiSend bytes →
-/// Safe.executeUserOp(MultiSendCallOnly, 0, bytes, 1).
+/// `buildSponsoredUserOp({ calls })` does. Delegates to the
+/// production builder so this fixture matches the on-chain shape
+/// byte-for-byte (the helper wraps packed bytes in
+/// `multiSend(bytes)` ABI calldata before the executeUserOp wrap).
 function buildBatchedWrapperCallData(args: {
   approveCalldata: Hex;
   placeBetCalldata: Hex;
 }): Hex {
-  const multiSendBytes = encodeMultiSendBytes([
+  return encodeBatchedExecuteUserOpCallData([
     { to: USDC_ADDRESS, value: 0n, data: args.approveCalldata },
     { to: MAKO_ADDRESS, value: 0n, data: args.placeBetCalldata },
   ]);
-  return encodeFunctionData({
-    abi: SAFE_WRAPPER_ABI,
-    functionName: 'executeUserOp',
-    args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendBytes, 1],
-  });
 }
 
 // ── vi.hoisted mock registry (same pattern as api-aa-send-route.test.ts) ────
@@ -316,8 +297,10 @@ describe('/api/aa/send — batched MultiSend wrapper (Phase 1D Group 4)', () => 
       magicEoa: '0x2222222222222222222222222222222222222222',
       sessionId: 'session-1',
     });
-    // Inner placeBet target is NOT MAKO — mirror rejects with bad_placebet_args.
-    const multiSendBytes = encodeMultiSendBytes([
+    // Wrapper shape is valid (canonical target + valid multiSend bytes).
+    // The inner placeBet's `to` is wrong — NOT MAKO. Validator's
+    // per-subcall check fires after the wrapper-shape check.
+    const callData = encodeBatchedExecuteUserOpCallData([
       {
         to: USDC_ADDRESS,
         value: 0n,
@@ -325,11 +308,6 @@ describe('/api/aa/send — batched MultiSend wrapper (Phase 1D Group 4)', () => 
       },
       { to: NON_MAKO, value: 0n, data: encodePlaceBet(1n, true, 100n) },
     ]);
-    const callData = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendBytes, 1],
-    });
     mocks.loadById.mockResolvedValue(buildPendingRow({ callData }));
 
     const res = await POST(mkReq(buildSendBody()));

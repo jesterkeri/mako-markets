@@ -23,6 +23,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeFunctionData, type Address, type Hex } from 'viem';
 
+import { MAKO_ADDRESS } from '../contract';
+import { buildBadOuterArgsWrapper } from './aa-test-helpers';
+
 import { USDC_ADDRESS } from '../usdc';
 
 // vi.mock factories are hoisted above all imports, so any state they
@@ -76,10 +79,18 @@ vi.mock('@/lib/aa-pending-user-ops', () => ({
     mocks.transitionFromSendingViaResolver(args),
 }));
 
-vi.mock('@/lib/user-op', () => ({
-  sendSignedUserOp: (args: unknown) => mocks.sendSignedUserOp(args),
-  resolveSubmittedOp: (args: unknown) => mocks.resolveSubmittedOp(args),
-}));
+vi.mock('@/lib/user-op', async (importOriginal) => {
+  // Mock only the orchestration entry points the route under test
+  // calls. The pure helpers (encodeMultiSendBytes,
+  // encodeBatchedExecuteUserOpCallData) need to remain real because
+  // aa-test-helpers.ts pulls them in for fixture construction.
+  const actual = await importOriginal<typeof import('../user-op')>();
+  return {
+    ...actual,
+    sendSignedUserOp: (args: unknown) => mocks.sendSignedUserOp(args),
+    resolveSubmittedOp: (args: unknown) => mocks.resolveSubmittedOp(args),
+  };
+});
 
 // Import after vi.mock so the route picks up the mocked modules.
 import { POST } from '../../app/api/aa/send/route';
@@ -115,18 +126,36 @@ const TRANSFER_ABI = [
 const SAFE: Address = '0x1111111111111111111111111111111111111111';
 
 function encodeWrapperWithOperation(operation: 0 | 1): Hex {
-  return encodeFunctionData({
-    abi: SAFE_WRAPPER_ABI,
-    functionName: 'executeUserOp',
-    args: [
-      USDC_ADDRESS,
-      0n,
-      encodeFunctionData({
-        abi: TRANSFER_ABI,
-        functionName: 'transfer',
-        args: [SAFE, 1n],
-      }),
-      operation,
+  if (operation === 0) {
+    // op=0 (CALL) — legitimate single-call wrapper test. Inner data
+    // is a USDC.transfer to the Safe (smoke flow shape).
+    return encodeFunctionData({
+      abi: SAFE_WRAPPER_ABI,
+      functionName: 'executeUserOp',
+      args: [
+        USDC_ADDRESS,
+        0n,
+        encodeFunctionData({
+          abi: TRANSFER_ABI,
+          functionName: 'transfer',
+          args: [SAFE, 1n],
+        }),
+        operation,
+      ],
+    });
+  }
+  // op=1 (DELEGATECALL) — bad_multisend_target test: outer `to` is
+  // USDC (not canonical MultiSendCallOnly). The validator rejects on
+  // outer target before decoding inner data, so the inner content is
+  // arbitrary; we use the production-shaped multiSend(bytes) wrap to
+  // exercise the same wrapper shape buildSponsoredUserOp emits.
+  const filler: Hex = '0x';
+  return buildBadOuterArgsWrapper({
+    to: USDC_ADDRESS, // non-canonical → bad_multisend_target
+    value: 0n,
+    calls: [
+      { to: USDC_ADDRESS, value: 0n, data: filler },
+      { to: MAKO_ADDRESS, value: 0n, data: filler },
     ],
   });
 }

@@ -70,6 +70,7 @@ export type NotAllowedReason =
   | 'bad_operation'
   // Phase 1D bet flow:
   | 'bad_multisend_target'
+  | 'bad_multisend_calldata'
   | 'bad_multisend_format'
   | 'bad_subcall_count'
   | 'bad_subcall_op'
@@ -156,6 +157,27 @@ const SAFE_WRAPPER_ABI = [
     ],
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// MultiSendCallOnly v1.4.1 — single function `multiSend(bytes
+/// transactions)`. Selector 0x8d80ff0a. Mirror of the snippet in
+/// user-op.ts; both must agree.
+///
+/// On the send-side (operation === 1), the wrapper's `data` is the
+/// CALL data Safe will delegatecall MultiSendCallOnly with. We must
+/// decode it as `multiSend(bytes)` BEFORE feeding the inner bytes
+/// to parseMultiSendBytes — without this, raw packed tuples that
+/// happen to start with op=0x00 would silently look like valid
+/// MultiSend bytes to our parser while the on-chain delegatecall
+/// would revert (no matching selector → empty fallback → revert).
+const MULTISEND_CALL_ONLY_ABI = [
+  {
+    type: 'function',
+    name: 'multiSend',
+    inputs: [{ name: 'transactions', type: 'bytes' }],
+    outputs: [],
+    stateMutability: 'payable',
   },
 ] as const;
 
@@ -551,7 +573,30 @@ export function assertSponsoredCallData(args: {
       throw new NotAllowedError('bad_value');
     }
 
-    const sub = parseMultiSendBytes(data);
+    // Decode `data` as multiSend(bytes) ABI calldata. This is what
+    // MultiSendCallOnly's delegatecall actually dispatches on — see
+    // MULTISEND_CALL_ONLY_ABI comment above. Pre-fix, this branch
+    // skipped the ABI decode and treated `data` as raw packed
+    // tuples directly; that bug caused on-chain
+    // ExecutionFailed() (selector 0xacfdb444) because the
+    // delegatecall's first 4 bytes never matched a function on
+    // MultiSendCallOnly.
+    let multiSendInner: Hex;
+    try {
+      const decodedMs = decodeFunctionData({
+        abi: MULTISEND_CALL_ONLY_ABI,
+        data,
+      });
+      if (decodedMs.functionName !== 'multiSend') {
+        throw new NotAllowedError('bad_multisend_calldata');
+      }
+      multiSendInner = (decodedMs.args as readonly [Hex])[0];
+    } catch (e) {
+      if (e instanceof NotAllowedError) throw e;
+      throw new NotAllowedError('bad_multisend_calldata');
+    }
+
+    const sub = parseMultiSendBytes(multiSendInner);
     if (sub.length !== 2) {
       throw new NotAllowedError('bad_subcall_count');
     }

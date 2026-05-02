@@ -98,6 +98,30 @@ const SAFE_4337_MODULE_ABI = [
   },
 ] as const;
 
+/// MultiSendCallOnly v1.4.1 — single function `multiSend(bytes
+/// transactions)`. The bytes payload is the packed
+/// `op(1)||to(20)||value(32)||dataLen(32)||data` tuples produced by
+/// `encodeMultiSendBytes`. Selector 0x8d80ff0a — must match what
+/// `assertSponsoredCallData` decodes on the send-side. Function is
+/// declared payable in MultiSendCallOnly's source; we still pass
+/// value=0 at the outer wrapper layer.
+///
+/// REQUIRED MULTISEND WRAP: Safe delegatecalls the wrapper data
+/// verbatim, so without the `multiSend(bytes)` ABI wrap the first 4
+/// bytes don't match any function on MultiSendCallOnly and the call
+/// reverts. Safe4337Module then re-emits ExecutionFailed() (selector
+/// 0xacfdb444). This bug shipped in Phase 1D Group 3 and was caught
+/// during the first real bet attempt 2026-05-02.
+const MULTISEND_CALL_ONLY_ABI = [
+  {
+    name: 'multiSend',
+    inputs: [{ name: 'transactions', type: 'bytes' }],
+    outputs: [],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+] as const;
+
 /// EntryPoint v0.7 minimal ABI for `getNonce(sender, key)` reads.
 const ENTRY_POINT_ABI = [
   {
@@ -158,6 +182,38 @@ export function encodeMultiSendBytes(
     );
   }
   return concat(parts) as Hex;
+}
+
+/// Build the wrapper.callData for a batched bet_batched user op.
+/// Composes encodeMultiSendBytes -> multiSend(bytes) ABI wrap ->
+/// Safe.executeUserOp(MultiSendCallOnly, 0, ms, 1).
+///
+/// Single source of truth for the batched wrapper. Production code
+/// (buildSponsoredUserOp) AND tests both call this. Do not roll a
+/// local "mirror of the wrapper build path" — that's how the pre-
+/// fix bug shipped (test fixtures and production were independently
+/// wrong but self-consistent).
+///
+/// Type narrowed to a 2-tuple [approve, placeBet] to match
+/// BuildSponsoredUserOpArgs.calls — bet_batched is specifically
+/// that shape, not a general N-call helper.
+export function encodeBatchedExecuteUserOpCallData(
+  calls: readonly [
+    { to: Address; value: bigint; data: Hex },
+    { to: Address; value: bigint; data: Hex },
+  ],
+): Hex {
+  const packed = encodeMultiSendBytes(calls);
+  const multiSendCallData = encodeFunctionData({
+    abi: MULTISEND_CALL_ONLY_ABI,
+    functionName: 'multiSend',
+    args: [packed],
+  });
+  return encodeFunctionData({
+    abi: SAFE_4337_MODULE_ABI,
+    functionName: 'executeUserOp',
+    args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendCallData, 1],
+  });
 }
 
 // ── buildSponsoredUserOp ─────────────────────────────────────────────────────
@@ -250,11 +306,27 @@ export async function buildSponsoredUserOp(
   //      Safe.executeUserOp(call.to, call.value, call.data, op=0)
   //
   //    Batched (bet_batched, Phase 1D):
-  //      Safe.executeUserOp(MultiSendCallOnly, 0, multiSendBytes, op=1)
-  //      where multiSendBytes = concat([
-  //        op(1) || to(20) || value(32) || dataLen(32) || data,
-  //        op(1) || to(20) || value(32) || dataLen(32) || data,
-  //      ])
+  //      Safe.executeUserOp(
+  //        MultiSendCallOnly,
+  //        0,
+  //        multiSend(packed),     // ABI calldata, selector 0x8d80ff0a
+  //        op=1                   // delegatecall
+  //      )
+  //      where:
+  //        packed = concat([
+  //          op(0) || to(20) || value(32) || dataLen(32) || data,  // approve
+  //          op(0) || to(20) || value(32) || dataLen(32) || data,  // placeBet
+  //        ])
+  //        wrapper data = abi.encodeWithSelector(
+  //                          MultiSendCallOnly.multiSend.selector,
+  //                          packed
+  //                        )
+  //
+  //    The `multiSend(bytes)` ABI wrap is REQUIRED — Safe delegatecalls
+  //    MultiSendCallOnly with the wrapper data verbatim, so the first
+  //    4 bytes must be the multiSend(bytes) selector or the call hits
+  //    no function and reverts. Reverts surface as Safe4337Module's
+  //    ExecutionFailed() (selector 0xacfdb444).
   //
   //    Outer op=1 (delegatecall) is unavoidable for the batched path:
   //    Safe must delegatecall MultiSendCallOnly to dispatch into its
@@ -275,16 +347,7 @@ export async function buildSponsoredUserOp(
         functionName: 'executeUserOp',
         args: [args.call!.to, args.call!.value, args.call!.data, 0],
       })
-    : encodeFunctionData({
-        abi: SAFE_4337_MODULE_ABI,
-        functionName: 'executeUserOp',
-        args: [
-          SAFE_CONFIG.multiSendCallOnly,
-          0n,
-          encodeMultiSendBytes(args.calls!),
-          1,
-        ],
-      });
+    : encodeBatchedExecuteUserOpCallData(args.calls!);
 
   // 5. Base userOp scaffold — no gas, no paymaster yet. Sponsor will
   //    fill both. Field shape mirrors `scripts/probe-pimlico.mts`.

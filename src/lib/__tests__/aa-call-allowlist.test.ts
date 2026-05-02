@@ -19,8 +19,10 @@ import {
   assertSponsoredCallData,
   NotAllowedError,
 } from '../aa-call-allowlist';
+import { MAKO_ADDRESS } from '../contract';
 import { MONAD_TESTNET_ID } from '../chain';
 import { USDC_ADDRESS } from '../usdc';
+import { buildBadOuterArgsWrapper } from './aa-test-helpers';
 
 const TRANSFER_ABI = [
   {
@@ -284,10 +286,20 @@ describe('assertSponsoredCallData (wrapper-decoded path)', () => {
     // USDC (or any other address) still rejects, but the reason is now
     // the more specific `bad_multisend_target`. The bet-flow allowlist
     // file has positive coverage for the canonical-target accept path.
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [USDC_ADDRESS, 0n, encodeTransfer(SAFE, 1n), 1],
+    //
+    // Inner data is valid `multiSend(bytes)` ABI calldata wrapping
+    // arbitrary calls — the validator's outer `bad_multisend_target`
+    // check fires before any inner decode, so the inner content is
+    // never evaluated. Using the real helper guarantees we exercise
+    // the same wrapper shape production builds.
+    const filler: Hex = '0x';
+    const wrapped = buildBadOuterArgsWrapper({
+      to: USDC_ADDRESS, // bad outer target — not canonical MultiSendCallOnly
+      value: 0n,
+      calls: [
+        { to: USDC_ADDRESS, value: 0n, data: filler },
+        { to: MAKO_ADDRESS, value: 0n, data: filler },
+      ],
     });
     try {
       assertSponsoredCallData({

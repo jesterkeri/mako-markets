@@ -25,6 +25,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   concat,
+  decodeFunctionData,
   encodeFunctionData,
   pad,
   toHex,
@@ -43,6 +44,12 @@ import { MONAD_TESTNET_ID } from '../chain';
 import { SAFE_CONFIG } from '../safe-config';
 import { USDC_ADDRESS } from '../usdc';
 import { encodeMultiSendBytes as libEncodeMultiSendBytes } from '../user-op';
+import {
+  buildBadOuterArgsWrapper,
+  buildPreFixRawWrapper,
+  buildWrappedMultiSendWrapper,
+  encodeBatchedExecuteUserOpCallData,
+} from './aa-test-helpers';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 const SAFE: Address = '0x1111111111111111111111111111111111111111';
@@ -166,15 +173,12 @@ function encodeBatchedWrapperCallData(args: {
   approveCalldata: Hex;
   placeBetCalldata: Hex;
 }): Hex {
-  const multiSendBytes = encodeMultiSendBytes([
-    { op: 0, to: USDC_ADDRESS, value: 0n, data: args.approveCalldata },
-    { op: 0, to: MAKO_ADDRESS, value: 0n, data: args.placeBetCalldata },
+  // Delegates to the production builder so happy-path fixtures
+  // exercise the same wrapper shape that buildSponsoredUserOp emits.
+  return encodeBatchedExecuteUserOpCallData([
+    { to: USDC_ADDRESS, value: 0n, data: args.approveCalldata },
+    { to: MAKO_ADDRESS, value: 0n, data: args.placeBetCalldata },
   ]);
-  return encodeFunctionData({
-    abi: SAFE_WRAPPER_ABI,
-    functionName: 'executeUserOp',
-    args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendBytes, 1],
-  });
 }
 
 // ── 1. Single placeBet — sponsor-time validator ─────────────────────────────
@@ -558,24 +562,21 @@ describe('assertSponsoredCallData (extended for batched)', () => {
   });
 
   it('rejects op=1 wrapper to ≠ canonical MultiSendCallOnly with bad_multisend_target', () => {
-    const multiSendBytes = encodeMultiSendBytes([
-      {
-        op: 0,
-        to: USDC_ADDRESS,
-        value: 0n,
-        data: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
-      },
-      {
-        op: 0,
-        to: MAKO_ADDRESS,
-        value: 0n,
-        data: encodePlaceBet(1n, true, 100n),
-      },
-    ]);
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [NON_MAKO, 0n, multiSendBytes, 1], // to ≠ canonical
+    const wrapped = buildBadOuterArgsWrapper({
+      to: NON_MAKO, // bad outer target
+      value: 0n,
+      calls: [
+        {
+          to: USDC_ADDRESS,
+          value: 0n,
+          data: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
+        },
+        {
+          to: MAKO_ADDRESS,
+          value: 0n,
+          data: encodePlaceBet(1n, true, 100n),
+        },
+      ],
     });
     try {
       assertSponsoredCallData({
@@ -602,11 +603,10 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       pad(toHex(oversizedDataLen), { size: 32 }).slice(2) +
       // No actual data follows — bounds check fires before we'd slice.
       '') as Hex;
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, malicious, 1],
-    });
+    // Wrap the malformed packed bytes in multiSend(bytes) ABI calldata
+    // so the wrapper passes the outer ABI decode and the malformed
+    // bytes reach parseMultiSendBytes.
+    const wrapped = buildWrappedMultiSendWrapper(malicious);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -638,11 +638,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       },
     ]);
     const withJunk = (validTuples + 'aabbccdd') as Hex;
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, withJunk, 1],
-    });
+    const wrapped = buildWrappedMultiSendWrapper(withJunk);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -663,11 +659,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       '00'.repeat(32) + // value 0
       pad(toHex(64n), { size: 32 }).slice(2) + // claims 64 bytes data
       'aa') as Hex; // only 1 byte of data
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, truncated, 1],
-    });
+    const wrapped = buildWrappedMultiSendWrapper(truncated);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -681,11 +673,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
   });
 
   it('rejects op=1 wrapper with empty multisend bytes (bad_subcall_count)', () => {
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, '0x' as Hex, 1],
-    });
+    const wrapped = buildWrappedMultiSendWrapper('0x' as Hex);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -707,11 +695,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
         data: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
       },
     ]);
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendBytes, 1],
-    });
+    const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -745,11 +729,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
         data: encodePlaceBet(2n, false, 50n),
       },
     ]);
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendBytes, 1],
-    });
+    const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -782,11 +762,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
         data: encodePlaceBet(1n, true, 100n),
       }),
     ]) as Hex;
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendBytes, 1],
-    });
+    const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -848,11 +824,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
         data: encodePlaceBet(1n, true, 100n),
       },
     ]);
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 0n, multiSendBytes, 1],
-    });
+    const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -883,24 +855,21 @@ describe('assertSponsoredCallData (extended for batched)', () => {
   });
 
   it('rejects op=1 wrapper with nonzero outer value (bad_value)', () => {
-    const multiSendBytes = encodeMultiSendBytes([
-      {
-        op: 0,
-        to: USDC_ADDRESS,
-        value: 0n,
-        data: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
-      },
-      {
-        op: 0,
-        to: MAKO_ADDRESS,
-        value: 0n,
-        data: encodePlaceBet(1n, true, 100n),
-      },
-    ]);
-    const wrapped = encodeFunctionData({
-      abi: SAFE_WRAPPER_ABI,
-      functionName: 'executeUserOp',
-      args: [SAFE_CONFIG.multiSendCallOnly, 1n, multiSendBytes, 1],
+    const wrapped = buildBadOuterArgsWrapper({
+      to: SAFE_CONFIG.multiSendCallOnly,
+      value: 1n, // bad outer value
+      calls: [
+        {
+          to: USDC_ADDRESS,
+          value: 0n,
+          data: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
+        },
+        {
+          to: MAKO_ADDRESS,
+          value: 0n,
+          data: encodePlaceBet(1n, true, 100n),
+        },
+      ],
     });
     try {
       assertSponsoredCallData({
@@ -929,6 +898,93 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       throw new Error('expected throw');
     } catch (e) {
       expect((e as NotAllowedError).reason).toBe('bad_operation');
+    }
+  });
+
+  // ── Phase 1D hotfix regression coverage ──────────────────────────────────
+
+  it('production builder produces validator-acceptable wrapper (cross-module pin)', () => {
+    // Build the wrapper via the SAME function buildSponsoredUserOp uses
+    // in production. Decode it and assert every outer field, then run
+    // the validator and confirm acceptance. This is the cross-module
+    // contract that was missing in Group 4 — every prior test
+    // independently encoded the wrapper one way or the other, so the
+    // pre-fix bug shipped despite full unit coverage.
+    const wrapper = encodeBatchedExecuteUserOpCallData([
+      {
+        to: USDC_ADDRESS,
+        value: 0n,
+        data: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
+      },
+      {
+        to: MAKO_ADDRESS,
+        value: 0n,
+        data: encodePlaceBet(1n, true, 100n),
+      },
+    ]);
+    // Decode the outer executeUserOp wrapper. Every field must be
+    // exactly what the validator expects.
+    const decodedOuter = decodeFunctionData({
+      abi: SAFE_WRAPPER_ABI,
+      data: wrapper,
+    });
+    expect(decodedOuter.functionName).toBe('executeUserOp');
+    const [to, value, innerData, operation] = decodedOuter.args as readonly [
+      Address,
+      bigint,
+      Hex,
+      number,
+    ];
+    expect(to.toLowerCase()).toBe(
+      SAFE_CONFIG.multiSendCallOnly.toLowerCase(),
+    );
+    expect(value).toBe(0n);
+    expect(operation).toBe(1);
+    // Inner data MUST start with the multiSend(bytes) selector
+    // 0x8d80ff0a — this is exactly what the pre-fix bug got wrong.
+    expect(innerData.slice(0, 10).toLowerCase()).toBe('0x8d80ff0a');
+    // And the validator accepts the whole shape.
+    expect(() =>
+      assertSponsoredCallData({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        callData: wrapper,
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects pre-fix raw-packed-bytes wrapper shape with bad_multisend_calldata', () => {
+    // Pin the regression: pre-fix buildSponsoredUserOp passed the
+    // packed multisend bytes STRAIGHT as the third arg, with no
+    // multiSend(bytes) ABI wrap. On chain that hit no function on
+    // MultiSendCallOnly and reverted with ExecutionFailed() (selector
+    // 0xacfdb444). The fix decodes the third arg as multiSend(bytes)
+    // first; raw packed bytes fail that decode and surface as
+    // bad_multisend_calldata. If a future refactor regresses to the
+    // pre-fix shape, this test fails LOUDLY instead of producing a
+    // chain-invalid userOp.
+    const rawPacked = libEncodeMultiSendBytes([
+      {
+        to: USDC_ADDRESS,
+        value: 0n,
+        data: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
+      },
+      {
+        to: MAKO_ADDRESS,
+        value: 0n,
+        data: encodePlaceBet(1n, true, 100n),
+      },
+    ]);
+    const wrapped = buildPreFixRawWrapper(rawPacked);
+    try {
+      assertSponsoredCallData({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        callData: wrapped,
+      });
+      throw new Error('expected throw');
+    } catch (e) {
+      expect((e as NotAllowedError).reason).toBe('bad_multisend_calldata');
     }
   });
 });
