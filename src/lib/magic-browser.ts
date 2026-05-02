@@ -108,3 +108,89 @@ export async function signSafeOpHash(args: {
     validUntil: args.validUntil,
   });
 }
+
+// ── Email change (Phase 1E) ─────────────────────────────────────────────────
+//
+// Magic Web SDK's `magic.auth.updateEmailWithUI({ email })` opens Magic's
+// own modal at the new email address, asks for OTP confirmation, and on
+// success rotates the email mapping in Magic's backend. The Magic-derived
+// EOA does NOT change — Path X invariant holds and the Safe address stays
+// the same.
+//
+// AVAILABILITY CAVEAT (the gating pre-flight check):
+// Magic docs tag this method as "Dedicated Wallet" only. Mako runs Magic
+// Auth flavor (see magic-server.ts header). At call time we may discover
+// the method is undefined or throws a product-not-supported error. The
+// browser wrapper detects both cases and surfaces a stable
+// `EmailUpdateNotSupported` error so the caller can fall back to recovery
+// copy without crashing.
+//
+// On success, the wrapper returns a fresh DID token (via getIdToken)
+// which the caller posts to /api/user/email/update. The route validates
+// the DID server-side and updates users.email atomically.
+
+export class EmailUpdateNotSupported extends Error {
+  constructor() {
+    super('Magic Auth flavor does not support updateEmailWithUI in this app.');
+    this.name = 'EmailUpdateNotSupported';
+  }
+}
+
+/// Update the user's email via Magic's modal flow, then return a fresh
+/// DID token bound to the (still-same) public address. Throws
+/// `EmailUpdateNotSupported` if the SDK doesn't expose the method in
+/// the current Magic product configuration.
+///
+/// Note: `magic.auth.updateEmailWithUI` is the documented method name
+/// per the Magic Web SDK. Earlier comments in the codebase referenced
+/// `magic.user.updateEmail` — that namespace is incorrect and was
+/// caught during integration review.
+export async function updateEmailWithMagic(args: {
+  newEmail: string;
+}): Promise<{ didToken: string }> {
+  if (typeof window === 'undefined') {
+    throw new Error('updateEmailWithMagic() must only run in the browser.');
+  }
+
+  const magic = await getMagic();
+
+  // Defensive: SDK shape may not expose the method on Auth flavor. Probe
+  // the function's existence before calling so we surface a typed error
+  // instead of a generic TypeError.
+  const auth = (magic as unknown as { auth?: Record<string, unknown> }).auth;
+  const method =
+    auth && typeof auth.updateEmailWithUI === 'function'
+      ? (auth.updateEmailWithUI as (
+          args: Record<string, unknown>,
+        ) => Promise<unknown>)
+      : null;
+  if (!method) {
+    throw new EmailUpdateNotSupported();
+  }
+
+  try {
+    await method.call(auth, { email: args.newEmail });
+  } catch (e) {
+    // Magic SDK errors that signal "not supported in this product
+    // configuration" are surfaced as our typed sentinel. Unknown errors
+    // pass through unchanged so callers can show specific messages.
+    const msg = e instanceof Error ? e.message : '';
+    if (
+      /not supported/i.test(msg) ||
+      /not available/i.test(msg) ||
+      /dedicated/i.test(msg)
+    ) {
+      throw new EmailUpdateNotSupported();
+    }
+    throw e;
+  }
+
+  // Fetch a fresh DID token AFTER the email change. Don't rely on
+  // implicit refresh: explicit getIdToken() guarantees the token's
+  // attached email claim reflects the new value (Codex review note).
+  const didToken = await magic.user.getIdToken();
+  if (!didToken || typeof didToken !== 'string') {
+    throw new Error('updateEmailWithMagic: getIdToken returned non-string');
+  }
+  return { didToken };
+}

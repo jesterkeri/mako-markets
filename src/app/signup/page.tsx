@@ -1,10 +1,16 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
+import { useDisconnect } from 'wagmi';
 
 import { getMagic } from '@/lib/magic-browser';
+import {
+  addRecentEmail,
+  getRecentEmails,
+  removeRecentEmail,
+} from '@/lib/recent-emails';
 import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 
 // ----------------------------------------------------------------------------
@@ -52,8 +58,17 @@ type AuthSuccessBody = { ok: true } & AuthedUser;
 export default function SignupPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { disconnect } = useDisconnect();
   const [email, setEmail] = useState('');
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
+  /// Recent emails for the one-tap return picker. Loaded from
+  /// localStorage on mount so SSR doesn't try to read browser-only APIs.
+  /// `null` is the pre-mount sentinel; treat as "loading" in the UI so
+  /// the picker doesn't flicker in then out on hydrate.
+  const [recentEmails, setRecentEmails] = useState<string[] | null>(null);
+  useEffect(() => {
+    setRecentEmails(getRecentEmails());
+  }, []);
   /// Synchronous re-entry guard. React state updates queue across renders, so
   /// two rapid clicks on the retry button could both observe `state.kind ===
   /// 'retry_available'` and fire two `postDidToken` calls — duplicate session
@@ -80,6 +95,27 @@ export default function SignupPage() {
     }
 
     if (res.ok) {
+      // Auto-disconnect any RainbowKit wallet on Magic sign-in. The two
+      // auth methods are mutually exclusive by policy: a Magic-signed-in
+      // user should NOT also have an external wallet connected, because
+      // that ambiguates which key signs the next transaction and clutters
+      // the UI with a wallet chip the user didn't ask for. Account
+      // transfer between Magic and external wallets is a deliberate
+      // Phase 5+ feature, not a side-effect of being signed in twice.
+      try {
+        disconnect();
+      } catch (e) {
+        // Best-effort — disconnect on a non-connected state is a no-op,
+        // and a real failure here doesn't block sign-in. Log so a
+        // wagmi regression shows up.
+        console.warn('Wallet disconnect on Magic sign-in failed', e);
+      }
+
+      // Remember this email for one-tap return on the next visit. Lives
+      // in localStorage; convenience-only, not a credential. See
+      // src/lib/recent-emails.ts for the threat model.
+      addRecentEmail(email);
+
       // Pre-populate the ['user'] cache before navigating so the home page
       // mounts already authed — no unauthed→authed flash even though
       // useUser uses refetchOnMount: 'always'. The auth route returns the
@@ -93,6 +129,10 @@ export default function SignupPage() {
             email: body.email,
             magicEoa: body.magicEoa,
             safeAddress: body.safeAddress,
+            // First sign-in has no prior session — /api/user/me would
+            // also return null. Refetch will replace this on the home
+            // page mount per useUser's refetchOnMount: 'always'.
+            lastSignInAt: null,
           } satisfies AuthedUser);
         }
       } catch {
@@ -215,6 +255,49 @@ export default function SignupPage() {
             MAKO
           </div>
         </div>
+
+        {/* Recent-emails picker. Renders only when there's at least one
+            remembered email AND the form is in the idle entry state. The
+            click handlers pre-fill the input rather than auto-submit so
+            the user explicitly confirms the email they want to sign back
+            in as. */}
+        {recentEmails && recentEmails.length > 0 && state.kind === 'idle' && (
+          <div className="relative z-10 flex w-full flex-col gap-2 mb-4">
+            <p className="mako-label text-center text-[10px] text-muted">
+              SIGN BACK IN AS
+            </p>
+            <div className="flex flex-col gap-2">
+              {recentEmails.map((recent) => (
+                <div key={recent} className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEmail(recent)}
+                    className="flex-1 rounded-xl border-2 border-ink bg-paper px-4 py-3 mako-body text-ink shadow-brutal-sm text-left hover:bg-surface-elevated transition-colors truncate"
+                  >
+                    {recent}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      removeRecentEmail(recent);
+                      setRecentEmails(getRecentEmails());
+                    }}
+                    aria-label={`Forget ${recent}`}
+                    className="w-10 h-10 flex items-center justify-center border-2 border-ink rounded-xl text-ink hover:bg-mako-red hover:text-white hover:border-mako-red transition-colors shrink-0"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 6 6 18" />
+                      <path d="m6 6 12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="mako-label text-center text-[10px] text-muted mt-2">
+              OR ADD A NEW ACCOUNT
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleEmailSubmit} className="relative z-10 flex w-full flex-col gap-4">
           <label className="sr-only" htmlFor="email">

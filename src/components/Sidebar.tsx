@@ -68,75 +68,40 @@ const items: NavItem[] = [
 ];
 
 /**
- * Bottom-of-sidebar account block. Renders only for authed users; unauthed
- * sidebar shows nav only (the SIGN IN CTA lives in the top header). Two
- * presentations driven by the parent's `hovering` state:
- *   - collapsed (80px rail): yellow initial-circle as a passive identity
- *     indicator. Not interactive — sign-out lives behind hover-expand.
- *   - expanded (288px): truncated email + SIGN OUT button.
- *
- * Sign-out flow mirrors AuthMenu's: POST /api/user/logout, write
- * { authed: false } into the ['user'] cache via setQueryData. No
- * router.refresh — nothing server-side reads auth in Phase 1F.
+ * Bottom-of-sidebar account block. Renders only for authed users.
+ * Links to the /profile page.
  */
 function SidebarAccount({ hovering }: { hovering: boolean }) {
-  const queryClient = useQueryClient();
   const { user } = useUser();
-  const [signingOut, setSigningOut] = useState(false);
 
   if (!user) return null;
 
   const initial = user.email.trim().charAt(0).toUpperCase() || '?';
 
-  async function handleSignOut() {
-    if (signingOut) return;
-    setSigningOut(true);
-    try {
-      const res = await fetch('/api/user/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-      if (res.ok) {
-        queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
-      }
-    } catch {
-      // Network error — leave the cache alone so the UI doesn't lie about
-      // auth state. Next mount or refetch will reconcile.
-    } finally {
-      setSigningOut(false);
-    }
-  }
-
   return (
     <div className="mt-auto border-t-2 border-chrome-divider shrink-0">
       {hovering ? (
-        <div className="flex flex-col gap-2 p-4">
+        <Link href="/profile" className="flex flex-col gap-2 p-4 hover:bg-chrome-fg/10 transition-colors">
           <div
             className="mako-label text-[10px] text-muted truncate"
             title={user.email}
           >
             {user.email}
           </div>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            disabled={signingOut}
-            className="mako-button mako-label w-full px-3! py-1.5! text-[11px]! disabled:opacity-60"
-            aria-label={`Sign out ${user.email}`}
-          >
-            {signingOut ? 'SIGNING OUT…' : 'SIGN OUT'}
-          </button>
-        </div>
+          <div className="mako-button mako-label w-full px-3! py-1.5! text-[11px]! text-center">
+            PROFILE
+          </div>
+        </Link>
       ) : (
-        <div className="flex items-center justify-center py-3">
+        <Link href="/profile" className="flex items-center justify-center py-3 hover:bg-chrome-fg/10 transition-colors block">
           <div
-            className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm"
+            className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm mx-auto"
             aria-label={`Signed in as ${user.email}`}
             title={user.email}
           >
             {initial}
           </div>
-        </div>
+        </Link>
       )}
     </div>
   );

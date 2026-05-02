@@ -43,6 +43,11 @@ export type AuthedUser = {
   email: string;
   magicEoa: string;
   safeAddress: string;
+  /// ISO-8601 string. The createdAt of the user's most recent session
+  /// row OTHER than the current one. `null` when this is the user's
+  /// first-ever sign-in (no prior session exists). UI shows it as the
+  /// "last sign-in" signal that helps users detect compromise.
+  lastSignInAt: string | null;
 };
 
 type UnauthedResponse = { authed: false };
