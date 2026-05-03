@@ -27,8 +27,12 @@ describe('aa-constants', () => {
     expect(aaConstants.RECEIPT_POLL_TIMEOUT_MS).toBe(90_000);
   });
 
-  it('RECEIPT_POLL_INTERVAL_MS is 3_000', () => {
-    expect(aaConstants.RECEIPT_POLL_INTERVAL_MS).toBe(3_000);
+  it('RECEIPT_POLL_INTERVAL_MS is 1_000', () => {
+    // Bumped from 3_000 to 1_000 on 2026-05-03 as the deferred quick
+    // win from the 1D wrapper-hotfix follow-ups list. Faster Magic-
+    // flow UX without a structural change. Phase 1I async architecture
+    // remains the real fix.
+    expect(aaConstants.RECEIPT_POLL_INTERVAL_MS).toBe(1_000);
   });
 
   it('SUBMITTED_RESOLVER_MAX_AGE_MS is 1_800_000 (30 min)', () => {

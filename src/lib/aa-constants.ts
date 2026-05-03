@@ -35,10 +35,18 @@ export const SENDING_RECOVERY_THRESHOLD_MS = 5 * 60_000;
 /// function timeout (with margin to spare for the rest of the route).
 export const RECEIPT_POLL_TIMEOUT_MS = 90_000;
 
-/// Interval between receipt polls. Keep small enough that a fast bundle
-/// resolves quickly (3s after submit) but large enough not to hammer the
-/// bundler RPC. Mirrors the value already used by `scripts/probe-pimlico.mts`.
-export const RECEIPT_POLL_INTERVAL_MS = 3_000;
+/// Interval between receipt polls during the synchronous send-side wait.
+/// Pimlico typically lands a Monad testnet bundle in <5s; polling every
+/// 1s catches the receipt closer to landing without spamming the bundler
+/// RPC (Pimlico has no per-call cost). Bumped from 3s on 2026-05-03
+/// after Joshua observed Magic-flow UX feeling ~3x slower than wagmi —
+/// this single-line drop is the documented "quick win" deferred from
+/// the 1D wrapper hotfix follow-ups; the structural fix (async
+/// /api/aa/send + /api/aa/status polling) is queued as Phase 1I.
+///
+/// Note: scripts/probe-pimlico.mts uses its own constant; this is the
+/// production path only.
+export const RECEIPT_POLL_INTERVAL_MS = 1_000;
 
 /// Slow cron only resolves `submitted` rows older than this; they have
 /// either landed on chain or been dropped by the bundler. 30 min is far
