@@ -249,9 +249,13 @@ export default function ProfilePage() {
   const handleExportKey = async () => {
     try {
       const magic = await getMagic();
-      await magic.user.showSettings();
+      await magic.user.revealEVMPrivateKey();
     } catch (e) {
-      console.error('Failed to open magic settings', e);
+      // User-canceled the modal: Magic surfaces this as RPC -32603
+      // "User canceled action". Not an error — just close quietly.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/user canceled/i.test(msg)) return;
+      console.error('Failed to open magic reveal-key flow', e);
     }
   };
 
