@@ -161,6 +161,10 @@ export default function SignupPage() {
             // also return null. Refetch will replace this on the home
             // page mount per useUser's refetchOnMount: 'always'.
             lastSignInAt: null,
+            // First sign-in also has no prior email change. Same refetch
+            // pattern fills the real value if the user has changed
+            // their email previously across other devices/sessions.
+            nextEmailChangeAvailableAt: null,
           } satisfies AuthedUser);
         }
       } catch {

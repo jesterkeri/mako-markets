@@ -48,6 +48,13 @@ export type AuthedUser = {
   /// first-ever sign-in (no prior session exists). UI shows it as the
   /// "last sign-in" signal that helps users detect compromise.
   lastSignInAt: string | null;
+  /// ISO-8601 string. The earliest moment at which the user is allowed
+  /// to change their email next. `null` means no cooldown active —
+  /// either the user has never changed their email, or the last change
+  /// was more than 365 days ago. UI uses this to disable the EDIT
+  /// affordance and surface "Next change available [date]" copy.
+  /// Server-side enforcement lives in /api/user/email/update.
+  nextEmailChangeAvailableAt: string | null;
 };
 
 type UnauthedResponse = { authed: false };

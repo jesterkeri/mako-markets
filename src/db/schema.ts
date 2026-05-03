@@ -121,6 +121,18 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
+  /// Timestamp of the most recent email change (or null if never changed).
+  /// Mako's policy: a user may change their email at most once per year.
+  /// Enforced server-side in /api/user/email/update; surfaced via
+  /// /api/user/me so the UI can disable the EDIT affordance during the
+  /// cooldown window. Email rotation is the only way to rotate the
+  /// account's recovery surface, so loose change-frequency would
+  /// invite session-compromise → email-rotation → permanent lockout
+  /// patterns. The annual cap pushes the security model onto 2FA on
+  /// the email account itself, which is the intended posture.
+  lastEmailChangedAt: timestamp('last_email_changed_at', {
+    withTimezone: true,
+  }),
 }, (t) => ({
   emailUniq: uniqueIndex('users_email_uniq').on(t.email),
   magicEoaUniq: uniqueIndex('users_magic_eoa_uniq').on(t.magicEoa),

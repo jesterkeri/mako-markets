@@ -2,9 +2,16 @@ import { type Address } from 'viem';
 import { and, desc, eq, ne } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { sessions } from '@/db/schema';
+import { sessions, users } from '@/db/schema';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
+
+/// Mirror of EMAIL_CHANGE_COOLDOWN_MS in /api/user/email/update. The
+/// value is small enough to inline here rather than introduce a new
+/// shared module; both routes must stay in sync if the cooldown is
+/// ever tuned. If the constant gets shared (e.g., a tier-based policy),
+/// extract to a server-only `policy.ts`.
+const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
 // ----------------------------------------------------------------------------
 // GET /api/user/me
@@ -53,11 +60,32 @@ export async function GET() {
   const lastSignInAt =
     priorSession.length > 0 ? priorSession[0].createdAt.toISOString() : null;
 
+  // Email-change cooldown state. The /api/user/email/update route caps
+  // changes at one per 365 days. Surface the next-available timestamp
+  // so the UI can disable the EDIT affordance and show "Next change
+  // available [date]" without an extra round-trip. NULL means no
+  // cooldown active (either never changed, or the most recent change
+  // was longer than a year ago).
+  const userRow = await db
+    .select({ lastEmailChangedAt: users.lastEmailChangedAt })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .limit(1);
+  const lastEmailChange = userRow[0]?.lastEmailChangedAt ?? null;
+  let nextEmailChangeAvailableAt: string | null = null;
+  if (lastEmailChange) {
+    const cooldownEnd = lastEmailChange.getTime() + EMAIL_CHANGE_COOLDOWN_MS;
+    if (Date.now() < cooldownEnd) {
+      nextEmailChangeAvailableAt = new Date(cooldownEnd).toISOString();
+    }
+  }
+
   return Response.json({
     authed: true,
     email: session.email,
     magicEoa: session.magicEoa,
     safeAddress,
     lastSignInAt,
+    nextEmailChangeAvailableAt,
   });
 }

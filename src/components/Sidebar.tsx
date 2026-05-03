@@ -128,7 +128,7 @@ export function Sidebar() {
           hovering ? 'justify-start gap-3 px-5' : 'justify-center px-0'
         }`}
       >
-        <Logo size={22} className="text-chrome-fg shrink-0" title="Mako Markets" />
+        <Logo size={22} className="text-chrome-fg shrink-0" title="Mako Market" />
         <AnimatePresence initial={false}>
           {hovering && (
             <motion.span

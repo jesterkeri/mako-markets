@@ -78,7 +78,7 @@ function MobileHeader() {
   return (
     <header className="md:hidden flex items-center justify-between px-4 py-3 bg-chrome text-chrome-fg border-b-2 border-chrome-divider sticky top-0 z-40">
       <Link href="/" className="flex items-center gap-2">
-        <Logo size={28} className="text-chrome-fg" title="Mako Markets" />
+        <Logo size={28} className="text-chrome-fg" title="Mako Market" />
         <span className="font-display font-black text-2xl tracking-tight text-chrome-fg">MAKO</span>
       </Link>
       {/* Single SIGN IN / SIGN OUT button surfaces the email-first flow.

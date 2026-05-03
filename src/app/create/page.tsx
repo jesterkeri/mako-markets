@@ -848,7 +848,7 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
               {closeTooSoon
                 ? 'KICKOFF TOO SOON * PICK A LATER FIXTURE'
                 : tooFarOut
-                  ? 'EVENT TOO FAR OUT * MAKO MARKETS SETTLE WITHIN 7 DAYS'
+                  ? 'EVENT TOO FAR OUT * MARKETS SETTLE WITHIN 7 DAYS'
                   : `${humanizeUntil(timestamps.bettingCloseSec - nowSec)} * RESOLVES ~${Math.round(FOOTBALL_DURATION_SEC / 60)} MIN AFTER KICKOFF`}
             </div>
           </div>
@@ -1149,7 +1149,7 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
               {closeTooSoon
                 ? 'TIPOFF TOO SOON * PICK A LATER GAME'
                 : tooFarOut
-                  ? 'EVENT TOO FAR OUT * MAKO MARKETS SETTLE WITHIN 7 DAYS'
+                  ? 'EVENT TOO FAR OUT * MARKETS SETTLE WITHIN 7 DAYS'
                   : `${humanizeUntil(timestamps.bettingCloseSec - nowSec)} * RESOLVES ~${Math.round(BASKETBALL_DURATION_SEC / 60)} MIN AFTER TIPOFF`}
             </div>
           </div>

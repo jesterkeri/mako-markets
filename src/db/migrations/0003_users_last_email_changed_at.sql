@@ -1,0 +1,11 @@
+-- Add `users.last_email_changed_at` so /api/user/email/update can enforce
+-- a once-per-year cooldown on email rotation. NULL means "never changed
+-- since signup," which is treated as "no cooldown active" (the user can
+-- change at any time on first attempt). After the first change the
+-- column is set to NOW() and gates further changes for 365 days.
+--
+-- The recovery model is "secure your email account with 2FA," NOT
+-- "rotate the email if compromised" — frequent rotation invites
+-- session-compromise → email-rotation → permanent-lockout patterns.
+-- The annual cap pushes posture onto 2FA, which is the intended fix.
+ALTER TABLE "users" ADD COLUMN "last_email_changed_at" timestamp with time zone;

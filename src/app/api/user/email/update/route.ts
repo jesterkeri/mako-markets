@@ -3,6 +3,18 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
+
+/// Email-change cooldown in milliseconds. Mako policy: at most one
+/// change per 365 days per user. The recovery model is "secure your
+/// email account with 2FA," NOT "rotate the email if compromised" —
+/// frequent rotation invites session-compromise → email-rotation →
+/// permanent-lockout patterns. The annual cap pushes posture onto
+/// 2FA, which is the intended fix.
+///
+/// Tunable via this constant; mainnet rollout may revisit (e.g.,
+/// per-tier cooldowns). Until then, hard-coded so the policy reads
+/// in one place.
+const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
 import { checkSameOrigin } from '@/lib/csrf';
 import { normalizeEmail } from '@/lib/email';
@@ -129,25 +141,63 @@ export async function POST(req: Request) {
     return Response.json({ error: 'not_allowlisted' }, { status: 403 });
   }
 
-  // Atomic UPDATE with EOA pin in WHERE. RETURNING id confirms the row
-  // matched. uniq violation surfaces as a Drizzle/Postgres error which
-  // we map to 409 email_taken.
+  // Cooldown check: at most one email change per 365 days. NULL on the
+  // column means "never changed since signup" → no cooldown active.
+  // Read-then-write is atomic-enough at this scale (1-per-year cap
+  // makes the TOCTTOU window irrelevant). The same condition is
+  // ALSO included in the WHERE clause below as defense-in-depth.
+  const existing = await db
+    .select({ lastEmailChangedAt: users.lastEmailChangedAt })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .limit(1);
+  const lastChange = existing[0]?.lastEmailChangedAt ?? null;
+  if (lastChange) {
+    const cooldownEndMs =
+      lastChange.getTime() + EMAIL_CHANGE_COOLDOWN_MS;
+    if (Date.now() < cooldownEndMs) {
+      return Response.json(
+        {
+          error: 'cooldown_active',
+          availableAt: new Date(cooldownEndMs).toISOString(),
+        },
+        { status: 429 },
+      );
+    }
+  }
+
+  // Atomic UPDATE with EOA pin AND cooldown in WHERE. RETURNING id
+  // confirms the row matched. uniq violation surfaces as a Drizzle/
+  // Postgres error which we map to 409 email_taken.
+  const oneYearAgo = new Date(Date.now() - EMAIL_CHANGE_COOLDOWN_MS);
   try {
     const updated = await db
       .update(users)
-      .set({ email: newEmail })
+      .set({ email: newEmail, lastEmailChangedAt: new Date() })
       .where(
         and(
           eq(users.id, session.userId),
           sql`lower(${users.magicEoa}) = lower(${didEoa})`,
+          // Defense in depth: this catches a race between the read
+          // above and the write here. If two concurrent change requests
+          // raced past the read-side check, only one of them lands
+          // because Postgres serializes writes and the loser sees
+          // last_email_changed_at already updated within the cooldown.
+          sql`(${users.lastEmailChangedAt} IS NULL OR ${users.lastEmailChangedAt} < ${oneYearAgo})`,
         ),
       )
       .returning({ id: users.id });
 
     if (updated.length === 0) {
-      // Row not matched — the EOA pin failed defensively. Should be
-      // unreachable given the EOA equality check above, but guard
-      // anyway since the two checks straddle a network call.
+      // Row not matched. Three possibilities:
+      //   - EOA pin failed (should be unreachable given equality check
+      //     above, but guard anyway since checks straddle a network call)
+      //   - Cooldown WHERE clause rejected (should also be unreachable
+      //     given the pre-read check; this is the defense-in-depth race
+      //     window we accept as never-fires-in-practice)
+      //   - Row id no longer exists (shouldn't happen mid-session)
+      // Surface as eoa_mismatch since that's the most likely cause; the
+      // race-loser cooldown case is rare enough to share the response.
       return Response.json({ error: 'eoa_mismatch' }, { status: 409 });
     }
   } catch (err) {

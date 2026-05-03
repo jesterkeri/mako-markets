@@ -118,6 +118,19 @@ export default function ProfilePage() {
   const availableBalanceBaseUnits =
     balanceData?.value !== undefined ? balanceData.value : 0n;
 
+  // Email-change cooldown state. The server enforces 1 change per
+  // 365 days; /api/user/me surfaces the next-available timestamp so
+  // the UI can disable the EDIT affordance during the cooldown
+  // window. Compute `locked` + a friendly label for the LOCKED chip's
+  // hover tooltip in one place.
+  const emailChangeAvailableAt = user?.nextEmailChangeAvailableAt ?? null;
+  const emailChangeLocked =
+    !!emailChangeAvailableAt &&
+    new Date(emailChangeAvailableAt).getTime() > Date.now();
+  const emailChangeAvailableLabel = emailChangeAvailableAt
+    ? new Date(emailChangeAvailableAt).toLocaleDateString()
+    : '';
+
   // Inline contract-address warning (NOT a hard error — server allowlist
   // catches these too with bad_send_recipient, but a friendly heads-up
   // before the user clicks REVIEW is better UX).
@@ -273,6 +286,7 @@ export default function ProfilePage() {
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
+          availableAt?: string;
         };
         if (body.error === 'email_taken') {
           setEmailEditError('That email is already in use by another account.');
@@ -283,6 +297,13 @@ export default function ProfilePage() {
         } else if (body.error === 'eoa_mismatch') {
           setEmailEditError(
             "Magic returned a different wallet than expected. We didn't update anything. Please refresh and try again.",
+          );
+        } else if (body.error === 'cooldown_active') {
+          const when = body.availableAt
+            ? new Date(body.availableAt).toLocaleDateString()
+            : 'later';
+          setEmailEditError(
+            `You can only change your email once per year. Try again on ${when}.`,
           );
         } else {
           setEmailEditError(
@@ -517,13 +538,21 @@ export default function ProfilePage() {
                 <div className="w-full">
                   <div className="flex justify-between items-center mb-1">
                     <h2 className="mako-label text-muted">SIGNED IN AS</h2>
-                    {isMagicUser && emailEdit === 'closed' && (
+                    {isMagicUser && emailEdit === 'closed' && !emailChangeLocked && (
                       <button
                         onClick={handleStartEditEmail}
                         className="mako-label text-[10px] text-ink opacity-60 hover:opacity-100 hover:underline transition-opacity"
                       >
                         EDIT
                       </button>
+                    )}
+                    {isMagicUser && emailEdit === 'closed' && emailChangeLocked && (
+                      <span
+                        className="mako-label text-[10px] text-muted"
+                        title={`Next change available ${emailChangeAvailableLabel}`}
+                      >
+                        LOCKED
+                      </span>
                     )}
                   </div>
                   <p className="mako-title text-xl break-all leading-tight mb-2">{identityLabel}</p>
@@ -591,8 +620,13 @@ export default function ProfilePage() {
                       <p className="mako-label text-[9px] text-muted">
                         LAST SIGN-IN: {user?.lastSignInAt ? new Date(user.lastSignInAt).toLocaleString() : 'First sign-in'}
                       </p>
+                      {emailChangeLocked && (
+                        <p className="mako-label text-[9px] text-mako-red">
+                          NEXT EMAIL CHANGE: {emailChangeAvailableLabel}
+                        </p>
+                      )}
                       <p className="mako-body text-[11px] text-muted leading-snug mt-1 max-w-md">
-                        If you lose access to this email, account recovery is managed through <a href="https://magic.link" target="_blank" rel="noopener noreferrer" className="underline hover:text-ink">Magic</a>. Mako Markets cannot recover your funds.
+                        If you lose access to this email, account recovery is managed through <a href="https://magic.link" target="_blank" rel="noopener noreferrer" className="underline hover:text-ink">Magic</a>. Mako Market cannot recover your funds.
                       </p>
                     </div>
                   )}
@@ -639,14 +673,14 @@ export default function ProfilePage() {
                 {isMagicUser ? (
                   <>
                     <p className="mako-body text-ink text-lg leading-relaxed">
-                      Your email is your wallet. Mako Markets does not hold your funds. Magic provides the authentication.
+                      Your email is your wallet. Mako Market does not hold your funds and has no separate password or recovery surface. Magic provides the authentication.
                       <strong className="block mt-2">If your email account is compromised, your funds are at risk.</strong>
                     </p>
 
-                    <div className="bg-surface-elevated border-2 border-ink p-4 rounded-xl flex gap-3 items-start">
-                      <svg className="w-6 h-6 text-mako-signal shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                    <div className="bg-mako-red/10 border-2 border-mako-red p-4 rounded-xl flex gap-3 items-start">
+                      <svg className="w-6 h-6 text-mako-red shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
                       <p className="mako-label text-[10px] text-ink leading-relaxed">
-                        TIP: WE STRONGLY RECOMMEND ENABLING 2FA ON YOUR EMAIL ACCOUNT. HARDWARE WALLET UPGRADES ARE COMING SOON.
+                        2FA ON YOUR EMAIL IS YOUR ACCOUNT SECURITY. EMAIL CAN ONLY BE CHANGED ONCE PER YEAR, SO ENABLE 2FA NOW. HARDWARE WALLET UPGRADES ARE COMING SOON.
                       </p>
                     </div>
 
