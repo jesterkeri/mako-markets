@@ -197,6 +197,25 @@ export function encodeMultiSendBytes(
 /// Type narrowed to a 2-tuple [approve, placeBet] to match
 /// BuildSponsoredUserOpArgs.calls — bet_batched is specifically
 /// that shape, not a general N-call helper.
+/// Single source of truth for the single-call Safe wrapper. Production
+/// code (buildSponsoredUserOp) AND tests both call this. Same hardening
+/// rationale as `encodeBatchedExecuteUserOpCallData` below: rolling a
+/// local mirror in tests is exactly how the wrapper-hotfix bug shipped.
+///
+/// Used by every single-call sponsored kind: smoke, bet_single,
+/// send_usdc, create_market.
+export function encodeSingleExecuteUserOpCallData(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): Hex {
+  return encodeFunctionData({
+    abi: SAFE_4337_MODULE_ABI,
+    functionName: 'executeUserOp',
+    args: [call.to, call.value, call.data, 0],
+  });
+}
+
 export function encodeBatchedExecuteUserOpCallData(
   calls: readonly [
     { to: Address; value: bigint; data: Hex },
@@ -342,11 +361,7 @@ export async function buildSponsoredUserOp(
     );
   }
   const wrapperCallData: Hex = hasSingle
-    ? encodeFunctionData({
-        abi: SAFE_4337_MODULE_ABI,
-        functionName: 'executeUserOp',
-        args: [args.call!.to, args.call!.value, args.call!.data, 0],
-      })
+    ? encodeSingleExecuteUserOpCallData(args.call!)
     : encodeBatchedExecuteUserOpCallData(args.calls!);
 
   // 5. Base userOp scaffold — no gas, no paymaster yet. Sponsor will

@@ -11,10 +11,13 @@ import { isSupportedAaChainId } from '@/lib/aa-config';
 import {
   assertBetBatchedCalls,
   assertBetSingleCall,
+  assertCreateMarketCall,
+  assertCreateMarketShape,
   assertSendUsdcCall,
   assertSponsorableCall,
   NotAllowedError,
 } from '@/lib/aa-call-allowlist';
+import { getAaPublicClient } from '@/lib/aa-public-client';
 import { summarizeAaErrorWithCause } from '@/lib/aa-errors';
 import {
   insertPending,
@@ -215,7 +218,7 @@ export async function POST(req: Request) {
   // shared below.
   type Call = { to: Address; value: bigint; data: Hex };
   let buildArgs:
-    | { kind: 'smoke' | 'bet_single' | 'send_usdc'; call: Call }
+    | { kind: 'smoke' | 'bet_single' | 'send_usdc' | 'create_market'; call: Call }
     | { kind: 'bet_batched'; calls: readonly [Call, Call] };
   try {
     switch (parsed.data.kind) {
@@ -270,9 +273,52 @@ export async function POST(req: Request) {
         buildArgs = { kind: 'send_usdc', call };
         break;
       }
+      case 'create_market': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        // Round-8 MINOR 1: cheap shape-only checks BEFORE the chain-
+        // time RPC. Wrong target / wrong selector / bad mType / bad
+        // question / immutable bettingCloseTime > closeTime all
+        // reject without paying for a getBlock roundtrip. An authed
+        // tester spamming malformed bodies cannot force chain-time
+        // reads. Full validator below repeats these checks plus
+        // the clock-relative invariants.
+        assertCreateMarketShape({ chainId, safeAddress, call });
+
+        // ONLY now do we pay the RPC cost for the latest chain block
+        // timestamp. ONLY the create_market case incurs this; smoke /
+        // bet_single / bet_batched / send_usdc are byte-for-byte
+        // unchanged. Browser Date.now() is never trusted here.
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        assertCreateMarketCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+        });
+        buildArgs = { kind: 'create_market', call };
+        break;
+      }
     }
   } catch (e) {
     if (e instanceof NotAllowedError) {
+      // Round-8 MINOR 2: log `detail` for operators (when present) so
+      // a NOT_ALLOWED rejection is debuggable beyond the stable reason
+      // string. Response body intentionally omits detail — UI branches
+      // on `reason` only and shouldn't see implementation specifics.
+      console.warn('[aa.sponsor.not_allowed]', {
+        reason: e.reason,
+        detail: e.detail,
+        userId: session.userId,
+        chainId,
+        kind: parsed.data.kind,
+      });
       return Response.json(
         { error: 'NOT_ALLOWED', reason: e.reason },
         { status: 403 },

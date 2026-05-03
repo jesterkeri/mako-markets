@@ -73,3 +73,21 @@ export const SPONSOR_CAP_PER_USER_PER_DAY = 5;
 /// should revisit alongside the contract restrictions on the Pimlico
 /// dashboard.
 export const SEND_USDC_MAX_PER_OP_BASE_UNITS = 100n * 1_000_000n;
+
+/// Phase 1H create-market constants. Mirror of MakoMarketsV4 contract
+/// guards plus a server-side landing buffer that intentionally sits
+/// BELOW the UI's TX_LANDING_BUFFER_SEC (60s in market-timing.ts) so
+/// the 5-minute crypto preset is robust against the typical ~10s
+/// network/RPC delta between UI submit time and the sponsor route's
+/// chain-time read. Equal buffers were proven flaky during plan
+/// review.
+///
+/// Asymmetry: UI commits closeTime = clientNow + duration + 60.
+/// Server requires closeTime - serverNow >= duration + 30. The 30s
+/// gap absorbs delta; under pathological network failure the route
+/// returns bad_create_timestamps rather than burning the user's
+/// daily cap on a guaranteed simulation revert.
+export const MAKO_V4_MIN_DURATION_SEC = 300n;
+export const MAKO_V4_MAX_DURATION_SEC = 7n * 24n * 60n * 60n;
+export const CREATE_MARKET_QUESTION_MAX_BYTES = 200;
+export const CREATE_MARKET_MIN_SERVER_BUFFER_SEC = 30n;

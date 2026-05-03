@@ -14,8 +14,11 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   maxUint256,
+  type Hex,
+  type TransactionReceipt,
 } from 'viem';
 import {
+  decodeMarketCreatedId,
   MAKO_ADDRESS,
   makoContract,
   type MarketWithId,
@@ -26,7 +29,7 @@ import {
 import { USDC_ADDRESS, usdcContract } from './usdc';
 import { parseUsdc } from './usdc';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
-import { runPlaceBet, type RunOutcome } from './aa-client';
+import { runCreateMarket, runPlaceBet, type RunOutcome } from './aa-client';
 import { useUser } from './use-user';
 
 /**
@@ -613,44 +616,376 @@ export function useClaim() {
  * default `bettingCloseTime` to `closeTime` here** — that's the v3
  * model and would let the resolver fire before sports events end.
  *
- * The hook guards `bettingCloseTime <= closeTime` defensively so a
- * caller bug doesn't burn gas on a known-revert tx.
+ * Phase 1H: branches on `useUser()`. Magic users → AA path via
+ * `runCreateMarket` (one Magic signature, gas sponsored by Pimlico).
+ * Wallet users → unchanged wagmi 2-tx flow. The hook returns a
+ * `CreateMarketResult` discriminated union so the page can branch
+ * unambiguously on every flow outcome (created / wallet_submitted /
+ * submitted / decode_pending / decode_failed / reverted / error).
  *
- * The caller is responsible for parsing the `MarketCreated` event from
- * the tx receipt to extract the new id. Note that v4's MarketCreated
- * event emits `(id, creator, mType, oracleRef, closeTime, question)` —
- * `bettingCloseTime` is NOT in the event; read it via `getMarket(id)`
- * if needed.
+ * Wallet branch ALWAYS returns `{ kind: 'wallet_submitted' }`; the
+ * page reads `hook.hash` and uses `useWaitForTransactionReceipt` plus
+ * `decodeMarketCreatedId` to drive its own redirect lifecycle.
+ * Magic branch resolves with `kind: 'created'` (decoded newId) on
+ * the happy path or one of the other variants on partial outcomes.
  */
+export type CreateMarketResult =
+  /// Magic happy path: bundler accepted, receipt landed, MarketCreated decoded.
+  | { kind: 'created'; newId: bigint; txHash: Hex; userOpHash: Hex }
+  /// Wallet path: writeContractAsync returned. Page drives the rest via
+  /// useWaitForTransactionReceipt({ hash: hook.hash }).
+  | { kind: 'wallet_submitted' }
+  /// Magic: bundler accepted but server-side receipt poll didn't confirm in 90s.
+  /// No txHash yet; cron will catch up. UI shows "we'll catch up" copy.
+  | { kind: 'submitted'; userOpHash: Hex }
+  /// Magic: tx landed; client-side receipt fetch timed out (RPC visibility lag).
+  /// Distinct from 'submitted' — there IS a txHash; user can copy/paste it.
+  | { kind: 'decode_pending'; txHash: Hex; userOpHash: Hex }
+  /// Magic: receipt landed; decodeMarketCreatedId returned null. Code bug.
+  | { kind: 'decode_failed'; txHash: Hex; userOpHash: Hex }
+  /// Magic: tx landed but reverted on chain.
+  | { kind: 'reverted'; txHash: Hex; userOpHash: Hex; reason: string }
+  /// Magic: sponsor / send / pre-submit / network rejection.
+  | { kind: 'error'; message: string; reason?: string };
+
+type CreateMarketArgs = {
+  mType: MarketType;
+  oracleRef: `0x${string}`;
+  bettingCloseTime: bigint;
+  closeTime: bigint;
+  question: string;
+};
+
+/// Pinned to Monad testnet so the receipt decode targets the correct
+/// chain even if the user's wallet is on a different chain (Magic
+/// users may have no wallet at all).
+const MAGIC_RECEIPT_TIMEOUT_MS = 30_000;
+
 export function useCreateMarket() {
-  const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract();
+  const { user, isLoading: userLoading } = useUser();
+  const {
+    writeContractAsync,
+    data: hash,
+    isPending: walletIsPending,
+    error: walletError,
+    reset: walletReset,
+  } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
+  /// Pinned public client — Magic users may have no wallet, and even
+  /// wallet users may be on a different chain at the moment we fetch
+  /// the receipt. wagmi's chainId arg returns the Monad-bound client
+  /// regardless of the currently-selected chain in the UI.
+  const publicClient = usePublicClient({ chainId: monadTestnet.id });
 
-  const create = async ({
-    mType,
-    oracleRef,
-    bettingCloseTime,
-    closeTime,
-    question,
-  }: {
-    mType: MarketType;
-    oracleRef: `0x${string}`;
-    bettingCloseTime: bigint;
-    closeTime: bigint;
-    question: string;
-  }) => {
-    if (bettingCloseTime > closeTime) {
-      throw new Error('bettingCloseTime must be on or before closeTime.');
-    }
-    await ensureChain();
-    return writeContractAsync({
-      ...makoContract,
-      functionName: 'createMarket',
-      args: [mType, oracleRef, bettingCloseTime, closeTime, question],
-    });
+  const [magicPhase, setMagicPhase] = useState<
+    'idle' | 'creating' | 'awaiting' | 'success' | 'error'
+  >('idle');
+  const [magicError, setMagicError] = useState<Error | null>(null);
+  const [magicTxHash, setMagicTxHash] = useState<Hex | undefined>();
+  const [magicUserOpHash, setMagicUserOpHash] = useState<Hex | undefined>();
+  /// Synchronous double-click guard — same pattern as usePlaceBet's
+  /// inFlightRef. Prevents two concurrent Magic prompts when a user
+  /// double-clicks the submit button before any state setter renders.
+  const inFlightRef = useRef(false);
+
+  const flow: 'magic' | 'wallet' | 'loading' = userLoading
+    ? 'loading'
+    : user
+      ? 'magic'
+      : 'wallet';
+
+  const reset = useCallback(() => {
+    walletReset();
+    setMagicPhase('idle');
+    setMagicError(null);
+    setMagicTxHash(undefined);
+    setMagicUserOpHash(undefined);
+    inFlightRef.current = false;
+  }, [walletReset]);
+
+  const create = useCallback(
+    async (args: CreateMarketArgs): Promise<CreateMarketResult> => {
+      if (args.bettingCloseTime > args.closeTime) {
+        const err = new Error(
+          'bettingCloseTime must be on or before closeTime.',
+        );
+        setMagicError(err);
+        setMagicPhase('error');
+        return { kind: 'error', message: err.message };
+      }
+
+      if (inFlightRef.current) {
+        return {
+          kind: 'error',
+          message: 'A market creation is already in progress.',
+        };
+      }
+      // Round-8 MAJOR 1: while the user query is loading we cannot
+      // know whether to take the Magic or wallet branch. Falling
+      // through to wallet would recreate the original "Connector
+      // not connected" failure for a Magic-authed user clicking
+      // during the cold-load window. Refuse the call and let the
+      // page disable the button (flow === 'loading' is included in
+      // isBusy below).
+      if (userLoading) {
+        return {
+          kind: 'error',
+          message: 'Still checking your sign-in — please retry in a second.',
+          reason: 'auth_loading',
+        };
+      }
+      inFlightRef.current = true;
+
+      // ── Magic-authed branch (Phase 1H) ─────────────────────────────
+      if (user) {
+        try {
+          setMagicError(null);
+          setMagicTxHash(undefined);
+          setMagicUserOpHash(undefined);
+          setMagicPhase('creating');
+
+          const outcome: RunOutcome = await runCreateMarket({
+            chainId: MONAD_TESTNET_ID,
+            makoAddress: MAKO_ADDRESS,
+            mType: args.mType,
+            oracleRef: args.oracleRef,
+            bettingCloseTime: args.bettingCloseTime,
+            closeTime: args.closeTime,
+            question: args.question,
+            magicEoa: user.magicEoa as `0x${string}`,
+          });
+
+          setMagicPhase('awaiting');
+
+          switch (outcome.kind) {
+            case 'sent': {
+              setMagicTxHash(outcome.txHash);
+              setMagicUserOpHash(outcome.userOpHash);
+              if (!publicClient) {
+                setMagicPhase('error');
+                setMagicError(new Error('RPC client not ready — please retry.'));
+                return {
+                  kind: 'decode_pending',
+                  txHash: outcome.txHash,
+                  userOpHash: outcome.userOpHash,
+                };
+              }
+              // Bounded wait for the receipt — public RPC visibility
+              // can lag Pimlico's eth_getUserOperationReceipt by 1-3s.
+              try {
+                const receipt = await publicClient.waitForTransactionReceipt({
+                  hash: outcome.txHash,
+                  timeout: MAGIC_RECEIPT_TIMEOUT_MS,
+                  pollingInterval: 1500,
+                });
+                const newId = decodeMarketCreatedId(
+                  receipt as unknown as TransactionReceipt,
+                );
+                if (newId === null) {
+                  setMagicPhase('error');
+                  setMagicError(
+                    new Error(
+                      'Transaction landed, but the new market id could not be decoded. Refresh /me to find it.',
+                    ),
+                  );
+                  return {
+                    kind: 'decode_failed',
+                    txHash: outcome.txHash,
+                    userOpHash: outcome.userOpHash,
+                  };
+                }
+                setMagicPhase('success');
+                return {
+                  kind: 'created',
+                  newId,
+                  txHash: outcome.txHash,
+                  userOpHash: outcome.userOpHash,
+                };
+              } catch {
+                // Timeout — receipt didn't show up in 30s. Cron resolver
+                // settles within ~5min via on-chain truth.
+                setMagicPhase('error');
+                setMagicError(
+                  new Error(
+                    'Transaction submitted, but the receipt is taking longer than expected. Refresh /me in a moment.',
+                  ),
+                );
+                return {
+                  kind: 'decode_pending',
+                  txHash: outcome.txHash,
+                  userOpHash: outcome.userOpHash,
+                };
+              }
+            }
+            case 'reverted':
+              setMagicTxHash(outcome.txHash);
+              setMagicUserOpHash(outcome.userOpHash);
+              setMagicPhase('error');
+              setMagicError(
+                new Error(
+                  `Market creation reverted on chain: ${outcome.failureReason ?? 'unknown reason'}`,
+                ),
+              );
+              return {
+                kind: 'reverted',
+                txHash: outcome.txHash,
+                userOpHash: outcome.userOpHash,
+                reason: outcome.failureReason ?? 'on-chain revert',
+              };
+            case 'submitted':
+              // Bundler accepted; server-side receipt poll didn't confirm
+              // in 90s. No client-side polling — cron resolver settles
+              // within ~5min and the user has to refresh /me to see the
+              // market. Round-8 MINOR 3 + round-9 MINOR 1: copy
+              // matches the page banner; do not promise a redirect.
+              setMagicUserOpHash(outcome.userOpHash);
+              setMagicPhase('error');
+              setMagicError(
+                new Error(
+                  'Market submitted. Refresh /me in a few minutes to see it.',
+                ),
+              );
+              return { kind: 'submitted', userOpHash: outcome.userOpHash };
+            case 'failed_pre_submit':
+              setMagicPhase('error');
+              setMagicError(
+                new Error(`Bundler rejected: ${outcome.failureReason}`),
+              );
+              return {
+                kind: 'error',
+                message: `Bundler rejected: ${outcome.failureReason}`,
+                reason: 'failed_pre_submit',
+              };
+            case 'in_progress':
+              setMagicPhase('error');
+              setMagicError(
+                new Error(
+                  `Already sending — please wait ${outcome.retryAfterSeconds}s and try again.`,
+                ),
+              );
+              return {
+                kind: 'error',
+                message: 'Already sending — please wait and try again.',
+                reason: 'in_progress',
+              };
+            case 'expired':
+              setMagicPhase('error');
+              setMagicError(
+                new Error('Confirmation took too long; please retry.'),
+              );
+              return {
+                kind: 'error',
+                message: 'Confirmation took too long; please retry.',
+                reason: 'expired',
+              };
+            case 'manual_review':
+              setMagicPhase('error');
+              setMagicError(
+                new Error(
+                  'This market needs operator review. We will follow up; no action needed.',
+                ),
+              );
+              return {
+                kind: 'error',
+                message:
+                  'This market needs operator review. We will follow up; no action needed.',
+                reason: 'manual_review',
+              };
+            case 'sponsor_failed': {
+              const message =
+                outcome.error === 'CAP_EXCEEDED'
+                  ? "You've reached today's sponsored-op limit. Try again tomorrow, or use a connected wallet."
+                  : outcome.error === 'SPONSOR_UNAVAILABLE'
+                    ? 'Sponsorship temporarily unavailable. Try again shortly, or use a connected wallet.'
+                    : outcome.error === 'NOT_ALLOWED'
+                      ? `Market creation rejected by sponsorship policy${outcome.reason ? ` (${outcome.reason})` : ''}.`
+                      : `Sponsorship failed: ${outcome.detail ?? outcome.error}`;
+              setMagicPhase('error');
+              setMagicError(new Error(message));
+              return { kind: 'error', message, reason: outcome.reason };
+            }
+            case 'send_failed': {
+              const message =
+                outcome.error === 'SIG_VALIDATION'
+                  ? 'Could not verify your signature. Please retry.'
+                  : `Send failed: ${outcome.detail ?? outcome.error}`;
+              setMagicPhase('error');
+              setMagicError(new Error(message));
+              return { kind: 'error', message, reason: outcome.error };
+            }
+          }
+        } catch (e) {
+          const err = e instanceof Error ? e : new Error(String(e));
+          setMagicPhase('error');
+          setMagicError(err);
+          return { kind: 'error', message: err.message };
+        } finally {
+          inFlightRef.current = false;
+        }
+      }
+
+      // ── Wallet-connected branch (existing wagmi flow) ──────────────
+      try {
+        await ensureChain();
+        await writeContractAsync({
+          ...makoContract,
+          functionName: 'createMarket',
+          args: [
+            args.mType,
+            args.oracleRef,
+            args.bettingCloseTime,
+            args.closeTime,
+            args.question,
+          ],
+        });
+        return { kind: 'wallet_submitted' };
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        return { kind: 'error', message: err.message };
+      } finally {
+        inFlightRef.current = false;
+      }
+    },
+    [
+      user,
+      userLoading,
+      publicClient,
+      ensureChain,
+      writeContractAsync,
+    ],
+  );
+
+  // Unified pending state: wagmi's wallet-flow isPending OR our local
+  // Magic-flow phase being non-idle non-terminal OR the auth query
+  // still loading (round-8 MAJOR 1 — gates the submit button so a
+  // Magic-authed user can't click during the cold-load window and
+  // fall through to the wallet branch).
+  const isPending =
+    walletIsPending ||
+    magicPhase === 'creating' ||
+    magicPhase === 'awaiting' ||
+    flow === 'loading';
+
+  // Unified error: prefer Magic-flow error when present; fall back to
+  // wagmi's error so existing /create copy still surfaces wallet-side
+  // failures unchanged.
+  const error = magicError ?? (walletError as Error | null) ?? null;
+
+  return {
+    create,
+    /// Wallet flow tx hash. `undefined` for Magic users (the Magic
+    /// txHash arrives in the resolved CreateMarketResult).
+    hash,
+    /// Magic flow user-op hash. `undefined` for wallet users.
+    userOpHash: magicUserOpHash,
+    /// Magic flow tx hash, when available. Distinct from `hash` so
+    /// callers don't conflate the two flows.
+    magicTxHash,
+    isPending,
+    error,
+    reset,
+    flow,
   };
-
-  return { create, hash, isPending, error, reset };
 }
 
 /**

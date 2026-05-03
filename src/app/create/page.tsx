@@ -3,9 +3,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWaitForTransactionReceipt } from 'wagmi';
-import { decodeEventLog, type Hex } from 'viem';
-import { makoAbi, MarketType } from '@/lib/contract';
-import { useCreateMarket } from '@/lib/hooks';
+import { type Hex } from 'viem';
+import { decodeMarketCreatedId, MarketType } from '@/lib/contract';
+import { useCreateMarket, type CreateMarketResult } from '@/lib/hooks';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { toBytes32 } from '@/lib/oracle';
 import { humanizeUntil } from '@/lib/time';
@@ -141,31 +141,28 @@ export default function CreateMarketPage() {
   // Shared tx lifecycle across both tabs. Submitting from either tab fires
   // the same `create()` hook, so the parent state drives the disable logic
   // and status strip consistently.
-  const { create, hash, isPending, error } = useCreateMarket();
+  //
+  // Phase 1H: useCreateMarket branches on auth method internally. Magic
+  // users → AA flow (one signature, gas sponsored), wallet users →
+  // unchanged wagmi 2-tx flow. The hook returns a discriminated
+  // `CreateMarketResult` union from `create()`:
+  //   - 'created'           — Magic happy path; hook decoded newId itself
+  //   - 'wallet_submitted'  — wallet path; useWaitForTransactionReceipt
+  //                            below drives the redirect
+  //   - 'submitted'         — Magic bundler accepted, receipt pending
+  //   - 'decode_pending'    — Magic tx landed, RPC visibility lag
+  //   - 'decode_failed'     — receipt landed, MarketCreated not present
+  //   - 'reverted'          — Magic on-chain revert
+  //   - 'error'             — sponsor / send / network error
+  const { create, hash, isPending, error, flow } = useCreateMarket();
   const { data: receipt, isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash });
 
-  // Derive the decoded new id + any decode error from the receipt using
-  // useMemo, NOT via setState inside an effect (react-hooks/set-state-in-effect).
-  // The effect below only handles the side effect of navigation.
+  // For the wallet path: derive the decoded new id from the receipt
+  // (same as 1C). The Magic path resolves `create()` with newId
+  // already decoded, so this only fires for `flow === 'wallet'`.
   const parsedReceipt = useMemo(() => {
     if (!isSuccess || !receipt) return { newId: null as bigint | null, error: null as string | null };
-    let newId: bigint | null = null;
-    for (const log of receipt.logs) {
-      try {
-        const decoded = decodeEventLog({
-          abi: makoAbi,
-          data: log.data,
-          topics: log.topics,
-        });
-        if (decoded.eventName === 'MarketCreated') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          newId = (decoded.args as any).id as bigint;
-          break;
-        }
-      } catch {
-        // not our event, skip silently
-      }
-    }
+    const newId = decodeMarketCreatedId(receipt);
     return {
       newId,
       error:
@@ -177,9 +174,7 @@ export default function CreateMarketPage() {
 
   const { newId: parsedNewId, error: decodeError } = parsedReceipt;
 
-  // Side effect: navigate to the new market's detail page once the id is decoded.
-  // If decoding fails, log a warning but don't setState (the UI already reflects
-  // the error via the derived `decodeError` value above).
+  // Wallet-flow side effect: navigate once the receipt decodes.
   useEffect(() => {
     if (parsedNewId !== null) {
       router.push(`/market/${parsedNewId.toString()}`);
@@ -188,9 +183,58 @@ export default function CreateMarketPage() {
     }
   }, [parsedNewId, decodeError, receipt, router]);
 
+  const [magicStatusBanner, setMagicStatusBanner] = useState<string | null>(null);
+
   const handleCreate = async (args: CreateArgs) => {
     try {
-      await create(args);
+      const result: CreateMarketResult = await create(args);
+      switch (result.kind) {
+        case 'created':
+          // Magic happy path — hook decoded newId; redirect.
+          setMagicStatusBanner(null);
+          router.push(`/market/${result.newId.toString()}`);
+          return;
+        case 'wallet_submitted':
+          // Wallet path — useWaitForTransactionReceipt drives the
+          // existing redirect via the useEffect above.
+          setMagicStatusBanner(null);
+          return;
+        case 'submitted':
+          // Round-8 MINOR 3: bundler accepted but the server-side
+          // receipt poll didn't confirm in 90s. We don't currently
+          // poll from the page, so the previous "WE WILL REDIRECT"
+          // copy was a false promise. Direct the user to /me where
+          // the cron resolver-settled market will appear within
+          // ~5min.
+          setMagicStatusBanner(
+            'MARKET SUBMITTED * REFRESH /me IN A FEW MINUTES TO SEE IT',
+          );
+          return;
+        case 'decode_pending':
+          setMagicStatusBanner(
+            'TX LANDED * REFRESH /me IN A MOMENT TO SEE YOUR MARKET',
+          );
+          return;
+        case 'decode_failed':
+          setMagicStatusBanner(
+            'TX SUBMITTED BUT MARKET ID NOT FOUND * REFRESH /me OR CHECK EXPLORER',
+          );
+          return;
+        case 'reverted':
+          setMagicStatusBanner(`MARKET CREATION REVERTED * ${result.reason.toUpperCase()}`);
+          return;
+        case 'error':
+          // Round-8 MAJOR 2: wallet-branch failures (e.g.
+          // ensureChain rejection) reach here without setting
+          // hook.error. Surface result.message in the banner so
+          // the user always sees the failure reason. Magic-branch
+          // 'error' results redundantly set hook.error too — both
+          // paths converge on a visible status string.
+          setMagicStatusBanner(
+            `ERROR: ${result.message.slice(0, 100).toUpperCase()}`,
+          );
+          return;
+      }
     } catch (e) {
       // error state surfaces via the hook
       console.error('[create] failed:', e);
@@ -198,17 +242,23 @@ export default function CreateMarketPage() {
   };
 
   const isBusy = isPending || isWaiting;
-  const statusText = isPending
-    ? 'CONFIRM IN WALLET...'
-    : isWaiting
-      ? 'CREATING MARKET...'
-      : decodeError
-        ? decodeError
-        : isSuccess
-          ? 'MARKET CREATED * REDIRECTING...'
-          : error
-            ? friendlyWriteError(error as Error)
-            : null;
+  const statusText = magicStatusBanner
+    ? magicStatusBanner
+    : isPending
+      ? flow === 'loading'
+        ? 'CHECKING SIGN-IN...'
+        : flow === 'magic'
+          ? 'AWAITING SIGNATURE...'
+          : 'CONFIRM IN WALLET...'
+      : isWaiting
+        ? 'CREATING MARKET...'
+        : decodeError
+          ? decodeError
+          : isSuccess
+            ? 'MARKET CREATED * REDIRECTING...'
+            : error
+              ? friendlyWriteError(error as Error)
+              : null;
 
   return (
     <main className="flex-1 flex flex-col w-full pb-16">

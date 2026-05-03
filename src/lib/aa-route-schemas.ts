@@ -13,14 +13,17 @@ import { z } from 'zod';
 // `HexBigint` is `0x` + 1+ hex digits (no length cap) so we can carry
 // uint256 values over the wire without lossy `Number` round-tripping.
 //
-// Phase 1D + 1E shape: `SponsorRequest` is a zod `discriminatedUnion('kind', ...)`
-// over four variants — the `kind` field is REQUIRED and the only
-// discriminator. No env-aware default, no fallback. The four variants are:
+// Phase 1D + 1E + 1H shape: `SponsorRequest` is a zod
+// `discriminatedUnion('kind', ...)` over five variants — the `kind`
+// field is REQUIRED and the only discriminator. No env-aware default,
+// no fallback. The five variants are:
 //   - `SmokeRequest` (kind='smoke')          single-call USDC.transfer self
 //   - `BetSingleRequest` (kind='bet_single') single-call placeBet
 //   - `BetBatchedRequest` (kind='bet_batched') tuple [approve, placeBet]
 //   - `SendUsdcRequest` (kind='send_usdc')   single-call USDC.transfer to
 //                                            arbitrary recipient (Phase 1E)
+//   - `CreateMarketRequest` (kind='create_market') single-call MakoMarketsV4
+//                                            createMarket (Phase 1H)
 // `.strict()` on each rejects unknown keys so a malicious body can't carry
 // both `call` and `calls` to confuse the route's branching.
 // ----------------------------------------------------------------------------
@@ -99,11 +102,35 @@ const SendUsdcRequest = z
   })
   .strict();
 
+const CreateMarketRequest = z
+  .object({
+    kind: z.literal('create_market'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Phase 1H Magic create-market flow: single-call
+    /// `MakoMarketsV4.createMarket(mType, oracleRef, bettingCloseTime,
+    /// closeTime, question)` from the Safe. The allowlist enforces:
+    ///   - inner.to === MAKO_ADDRESS
+    ///   - inner.value === 0n
+    ///   - inner selector === createMarket (0xda6a7338)
+    ///   - decoded mType ∈ {0, 1, 2}
+    ///   - decoded question byte length ∈ [1, 200]
+    ///   - decoded bettingCloseTime > nowSec (chain time)
+    ///   - decoded closeTime > nowSec
+    ///   - decoded bettingCloseTime <= closeTime
+    ///   - decoded duration ≥ MAKO_V4_MIN_DURATION_SEC + CREATE_MARKET_MIN_SERVER_BUFFER_SEC
+    ///   - decoded duration ≤ MAKO_V4_MAX_DURATION_SEC
+    /// Send-time re-validation enforces shape only (no clock checks);
+    /// timestamp drift is caught by SafeOp hash recomputation (Guard A).
+    call: CallShape,
+  })
+  .strict();
+
 export const SponsorRequest = z.discriminatedUnion('kind', [
   SmokeRequest,
   BetSingleRequest,
   BetBatchedRequest,
   SendUsdcRequest,
+  CreateMarketRequest,
 ]);
 
 export type SponsorRequest = z.infer<typeof SponsorRequest>;
@@ -111,6 +138,7 @@ export type SmokeRequest = z.infer<typeof SmokeRequest>;
 export type BetSingleRequest = z.infer<typeof BetSingleRequest>;
 export type BetBatchedRequest = z.infer<typeof BetBatchedRequest>;
 export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
+export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
 
 export const SendRequest = z.object({
   pendingUserOpId: z.string().uuid(),

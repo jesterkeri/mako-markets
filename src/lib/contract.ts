@@ -1,3 +1,4 @@
+import { decodeEventLog, type TransactionReceipt } from 'viem';
 import { makoAbi } from './MakoMarkets.abi';
 import { usdcContract } from './usdc';
 
@@ -89,3 +90,34 @@ export type Market = {
 
 /** Market + its on-chain id, convenient for list rendering. */
 export type MarketWithId = Market & { id: bigint };
+
+/**
+ * Walk a tx receipt's logs and return the new market's id from the
+ * `MarketCreated` event, or `null` if the event isn't present.
+ *
+ * Used by both `useCreateMarket` flows: wallet path runs this against
+ * the `useWaitForTransactionReceipt({ hash })` payload; Magic path
+ * runs it against the receipt fetched after `runCreateMarket` returns
+ * `{ kind: 'sent' }`. Single source of truth so a future v5
+ * `MarketCreated` shape change is one diff instead of two.
+ */
+export function decodeMarketCreatedId(
+  receipt: TransactionReceipt,
+): bigint | null {
+  for (const log of receipt.logs) {
+    try {
+      const decoded = decodeEventLog({
+        abi: makoAbi,
+        data: log.data,
+        topics: log.topics,
+      });
+      if (decoded.eventName === 'MarketCreated') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (decoded.args as any).id as bigint;
+      }
+    } catch {
+      // Not our event — skip silently.
+    }
+  }
+  return null;
+}

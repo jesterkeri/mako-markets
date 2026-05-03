@@ -55,7 +55,13 @@ import { MAKO_ADDRESS } from './contract';
 import { MONAD_TESTNET_ID } from './chain';
 import { SAFE_CONFIG } from './safe-config';
 import { USDC_ADDRESS } from './usdc';
-import { SEND_USDC_MAX_PER_OP_BASE_UNITS } from './aa-constants';
+import {
+  CREATE_MARKET_QUESTION_MAX_BYTES,
+  CREATE_MARKET_MIN_SERVER_BUFFER_SEC,
+  MAKO_V4_MAX_DURATION_SEC,
+  MAKO_V4_MIN_DURATION_SEC,
+  SEND_USDC_MAX_PER_OP_BASE_UNITS,
+} from './aa-constants';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -81,11 +87,19 @@ export type NotAllowedReason =
   // Phase 1E send flow:
   | 'bad_send_args'
   | 'bad_send_recipient'
-  | 'bad_send_amount';
+  | 'bad_send_amount'
+  // Phase 1H create-market flow:
+  | 'bad_create_args'
+  | 'bad_create_question'
+  | 'bad_create_timestamps';
 
 export class NotAllowedError extends Error {
-  constructor(public readonly reason: NotAllowedReason, message?: string) {
-    super(message ?? `aa-call-allowlist: ${reason}`);
+  constructor(
+    public readonly reason: NotAllowedReason,
+    public readonly detail?: string,
+    message?: string,
+  ) {
+    super(message ?? `aa-call-allowlist: ${reason}${detail ? ` (${detail})` : ''}`);
     this.name = 'NotAllowedError';
   }
 }
@@ -135,6 +149,34 @@ const PLACEBET_ABI = [
     stateMutability: 'nonpayable',
   },
 ] as const;
+
+/// `createMarket(uint8, bytes32, uint64, uint64, string)`. Phase 1H
+/// create-market flow. Mirrors v4 contract method exactly. The mType
+/// argument is a uint8 enum mapped to MarketType {FOOTBALL=0, CRYPTO=1,
+/// BASKETBALL=2} (matches MakoMarketsV4.sol enum order).
+const CREATEMARKET_ABI = [
+  {
+    type: 'function',
+    name: 'createMarket',
+    inputs: [
+      { name: 'mType', type: 'uint8' },
+      { name: 'oracleRef', type: 'bytes32' },
+      { name: 'bettingCloseTime', type: 'uint64' },
+      { name: 'closeTime', type: 'uint64' },
+      { name: 'question', type: 'string' },
+    ],
+    outputs: [{ name: 'id', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// 4-byte selectors for the MAKO send-side dispatch. Pinned as literal
+/// constants so a future ABI typo cannot silently change what gets
+/// routed where. The aa-call-allowlist-selectors.test.ts soft-asserts
+/// each constant matches `viem.toFunctionSelector(signature)`; CI
+/// fails on drift.
+export const PLACEBET_SELECTOR = '0x1a38cac6' as const;
+export const CREATEMARKET_SELECTOR = '0xda6a7338' as const;
 
 /// Safe4337Module wrapper selectors. Both round-trip — the SDK chooses
 /// either depending on whether it wants the error-string variant.
@@ -466,6 +508,175 @@ export function assertSendUsdcCall(args: {
   decodeAndAssertSendUsdc({ call: args.call, safeAddress: args.safeAddress });
 }
 
+// ── Create-market validators (Phase 1H) ─────────────────────────────────────
+
+/// Tuple shape of the decoded createMarket args. Shared by sponsor-time
+/// (with chain-time check) and send-time (shape-only) validators.
+type CreateMarketArgs = readonly [
+  number,    // mType (uint8 enum)
+  Hex,       // oracleRef (bytes32)
+  bigint,    // bettingCloseTime (uint64)
+  bigint,    // closeTime (uint64)
+  string,    // question
+];
+
+/// Decode + structural assertions shared between sponsor-time and
+/// send-time. Validates:
+///   - call.to === MAKO_ADDRESS (case-insensitive)
+///   - call.value === 0n
+///   - call.data ABI-decodes as createMarket
+///   - mType ∈ {0, 1, 2}
+///   - question UTF-8 byte length ∈ [1, 200]
+///   - bettingCloseTime <= closeTime (immutable shape — true at any
+///     point in time, NOT clock-relative)
+///
+/// Does NOT check `closeTime > nowSec`, MIN_DURATION, or MAX_DURATION;
+/// those are clock-relative and live only in the sponsor-time wrapper
+/// (see `decodeAndAssertCreateMarket`). Send-time uses this shape-only
+/// helper directly so legitimate-but-slow Magic-signing users don't
+/// get their already-sponsored row 403'd at send time (drift is caught
+/// by SafeOp hash recomputation, Guard A in /api/aa/send).
+function decodeCreateMarketArgs(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): CreateMarketArgs {
+  if (call.to.toLowerCase() !== MAKO_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('bad_create_args', 'wrong_target');
+  }
+  if (call.value !== 0n) {
+    throw new NotAllowedError('bad_value');
+  }
+
+  let decoded: { functionName: 'createMarket'; args: CreateMarketArgs };
+  try {
+    const result = decodeFunctionData({
+      abi: CREATEMARKET_ABI,
+      data: call.data,
+    });
+    if (result.functionName !== 'createMarket') {
+      throw new NotAllowedError('bad_create_args', 'wrong_selector');
+    }
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('bad_create_args', 'decode_failed');
+  }
+
+  const [mType, , bettingCloseTime, closeTime, question] = decoded.args;
+
+  if (!(mType === 0 || mType === 1 || mType === 2)) {
+    throw new NotAllowedError('bad_create_args', 'bad_mtype_enum');
+  }
+
+  // UTF-8 byte length, NOT character count. The contract's qLen check
+  // is `bytes(question).length`, so we mirror byte-length semantics.
+  // TextEncoder is available in Node ≥ 11 + browsers; aa-call-allowlist
+  // is server-only via the route's import, so this is safe.
+  const qBytes = new TextEncoder().encode(question).length;
+  if (qBytes < 1 || qBytes > CREATE_MARKET_QUESTION_MAX_BYTES) {
+    throw new NotAllowedError('bad_create_question');
+  }
+
+  // Immutable timestamp shape: bettingCloseTime <= closeTime. NOT a
+  // clock-relative invariant — true at any point in time.
+  if (bettingCloseTime > closeTime) {
+    throw new NotAllowedError('bad_create_timestamps', 'betting_after_close');
+  }
+
+  return decoded.args;
+}
+
+/// Sponsor-time wrapper: shape checks via decodeCreateMarketArgs PLUS
+/// chain-time clock checks. `nowSec` MUST be the latest Monad block
+/// timestamp (read by the sponsor route from getAaPublicClient.getBlock,
+/// not Date.now()).
+function decodeAndAssertCreateMarket(args: {
+  call: { to: Address; value: bigint; data: Hex };
+  nowSec: bigint;
+}): void {
+  const [, , bettingCloseTime, closeTime] = decodeCreateMarketArgs(args.call);
+
+  if (!(bettingCloseTime > args.nowSec)) {
+    throw new NotAllowedError(
+      'bad_create_timestamps',
+      'betting_close_in_past',
+    );
+  }
+  if (!(closeTime > args.nowSec)) {
+    throw new NotAllowedError('bad_create_timestamps', 'close_in_past');
+  }
+
+  const duration = closeTime - args.nowSec;
+
+  // Asymmetric server buffer (30s) sits BELOW the UI's 60s landing
+  // buffer so the 5-minute crypto preset is robust against the typical
+  // network/RPC delta. Adding the server buffer to MIN_DURATION here
+  // means the route accepts only durations that will still pass the
+  // contract's own `duration < MIN_DURATION` check at the moment of
+  // Pimlico simulation, even if a few blocks pass between snapshot
+  // and simulation. Equal buffers are flaky; do NOT change this to 60.
+  if (duration < MAKO_V4_MIN_DURATION_SEC + CREATE_MARKET_MIN_SERVER_BUFFER_SEC) {
+    throw new NotAllowedError('bad_create_timestamps', 'duration_too_short');
+  }
+  // No max-side slack: time advances between snapshot and simulation,
+  // so any positive +slack would let through ops that revert at the
+  // contract's `duration > MAX_DURATION` check.
+  if (duration > MAKO_V4_MAX_DURATION_SEC) {
+    throw new NotAllowedError('bad_create_timestamps', 'duration_too_long');
+  }
+}
+
+/// Send-time wrapper: shape checks ONLY. No clock checks. Used by
+/// `assertSponsoredCallData` MAKO selector dispatch when the inner
+/// selector is `createMarket`. Drift in clock-relative timestamps
+/// is caught by Guard A (SafeOp hash recomputation) before the
+/// bundler is reached; this validator's job is shape-only.
+function decodeAndAssertCreateMarketShape(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): void {
+  decodeCreateMarketArgs(call);
+}
+
+/// Validate a single `MakoMarketsV4.createMarket(...)` call (sponsor-time,
+/// kind='create_market'). Used by /api/aa/sponsor for the Phase 1H Magic
+/// create-market flow.
+export function assertCreateMarketCall(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+  /// Latest Monad block timestamp. The sponsor route reads this once via
+  /// getAaPublicClient(chainId).getBlock({ blockTag: 'latest' }) before
+  /// invoking the validator. Browser Date.now() is NOT trusted.
+  nowSec: bigint;
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('bad_create_args', 'wrong_chain');
+  }
+  decodeAndAssertCreateMarket({ call: args.call, nowSec: args.nowSec });
+}
+
+/// Cheap shape-only validation — no clock, no chain RPC. Round-8 MINOR 1:
+/// the sponsor route runs this BEFORE the `getBlock` call so a malicious
+/// or misconfigured caller can't force the route to do an RPC roundtrip
+/// for a request that would always reject on shape. Same shape checks
+/// the full validator does (chainId, target, value, decode, mType,
+/// question, immutable bettingCloseTime <= closeTime); skips the
+/// clock-relative checks. Suitable for both pre-flight gating AND
+/// send-time re-validation.
+export function assertCreateMarketShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('bad_create_args', 'wrong_chain');
+  }
+  decodeAndAssertCreateMarketShape(args.call);
+}
+
 // ── MultiSend bytes parser (send-time only) ─────────────────────────────────
 
 /// Safe MultiSend tuple format (packed):
@@ -670,8 +881,27 @@ export function assertSponsoredCallData(args: {
       if (args.chainId !== MONAD_TESTNET_ID) {
         throw new NotAllowedError('bad_placebet_args');
       }
-      decodeAndAssertPlaceBet({ to, value, data });
-      return;
+      // Phase 1H: dispatch by 4-byte selector. placeBet (0x1a38cac6)
+      // and createMarket (0xda6a7338) are the two MAKO methods we
+      // sponsor today. Selector dispatch — not exception-catch
+      // fallthrough — so a malformed placeBet cannot silently remap
+      // to bad_create_args (or vice versa).
+      if (data.length < 10) {
+        throw new NotAllowedError('bad_selector');
+      }
+      const innerSelector = data.slice(0, 10).toLowerCase();
+      if (innerSelector === PLACEBET_SELECTOR) {
+        decodeAndAssertPlaceBet({ to, value, data });
+        return;
+      }
+      if (innerSelector === CREATEMARKET_SELECTOR) {
+        // Shape-only at send-time. Clock-relative timestamp drift is
+        // caught by Guard A (SafeOp hash recomputation) before the
+        // bundler is reached.
+        decodeAndAssertCreateMarketShape({ to, value, data });
+        return;
+      }
+      throw new NotAllowedError('bad_selector');
     }
     throw new NotAllowedError('bad_to');
   }

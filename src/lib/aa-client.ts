@@ -42,7 +42,8 @@ export type SponsorRequestBody =
   | { kind: 'smoke'; chainId: number; call: Call }
   | { kind: 'bet_single'; chainId: number; call: Call }
   | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] }
-  | { kind: 'send_usdc'; chainId: number; call: Call };
+  | { kind: 'send_usdc'; chainId: number; call: Call }
+  | { kind: 'create_market'; chainId: number; call: Call };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
 export type SponsorResponse = {
@@ -564,6 +565,212 @@ export async function runSendUsdc(args: RunSendUsdcArgs): Promise<RunOutcome> {
       data: transferData,
     },
   };
+
+  // 1. Sponsor.
+  const sponsor = await postJson('/api/aa/sponsor', body);
+  if (!sponsor.ok) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: (sponsor.body as { error?: string }).error ?? 'unknown',
+      reason: (sponsor.body as { reason?: string }).reason,
+      detail: (sponsor.body as { message?: string }).message,
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
+
+  // 2. Magic personal_sign over the SafeOp hash.
+  const validAfter = BigInt(sponsored.validAfter);
+  const validUntil = BigInt(sponsored.validUntil);
+  const signature = await signSafeOpHash({
+    hash: sponsored.safeOpHash,
+    magicEoa: args.magicEoa,
+    validAfter,
+    validUntil,
+  });
+
+  // 3. Send.
+  const send = await postJson('/api/aa/send', {
+    pendingUserOpId: sponsored.pendingUserOpId,
+    signature,
+  });
+
+  if (!send.ok) {
+    const sendBody = send.body as {
+      error?: string;
+      message?: string;
+      status?: string;
+      retryAfterSeconds?: number;
+    };
+    if (send.status === 202 && sendBody.status === 'send_in_progress') {
+      return {
+        kind: 'in_progress',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
+      };
+    }
+    if (send.status === 410) {
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    }
+    if (send.status === 423) {
+      return {
+        kind: 'manual_review',
+        pendingUserOpId: sponsored.pendingUserOpId,
+      };
+    }
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: sendBody.error ?? 'unknown',
+      detail: sendBody.message,
+    };
+  }
+
+  const sendBody = send.body as {
+    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
+    txHash?: Hex;
+    userOpHash?: Hex;
+    failureReason?: string;
+  };
+  switch (sendBody.status) {
+    case 'sent':
+      return {
+        kind: 'sent',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        recovered: sponsored.recovered,
+      };
+    case 'reverted':
+      return {
+        kind: 'reverted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        failureReason: sendBody.failureReason ?? 'on-chain revert',
+      };
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        userOpHash: sendBody.userOpHash as Hex,
+      };
+    case 'failed_pre_submit':
+      return {
+        kind: 'failed_pre_submit',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        failureReason: sendBody.failureReason ?? 'bundler reject',
+      };
+    case 'expired':
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
+}
+
+// ── runCreateMarket (Phase 1H Magic create-market flow) ────────────────────
+
+/// Args for `runCreateMarket`. Mirrors the bet/send shapes for outbound
+/// MakoMarketsV4 createMarket calls from the user's Safe via Pimlico.
+export type RunCreateMarketArgs = {
+  chainId: number;
+  /// MakoMarketsV4 contract address (where `createMarket` is called).
+  /// Caller passes via env so tests can swap.
+  makoAddress: Address;
+  /// MarketType enum value: 0 = FOOTBALL, 1 = CRYPTO, 2 = BASKETBALL
+  /// (matches MakoMarketsV4.sol enum order — round-8 NIT). Validated
+  /// server-side against {0, 1, 2}.
+  mType: number;
+  /// Market-specific oracle reference (32 bytes). For testnet beta the
+  /// allowlist accepts any 32-byte value; mainnet will require shape
+  /// validation per market type (see Phase 1H plan "Mainnet blocker").
+  oracleRef: Hex;
+  /// Time after which placeBet is no longer legal. Validated server-side
+  /// against `bettingCloseTime > nowSec` and `bettingCloseTime <= closeTime`.
+  bettingCloseTime: bigint;
+  /// Time after which resolveMarket becomes legal. Validated server-side
+  /// against MIN_DURATION + landing buffer and MAX_DURATION (7 days).
+  closeTime: bigint;
+  /// Human-readable question string. UTF-8 byte length must be in [1, 200].
+  question: string;
+  /// Magic-derived EOA — passed to signSafeOpHash so personal_sign goes
+  /// through Magic's RPC provider against the Safe's owner.
+  magicEoa: Address;
+};
+
+/// ABI fragment used solely to encode the inner createMarket call. Keep
+/// minimal; do NOT import the full contract ABI here.
+const CREATEMARKET_ABI = [
+  {
+    type: 'function',
+    name: 'createMarket',
+    inputs: [
+      { name: 'mType', type: 'uint8' },
+      { name: 'oracleRef', type: 'bytes32' },
+      { name: 'bettingCloseTime', type: 'uint64' },
+      { name: 'closeTime', type: 'uint64' },
+      { name: 'question', type: 'string' },
+    ],
+    outputs: [{ name: 'id', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// Pure builder: input → /api/aa/sponsor request body. No fetch, no
+/// Magic, no React. Tests target this directly so the wrapper-hotfix
+/// learning ("never let test fixtures be built by something other
+/// than what production uses") composes one level up: the test
+/// decodes the builder output's call.data with the same ABI fragment
+/// and asserts every field at its expected slot, including a
+/// `bettingCloseTime !== closeTime` fixture that exposes any swap
+/// of the two adjacent uint64 slots.
+export function buildCreateMarketSponsorRequest(args: {
+  chainId: number;
+  makoAddress: Address;
+  mType: number;
+  oracleRef: Hex;
+  bettingCloseTime: bigint;
+  closeTime: bigint;
+  question: string;
+}): {
+  kind: 'create_market';
+  chainId: number;
+  call: { to: Address; value: '0x0'; data: Hex };
+} {
+  return {
+    kind: 'create_market',
+    chainId: args.chainId,
+    call: {
+      to: args.makoAddress,
+      value: '0x0',
+      data: encodeFunctionData({
+        abi: CREATEMARKET_ABI,
+        functionName: 'createMarket',
+        args: [
+          args.mType,
+          args.oracleRef,
+          args.bettingCloseTime,
+          args.closeTime,
+          args.question,
+        ],
+      }),
+    },
+  };
+}
+
+/// Browser-side end-to-end: pure builder → /api/aa/sponsor → Magic
+/// personal_sign → /api/aa/send. Outcome shape matches `runPlaceBet`
+/// and `runSendUsdc` so caller hooks can share state machines.
+export async function runCreateMarket(
+  args: RunCreateMarketArgs,
+): Promise<RunOutcome> {
+  const body: SponsorRequestBody = buildCreateMarketSponsorRequest({
+    chainId: args.chainId,
+    makoAddress: args.makoAddress,
+    mType: args.mType,
+    oracleRef: args.oracleRef,
+    bettingCloseTime: args.bettingCloseTime,
+    closeTime: args.closeTime,
+    question: args.question,
+  });
 
   // 1. Sponsor.
   const sponsor = await postJson('/api/aa/sponsor', body);
