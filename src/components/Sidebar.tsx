@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useAccount } from 'wagmi';
 import { Logo } from '@/components/Logo';
-import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
+import { useUser } from '@/lib/use-user';
 
 /**
  * Neobrutalist hover-expand sidebar.
@@ -68,15 +68,29 @@ const items: NavItem[] = [
 ];
 
 /**
- * Bottom-of-sidebar account block. Renders only for authed users.
- * Links to the /profile page.
+ * Bottom-of-sidebar account block. Renders only for authed users —
+ * either Magic-session OR connected wallet. Links to /profile.
+ *
+ * Phase 1E added wallet auth recognition. Before 1E this only checked
+ * `useUser()`, leaving wallet-only users without a sidebar identity
+ * affordance — same gap that hid the SIGN OUT button on the home
+ * header.
  */
 function SidebarAccount({ hovering }: { hovering: boolean }) {
   const { user } = useUser();
+  const { address: connectedWallet } = useAccount();
 
-  if (!user) return null;
+  if (!user && !connectedWallet) return null;
 
-  const initial = user.email.trim().charAt(0).toUpperCase() || '?';
+  // Identity label: Magic email if signed in via OTP, truncated wallet
+  // otherwise. The avatar circle displays the first email letter for
+  // Magic users, "0x" for wallet users.
+  const label = user
+    ? user.email
+    : `${connectedWallet!.slice(0, 6)}…${connectedWallet!.slice(-4)}`;
+  const initial = user
+    ? user.email.trim().charAt(0).toUpperCase() || '?'
+    : '0x';
 
   return (
     <div className="mt-auto border-t-2 border-chrome-divider shrink-0">
@@ -84,9 +98,9 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
         <Link href="/profile" className="flex flex-col gap-2 p-4 hover:bg-chrome-fg/10 transition-colors">
           <div
             className="mako-label text-[10px] text-muted truncate"
-            title={user.email}
+            title={label}
           >
-            {user.email}
+            {label}
           </div>
           <div className="mako-button mako-label w-full px-3! py-1.5! text-[11px]! text-center">
             PROFILE
@@ -96,8 +110,8 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
         <Link href="/profile" className="flex items-center justify-center py-3 hover:bg-chrome-fg/10 transition-colors block">
           <div
             className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm mx-auto"
-            aria-label={`Signed in as ${user.email}`}
-            title={user.email}
+            aria-label={`Signed in as ${label}`}
+            title={label}
           >
             {initial}
           </div>

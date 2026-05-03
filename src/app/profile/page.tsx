@@ -57,7 +57,7 @@ export default function ProfilePage() {
   const queryClient = useQueryClient();
   const { user, isLoading: isUserLoading } = useUser();
   const { address: connectedWallet } = useAccount();
-  const { disconnect } = useDisconnect();
+  const { disconnect, disconnectAsync } = useDisconnect();
   const { writeContractAsync } = useWriteContract();
 
   // Component States. Two transition flags rather than one shared
@@ -171,11 +171,18 @@ export default function ProfilePage() {
   // email sign-in. Symmetric with the Magic-user version below: both
   // paths arrive at /signup, both require the user to deliberately
   // re-authenticate.
-  const handleSwitchWallet = () => {
+  const handleSwitchWallet = async () => {
     if (transitionInFlight) return;
     setSwitching(true);
+    // Use disconnectAsync so we can await wagmi's state update before
+    // navigating. Otherwise /signup mounts with stale-truthy
+    // useAccount() while wagmi is mid-disconnect — which used to
+    // trigger /signup's stuck-on-CONNECTING state under the prior
+    // transition-detector. The intent-based redirect on /signup
+    // handles stale state too, but awaiting here is cheap belt-and-
+    // suspenders.
     try {
-      disconnect();
+      await disconnectAsync();
     } catch (e) {
       console.warn('Wallet disconnect during switch failed', e);
     }
@@ -568,6 +575,19 @@ export default function ProfilePage() {
                         className="mako-input mako-mono text-sm bg-white"
                         autoFocus
                       />
+
+                      {/* Annual-cooldown warning. Displayed at the
+                          moment of change so the user understands the
+                          one-shot nature before they commit. Mirrors
+                          the policy enforced server-side in
+                          /api/user/email/update. */}
+                      <div className="bg-mako-red/10 border-2 border-mako-red p-3 rounded-lg flex gap-2 items-start mt-1">
+                        <svg className="w-5 h-5 text-mako-red shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                        <p className="mako-label text-[10px] text-ink leading-snug">
+                          YOU CAN ONLY CHANGE YOUR EMAIL ONCE PER YEAR. AFTER UPDATING, THE NEXT CHANGE WILL BE LOCKED FOR 365 DAYS. MAKE SURE YOU CAN ACCESS THE NEW ADDRESS AND HAVE 2FA ENABLED ON IT.
+                        </p>
+                      </div>
+
                       {emailEditError && (
                         <p className="mako-body text-xs font-medium text-mako-red">
                           {emailEditError}
@@ -680,7 +700,7 @@ export default function ProfilePage() {
                     <div className="bg-mako-red/10 border-2 border-mako-red p-4 rounded-xl flex gap-3 items-start">
                       <svg className="w-6 h-6 text-mako-red shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
                       <p className="mako-label text-[10px] text-ink leading-relaxed">
-                        2FA ON YOUR EMAIL IS YOUR ACCOUNT SECURITY. EMAIL CAN ONLY BE CHANGED ONCE PER YEAR, SO ENABLE 2FA NOW. HARDWARE WALLET UPGRADES ARE COMING SOON.
+                        2FA ON YOUR EMAIL ACCOUNT IS CURRENTLY YOUR ACCOUNT SECURITY. EMAIL CAN ONLY BE CHANGED ONCE PER YEAR, SO ENABLE 2FA ON YOUR EMAIL PROVIDER NOW. AUTHENTICATOR-APP 2FA AND HARDWARE WALLET UPGRADES ARE COMING SOON.
                       </p>
                     </div>
 

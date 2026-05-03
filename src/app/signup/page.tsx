@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useDisconnect, useAccount } from 'wagmi';
@@ -57,35 +57,69 @@ type SubmitState =
 
 type AuthSuccessBody = { ok: true } & AuthedUser;
 
+/// Tiny child component used to fire `router.push('/')` legally inside
+/// the ConnectButton.Custom render-prop. Render-props can't host hooks
+/// directly, so we render this component when the conditions to
+/// redirect are met and let its useEffect do the navigation. Returns
+/// null so it doesn't perturb layout.
+function WalletConnectRedirectGate({
+  enabled,
+  onRedirect,
+}: {
+  enabled: boolean;
+  onRedirect: () => void;
+}) {
+  useEffect(() => {
+    if (enabled) onRedirect();
+  }, [enabled, onRedirect]);
+  return null;
+}
+
 export default function SignupPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { disconnect } = useDisconnect();
-  const { address: connectedWallet } = useAccount();
+  // useAccount() is called for its subscription side-effect — the
+  // component re-renders when wagmi's account state changes, which
+  // re-runs the ConnectButton.Custom render-prop's connected check.
+  // We don't read `address` here; redirect logic is intent-based and
+  // sources its truth from the render-prop, not this hook (see
+  // walletConnectIntentRef below).
+  useAccount();
 
-  // Route to home only when the wallet TRANSITIONS from disconnected
-  // to connected on this page — not when /signup mounts with a wallet
-  // already cached. Two reasons matter:
+  // Wallet redirect is gated by EXPLICIT user intent on this page,
+  // not on a state-transition guess. Why this matters (Codex review,
+  // 2026-05-03):
   //
-  //   1. A returning visitor whose wagmi state is cached in localStorage
-  //      shouldn't be bounced off /signup before they can use it
-  //      (e.g. to add a different account via the email path).
-  //   2. SWITCH ACCOUNT from /profile calls wagmi's `disconnect()` then
-  //      routes here. The wagmi state update is async — at our mount
-  //      time, `connectedWallet` may still be stale-truthy. A naive
-  //      effect on `[connectedWallet]` would redirect right back to /
-  //      before the disconnect propagates, trapping the user.
+  //   The previous transition-detector approach (`prevConnectedRef`
+  //   watching `useAccount().address`) had two failure modes:
   //
-  // Tracking the previous value via ref means a stale-connected mount
-  // is a no-op; the redirect only fires after the user explicitly
-  // completes a fresh RainbowKit connect from this page.
-  const prevConnectedRef = useRef<string | undefined>(connectedWallet);
-  useEffect(() => {
-    if (!prevConnectedRef.current && connectedWallet) {
-      router.push('/');
-    }
-    prevConnectedRef.current = connectedWallet;
-  }, [connectedWallet, router]);
+  //   1. wagmi rehydration race. On first render `useAccount()` is
+  //      undefined even when localStorage has a cached wallet. Then
+  //      wagmi rehydrates and address flips to truthy. The detector
+  //      fired this as "transition undefined → defined" and bounced
+  //      the user off /signup before they could act.
+  //   2. State desync. `ConnectButton.Custom`'s render-prop computes
+  //      `connected = ready && account && chain`, drawing from
+  //      RainbowKit/wagmi's connector view. Outer `useAccount().address`
+  //      reads a different slice of the same store. They can disagree
+  //      under contention (extension collisions, partial rehydration).
+  //      When render-prop says connected but `useAccount()` doesn't,
+  //      the page rendered the disabled CONNECTING state forever
+  //      because the redirect effect never fired.
+  //
+  // Fix: track an EXPLICIT intent ref that flips true when the user
+  // clicks CONNECT A WALLET on this page. Redirect fires from the
+  // SAME state source that produces the connected render branch
+  // (the render-prop's `connected`), via a child component's
+  // useEffect. Stale-connected mounts without intent get a real
+  // fallback UI ("CONTINUE WITH WALLET" / "USE A DIFFERENT WALLET")
+  // instead of a stuck disabled button.
+  const walletConnectIntentRef = useRef(false);
+  const completeWalletConnectRedirect = useCallback(() => {
+    walletConnectIntentRef.current = false;
+    router.replace('/');
+  }, [router]);
 
   const [email, setEmail] = useState('');
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
@@ -221,6 +255,11 @@ export default function SignupPage() {
     }
 
     inFlightRef.current = true;
+    // Clear any wallet-connect intent before the email path runs.
+    // Avoids a stale wallet intent racing the email flow's own
+    // redirect (e.g., user clicked CONNECT A WALLET, then changed
+    // their mind and used email instead).
+    walletConnectIntentRef.current = false;
     setState({ kind: 'awaiting_otp' });
     let didToken: string | null;
     try {
@@ -480,7 +519,15 @@ export default function SignupPage() {
                 if (!connected) {
                   return (
                     <button
-                      onClick={openConnectModal}
+                      onClick={() => {
+                        // Mark intent BEFORE opening the modal so the
+                        // post-connect render branch can distinguish
+                        // "user just connected on this page → redirect"
+                        // from "user already had a connection cached
+                        // before they got here → don't redirect".
+                        walletConnectIntentRef.current = true;
+                        openConnectModal();
+                      }}
                       type="button"
                       className="w-full rounded-xl border-2 border-ink bg-transparent text-ink px-4 py-3 font-display font-black tracking-widest uppercase transition-colors hover:bg-ink/5"
                     >
@@ -491,9 +538,9 @@ export default function SignupPage() {
 
                 if (chain.unsupported) {
                   return (
-                    <button 
-                      onClick={openChainModal} 
-                      type="button" 
+                    <button
+                      onClick={openChainModal}
+                      type="button"
                       className="w-full rounded-xl border-2 border-mako-red bg-mako-red text-white px-4 py-3 font-display font-black tracking-widest uppercase transition-colors hover:opacity-80"
                     >
                       WRONG NETWORK
@@ -501,14 +548,76 @@ export default function SignupPage() {
                   );
                 }
 
-                // In transient state (connected but waiting for useEffect redirect)
+                // Connected + on the right chain. Two sub-cases:
+                //
+                //   (a) The user JUST clicked CONNECT A WALLET on this
+                //       page — intent ref is true. Render the
+                //       CONNECTING transient state and let
+                //       WalletConnectRedirectGate fire the redirect via
+                //       its own useEffect. The gate sources truth from
+                //       the SAME render-prop state that produced this
+                //       branch, so no state-source desync window
+                //       (the bug we're fixing).
+                //
+                //   (b) The user landed here with a wallet ALREADY
+                //       connected (cached in localStorage from a prior
+                //       session). Intent is false. Show a real
+                //       fallback UI instead of an infinite disabled
+                //       button — they can either continue with the
+                //       cached wallet (CONTINUE) or disconnect to
+                //       switch (USE A DIFFERENT WALLET).
+                if (walletConnectIntentRef.current) {
+                  return (
+                    <>
+                      <WalletConnectRedirectGate
+                        enabled
+                        onRedirect={completeWalletConnectRedirect}
+                      />
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full rounded-xl border-2 border-ink bg-transparent text-ink px-4 py-3 font-display font-black tracking-widest uppercase opacity-50 cursor-wait"
+                        >
+                          CONNECTING...
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            walletConnectIntentRef.current = false;
+                            disconnect();
+                          }}
+                          className="mako-label text-[10px] text-muted underline underline-offset-2 hover:text-ink self-center"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  );
+                }
+
+                // Stale-cached connection without intent. Give the
+                // user a real choice instead of a stuck spinner.
                 return (
-                  <button
-                    disabled
-                    className="w-full rounded-xl border-2 border-ink bg-transparent text-ink px-4 py-3 font-display font-black tracking-widest uppercase opacity-50 cursor-wait"
-                  >
-                    CONNECTING...
-                  </button>
+                  <div className="flex flex-col gap-3">
+                    <button
+                      type="button"
+                      onClick={() => router.replace('/')}
+                      className="w-full rounded-xl border-2 border-ink bg-ink text-paper px-4 py-3 font-display font-black tracking-widest uppercase transition-colors hover:opacity-90"
+                    >
+                      CONTINUE WITH WALLET
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        walletConnectIntentRef.current = false;
+                        disconnect();
+                      }}
+                      className="w-full rounded-xl border-2 border-ink bg-transparent text-ink px-4 py-3 font-display font-black tracking-widest uppercase transition-colors hover:bg-ink/5"
+                    >
+                      USE A DIFFERENT WALLET
+                    </button>
+                  </div>
                 );
               }}
             </ConnectButton.Custom>
