@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { useDisconnect } from 'wagmi';
+import { useDisconnect, useAccount } from 'wagmi';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
 
 import { getMagic } from '@/lib/magic-browser';
 import {
@@ -12,6 +13,7 @@ import {
   removeRecentEmail,
 } from '@/lib/recent-emails';
 import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 // ----------------------------------------------------------------------------
 // /signup — Phase 1A email auth entry point.
@@ -59,6 +61,32 @@ export default function SignupPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { disconnect } = useDisconnect();
+  const { address: connectedWallet } = useAccount();
+
+  // Route to home only when the wallet TRANSITIONS from disconnected
+  // to connected on this page — not when /signup mounts with a wallet
+  // already cached. Two reasons matter:
+  //
+  //   1. A returning visitor whose wagmi state is cached in localStorage
+  //      shouldn't be bounced off /signup before they can use it
+  //      (e.g. to add a different account via the email path).
+  //   2. SWITCH ACCOUNT from /profile calls wagmi's `disconnect()` then
+  //      routes here. The wagmi state update is async — at our mount
+  //      time, `connectedWallet` may still be stale-truthy. A naive
+  //      effect on `[connectedWallet]` would redirect right back to /
+  //      before the disconnect propagates, trapping the user.
+  //
+  // Tracking the previous value via ref means a stale-connected mount
+  // is a no-op; the redirect only fires after the user explicitly
+  // completes a fresh RainbowKit connect from this page.
+  const prevConnectedRef = useRef<string | undefined>(connectedWallet);
+  useEffect(() => {
+    if (!prevConnectedRef.current && connectedWallet) {
+      router.push('/');
+    }
+    prevConnectedRef.current = connectedWallet;
+  }, [connectedWallet, router]);
+
   const [email, setEmail] = useState('');
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
   /// Recent emails for the one-tap return picker. Loaded from
@@ -248,115 +276,240 @@ export default function SignupPage() {
         : 'SIGN IN WITH EMAIL';
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-paper px-4">
-      <div className="flex w-full max-w-sm flex-col items-center">
-        <div className="mb-12">
-          <div className="text-ink text-center font-display text-6xl font-black tracking-tighter">
-            MAKO
+    <main className="flex min-h-screen bg-chrome text-chrome-fg relative selection:bg-mako-red selection:text-white">
+      {/* Theme Toggle in top right */}
+      <div className="absolute top-6 right-6 lg:top-8 lg:right-8 z-50">
+        <ThemeToggle />
+      </div>
+
+      {/* Left Column: Brand Hero (hidden on small screens) */}
+      <div 
+        className="hidden lg:flex flex-1 flex-col justify-between border-r-4 border-ink bg-signal p-12 relative overflow-hidden"
+        style={{
+          backgroundImage: `radial-gradient(rgba(0,0,0,0.1) 2px, transparent 2px)`,
+          backgroundSize: '20px 20px',
+          backgroundPosition: '0 0'
+        }}
+      >
+        {/* Artistic Background Shapes (Bauhaus / Neobrutalist Vibe) */}
+        <div className="absolute -top-32 -right-32 w-[30rem] h-[30rem] bg-mako-red border-4 border-ink rounded-full opacity-30 mix-blend-multiply pointer-events-none"></div>
+        <div className="absolute -bottom-20 -left-10 w-96 h-96 bg-paper border-4 border-ink opacity-50 mix-blend-overlay rotate-[15deg] pointer-events-none"></div>
+        {/* Architectural Corner Crosshairs */}
+        <div className="absolute top-12 left-12 w-6 h-6 border-l-4 border-t-4 border-ink pointer-events-none opacity-50 z-20"></div>
+        <div className="absolute top-12 right-12 w-6 h-6 border-r-4 border-t-4 border-ink pointer-events-none opacity-50 z-20"></div>
+        <div className="absolute bottom-12 left-12 w-6 h-6 border-l-4 border-b-4 border-ink pointer-events-none opacity-50 z-20"></div>
+        <div className="absolute bottom-12 right-12 w-6 h-6 border-r-4 border-b-4 border-ink pointer-events-none opacity-50 z-20"></div>
+
+        {/* Massive background typography — outlined and tilted */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col justify-center opacity-10 pointer-events-none select-none -rotate-[10deg] w-[150%]">
+          <div className="font-display font-black text-[18vw] leading-[0.75] whitespace-nowrap text-transparent [-webkit-text-stroke:4px_#000] text-center">
+            PREDICT
+          </div>
+          <div className="font-display font-black text-[18vw] leading-[0.75] whitespace-nowrap text-ink text-center translate-x-24">
+            TRADE
+          </div>
+          <div className="font-display font-black text-[18vw] leading-[0.75] whitespace-nowrap text-transparent [-webkit-text-stroke:4px_#000] text-center -translate-x-12">
+            PROFIT
           </div>
         </div>
 
-        {/* Recent-emails picker. Renders only when there's at least one
-            remembered email AND the form is in the idle entry state. The
-            click handlers pre-fill the input rather than auto-submit so
-            the user explicitly confirms the email they want to sign back
-            in as. */}
-        {recentEmails && recentEmails.length > 0 && state.kind === 'idle' && (
-          <div className="relative z-10 flex w-full flex-col gap-2 mb-4">
-            <p className="mako-label text-center text-[10px] text-muted">
-              SIGN BACK IN AS
-            </p>
-            <div className="flex flex-col gap-2">
-              {recentEmails.map((recent) => (
-                <div key={recent} className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEmail(recent)}
-                    className="flex-1 rounded-xl border-2 border-ink bg-paper px-4 py-3 mako-body text-ink shadow-brutal-sm text-left hover:bg-surface-elevated transition-colors truncate"
-                  >
-                    {recent}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      removeRecentEmail(recent);
-                      setRecentEmails(getRecentEmails());
-                    }}
-                    aria-label={`Forget ${recent}`}
-                    className="w-10 h-10 flex items-center justify-center border-2 border-ink rounded-xl text-ink hover:bg-mako-red hover:text-white hover:border-mako-red transition-colors shrink-0"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M18 6 6 18" />
-                      <path d="m6 6 12 12" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-            <p className="mako-label text-center text-[10px] text-muted mt-2">
-              OR ADD A NEW ACCOUNT
+        <div className="relative z-10 pt-12 pb-12">
+          <h1 className="font-display text-6xl xl:text-[7rem] font-black tracking-tighter text-ink leading-[0.85]">
+            MAKO<br />
+            MARKET
+          </h1>
+          
+          <div className="mt-12 bg-white border-4 border-ink p-4 px-6 shadow-[8px_8px_0_0_#000000] rotate-3 w-fit">
+            <p className="text-xl xl:text-2xl font-black font-display uppercase tracking-widest text-ink leading-tight max-w-sm">
+              The fastest prediction markets on Monad.
             </p>
           </div>
-        )}
+        </div>
+      </div>
 
-        <form onSubmit={handleEmailSubmit} className="relative z-10 flex w-full flex-col gap-4">
-          <label className="sr-only" htmlFor="email">
-            Email address
-          </label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="name@example.com"
-            disabled={isBusy || isRetryAvailable}
-            required
-            autoComplete="email"
-            className="w-full rounded-xl border-2 border-ink bg-paper px-4 py-3 mako-body text-ink shadow-brutal-sm placeholder:text-subtle focus:border-ink focus:outline-none focus:ring-2 focus:ring-signal disabled:opacity-50"
-          />
+      {/* Right Column: Auth Form */}
+      <div className="flex-1 flex flex-col items-center justify-center p-4 lg:p-12 relative bg-transparent w-full">
+        
+        <div className="flex w-full max-w-md flex-col items-center lg:items-stretch">
+          
+          {/* Mobile Header */}
+          <div className="lg:hidden mb-10 flex flex-col items-center text-center">
+            <div className="font-display text-5xl sm:text-6xl font-black tracking-tighter text-chrome-fg flex flex-col leading-[0.85]">
+              <span>MAKO</span>
+              <span>MARKET</span>
+            </div>
+            <div className="mt-6 mako-sticker mako-sticker--signal scale-90 -rotate-2">
+              MONAD TESTNET
+            </div>
+          </div>
 
-          <button
-            type="submit"
-            disabled={isBusy || isRetryAvailable || !email}
-            className="mako-button mako-button--signal w-full disabled:cursor-not-allowed disabled:opacity-75"
-          >
-            {buttonLabel}
-          </button>
+          <div className="relative z-10 w-full bg-paper border-2 border-ink rounded-xl p-6 sm:p-8 flex flex-col gap-8">
+            
+            {/* Recent-emails picker. */}
+            {recentEmails && recentEmails.length > 0 && state.kind === 'idle' && (
+              <div className="flex flex-col gap-3 pb-6 border-b border-ink/10">
+                <p className="mako-label text-[10px] text-muted uppercase">
+                  SIGN BACK IN
+                </p>
+                <div className="flex flex-col gap-3">
+                  {recentEmails.map((recent) => (
+                    <div key={recent} className="flex items-stretch gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEmail(recent)}
+                        className="flex-1 rounded-xl border-2 border-ink bg-transparent px-4 py-3 mako-body font-bold text-ink text-left hover:bg-ink/5 transition-colors truncate"
+                      >
+                        {recent}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          removeRecentEmail(recent);
+                          setRecentEmails(getRecentEmails());
+                        }}
+                        aria-label={`Forget ${recent}`}
+                        className="w-12 flex items-center justify-center border-2 border-ink rounded-xl bg-transparent text-ink hover:bg-mako-red hover:text-white hover:border-mako-red transition-colors shrink-0"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 6 6 18" />
+                          <path d="m6 6 12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
-          {isRetryAvailable && (
-            <>
-              <p
-                role="status"
-                className="mako-label text-center text-[12px] text-ink"
-              >
-                {state.message}
-              </p>
+            {/* Email Path */}
+            <form onSubmit={handleEmailSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <label className="mako-label text-[10px] text-muted uppercase" htmlFor="email">
+                  {recentEmails && recentEmails.length > 0 ? 'OR USE A DIFFERENT EMAIL' : 'EMAIL ADDRESS'}
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  disabled={isBusy || isRetryAvailable}
+                  required
+                  autoComplete="email"
+                  className="w-full rounded-xl border-2 border-ink bg-transparent px-4 py-3 mako-body font-bold text-ink placeholder:text-subtle focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink disabled:opacity-50 transition-colors"
+                />
+              </div>
+
               <button
-                type="button"
-                onClick={handleRetry}
-                className="mako-button mako-button--signal w-full"
+                type="submit"
+                disabled={isBusy || isRetryAvailable || !email}
+                className="w-full rounded-xl border-2 border-transparent bg-ink text-paper px-4 py-3 font-display font-black tracking-widest uppercase transition-opacity hover:opacity-80 disabled:cursor-not-allowed"
               >
-                RETRY VERIFICATION
+                {buttonLabel}
               </button>
-              <button
-                type="button"
-                onClick={handleUseDifferentEmail}
-                className="mako-label text-center text-[10px] text-muted underline underline-offset-2 hover:text-ink"
-              >
-                Use a different email
-              </button>
-            </>
-          )}
 
-          {state.kind === 'error' && (
-            <p
-              role="alert"
-              className="mako-label text-center text-[12px] text-ink"
-            >
-              {state.message}
-            </p>
-          )}
-        </form>
+              {isRetryAvailable && (
+                <div className="flex flex-col gap-3 mt-2 bg-ink/5 p-4 rounded-xl border-2 border-ink border-dashed">
+                  <p
+                    role="status"
+                    className="mako-label text-center text-[12px] text-ink"
+                  >
+                    {state.message}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleRetry}
+                    className="w-full rounded-xl border-2 border-ink bg-transparent text-ink px-4 py-3 font-display font-black tracking-widest uppercase transition-colors hover:bg-ink/5"
+                  >
+                    RETRY VERIFICATION
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleUseDifferentEmail}
+                    className="mako-label text-center text-[10px] text-muted underline underline-offset-2 hover:text-ink mt-2"
+                  >
+                    Use a different email
+                  </button>
+                </div>
+              )}
+
+              {state.kind === 'error' && (
+                <p
+                  role="alert"
+                  className="mako-label text-center text-[12px] text-mako-red bg-mako-red/10 border-2 border-mako-red p-3 rounded-xl mt-2"
+                >
+                  {state.message}
+                </p>
+              )}
+            </form>
+
+            {/* Divider */}
+            <div className="flex w-full items-center gap-4">
+              <div className="h-px bg-ink/20 flex-1"></div>
+              <p className="mako-label text-[10px] text-muted uppercase">OR</p>
+              <div className="h-px bg-ink/20 flex-1"></div>
+            </div>
+
+            {/* Wallet Path */}
+            <ConnectButton.Custom>
+              {({
+                account,
+                chain,
+                openChainModal,
+                openConnectModal,
+                mounted,
+              }) => {
+                const ready = mounted;
+                const connected = ready && account && chain;
+
+                if (!ready) {
+                  return (
+                    <button 
+                      disabled 
+                      className="w-full rounded-xl border-2 border-ink bg-transparent px-4 py-3 font-display font-black tracking-widest uppercase opacity-50 cursor-not-allowed"
+                    >
+                      LOADING...
+                    </button>
+                  );
+                }
+
+                if (!connected) {
+                  return (
+                    <button
+                      onClick={openConnectModal}
+                      type="button"
+                      className="w-full rounded-xl border-2 border-ink bg-transparent text-ink px-4 py-3 font-display font-black tracking-widest uppercase transition-colors hover:bg-ink/5"
+                    >
+                      CONNECT A WALLET
+                    </button>
+                  );
+                }
+
+                if (chain.unsupported) {
+                  return (
+                    <button 
+                      onClick={openChainModal} 
+                      type="button" 
+                      className="w-full rounded-xl border-2 border-mako-red bg-mako-red text-white px-4 py-3 font-display font-black tracking-widest uppercase transition-colors hover:opacity-80"
+                    >
+                      WRONG NETWORK
+                    </button>
+                  );
+                }
+
+                // In transient state (connected but waiting for useEffect redirect)
+                return (
+                  <button
+                    disabled
+                    className="w-full rounded-xl border-2 border-ink bg-transparent text-ink px-4 py-3 font-display font-black tracking-widest uppercase opacity-50 cursor-wait"
+                  >
+                    CONNECTING...
+                  </button>
+                );
+              }}
+            </ConnectButton.Custom>
+          </div>
+        </div>
       </div>
     </main>
   );

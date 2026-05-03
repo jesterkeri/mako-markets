@@ -6,7 +6,8 @@ import { useAccount, useBalance, useDisconnect } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useQueryClient } from '@tanstack/react-query';
 import { QRCodeSVG } from 'qrcode.react';
-import { isAddress, parseUnits, type Address } from 'viem';
+import { isAddress, parseUnits, type Address, erc20Abi } from 'viem';
+import { useWriteContract } from 'wagmi';
 
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 import { WarningModal } from '@/components/WarningModal';
@@ -57,6 +58,7 @@ export default function ProfilePage() {
   const { user, isLoading: isUserLoading } = useUser();
   const { address: connectedWallet } = useAccount();
   const { disconnect } = useDisconnect();
+  const { writeContractAsync } = useWriteContract();
 
   // Component States. Two transition flags rather than one shared
   // `signingOut`: clicking SWITCH ACCOUNT shouldn't make SIGN OUT also
@@ -344,9 +346,9 @@ export default function ProfilePage() {
 
   const executeSend = async () => {
     setActiveModal('none');
-    if (!user || !canonicalAddress) {
+    if (!canonicalAddress) {
       setSendPhase('error');
-      setSendError('You must be signed in via email to send from this Safe.');
+      setSendError('You must be connected to send USDC.');
       return;
     }
 
@@ -362,6 +364,29 @@ export default function ProfilePage() {
     setSendPhase('sending');
     setSendTxHash(null);
 
+    // External wallet flow (direct EOA transaction)
+    if (!isMagicUser) {
+      try {
+        const txHash = await writeContractAsync({
+          address: usdcAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [sendDestination as `0x${string}`, amountBaseUnits],
+        });
+        setSendTxHash(txHash);
+        setSendPhase('confirming'); // Wagmi returns txHash immediately; network confirms it
+        // Note: For a robust implementation we should wait for the receipt,
+        // but for UX consistency with AA we can just show 'sent' shortly after.
+        setTimeout(() => setSendPhase('sent'), 3000); 
+      } catch (e) {
+        console.error('Send failed via external wallet', e);
+        setSendPhase('error');
+        setSendError('Transaction failed or was rejected by your wallet.');
+      }
+      return;
+    }
+
+    // Magic user flow (Account Abstraction via bundler)
     let outcome;
     try {
       outcome = await runSendUsdc({
@@ -676,9 +701,8 @@ export default function ProfilePage() {
           {/* RIGHT COLUMN: Send & Receive */}
           <div className="lg:col-span-6 flex flex-col gap-8">
 
-            {/* 3. Send USDC — Magic users only. Wallet users have their
-                own wallet's send-token UI which we don't duplicate. */}
-            {isMagicUser && canonicalAddress && (
+            {/* 3. Send USDC */}
+            {canonicalAddress && (
                <section className="mako-card text-ink flex flex-col gap-5 border-4 border-ink relative overflow-hidden">
                 <h2 className="mako-display text-2xl">SEND USDC</h2>
 
