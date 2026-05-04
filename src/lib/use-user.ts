@@ -43,6 +43,23 @@ export type AuthedUser = {
   email: string;
   magicEoa: string;
   safeAddress: string;
+  /// Optional human label set via POST /api/user/profile/update. Null
+  /// when the user hasn't picked one — sidebar/AuthMenu render the
+  /// email or formatted EOA as a fallback.
+  displayName: string | null;
+  /// Plain https URL the user pastes via /api/user/profile/update.
+  /// Validated server-side as https-only, no userinfo, no fragments,
+  /// length ≤ 512. Rendered client-side with
+  /// referrerpolicy="no-referrer". Null when unset.
+  avatarUrl: string | null;
+  /// True when users.totp_secret IS NOT NULL. Drives "DISABLE 2FA" vs
+  /// "ENABLE 2FA" UI affordances. Derived server-side; the encrypted
+  /// secret itself never crosses the wire.
+  totpEnabled: boolean;
+  /// ISO-8601 string. Set by /api/user/totp/verify-enrollment;
+  /// cleared by /api/user/totp/disable. UI's "Enabled YYYY-MM-DD"
+  /// copy reads off this.
+  totpEnabledAt: string | null;
   /// ISO-8601 string. The createdAt of the user's most recent session
   /// row OTHER than the current one. `null` when this is the user's
   /// first-ever sign-in (no prior session exists). UI shows it as the

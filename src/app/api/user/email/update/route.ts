@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
+import { type WireUser } from '@/lib/users-wire';
 
 /// Email-change cooldown in milliseconds. Mako policy: at most one
 /// change per 365 days per user. The recovery model is "secure your
@@ -29,6 +30,13 @@ import { getUserSession } from '@/lib/user-session';
 // POST /api/user/email/update
 //
 // Body: { didToken: string }
+//
+// Bucket B in the wire-shape policy (see src/lib/users-wire.ts). The
+// route returns exactly one identity field — the just-set email — as
+// the source of truth before /api/user/me re-fetches. The response is
+// typed `{ ok: true } & Pick<WireUser, 'email'>` to pin that subset
+// against the canonical wire shape; future schema changes that strip
+// `email` from WireUser would surface here at the type level.
 //
 // Phase 1E: lets a Magic-authed user change the email associated with their
 // Magic account WITHOUT re-issuing Mako's session cookie. The Magic-derived
@@ -243,7 +251,11 @@ export async function POST(req: Request) {
     return Response.json({ error: 'internal' }, { status: 500 });
   }
 
-  return Response.json({ ok: true, email: newEmail });
+  const responseBody: { ok: true } & Pick<WireUser, 'email'> = {
+    ok: true,
+    email: newEmail,
+  };
+  return Response.json(responseBody);
 }
 
 // ── error helpers ───────────────────────────────────────────────────────────

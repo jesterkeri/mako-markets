@@ -36,15 +36,22 @@ const mocks = vi.hoisted(() => {
     verifyAndConsumeRecoveryCode: vi.fn(),
     verifyTotpCode: vi.fn(),
     decryptTotpSecret: vi.fn(),
+    deriveSafeAddress: vi.fn(),
     createSession: vi.fn(),
     cookiesStore: { set: vi.fn() },
     // db query builders. The route runs:
     //   db.select(...).from(users).where(eq(id)).limit(1)            — load user
-    //   db.update(users).set(...).where(eq(id)).returning(...)        — failed-attempt bump
-    //   db.transaction(async tx => { tx.update(users).set... })       — success path
+    //   tx.update(users).set(...).where(eq(id)).returning(...)        — TOTP success
+    //   tx.select({createdAt: sessions.createdAt}).from(sessions)
+    //     .where(...).orderBy(...).limit(1)                           — prior-session lookup
+    //   db.update(users).set(...).where(eq(id)).returning(...)        — failed-attempt bump (mocked via helper)
     selectUser: vi.fn(),
     bumpTotpFailedAttempts: vi.fn(),
     updateUserSuccess: vi.fn(),
+    selectPriorSession: vi.fn(),
+    selectPriorSessionInvocation: { calls: [] as number[] },
+    updateUserSuccessInvocation: { calls: [] as number[] },
+    nextInvocation: 0,
   };
 });
 
@@ -75,6 +82,10 @@ vi.mock('@/lib/totp-crypto', () => ({
   TotpAuthTagMismatch: class TotpAuthTagMismatch extends Error {},
 }));
 
+vi.mock('@/lib/safe', () => ({
+  deriveSafeAddress: mocks.deriveSafeAddress,
+}));
+
 vi.mock('@/lib/user-session', () => ({
   createSession: mocks.createSession,
   USER_SESSION_COOKIE: 'mako_user_session',
@@ -92,6 +103,9 @@ vi.mock('next/headers', () => ({
 // We model each by returning chainable proxies that resolve to the
 // vi.hoisted mocks when awaited.
 vi.mock('@/db/client', () => {
+  // Top-level db.select(...).from(users).where(...).limit() resolves
+  // to the selectUser mock — that's the read on entry that loads the
+  // live user row.
   const buildSelect = () => ({
     from: () => ({
       where: () => ({
@@ -99,6 +113,15 @@ vi.mock('@/db/client', () => {
       }),
     }),
   });
+  type TxSelectChain = {
+    from: () => {
+      where: () => {
+        orderBy: () => {
+          limit: () => Promise<Array<{ createdAt: Date }>>;
+        };
+      };
+    };
+  };
   type TxLike = {
     update: () => {
       set: () => {
@@ -107,12 +130,33 @@ vi.mock('@/db/client', () => {
         };
       };
     };
+    select: (cols?: unknown) => TxSelectChain;
   };
   const tx: TxLike = {
     update: () => ({
       set: () => ({
         where: () => ({
-          returning: () => mocks.updateUserSuccess(),
+          returning: () => {
+            const order = ++mocks.nextInvocation;
+            mocks.updateUserSuccessInvocation.calls.push(order);
+            return mocks.updateUserSuccess();
+          },
+        }),
+      }),
+    }),
+    // tx.select({createdAt}).from(sessions).where(...).orderBy(...).limit(1)
+    // is the prior-session lookup. We model only the chain shape; the
+    // resolved value comes from the selectPriorSession mock.
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            limit: () => {
+              const order = ++mocks.nextInvocation;
+              mocks.selectPriorSessionInvocation.calls.push(order);
+              return mocks.selectPriorSession();
+            },
+          }),
         }),
       }),
     }),
@@ -136,10 +180,19 @@ vi.mock('@/db/schema', () => {
       id: 'users.id',
       email: 'users.email',
       magicEoa: 'users.magic_eoa',
+      displayName: 'users.display_name',
+      avatarUrl: 'users.avatar_url',
       totpSecret: 'users.totp_secret',
+      totpEnabledAt: 'users.totp_enabled_at',
       totpLastUsedStep: 'users.totp_last_used_step',
       totpFailedAttempts: 'users.totp_failed_attempts',
       totpLockedUntil: 'users.totp_locked_until',
+      lastEmailChangedAt: 'users.last_email_changed_at',
+    },
+    sessions: {
+      id: 'sessions.id',
+      userId: 'sessions.user_id',
+      createdAt: 'sessions.created_at',
     },
   };
 });
@@ -150,6 +203,7 @@ vi.mock('@/db/schema', () => {
 vi.mock('drizzle-orm', () => ({
   and: (...args: unknown[]) => ({ args }),
   eq: (a: unknown, b: unknown) => ({ a, b }),
+  desc: (a: unknown) => ({ desc: a }),
   sql: Object.assign(
     (strings: TemplateStringsArray, ...vals: unknown[]) => ({
       strings,
@@ -161,6 +215,9 @@ vi.mock('drizzle-orm', () => ({
 
 afterEach(() => {
   vi.clearAllMocks();
+  mocks.selectPriorSessionInvocation.calls = [];
+  mocks.updateUserSuccessInvocation.calls = [];
+  mocks.nextInvocation = 0;
 });
 
 const CHALLENGE_ID = '00000000-0000-0000-0000-000000000001';
@@ -179,17 +236,25 @@ function userRow(overrides: Partial<{
   id: string;
   email: string;
   magicEoa: string;
+  displayName: string | null;
+  avatarUrl: string | null;
   totpSecret: string | null;
+  totpEnabledAt: Date | null;
   totpLastUsedStep: bigint | null;
   totpLockedUntil: Date | null;
+  lastEmailChangedAt: Date | null;
 }> = {}) {
   return [{
     id: USER_ID,
     email: 'a@b.com',
     magicEoa: MAGIC_EOA,
+    displayName: null,
+    avatarUrl: null,
     totpSecret: 'enc:blob',
+    totpEnabledAt: null,
     totpLastUsedStep: null,
     totpLockedUntil: null,
+    lastEmailChangedAt: null,
     ...overrides,
   }];
 }
@@ -279,22 +344,144 @@ describe('POST /api/user/auth/totp', () => {
     mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
     mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
     mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    mocks.selectPriorSession.mockResolvedValue([]);
     mocks.consumeSigninChallengeInTx.mockResolvedValue(true);
     mocks.createSession.mockResolvedValue('signed-session-token');
+    mocks.deriveSafeAddress.mockReturnValue('0xsafe');
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
     expect(res.status).toBe(200);
-    const body = await res.json() as { ok: boolean; authed: boolean };
+    const body = await res.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(body.authed).toBe(true);
     expect(mocks.consumeSigninChallengeInTx).toHaveBeenCalledTimes(1);
     expect(mocks.createSession).toHaveBeenCalledTimes(1);
+    // Atomicity guard: createSession MUST receive the tx client so
+    // the session insert participates in the same transaction as the
+    // factor-success state reset and challenge consume. A future
+    // refactor that dropped the second arg would silently break
+    // ROLLBACK semantics (the session row would persist on a tx that
+    // otherwise rolled back).
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      USER_ID,
+      expect.objectContaining({ tx: expect.anything() }),
+    );
     expect(mocks.cookiesStore.set).toHaveBeenCalledWith(
       'mako_user_session',
       'signed-session-token',
       expect.objectContaining({ httpOnly: true, sameSite: 'lax' }),
     );
+  });
+
+  it('TOTP success: response keys match WireUser ∪ {ok, authed, lastSignInAt, nextEmailChangeAvailableAt}; no sensitive fields', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
+    mocks.selectUser.mockResolvedValue(userRow({
+      displayName: 'Joshua',
+      avatarUrl: 'https://example.com/a.png',
+      totpEnabledAt: new Date('2026-04-15T00:00:00Z'),
+      lastEmailChangedAt: null,
+    }));
+    mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
+    mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+    mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    mocks.selectPriorSession.mockResolvedValue([]);
+    mocks.consumeSigninChallengeInTx.mockResolvedValue(true);
+    mocks.createSession.mockResolvedValue('signed-session-token');
+    mocks.deriveSafeAddress.mockReturnValue('0xsafe');
+
+    const { POST } = await import('../../app/api/user/auth/totp/route');
+    const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual([
+      'authed',
+      'avatarUrl',
+      'displayName',
+      'email',
+      'lastSignInAt',
+      'magicEoa',
+      'nextEmailChangeAvailableAt',
+      'ok',
+      'safeAddress',
+      'totpEnabled',
+      'totpEnabledAt',
+    ]);
+    expect(body).not.toHaveProperty('totpSecret');
+    expect(body).not.toHaveProperty('totpFailedAttempts');
+    expect(body).not.toHaveProperty('totpLockedUntil');
+    expect(body).not.toHaveProperty('totpLastUsedStep');
+    expect(body).not.toHaveProperty('lastEmailChangedAt');
+    expect(body).not.toHaveProperty('kycStatus');
+    expect(body.totpEnabled).toBe(true);
+    expect(body.totpEnabledAt).toBe('2026-04-15T00:00:00.000Z');
+    expect(body.displayName).toBe('Joshua');
+  });
+
+  it('TOTP success: lastSignInAt = null on first sign-in', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
+    mocks.selectUser.mockResolvedValue(userRow());
+    mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
+    mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+    mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    mocks.selectPriorSession.mockResolvedValue([]);
+    mocks.consumeSigninChallengeInTx.mockResolvedValue(true);
+    mocks.createSession.mockResolvedValue('signed-session-token');
+    mocks.deriveSafeAddress.mockReturnValue('0xsafe');
+
+    const { POST } = await import('../../app/api/user/auth/totp/route');
+    const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+    const body = await res.json() as { lastSignInAt: string | null };
+    expect(body.lastSignInAt).toBeNull();
+  });
+
+  it('TOTP success: lastSignInAt = prior createdAt verbatim (not "now")', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
+    mocks.selectUser.mockResolvedValue(userRow());
+    mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
+    mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+    mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    const priorCreatedAt = new Date('2026-04-15T12:34:56.789Z');
+    mocks.selectPriorSession.mockResolvedValue([{ createdAt: priorCreatedAt }]);
+    mocks.consumeSigninChallengeInTx.mockResolvedValue(true);
+    mocks.createSession.mockResolvedValue('signed-session-token');
+    mocks.deriveSafeAddress.mockReturnValue('0xsafe');
+
+    const { POST } = await import('../../app/api/user/auth/totp/route');
+    const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+    const body = await res.json() as { lastSignInAt: string };
+    expect(body.lastSignInAt).toBe('2026-04-15T12:34:56.789Z');
+  });
+
+  it('TOTP success: prior-session SELECT runs BEFORE createSession (read-before-create ordering)', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
+    mocks.selectUser.mockResolvedValue(userRow());
+    mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
+    mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+    mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    mocks.selectPriorSession.mockResolvedValue([]);
+    mocks.consumeSigninChallengeInTx.mockResolvedValue(true);
+    // createSession is mocked to record its call order via the
+    // shared invocation counter. Simulate the existing tx shape: by
+    // the time createSession runs, selectPriorSession's invocation
+    // number must already be set.
+    let createSessionInvocation = -1;
+    mocks.createSession.mockImplementation(() => {
+      createSessionInvocation = ++mocks.nextInvocation;
+      return Promise.resolve('signed-session-token');
+    });
+    mocks.deriveSafeAddress.mockReturnValue('0xsafe');
+
+    const { POST } = await import('../../app/api/user/auth/totp/route');
+    await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+
+    expect(mocks.selectPriorSessionInvocation.calls.length).toBe(1);
+    const selectOrder = mocks.selectPriorSessionInvocation.calls[0];
+    expect(selectOrder).toBeLessThan(createSessionInvocation);
   });
 
   it('TOTP failure: 401 totp_failed, no challenge consume, atomic failed_attempts++', async () => {
@@ -336,8 +523,11 @@ describe('POST /api/user/auth/totp', () => {
     mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
     mocks.selectUser.mockResolvedValue(userRow());
     mocks.verifyAndConsumeRecoveryCode.mockResolvedValue({ ok: true, consumedId: 'rc-1' });
+    mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    mocks.selectPriorSession.mockResolvedValue([]);
     mocks.consumeSigninChallengeInTx.mockResolvedValue(true);
     mocks.createSession.mockResolvedValue('signed-session-token');
+    mocks.deriveSafeAddress.mockReturnValue('0xsafe');
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, recoveryCode: 'abcd-efgh-jk' }));
@@ -369,6 +559,7 @@ describe('POST /api/user/auth/totp', () => {
     mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
     mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
     mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    mocks.selectPriorSession.mockResolvedValue([]);
     mocks.consumeSigninChallengeInTx.mockResolvedValue(false);
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
@@ -404,6 +595,8 @@ describe('POST /api/user/auth/totp', () => {
     mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
     mocks.selectUser.mockResolvedValue(userRow());
     mocks.verifyAndConsumeRecoveryCode.mockResolvedValue({ ok: true, consumedId: 'rc-1' });
+    mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+    mocks.selectPriorSession.mockResolvedValue([]);
     mocks.consumeSigninChallengeInTx.mockResolvedValue(false);
 
     const { POST } = await import('../../app/api/user/auth/totp/route');

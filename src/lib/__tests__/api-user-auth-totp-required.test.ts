@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   upsertUserStrict: vi.fn(),
   createSession: vi.fn(),
   createSigninChallenge: vi.fn(),
+  selectPriorSession: vi.fn(),
   cookiesStore: { set: vi.fn() },
 }));
 
@@ -68,20 +69,42 @@ vi.mock('next/headers', () => ({
   cookies: async () => mocks.cookiesStore,
 }));
 
-// db.transaction(cb) executes cb with a tx proxy; tx.insert(userSafes)
-// for the user_safes upsert is a no-op chainable resolved Promise.
+// db.transaction(cb) executes cb with a tx proxy. The tx supports:
+//   - tx.insert(userSafes).values(...).onConflictDoNothing()   — userSafes upsert
+//   - tx.select({createdAt}).from(sessions).where(...).orderBy(...).limit(1)
+//                                                                — prior-session lookup
 vi.mock('@/db/client', () => {
-  type TxLike = {
-    insert: () => {
-      values: () => {
-        onConflictDoNothing: () => Promise<unknown[]>;
+  type InsertChain = {
+    values: () => {
+      onConflictDoNothing: () => Promise<unknown[]>;
+    };
+  };
+  type SelectChain = {
+    from: () => {
+      where: () => {
+        orderBy: () => {
+          limit: () => Promise<Array<{ createdAt: Date }>>;
+        };
       };
     };
+  };
+  type TxLike = {
+    insert: () => InsertChain;
+    select: () => SelectChain;
   };
   const tx: TxLike = {
     insert: () => ({
       values: () => ({
         onConflictDoNothing: () => Promise.resolve([]),
+      }),
+    }),
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            limit: () => mocks.selectPriorSession(),
+          }),
+        }),
       }),
     }),
   };
@@ -99,6 +122,17 @@ vi.mock('@/db/schema', () => ({
     userId: 'user_safes.user_id',
     chainId: 'user_safes.chain_id',
   },
+  sessions: {
+    id: 'sessions.id',
+    userId: 'sessions.user_id',
+    createdAt: 'sessions.created_at',
+  },
+}));
+
+vi.mock('drizzle-orm', () => ({
+  and: (...args: unknown[]) => ({ args }),
+  eq: (a: unknown, b: unknown) => ({ a, b }),
+  desc: (a: unknown) => ({ desc: a }),
 }));
 
 afterEach(() => {
@@ -119,7 +153,13 @@ function makeRequest() {
   });
 }
 
-function setupHappyPathBase(opts: { totpSecret: string | null }) {
+function setupHappyPathBase(opts: {
+  totpSecret: string | null;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  totpEnabledAt?: Date | null;
+  lastEmailChangedAt?: Date | null;
+}) {
   mocks.checkSameOrigin.mockReturnValue({ ok: true });
   mocks.validateDidToken.mockResolvedValue(undefined);
   mocks.getMetadataByDidToken.mockResolvedValue({
@@ -132,37 +172,99 @@ function setupHappyPathBase(opts: { totpSecret: string | null }) {
     id: USER_ID,
     email: EMAIL,
     magicEoa: EOA,
+    displayName: opts.displayName ?? null,
+    avatarUrl: opts.avatarUrl ?? null,
     totpSecret: opts.totpSecret,
+    totpEnabledAt: opts.totpEnabledAt ?? null,
+    lastEmailChangedAt: opts.lastEmailChangedAt ?? null,
   });
+  mocks.selectPriorSession.mockResolvedValue([]);
 }
 
 describe('POST /api/user/auth — TOTP branch', () => {
-  it('TOTP-disabled user: issues session cookie, response includes email + safe', async () => {
+  it('TOTP-disabled user: issues session cookie, response is bucket-A wire shape', async () => {
     setupHappyPathBase({ totpSecret: null });
     mocks.createSession.mockResolvedValue('signed-session-token');
 
     const { POST } = await import('../../app/api/user/auth/route');
     const res = await POST(makeRequest());
     expect(res.status).toBe(200);
-    const body = await res.json() as {
-      ok: boolean;
-      authed: boolean;
-      email: string;
-      magicEoa: string;
-      safeAddress: string;
-    };
+    const body = await res.json() as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual([
+      'authed',
+      'avatarUrl',
+      'displayName',
+      'email',
+      'lastSignInAt',
+      'magicEoa',
+      'nextEmailChangeAvailableAt',
+      'ok',
+      'safeAddress',
+      'totpEnabled',
+      'totpEnabledAt',
+    ]);
     expect(body.ok).toBe(true);
     expect(body.authed).toBe(true);
     expect(body.email).toBe(EMAIL);
     expect(body.magicEoa).toBe(EOA);
     expect(body.safeAddress).toBe(SAFE);
+    expect(body.displayName).toBeNull();
+    expect(body.avatarUrl).toBeNull();
+    expect(body.totpEnabled).toBe(false);
+    expect(body.totpEnabledAt).toBeNull();
+    expect(body.lastSignInAt).toBeNull();
+    expect(body).not.toHaveProperty('totpSecret');
+    expect(body).not.toHaveProperty('lastEmailChangedAt');
     expect(mocks.createSession).toHaveBeenCalledTimes(1);
+    // Atomicity guard: createSession MUST receive the tx client so the
+    // session insert participates in the same transaction as
+    // upsertUserStrict + the userSafes upsert. A future refactor that
+    // dropped the second arg would silently break ROLLBACK semantics
+    // (the session row would persist on a tx that otherwise rolled
+    // back).
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      USER_ID,
+      expect.objectContaining({ tx: expect.anything() }),
+    );
     expect(mocks.createSigninChallenge).not.toHaveBeenCalled();
     expect(mocks.cookiesStore.set).toHaveBeenCalledWith(
       'mako_user_session',
       'signed-session-token',
       expect.objectContaining({ httpOnly: true }),
     );
+  });
+
+  it('TOTP-disabled: lastSignInAt = prior createdAt verbatim when prior session exists', async () => {
+    setupHappyPathBase({ totpSecret: null });
+    const priorCreatedAt = new Date('2026-04-15T08:00:00.000Z');
+    mocks.selectPriorSession.mockResolvedValue([{ createdAt: priorCreatedAt }]);
+    mocks.createSession.mockResolvedValue('signed-session-token');
+
+    const { POST } = await import('../../app/api/user/auth/route');
+    const res = await POST(makeRequest());
+    const body = await res.json() as { lastSignInAt: string };
+    expect(body.lastSignInAt).toBe('2026-04-15T08:00:00.000Z');
+  });
+
+  it('TOTP-disabled: prior-session SELECT runs BEFORE createSession (ordering)', async () => {
+    setupHappyPathBase({ totpSecret: null });
+    let priorSessionCallTime = 0;
+    let createSessionCallTime = 0;
+    let counter = 0;
+    mocks.selectPriorSession.mockImplementation(() => {
+      priorSessionCallTime = ++counter;
+      return Promise.resolve([]);
+    });
+    mocks.createSession.mockImplementation(() => {
+      createSessionCallTime = ++counter;
+      return Promise.resolve('signed-session-token');
+    });
+
+    const { POST } = await import('../../app/api/user/auth/route');
+    await POST(makeRequest());
+    expect(priorSessionCallTime).toBeGreaterThan(0);
+    expect(createSessionCallTime).toBeGreaterThan(0);
+    expect(priorSessionCallTime).toBeLessThan(createSessionCallTime);
   });
 
   it('TOTP-enabled user: returns totp_required + challengeId, NO cookie', async () => {

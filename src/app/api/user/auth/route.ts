@@ -1,8 +1,9 @@
 import { cookies } from 'next/headers';
 import { type Address } from 'viem';
+import { desc, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { userSafes } from '@/db/schema';
+import { sessions, userSafes } from '@/db/schema';
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
 import { createSigninChallenge } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
@@ -23,6 +24,9 @@ import {
   IdentityConflictError,
   upsertUserStrict,
 } from '@/lib/user-upsert';
+import { userToWire } from '@/lib/users-wire';
+
+const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
 // ----------------------------------------------------------------------------
 // POST /api/user/auth
@@ -40,14 +44,17 @@ import {
 //      b. derive the Safe address (pure CREATE2; same value on every chain
 //         under Path X) and INSERT a user_safes row per tracked chain id
 //      c. BRANCH:
-//           - users.totp_secret IS NULL → createSession + return cookie
+//           - users.totp_secret IS NULL → read prior-session row BEFORE
+//             createSession (see "lastSignInAt ordering" below);
+//             createSession; return cookie + full wire shape
 //           - users.totp_secret IS NOT NULL → INSERT auth_challenges row
 //             scoped to (user.id, magicEoa, 'totp_signin'); return
 //             { status: 'totp_required', challengeId } and DO NOT issue
 //             a session cookie. The browser holds challengeId only;
 //             /api/user/auth/totp consumes it on successful TOTP /
 //             recovery-code verification.
-// 5. Set the session cookie and return { ok: true } — TOTP-disabled path only
+// 5. Set the session cookie and return the canonical wire shape — TOTP-
+//    disabled path only.
 //
 // Failures map cleanly to status codes:
 //   400  bad body / missing didToken
@@ -57,13 +64,26 @@ import {
 //   500  config error (missing MAGIC_SECRET_KEY) or unexpected DB failure
 //   502  Magic admin API unreachable / metadata lookup failed
 //
-// Success response shape:
-//   { ok: true, authed: true, email, magicEoa, safeAddress }
+// Success response shape (bucket A, see src/lib/users-wire.ts):
+//   { ok: true, authed: true, ...WireUser, lastSignInAt,
+//     nextEmailChangeAvailableAt }
 //
-// `ok: true` keeps any caller that checks `body.ok` happy (symmetric with
-// /api/user/logout). The auth payload is included so the client can
-// `setQueryData(['user'], userPayload)` immediately on receipt and avoid
-// an unauthed→authed flash before /api/user/me has been re-fetched.
+// The shape is identical to /api/user/auth/totp success and to /api/user/me's
+// authed branch. signup/page.tsx strips `ok` and writes the rest into the
+// ['user'] React Query cache, avoiding an unauthed→authed flash before
+// /api/user/me has been re-fetched.
+//
+// lastSignInAt ordering (load-bearing):
+//   The prior-session SELECT runs INSIDE the transaction and BEFORE
+//   `createSession`. Reading after createSession would let the just-
+//   inserted session row count as "prior" — yielding a "last sign-in"
+//   timestamp of "now", which is wrong. The same-tx ordering is what
+//   makes the read correct without `createSession` having to return
+//   the new sid. The transaction does not literally prevent another
+//   concurrent login from inserting a sibling session row; the load-
+//   bearing invariant is only "this route's newly-created session
+//   cannot be counted as prior," which the read-before-create
+//   ordering achieves on its own.
 //
 // Body parsing intentionally rejects unknown extras quietly — the auth route
 // must never echo browser-supplied fields into the DB. Email + EOA come
@@ -127,8 +147,22 @@ export async function POST(req: Request) {
   // so we can compute once and write the same string to both user_safes rows.
   const safeAddress = deriveSafeAddress(eoa);
 
+  type SessionOutcome = {
+    kind: 'session';
+    token: string;
+    user: {
+      email: string;
+      magicEoa: string;
+      displayName: string | null;
+      avatarUrl: string | null;
+      totpSecret: string | null;
+      totpEnabledAt: Date | null;
+    };
+    lastSignInAt: string | null;
+    nextEmailChangeAvailableAt: string | null;
+  };
   type Outcome =
-    | { kind: 'session'; token: string }
+    | SessionOutcome
     | { kind: 'totp_required'; challengeId: string };
 
   let outcome: Outcome;
@@ -167,8 +201,46 @@ export async function POST(req: Request) {
         return { kind: 'totp_required', challengeId };
       }
 
+      // Read prior-session row BEFORE createSession (see header comment
+      // on lastSignInAt ordering). At this point the user has zero or
+      // more existing sessions; none of them are "current" because we
+      // haven't issued one yet, so the latest is the prior sign-in
+      // moment. First-ever sign-in returns lastSignInAt: null.
+      const priorSession = await tx
+        .select({ createdAt: sessions.createdAt })
+        .from(sessions)
+        .where(eq(sessions.userId, user.id))
+        .orderBy(desc(sessions.createdAt))
+        .limit(1);
+      const lastSignInAt =
+        priorSession.length > 0
+          ? priorSession[0].createdAt.toISOString()
+          : null;
+
+      const cooldownAvailable =
+        user.lastEmailChangedAt
+          ? user.lastEmailChangedAt.getTime() + EMAIL_CHANGE_COOLDOWN_MS
+          : null;
+      const nextEmailChangeAvailableAt =
+        cooldownAvailable && Date.now() < cooldownAvailable
+          ? new Date(cooldownAvailable).toISOString()
+          : null;
+
       const token = await createSession(user.id, { tx });
-      return { kind: 'session', token };
+      return {
+        kind: 'session',
+        token,
+        user: {
+          email: user.email,
+          magicEoa: user.magicEoa,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          totpSecret: user.totpSecret,
+          totpEnabledAt: user.totpEnabledAt,
+        },
+        lastSignInAt,
+        nextEmailChangeAvailableAt,
+      };
     });
   } catch (err) {
     if (err instanceof IdentityConflictError) {
@@ -201,9 +273,9 @@ export async function POST(req: Request) {
   return Response.json({
     ok: true,
     authed: true,
-    email,
-    magicEoa: eoa,
-    safeAddress,
+    ...userToWire(outcome.user, safeAddress),
+    lastSignInAt: outcome.lastSignInAt,
+    nextEmailChangeAvailableAt: outcome.nextEmailChangeAvailableAt,
   });
 }
 

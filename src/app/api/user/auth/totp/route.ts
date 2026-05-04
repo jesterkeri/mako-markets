@@ -1,14 +1,16 @@
 import { cookies } from 'next/headers';
-import { and, eq, sql } from 'drizzle-orm';
+import { type Address } from 'viem';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { users } from '@/db/schema';
+import { sessions, users } from '@/db/schema';
 import {
   consumeSigninChallengeInTx,
   validateSigninChallenge,
 } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
 import { verifyAndConsumeRecoveryCode } from '@/lib/recovery-codes';
+import { deriveSafeAddress } from '@/lib/safe';
 import {
   TotpAuthTagMismatch,
   decryptTotpSecret,
@@ -23,6 +25,9 @@ import {
   USER_SESSION_MAX_AGE_SEC,
   createSession,
 } from '@/lib/user-session';
+import { userToWire } from '@/lib/users-wire';
+
+const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
 // ----------------------------------------------------------------------------
 // POST /api/user/auth/totp
@@ -41,7 +46,12 @@ import {
 // Hard invariants:
 //   1. challengeId is the bearer credential. Read-only validate first;
 //      consume only on factor-verify success inside the same transaction
-//      that resets user state and (transitively) issues the cookie.
+//      that resets user state and inserts the new sessions row. The
+//      Set-Cookie header is written by the route AFTER the transaction
+//      commits — that's still atomic-enough for safety because a
+//      ROLLBACK drops the inserted session row, so a stale cookie
+//      lands at a session id that no longer exists and the next
+//      request gets a clean unauthed state.
 //      Wrong-code attempts do NOT consume the challenge.
 //   2. users.totp_secret is decrypted with slot='users.totp_secret' AAD.
 //      Mismatch (TotpAuthTagMismatch) → 500 internal; operator-mediated
@@ -137,15 +147,22 @@ export async function POST(req: Request) {
 
   // Step 2: load the live users row. The challenge pins magic_eoa at
   // issue time; if it has drifted from the live row (defensive guard),
-  // refuse without consuming.
+  // refuse without consuming. SELECT carries the wire-shape columns
+  // (displayName, avatarUrl, totpEnabledAt, lastEmailChangedAt) so the
+  // success response can build the canonical envelope without a second
+  // round-trip.
   const userRows = await db
     .select({
       id: users.id,
       email: users.email,
       magicEoa: users.magicEoa,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
       totpSecret: users.totpSecret,
+      totpEnabledAt: users.totpEnabledAt,
       totpLastUsedStep: users.totpLastUsedStep,
       totpLockedUntil: users.totpLockedUntil,
+      lastEmailChangedAt: users.lastEmailChangedAt,
     })
     .from(users)
     .where(eq(users.id, challenge.userId))
@@ -180,11 +197,21 @@ export async function POST(req: Request) {
   }
 
   // Step 4: factor-specific verification + atomic success transaction.
-  let sessionToken: string | null = null;
+  // The transaction also reads the prior-session row BEFORE
+  // createSession (see "lastSignInAt ordering" in /api/user/auth's
+  // header). We surface lastSignInAt + nextEmailChangeAvailableAt
+  // alongside the cookie token so the route can build the bucket-A
+  // success envelope without a second round-trip.
+  type SuccessPayload = {
+    token: string;
+    lastSignInAt: string | null;
+    nextEmailChangeAvailableAt: string | null;
+  };
+  let success: SuccessPayload | null = null;
   let factorFailed = false;
 
   try {
-    sessionToken = await db.transaction(async (tx) => {
+    success = await db.transaction(async (tx): Promise<SuccessPayload> => {
       if (codeStr !== null) {
         // -- TOTP code path --
         let plaintextSecret: string;
@@ -268,10 +295,35 @@ export async function POST(req: Request) {
       });
       if (!consumed) throw new ChallengeInvalid();
 
-      // Step 6: issue session cookie. createSession participates in the
+      // Step 6: read the prior-session row BEFORE createSession (read-
+      // before-create ordering, see /api/user/auth header). The user
+      // may have zero or more prior sessions; the latest is the
+      // previous sign-in moment. First-ever sign-in returns null.
+      const priorSession = await tx
+        .select({ createdAt: sessions.createdAt })
+        .from(sessions)
+        .where(eq(sessions.userId, user.id))
+        .orderBy(desc(sessions.createdAt))
+        .limit(1);
+      const lastSignInAt =
+        priorSession.length > 0
+          ? priorSession[0].createdAt.toISOString()
+          : null;
+
+      const cooldownAvailable =
+        user.lastEmailChangedAt
+          ? user.lastEmailChangedAt.getTime() + EMAIL_CHANGE_COOLDOWN_MS
+          : null;
+      const nextEmailChangeAvailableAt =
+        cooldownAvailable && Date.now() < cooldownAvailable
+          ? new Date(cooldownAvailable).toISOString()
+          : null;
+
+      // Step 7: issue session cookie. createSession participates in the
       // same transaction so a ROLLBACK from any earlier step also drops
       // the would-be-issued session row.
-      return createSession(user.id, { tx });
+      const token = await createSession(user.id, { tx });
+      return { token, lastSignInAt, nextEmailChangeAvailableAt };
     });
   } catch (err) {
     if (err instanceof FactorFailure) {
@@ -300,14 +352,14 @@ export async function POST(req: Request) {
     return Response.json({ error: 'totp_failed' }, { status: 401 });
   }
 
-  if (!sessionToken) {
+  if (!success) {
     // Belt-and-braces: the only way to fall here is an unexpected
     // codepath. Refuse rather than issue an empty cookie.
     return Response.json({ error: 'internal' }, { status: 500 });
   }
 
   const store = await cookies();
-  store.set(USER_SESSION_COOKIE, sessionToken, {
+  store.set(USER_SESSION_COOKIE, success.token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
@@ -315,10 +367,13 @@ export async function POST(req: Request) {
     maxAge: USER_SESSION_MAX_AGE_SEC,
   });
 
+  const safeAddress = deriveSafeAddress(user.magicEoa as Address);
+
   return Response.json({
     ok: true,
     authed: true,
-    email: user.email,
-    magicEoa: user.magicEoa,
+    ...userToWire(user, safeAddress),
+    lastSignInAt: success.lastSignInAt,
+    nextEmailChangeAvailableAt: success.nextEmailChangeAvailableAt,
   });
 }

@@ -53,9 +53,19 @@ type SubmitState =
   | { kind: 'awaiting_otp' }
   | { kind: 'verifying'; didToken: string }
   | { kind: 'retry_available'; didToken: string; message: string }
+  /// User passed Magic OTP but their account has TOTP enabled. The
+  /// auth route returned `{ ok: true, status: 'totp_required',
+  /// challengeId }` instead of issuing a session. Phase 1G Group 5
+  /// will wire the second-factor step UI and consume the
+  /// challengeId via /api/user/auth/totp; until then we stop the
+  /// flow here with an explicit blocking message rather than silently
+  /// routing the user home unauthed (where they'd see a SIGN IN CTA
+  /// despite having just entered their OTP).
+  | { kind: 'totp_unsupported'; challengeId: string }
   | { kind: 'error'; message: string };
 
 type AuthSuccessBody = { ok: true } & AuthedUser;
+type TotpRequiredBody = { ok: true; status: 'totp_required'; challengeId: string };
 
 /// Tiny child component used to fire `router.push('/')` legally inside
 /// the ConnectButton.Custom render-prop. Render-props can't host hooks
@@ -157,13 +167,50 @@ export default function SignupPage() {
     }
 
     if (res.ok) {
-      // Auto-disconnect any RainbowKit wallet on Magic sign-in. The two
-      // auth methods are mutually exclusive by policy: a Magic-signed-in
-      // user should NOT also have an external wallet connected, because
-      // that ambiguates which key signs the next transaction and clutters
-      // the UI with a wallet chip the user didn't ask for. Account
-      // transfer between Magic and external wallets is a deliberate
-      // Phase 5+ feature, not a side-effect of being signed in twice.
+      // The 200 response can be one of two shapes: bucket-A session
+      // success or `{ ok, status: 'totp_required', challengeId }` for
+      // a TOTP-enabled user. Parse the body BEFORE any success side
+      // effects (wallet disconnect, recent-email store, cache write,
+      // navigation). Routing home on a totp_required would land the
+      // user unauthed at the SIGN IN CTA — they'd think their OTP
+      // failed silently.
+      let body: Partial<AuthSuccessBody> | Partial<TotpRequiredBody> | null = null;
+      try {
+        body = (await res.json()) as
+          | Partial<AuthSuccessBody>
+          | Partial<TotpRequiredBody>;
+      } catch {
+        // Body parse failure on a 2xx response is unexpected. Treat
+        // it as a transient retry case rather than a hard error so
+        // the user can re-submit without restarting Magic.
+        setState({
+          kind: 'retry_available',
+          didToken,
+          message:
+            'Unexpected response from sign-in. The code is still valid; please retry.',
+        });
+        return;
+      }
+
+      if (body && (body as TotpRequiredBody).status === 'totp_required') {
+        // Phase 1G Group 5 will replace this branch with the second-
+        // factor step UI. Until then, surface an explicit blocking
+        // message rather than routing the user home unauthed. The
+        // challenge stays valid for ~5 minutes server-side; the user
+        // can refresh and start over.
+        const challengeId = (body as TotpRequiredBody).challengeId ?? '';
+        setState({ kind: 'totp_unsupported', challengeId });
+        return;
+      }
+
+      // Bucket-A session success. Auto-disconnect any RainbowKit
+      // wallet on Magic sign-in. The two auth methods are mutually
+      // exclusive by policy: a Magic-signed-in user should NOT also
+      // have an external wallet connected, because that ambiguates
+      // which key signs the next transaction and clutters the UI
+      // with a wallet chip the user didn't ask for. Account transfer
+      // between Magic and external wallets is a deliberate Phase 5+
+      // feature, not a side-effect of being signed in twice.
       try {
         disconnect();
       } catch (e) {
@@ -180,31 +227,22 @@ export default function SignupPage() {
 
       // Pre-populate the ['user'] cache before navigating so the home page
       // mounts already authed — no unauthed→authed flash even though
-      // useUser uses refetchOnMount: 'always'. The auth route returns the
-      // full canonical payload alongside { ok: true }; we strip `ok` and
-      // pass through the auth fields verbatim.
-      try {
-        const body = (await res.json()) as Partial<AuthSuccessBody>;
-        if (body && body.authed === true && body.email && body.magicEoa && body.safeAddress) {
-          queryClient.setQueryData(USER_QUERY_KEY, {
-            authed: true,
-            email: body.email,
-            magicEoa: body.magicEoa,
-            safeAddress: body.safeAddress,
-            // First sign-in has no prior session — /api/user/me would
-            // also return null. Refetch will replace this on the home
-            // page mount per useUser's refetchOnMount: 'always'.
-            lastSignInAt: null,
-            // First sign-in also has no prior email change. Same refetch
-            // pattern fills the real value if the user has changed
-            // their email previously across other devices/sessions.
-            nextEmailChangeAvailableAt: null,
-          } satisfies AuthedUser);
-        }
-      } catch {
-        // Body parse failure is non-fatal — the home page will refetch on
-        // mount and pick up the live session via /api/user/me. Worst case
-        // is a brief skeleton while that happens.
+      // useUser uses refetchOnMount: 'always'. The auth route's bucket-A
+      // success envelope is `{ ok, authed, ...WireUser, lastSignInAt,
+      // nextEmailChangeAvailableAt }` (see src/lib/users-wire.ts). The
+      // React Query cache shape is AuthedUser — `ok` is a route envelope
+      // flag, not part of the canonical user shape — so we strip it
+      // before writing. The same destructure pattern applies to any
+      // future bucket-A response the signup flow consumes (e.g. the
+      // /api/user/auth/totp success path Group 5 will wire up).
+      const authedBody = body as Partial<AuthSuccessBody>;
+      if (authedBody && authedBody.authed === true) {
+        const { ok: _ok, ...authedUser } = authedBody as AuthSuccessBody;
+        void _ok;
+        queryClient.setQueryData(
+          USER_QUERY_KEY,
+          authedUser satisfies AuthedUser,
+        );
       }
       router.replace('/');
       return;
@@ -482,6 +520,16 @@ export default function SignupPage() {
                   className="mako-label text-center text-[12px] text-mako-red bg-mako-red/10 border-2 border-mako-red p-3 rounded-xl mt-2"
                 >
                   {state.message}
+                </p>
+              )}
+
+              {state.kind === 'totp_unsupported' && (
+                <p
+                  role="alert"
+                  className="mako-label text-center text-[12px] text-mako-red bg-mako-red/10 border-2 border-mako-red p-3 rounded-xl mt-2"
+                >
+                  Two-factor sign-in isn&apos;t available yet. Please try again
+                  shortly, or contact support.
                 </p>
               )}
             </form>
