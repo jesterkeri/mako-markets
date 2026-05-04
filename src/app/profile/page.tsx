@@ -13,15 +13,13 @@ import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 import { WarningModal } from '@/components/WarningModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
+import { IdentityBlock } from '@/components/profile/IdentityBlock';
+import { TotpSection } from '@/components/profile/TotpSection';
 import { runSendUsdc } from '@/lib/aa-client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS } from '@/lib/contract';
 import { SEND_USDC_MAX_PER_OP_BASE_UNITS } from '@/lib/aa-constants';
-import {
-  EmailUpdateNotSupported,
-  getMagic,
-  updateEmailWithMagic,
-} from '@/lib/magic-browser';
+import { getMagic } from '@/lib/magic-browser';
 
 function formatAddress(address: string | undefined): string {
   if (!address) return '';
@@ -48,10 +46,6 @@ type SendPhase =
   | 'sent'
   | 'reverted'
   | 'error';
-
-/// Email-edit phase. The Magic flow opens an OTP modal on Magic's side;
-/// our state machine just tracks which step Mako is in.
-type EmailEditPhase = 'closed' | 'open' | 'updating' | 'unsupported';
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -86,11 +80,6 @@ export default function ProfilePage() {
   const [sendError, setSendError] = useState('');
   const [sendTxHash, setSendTxHash] = useState<`0x${string}` | null>(null);
 
-  // Email Edit State
-  const [emailEdit, setEmailEdit] = useState<EmailEditPhase>('closed');
-  const [newEmailInput, setNewEmailInput] = useState('');
-  const [emailEditError, setEmailEditError] = useState('');
-
   // Address resolution: Magic Safe takes precedence if logged in,
   // otherwise connected wallet.
   const isMagicUser = !!user;
@@ -119,19 +108,6 @@ export default function ProfilePage() {
   const availableBalance = balanceData ? parseFloat(balanceData.formatted) : 0;
   const availableBalanceBaseUnits =
     balanceData?.value !== undefined ? balanceData.value : 0n;
-
-  // Email-change cooldown state. The server enforces 1 change per
-  // 365 days; /api/user/me surfaces the next-available timestamp so
-  // the UI can disable the EDIT affordance during the cooldown
-  // window. Compute `locked` + a friendly label for the LOCKED chip's
-  // hover tooltip in one place.
-  const emailChangeAvailableAt = user?.nextEmailChangeAvailableAt ?? null;
-  const emailChangeLocked =
-    !!emailChangeAvailableAt &&
-    new Date(emailChangeAvailableAt).getTime() > Date.now();
-  const emailChangeAvailableLabel = emailChangeAvailableAt
-    ? new Date(emailChangeAvailableAt).toLocaleDateString()
-    : '';
 
   // Inline contract-address warning (NOT a hard error — server allowlist
   // catches these too with bad_send_recipient, but a friendly heads-up
@@ -288,87 +264,6 @@ export default function ProfilePage() {
       const msg = e instanceof Error ? e.message : String(e);
       if (/user canceled/i.test(msg)) return;
       console.error('Failed to open magic reveal-key flow', e);
-    }
-  };
-
-  // ── Email change flow ────────────────────────────────────────────────────
-  const handleStartEditEmail = () => {
-    setEmailEditError('');
-    setNewEmailInput('');
-    setEmailEdit('open');
-  };
-
-  const handleCancelEditEmail = () => {
-    setEmailEdit('closed');
-    setNewEmailInput('');
-    setEmailEditError('');
-  };
-
-  const handleSubmitEditEmail = async () => {
-    setEmailEditError('');
-    const trimmed = newEmailInput.trim();
-    if (!trimmed || !trimmed.includes('@')) {
-      setEmailEditError('Enter a valid email address.');
-      return;
-    }
-    if (user && trimmed.toLowerCase() === user.email.toLowerCase()) {
-      setEmailEditError('That is already your email.');
-      return;
-    }
-
-    setEmailEdit('updating');
-    try {
-      const { didToken } = await updateEmailWithMagic({ newEmail: trimmed });
-
-      const res = await fetch('/api/user/email/update', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ didToken }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          availableAt?: string;
-        };
-        if (body.error === 'email_taken') {
-          setEmailEditError('That email is already in use by another account.');
-        } else if (body.error === 'not_allowlisted') {
-          setEmailEditError(
-            'That email is not on the beta allowlist. Pick a different address or contact support.',
-          );
-        } else if (body.error === 'eoa_mismatch') {
-          setEmailEditError(
-            "Magic returned a different wallet than expected. We didn't update anything. Please refresh and try again.",
-          );
-        } else if (body.error === 'cooldown_active') {
-          const when = body.availableAt
-            ? new Date(body.availableAt).toLocaleDateString()
-            : 'later';
-          setEmailEditError(
-            `You can only change your email once per year. Try again on ${when}.`,
-          );
-        } else {
-          setEmailEditError(
-            'Email update failed. Please refresh and try again.',
-          );
-        }
-        setEmailEdit('open');
-        return;
-      }
-
-      await queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
-      handleCancelEditEmail();
-    } catch (e) {
-      if (e instanceof EmailUpdateNotSupported) {
-        setEmailEdit('unsupported');
-        return;
-      }
-      console.error('Email change failed', e);
-      setEmailEditError(
-        'Magic could not complete the change. If you closed the modal, try again.',
-      );
-      setEmailEdit('open');
     }
   };
 
@@ -554,8 +449,6 @@ export default function ProfilePage() {
     );
   }
 
-  const identityLabel = user ? user.email : formatAddress(connectedWallet);
-
   return (
     <main className="flex-1 flex flex-col w-full pb-10">
       <MobileChromeHeader />
@@ -579,119 +472,9 @@ export default function ProfilePage() {
 
             {/* 1. Identity & Balance */}
             <section className="mako-card text-ink flex flex-col">
-              <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-6">
-                <div className="w-full">
-                  <div className="flex justify-between items-center mb-1">
-                    <h2 className="mako-label text-muted">SIGNED IN AS</h2>
-                    {isMagicUser && emailEdit === 'closed' && !emailChangeLocked && (
-                      <button
-                        onClick={handleStartEditEmail}
-                        className="mako-label text-[10px] text-ink opacity-60 hover:opacity-100 hover:underline transition-opacity"
-                      >
-                        EDIT
-                      </button>
-                    )}
-                    {isMagicUser && emailEdit === 'closed' && emailChangeLocked && (
-                      <span
-                        className="mako-label text-[10px] text-muted"
-                        title={`Next change available ${emailChangeAvailableLabel}`}
-                      >
-                        LOCKED
-                      </span>
-                    )}
-                  </div>
-                  <p className="mako-title text-xl break-all leading-tight mb-2">{identityLabel}</p>
+              <IdentityBlock user={user} connectedWallet={connectedWallet} />
 
-                  {isMagicUser && emailEdit === 'open' && (
-                    <div className="mt-3 flex flex-col gap-2 bg-paper p-3 rounded-xl border-2 border-ink">
-                      <label className="mako-label text-[10px] text-ink">NEW EMAIL</label>
-                      <input
-                        type="email"
-                        value={newEmailInput}
-                        onChange={(e) => setNewEmailInput(e.target.value)}
-                        placeholder="you@example.com"
-                        className="mako-input mako-mono text-sm bg-white"
-                        autoFocus
-                      />
-
-                      {/* Annual-cooldown warning. Displayed at the
-                          moment of change so the user understands the
-                          one-shot nature before they commit. Mirrors
-                          the policy enforced server-side in
-                          /api/user/email/update. */}
-                      <div className="bg-mako-red/10 border-2 border-mako-red p-3 rounded-lg flex gap-2 items-start mt-1">
-                        <svg className="w-5 h-5 text-mako-red shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-                        <p className="mako-label text-[10px] text-ink leading-snug">
-                          YOU CAN ONLY CHANGE YOUR EMAIL ONCE PER YEAR. AFTER UPDATING, THE NEXT CHANGE WILL BE LOCKED FOR 365 DAYS. MAKE SURE YOU CAN ACCESS THE NEW ADDRESS AND HAVE 2FA ENABLED ON IT.
-                        </p>
-                      </div>
-
-                      {emailEditError && (
-                        <p className="mako-body text-xs font-medium text-mako-red">
-                          {emailEditError}
-                        </p>
-                      )}
-                      <div className="flex gap-2 mt-1">
-                        <button
-                          onClick={handleSubmitEditEmail}
-                          className="mako-button mako-label text-[10px] flex-1 sm:flex-initial"
-                        >
-                          UPDATE EMAIL
-                        </button>
-                        <button
-                          onClick={handleCancelEditEmail}
-                          className="mako-button mako-button--ghost mako-label text-[10px] flex-1 sm:flex-initial"
-                        >
-                          CANCEL
-                        </button>
-                      </div>
-                      <p className="mako-body text-[10px] text-muted leading-snug mt-1">
-                        Magic will email a code to your new address to confirm. Your wallet address stays the same.
-                      </p>
-                    </div>
-                  )}
-
-                  {isMagicUser && emailEdit === 'updating' && (
-                    <div className="mt-3 flex flex-col gap-2 bg-paper p-3 rounded-xl border-2 border-ink">
-                      <p className="mako-body text-sm text-ink">
-                        Updating email through Magic. Check the new address for an OTP.
-                      </p>
-                    </div>
-                  )}
-
-                  {isMagicUser && emailEdit === 'unsupported' && (
-                    <div className="mt-3 flex flex-col gap-2 bg-paper p-3 rounded-xl border-2 border-mako-red">
-                      <p className="mako-body text-sm text-ink">
-                        Email change is not available in this app. To use a different address, contact support and we will help you migrate your funds.
-                      </p>
-                      <button
-                        onClick={() => setEmailEdit('closed')}
-                        className="mako-button mako-button--ghost mako-label text-[10px] self-start"
-                      >
-                        DISMISS
-                      </button>
-                    </div>
-                  )}
-
-                  {isMagicUser && emailEdit === 'closed' && (
-                    <div className="flex flex-col gap-1">
-                      <p className="mako-label text-[9px] text-muted">
-                        LAST SIGN-IN: {user?.lastSignInAt ? new Date(user.lastSignInAt).toLocaleString() : 'First sign-in'}
-                      </p>
-                      {emailChangeLocked && (
-                        <p className="mako-label text-[9px] text-mako-red">
-                          NEXT EMAIL CHANGE: {emailChangeAvailableLabel}
-                        </p>
-                      )}
-                      <p className="mako-body text-[11px] text-muted leading-snug mt-1 max-w-md">
-                        If you lose access to this email, account recovery is managed through <a href="https://magic.link" target="_blank" rel="noopener noreferrer" className="underline hover:text-ink">Magic</a>. Mako Market cannot recover your funds.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="border-t-2 border-ink pt-6 mt-auto">
+              <div className="border-t-2 border-ink pt-6 mt-6">
                 <div className="flex justify-between items-center mb-2">
                   <h3 className="mako-label text-muted">AVAILABLE BALANCE</h3>
                   <div className="mako-sticker mako-sticker--ink whitespace-nowrap scale-75 origin-right">
@@ -735,11 +518,9 @@ export default function ProfilePage() {
                       <strong className="block mt-2">If your email account is compromised, your funds are at risk.</strong>
                     </p>
 
-                    <div className="bg-mako-red/10 border-2 border-mako-red p-4 rounded-xl flex gap-3 items-start">
-                      <svg className="w-6 h-6 text-mako-red shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-                      <p className="mako-label text-[10px] text-ink leading-relaxed">
-                        2FA ON YOUR EMAIL ACCOUNT IS CURRENTLY YOUR ACCOUNT SECURITY. EMAIL CAN ONLY BE CHANGED ONCE PER YEAR, SO ENABLE 2FA ON YOUR EMAIL PROVIDER NOW. AUTHENTICATOR-APP 2FA AND HARDWARE WALLET UPGRADES ARE COMING SOON.
-                      </p>
+                    <div className="bg-paper border-2 border-ink p-4 rounded-xl">
+                      <h3 className="mako-display text-base text-ink mb-3">TWO-FACTOR AUTHENTICATION</h3>
+                      <TotpSection user={user} />
                     </div>
 
                     <div className="mt-4 pt-6 border-t-2 border-ink/10">
