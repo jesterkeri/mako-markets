@@ -50,7 +50,7 @@ export type AuthedUser = {
   /// Plain https URL the user pastes via /api/user/profile/update.
   /// Validated server-side as https-only, no userinfo, no fragments,
   /// length ≤ 512. Rendered client-side with
-  /// referrerpolicy="no-referrer". Null when unset.
+  /// referrerPolicy="no-referrer" (camelCase JSX). Null when unset.
   avatarUrl: string | null;
   /// True when users.totp_secret IS NOT NULL. Drives "DISABLE 2FA" vs
   /// "ENABLE 2FA" UI affordances. Derived server-side; the encrypted

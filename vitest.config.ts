@@ -3,14 +3,16 @@
 //
 // Sub-phase B introduces a vitest suite for the AA (ERC-4337) primitives.
 // Sub-phase C extends the suite to cover server-only modules (cron auth,
-// allowlist). Scope is intentionally narrow: only `src/lib/__tests__/**`
-// runs through this config. Component / page / API tests (if/when added)
-// get their own config so the AA suite stays fast and frontend deps don't
-// bleed in.
+// allowlist). Phase 1G Group 4 Sub-A extends to component-DOM tests
+// (`*.test.tsx`) for the modal-close-arbitrator + use-focus-trap
+// primitives that are too DOM-driven for pure-logic extraction.
 //
-// Node environment (no jsdom) — every helper under test is pure and runs
-// in the browser via the same module path, but the tests don't touch
-// `window`.
+// Default environment is `node` — fast for the existing pure-helper +
+// route tests. `*.test.tsx` files run under `happy-dom` via the
+// `environmentMatchGlobs` rule below; that's where component + hook
+// tests live. (We swapped from jsdom to happy-dom during Sub-A
+// because jsdom@29 has an ESM/CJS conflict with html-encoding-sniffer
+// that breaks under vitest 2.x.)
 //
 // `server-only` is aliased to an empty stub so vitest can import modules
 // like `cron-auth.ts` and `aa-call-allowlist.ts` that ship with `import
@@ -27,7 +29,13 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/lib/__tests__/**/*.test.ts'],
+    include: [
+      'src/lib/__tests__/**/*.test.ts',
+      'src/lib/__tests__/**/*.test.tsx',
+    ],
+    environmentMatchGlobs: [
+      ['src/lib/__tests__/**/*.test.tsx', 'happy-dom'],
+    ],
     globals: false,
   },
   resolve: {
