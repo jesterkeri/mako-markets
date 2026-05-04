@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
+import type { DbOrTx } from '@/db/client';
 import { recoveryCodes } from '@/db/schema';
 
 // ----------------------------------------------------------------------------
@@ -100,8 +101,6 @@ export async function hashRecoveryCode(code: string): Promise<string> {
   return bcrypt.hash(normalizeCode(code), BCRYPT_COST);
 }
 
-type Tx = Parameters<Parameters<typeof import('@/db/client').db['transaction']>[0]>[0];
-
 /// Verify a submitted recovery code against the user's unused codes inside
 /// the caller's transaction. Returns `{ ok: false }` for both "no match"
 /// and "race lost on conditional UPDATE" — the caller cannot tell the two
@@ -117,7 +116,7 @@ type Tx = Parameters<Parameters<typeof import('@/db/client').db['transaction']>[
 /// loop is ~250ms × N codes (sequential; ~2.5s for 10 codes worst case).
 /// Acceptable cost for consume-once semantics at beta scale.
 export async function verifyAndConsumeRecoveryCode(args: {
-  tx: Tx;
+  tx: DbOrTx;
   userId: string;
   code: string;
 }): Promise<VerifyAndConsumeResult> {

@@ -4,6 +4,7 @@ import { type Address } from 'viem';
 import { db } from '@/db/client';
 import { userSafes } from '@/db/schema';
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
+import { createSigninChallenge } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
 import { normalizeEmail } from '@/lib/email';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
@@ -38,8 +39,15 @@ import {
 //      a. upsertUserStrict — find-or-create the users row (throws on conflict)
 //      b. derive the Safe address (pure CREATE2; same value on every chain
 //         under Path X) and INSERT a user_safes row per tracked chain id
-//      c. createSession — insert the sessions row and HMAC-sign the cookie
-// 5. Set the session cookie and return { ok: true }
+//      c. BRANCH:
+//           - users.totp_secret IS NULL → createSession + return cookie
+//           - users.totp_secret IS NOT NULL → INSERT auth_challenges row
+//             scoped to (user.id, magicEoa, 'totp_signin'); return
+//             { status: 'totp_required', challengeId } and DO NOT issue
+//             a session cookie. The browser holds challengeId only;
+//             /api/user/auth/totp consumes it on successful TOTP /
+//             recovery-code verification.
+// 5. Set the session cookie and return { ok: true } — TOTP-disabled path only
 //
 // Failures map cleanly to status codes:
 //   400  bad body / missing didToken
@@ -119,9 +127,13 @@ export async function POST(req: Request) {
   // so we can compute once and write the same string to both user_safes rows.
   const safeAddress = deriveSafeAddress(eoa);
 
-  let sessionToken: string;
+  type Outcome =
+    | { kind: 'session'; token: string }
+    | { kind: 'totp_required'; challengeId: string };
+
+  let outcome: Outcome;
   try {
-    sessionToken = await db.transaction(async (tx) => {
+    outcome = await db.transaction(async (tx): Promise<Outcome> => {
       const user = await upsertUserStrict(tx, email, eoa);
 
       // user_safes is keyed (user_id, chain_id) and uniquely indexed on the
@@ -143,7 +155,20 @@ export async function POST(req: Request) {
           });
       }
 
-      return createSession(user.id, { tx });
+      // Phase 1G: split on TOTP. upsertUserStrict returns the full users
+      // row including `totpSecret`. Non-null means 2FA is on for this
+      // user; gate the session cookie behind /api/user/auth/totp.
+      if (user.totpSecret) {
+        const challengeId = await createSigninChallenge({
+          tx,
+          userId: user.id,
+          magicEoa: eoa,
+        });
+        return { kind: 'totp_required', challengeId };
+      }
+
+      const token = await createSession(user.id, { tx });
+      return { kind: 'session', token };
     });
   } catch (err) {
     if (err instanceof IdentityConflictError) {
@@ -153,8 +178,19 @@ export async function POST(req: Request) {
     return Response.json({ error: 'internal' }, { status: 500 });
   }
 
+  if (outcome.kind === 'totp_required') {
+    // No userId / email / display name in this response — challengeId is
+    // the bearer credential. /api/user/auth/totp re-loads everything from
+    // the consumed challenge.
+    return Response.json({
+      ok: true,
+      status: 'totp_required',
+      challengeId: outcome.challengeId,
+    });
+  }
+
   const store = await cookies();
-  store.set(USER_SESSION_COOKIE, sessionToken, {
+  store.set(USER_SESSION_COOKIE, outcome.token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
