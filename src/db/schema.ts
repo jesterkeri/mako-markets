@@ -133,6 +133,33 @@ export const users = pgTable('users', {
   lastEmailChangedAt: timestamp('last_email_changed_at', {
     withTimezone: true,
   }),
+  /// Phase 1G: identity surface.
+  /// display_name is mutable any time, validated server-side as
+  /// [a-zA-Z0-9 ._-]{1,32}. Null = use email/EOA fallback in UI.
+  displayName: text('display_name'),
+  /// avatar_url is a plain https:// URL the user pastes. 1G does not
+  /// run server-side fetches against the URL — it's rendered client-side
+  /// with referrerpolicy="no-referrer". Upload-to-Blob is deferred.
+  avatarUrl: text('avatar_url'),
+  /// totp_secret is the AES-256-GCM ciphertext of the user's TOTP secret,
+  /// bound to (userId, slot='users.totp_secret') as AAD. Null = 2FA off.
+  /// NEVER returned over the wire (encrypted or plaintext) on any route.
+  totpSecret: text('totp_secret'),
+  /// Set by verify-enrollment when the conditional UPDATE commits.
+  /// Cleared by the disable route.
+  totpEnabledAt: timestamp('totp_enabled_at', { withTimezone: true }),
+  /// Atomic-increment counter on bad TOTP / recovery-code attempts.
+  /// Crosses the lockout threshold inside the same UPDATE that bumps
+  /// totp_locked_until. Zeroed on successful sign-in.
+  totpFailedAttempts: integer('totp_failed_attempts').notNull().default(0),
+  /// Non-null while a 15-min lockout is in flight. Cleared on successful
+  /// sign-in alongside totp_failed_attempts = 0.
+  totpLockedUntil: timestamp('totp_locked_until', { withTimezone: true }),
+  /// Last successfully-consumed TOTP step (Math.floor(unixTime/30)).
+  /// Sign-in's TOTP path enforces last_used_step IS NULL OR
+  /// last_used_step < matchedStep so a code can't be replayed within
+  /// its 30s window.
+  totpLastUsedStep: bigint('totp_last_used_step', { mode: 'bigint' }),
 }, (t) => ({
   emailUniq: uniqueIndex('users_email_uniq').on(t.email),
   magicEoaUniq: uniqueIndex('users_magic_eoa_uniq').on(t.magicEoa),
@@ -499,6 +526,86 @@ export const aaSponsorLimits = pgTable(
 );
 
 // ----------------------------------------------------------------------------
+// Phase 1G — TOTP 2FA + recovery codes.
+//
+// recovery_codes is bcrypt-hashed one-time codes. The partial index on
+// (user_id) WHERE used_at IS NULL keeps the unused-code lookup cheap as
+// users accumulate consumed codes; the lookup is what
+// verifyAndConsumeRecoveryCode walks (with FOR UPDATE) to find a match.
+//
+// pending_totp_enrollments stores the encrypted TOTP secret between /enroll
+// and /verify-enrollment. Encrypted under slot
+// 'pending_totp_enrollments.encrypted_secret'. Verify-enrollment decrypts,
+// validates the user's first code, RE-ENCRYPTS under
+// 'users.totp_secret' slot (different AAD → different ciphertext) and
+// writes the new blob to users.totp_secret. Stale rows expire at 10 min.
+//
+// auth_challenges is the pre-auth challenge table. /api/user/auth INSERTs
+// a row when a TOTP-enabled user passes the Magic-DID check; the response
+// returns ONLY the challengeId. /api/user/auth/totp validates the
+// challenge read-only, runs factor verification, and on success consumes
+// the challenge atomically inside the same transaction that commits the
+// user-state reset. The session cookie is issued only after that COMMIT.
+// ----------------------------------------------------------------------------
+export const recoveryCodes = pgTable(
+  'recovery_codes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  // The partial unused-only index lives in the SQL migration; Drizzle's
+  // index DSL doesn't reliably emit `WHERE` clauses. Same pattern the
+  // aa_pending_user_ops table uses for its partial uniqueness.
+);
+
+export const pendingTotpEnrollments = pgTable(
+  'pending_totp_enrollments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    encryptedSecret: text('encrypted_secret').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    userIdx: index('pending_totp_user_idx').on(t.userId),
+    expiresIdx: index('pending_totp_expires_idx').on(t.expiresAt),
+  }),
+);
+
+export const authChallenges = pgTable(
+  'auth_challenges',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    magicEoa: text('magic_eoa').notNull(),
+    purpose: text('purpose').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (t) => ({
+    expiresIdx: index('auth_challenges_expires_idx').on(t.expiresAt),
+    // The unconsumed partial index lives in the migration.
+  }),
+);
+
+// ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
 // ----------------------------------------------------------------------------
@@ -523,3 +630,9 @@ export type AaPendingUserOp = typeof aaPendingUserOps.$inferSelect;
 export type NewAaPendingUserOp = typeof aaPendingUserOps.$inferInsert;
 export type AaPendingStatus = AaPendingUserOp['status'];
 export type AaSponsorLimit = typeof aaSponsorLimits.$inferSelect;
+export type RecoveryCode = typeof recoveryCodes.$inferSelect;
+export type NewRecoveryCode = typeof recoveryCodes.$inferInsert;
+export type PendingTotpEnrollment = typeof pendingTotpEnrollments.$inferSelect;
+export type NewPendingTotpEnrollment = typeof pendingTotpEnrollments.$inferInsert;
+export type AuthChallenge = typeof authChallenges.$inferSelect;
+export type NewAuthChallenge = typeof authChallenges.$inferInsert;
