@@ -66,6 +66,7 @@ export default function ProfilePage() {
   // disabled while either flow is in flight (a sign-out mid-switch is
   // a bug we don't try to handle gracefully).
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
   const transitionInFlight = signingOut || switching;
   const [copied, setCopied] = useState(false);
@@ -150,15 +151,45 @@ export default function ProfilePage() {
   const handleSignOut = async () => {
     if (transitionInFlight) return;
     setSigningOut(true);
+    setSignOutError(null);
     try {
-      const res = await fetch('/api/user/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-      if (res.ok) {
+      // Mirror AuthMenu: clear Magic session first, then disconnect wagmi.
+      // Either branch may run independently — wallet-only users land on
+      // /profile via the wallet-auth path and have no Magic session to
+      // clear; legacy mixed-state users (from before mutual-exclusion
+      // enforcement on /signup) need both.
+      //
+      // Sub-F round-2 MAJOR 1: if Magic logout fails (network throw OR
+      // non-OK response), bail with an error banner and DO NOT touch
+      // wagmi. A partial sign-out (wallet disconnected, Magic session
+      // alive) is the worst possible state — the user would land on /
+      // with a stale authed cache and a disconnected wallet, looking
+      // signed in but unable to transact. Same bail policy as AuthMenu.
+      if (user) {
+        let res: Response;
+        try {
+          res = await fetch('/api/user/logout', {
+            method: 'POST',
+            credentials: 'same-origin',
+          });
+        } catch {
+          setSignOutError('Network error during sign-out. Please retry.');
+          return;
+        }
+        if (!res.ok) {
+          setSignOutError('Sign-out failed. Please retry.');
+          return;
+        }
         queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
-        router.push('/');
       }
+      if (connectedWallet) {
+        try {
+          disconnect();
+        } catch (e) {
+          console.warn('Wallet disconnect during sign-out failed', e);
+        }
+      }
+      router.push('/');
     } finally {
       setSigningOut(false);
     }
@@ -1061,13 +1092,23 @@ export default function ProfilePage() {
                   {switching ? 'SWITCHING…' : 'SWITCH ACCOUNT'}
                 </button>
               )}
-               <button
-                onClick={handleSignOut}
-                disabled={transitionInFlight}
-                className="font-display font-black uppercase tracking-widest text-sm px-8 py-4 border-2 border-chrome-divider text-chrome-fg hover:border-chrome-fg hover:bg-chrome-fg hover:text-chrome transition-colors text-center disabled:opacity-50"
-              >
-                {signingOut ? 'SIGNING OUT…' : 'SIGN OUT'}
-              </button>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handleSignOut}
+                  disabled={transitionInFlight}
+                  className="font-display font-black uppercase tracking-widest text-sm px-8 py-4 border-2 border-chrome-divider text-chrome-fg hover:border-chrome-fg hover:bg-chrome-fg hover:text-chrome transition-colors text-center disabled:opacity-50"
+                >
+                  {signingOut ? 'SIGNING OUT…' : 'SIGN OUT'}
+                </button>
+                {signOutError && (
+                  <p
+                    role="alert"
+                    className="font-mono text-xs text-mako-red text-center"
+                  >
+                    {signOutError}
+                  </p>
+                )}
+              </div>
             </section>
           )}
         </div>

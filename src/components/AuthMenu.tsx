@@ -103,7 +103,12 @@ export function AuthMenu({ className }: Props) {
     );
   }
 
-  if (isError && !user) {
+  // /api/user/me errored AND we have no cached user AND no wallet auth
+  // to fall back on. Wallet-only users have a valid auth path that
+  // doesn't touch the Magic session route — surfacing RETRY for them
+  // would override their actual signed-in state with a noisy retry
+  // button. Defer to the wallet-auth branch when a wallet is connected.
+  if (isError && !user && !connectedWallet) {
     return (
       <button
         type="button"

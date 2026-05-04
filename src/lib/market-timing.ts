@@ -112,7 +112,7 @@ export function validateMarketTimestamps(args: {
     return 'Event too soon — markets need at least 5 minutes.';
   }
   if (durationSec > MAX_DURATION_SEC) {
-    return 'Event too far out — Mako markets settle within 7 days.';
+    return 'Event too far out — Mako Market settles within 7 days.';
   }
   return null;
 }

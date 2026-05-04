@@ -200,24 +200,24 @@ export default function CreateMarketPage() {
           setMagicStatusBanner(null);
           return;
         case 'submitted':
-          // Round-8 MINOR 3: bundler accepted but the server-side
-          // receipt poll didn't confirm in 90s. We don't currently
-          // poll from the page, so the previous "WE WILL REDIRECT"
-          // copy was a false promise. Direct the user to /me where
-          // the cron resolver-settled market will appear within
-          // ~5min.
+          // Round-8 MINOR 3 + sub-F MAJOR 2: bundler accepted but the
+          // server-side receipt poll didn't confirm in 90s. /me only
+          // surfaces markets the user has bet positions in — a creator
+          // who hasn't bet won't see their market there. Point them at
+          // the home feed instead, where the market appears once the
+          // cron resolver-settled tx is indexed.
           setMagicStatusBanner(
-            'MARKET SUBMITTED * REFRESH /me IN A FEW MINUTES TO SEE IT',
+            'MARKET SUBMITTED * REFRESH THE HOME FEED IN A FEW MINUTES TO SEE IT',
           );
           return;
         case 'decode_pending':
           setMagicStatusBanner(
-            'TX LANDED * REFRESH /me IN A MOMENT TO SEE YOUR MARKET',
+            'TX LANDED * REFRESH THE HOME FEED IN A MOMENT TO SEE YOUR MARKET',
           );
           return;
         case 'decode_failed':
           setMagicStatusBanner(
-            'TX SUBMITTED BUT MARKET ID NOT FOUND * REFRESH /me OR CHECK EXPLORER',
+            'TX SUBMITTED BUT MARKET ID NOT FOUND * REFRESH THE HOME FEED OR CHECK EXPLORER',
           );
           return;
         case 'reverted':

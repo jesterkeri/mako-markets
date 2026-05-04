@@ -11,6 +11,7 @@ import { MarketResolveActions } from '@/components/MarketResolveActions';
 import { MarketClaimAction } from '@/components/MarketClaimAction';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useIsAdmin } from '@/lib/admin';
+import { useUser } from '@/lib/use-user';
 
 type PositionsTab = 'active' | 'closed';
 
@@ -24,7 +25,17 @@ type UserPosition = {
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
 export default function MyMarketsPage() {
-  const { address } = useAccount();
+  const { address: connectedWallet } = useAccount();
+  const {
+    user,
+    isLoading: isUserLoading,
+    isError: isUserError,
+    refetch: refetchUser,
+  } = useUser();
+  // Phase 1H integration fix: Magic users have no `useAccount()` address
+  // but their bets are owned by their derived Safe. Magic Safe takes
+  // precedence; wallet-only users keep the previous behavior.
+  const address = (user?.safeAddress as `0x${string}` | undefined) ?? connectedWallet;
   const { markets, isLoading, refetch } = useMarkets();
   const isAdmin = useIsAdmin();
   const [tab, setTab] = useState<PositionsTab>('active');
@@ -71,6 +82,58 @@ export default function MyMarketsPage() {
   );
 
   const shown = tab === 'active' ? active : closed;
+
+  // Sub-F round-2 MINOR 1: Magic users start with `user === null` while
+  // /api/user/me is in flight. Without this gate, /me flashes the full
+  // NOT CONNECTED CTA before useUser() resolves, then snaps to authed
+  // state — auth-surface disagreement on cold load. Render a quiet
+  // skeleton while the auth probe is mid-flight; only fall through to
+  // the unauthenticated branch after we know we're actually unauthed.
+  //
+  // Sub-F round-3 NIT 1: skeleton gate widened to fire for ALL
+  // isUserLoading states, including when connectedWallet is truthy.
+  // The cost is one skeleton frame for wallet-only cold loads; the
+  // benefit is mixed-state users no longer flash external-wallet
+  // positions before Magic Safe priority resolves.
+  if (isUserLoading) {
+    return (
+      <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
+        <div className="mako-skeleton h-[160px] w-full max-w-sm" aria-hidden="true" />
+      </main>
+    );
+  }
+
+  // Sub-F round-3 MINOR 1: /api/user/me errored with no cached user.
+  // Without this branch, /me silently degrades to NOT CONNECTED for an
+  // authed Magic user when the auth probe 500s — same auth-surface
+  // disagreement AuthMenu defends against. Wallet-only users bypass
+  // because their auth is independent of /api/user/me.
+  if (isUserError && !user && !connectedWallet) {
+    return (
+      <main className="flex-1 flex flex-col items-center justify-center gap-6 py-20 px-6 text-center">
+        <div className="-rotate-2">
+          <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal p-8">
+            <h1 className="mako-display text-2xl md:text-3xl mb-3">SIGN-IN UNAVAILABLE</h1>
+            <p className="mako-body text-muted max-w-xs mb-4">
+              We couldn&apos;t check your sign-in status. Try again in a moment.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                void refetchUser();
+              }}
+              className="mako-button mako-button--signal mako-label"
+            >
+              RETRY
+            </button>
+          </div>
+        </div>
+        <Link href="/" className="mako-button mako-label">
+          BACK TO FEED
+        </Link>
+      </main>
+    );
+  }
 
   if (!address) {
     return (

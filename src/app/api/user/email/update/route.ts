@@ -192,13 +192,45 @@ export async function POST(req: Request) {
       // Row not matched. Three possibilities:
       //   - EOA pin failed (should be unreachable given equality check
       //     above, but guard anyway since checks straddle a network call)
-      //   - Cooldown WHERE clause rejected (should also be unreachable
-      //     given the pre-read check; this is the defense-in-depth race
-      //     window we accept as never-fires-in-practice)
+      //   - Cooldown WHERE clause rejected (race window: a concurrent
+      //     change request landed between the pre-read above and this
+      //     write — the loser sees last_email_changed_at already
+      //     updated within the cooldown)
       //   - Row id no longer exists (shouldn't happen mid-session)
-      // Surface as eoa_mismatch since that's the most likely cause; the
-      // race-loser cooldown case is rare enough to share the response.
-      return Response.json({ error: 'eoa_mismatch' }, { status: 409 });
+      //
+      // Sub-F MINOR 2: returning eoa_mismatch for the race-loser case
+      // would surface scary wallet-mismatch copy at a user who's just
+      // hit a cooldown collision. Re-read to disambiguate. EOA mismatch
+      // gets the catastrophic message; cooldown loser gets the friendly
+      // 429 cooldown response identical to the read-side gate above.
+      const after = await db
+        .select({
+          magicEoa: users.magicEoa,
+          lastEmailChangedAt: users.lastEmailChangedAt,
+        })
+        .from(users)
+        .where(eq(users.id, session.userId))
+        .limit(1);
+      const row = after[0];
+      if (row && row.magicEoa.toLowerCase() !== didEoa.toLowerCase()) {
+        return Response.json({ error: 'eoa_mismatch' }, { status: 409 });
+      }
+      if (row?.lastEmailChangedAt) {
+        const cooldownEndMs =
+          row.lastEmailChangedAt.getTime() + EMAIL_CHANGE_COOLDOWN_MS;
+        if (Date.now() < cooldownEndMs) {
+          return Response.json(
+            {
+              error: 'cooldown_active',
+              availableAt: new Date(cooldownEndMs).toISOString(),
+            },
+            { status: 429 },
+          );
+        }
+      }
+      // Neither EOA nor cooldown matched — the row id is gone or some
+      // other invariant broke. Generic conflict.
+      return Response.json({ error: 'conflict' }, { status: 409 });
     }
   } catch (err) {
     if (isUniqueViolation(err, 'users_email_uniq')) {

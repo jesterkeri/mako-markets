@@ -35,7 +35,7 @@ export default function AdminOverviewPage() {
 
       <div className="px-6 lg:px-8 py-8 border-b-2 border-ink">
         <div className="mako-label text-muted mb-2">ADMIN · OVERVIEW</div>
-        <h1 className="mako-display text-3xl md:text-4xl mb-2 text-canvas-fg">MAKO MARKETS</h1>
+        <h1 className="mako-display text-3xl md:text-4xl mb-2 text-canvas-fg">MAKO MARKET</h1>
         <p className="mako-label text-muted">
           PLATFORM HEALTH · REFRESHED EVERY 30s
           {data?.window.bounded
