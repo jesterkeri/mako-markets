@@ -15,6 +15,10 @@ import {
 } from '@/lib/totp-crypto';
 import { verifyTotpCode } from '@/lib/totp';
 import {
+  bumpTotpFailedAttempts,
+  isLockoutActive,
+} from '@/lib/totp-lockout';
+import {
   USER_SESSION_COOKIE,
   USER_SESSION_MAX_AGE_SEC,
   createSession,
@@ -65,9 +69,6 @@ import {
 //      live countdown. Lockout window is 15 min; 5 failed attempts (any
 //      mix of TOTP + recovery code) trigger it.
 // ----------------------------------------------------------------------------
-
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_MINUTES = 15;
 
 class FactorFailure extends Error {
   constructor() {
@@ -160,12 +161,11 @@ export async function POST(req: Request) {
 
   // Step 3: lockout check. If the lockout is in flight, reject before
   // doing any HMAC / bcrypt work.
-  const now = Date.now();
-  if (user.totpLockedUntil && user.totpLockedUntil.getTime() > now) {
+  if (isLockoutActive(user.totpLockedUntil)) {
     return Response.json(
       {
         error: 'totp_locked',
-        retryAt: user.totpLockedUntil.toISOString(),
+        retryAt: user.totpLockedUntil!.toISOString(),
       },
       { status: 429 },
     );
@@ -287,33 +287,12 @@ export async function POST(req: Request) {
   }
 
   if (factorFailed) {
-    // Atomic failed-attempt increment + lockout-on-threshold in a single
-    // UPDATE. No read-modify-write race window. RETURNING gives us the
-    // post-update state to decide between 401 (still under threshold)
-    // and 429 (lockout fired).
-    const lockoutInterval = `${LOCKOUT_MINUTES} minutes`;
-    const post = await db
-      .update(users)
-      .set({
-        totpFailedAttempts: sql`${users.totpFailedAttempts} + 1`,
-        totpLockedUntil: sql`CASE
-          WHEN ${users.totpFailedAttempts} + 1 >= ${MAX_FAILED_ATTEMPTS}
-            THEN now() + ${sql.raw(`interval '${lockoutInterval}'`)}
-          ELSE ${users.totpLockedUntil}
-        END`,
-      })
-      .where(eq(users.id, user.id))
-      .returning({
-        attempts: users.totpFailedAttempts,
-        lockedUntil: users.totpLockedUntil,
-      });
-
-    const row = post[0];
-    if (row?.lockedUntil && row.lockedUntil.getTime() > Date.now()) {
+    const post = await bumpTotpFailedAttempts({ userId: user.id });
+    if (isLockoutActive(post.lockedUntil)) {
       return Response.json(
         {
           error: 'totp_locked',
-          retryAt: row.lockedUntil.toISOString(),
+          retryAt: post.lockedUntil!.toISOString(),
         },
         { status: 429 },
       );

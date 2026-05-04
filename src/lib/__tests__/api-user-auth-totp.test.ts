@@ -43,10 +43,15 @@ const mocks = vi.hoisted(() => {
     //   db.update(users).set(...).where(eq(id)).returning(...)        — failed-attempt bump
     //   db.transaction(async tx => { tx.update(users).set... })       — success path
     selectUser: vi.fn(),
-    updateFailedAttempts: vi.fn(),
+    bumpTotpFailedAttempts: vi.fn(),
     updateUserSuccess: vi.fn(),
   };
 });
+
+vi.mock('@/lib/totp-lockout', () => ({
+  bumpTotpFailedAttempts: mocks.bumpTotpFailedAttempts,
+  isLockoutActive: (d: Date | null) => !!d && d.getTime() > Date.now(),
+}));
 
 vi.mock('@/lib/csrf', () => ({
   checkSameOrigin: mocks.checkSameOrigin,
@@ -94,13 +99,6 @@ vi.mock('@/db/client', () => {
       }),
     }),
   });
-  const buildUpdate = () => ({
-    set: () => ({
-      where: () => ({
-        returning: () => mocks.updateFailedAttempts(),
-      }),
-    }),
-  });
   type TxLike = {
     update: () => {
       set: () => {
@@ -122,7 +120,6 @@ vi.mock('@/db/client', () => {
   return {
     db: {
       select: () => buildSelect(),
-      update: () => buildUpdate(),
       transaction: async (cb: (tx: TxLike) => Promise<unknown>) => {
         return cb(tx);
       },
@@ -306,7 +303,7 @@ describe('POST /api/user/auth/totp', () => {
     mocks.selectUser.mockResolvedValue(userRow());
     mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
     mocks.verifyTotpCode.mockReturnValue({ ok: false });
-    mocks.updateFailedAttempts.mockResolvedValue([{ attempts: 1, lockedUntil: null }]);
+    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 1, lockedUntil: null });
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
@@ -314,7 +311,7 @@ describe('POST /api/user/auth/totp', () => {
     expect(await res.json()).toEqual({ error: 'totp_failed' });
     expect(mocks.consumeSigninChallengeInTx).not.toHaveBeenCalled();
     expect(mocks.createSession).not.toHaveBeenCalled();
-    expect(mocks.updateFailedAttempts).toHaveBeenCalledTimes(1);
+    expect(mocks.bumpTotpFailedAttempts).toHaveBeenCalledTimes(1);
   });
 
   it('TOTP failure on the 5th attempt: returns 429 totp_locked with retryAt', async () => {
@@ -324,7 +321,7 @@ describe('POST /api/user/auth/totp', () => {
     mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
     mocks.verifyTotpCode.mockReturnValue({ ok: false });
     const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-    mocks.updateFailedAttempts.mockResolvedValue([{ attempts: 5, lockedUntil }]);
+    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 5, lockedUntil });
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
@@ -356,13 +353,13 @@ describe('POST /api/user/auth/totp', () => {
     mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
     mocks.selectUser.mockResolvedValue(userRow());
     mocks.verifyAndConsumeRecoveryCode.mockResolvedValue({ ok: false });
-    mocks.updateFailedAttempts.mockResolvedValue([{ attempts: 2, lockedUntil: null }]);
+    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 2, lockedUntil: null });
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, recoveryCode: 'abcd-efgh-jk' }));
     expect(res.status).toBe(401);
     expect(mocks.consumeSigninChallengeInTx).not.toHaveBeenCalled();
-    expect(mocks.updateFailedAttempts).toHaveBeenCalledTimes(1);
+    expect(mocks.bumpTotpFailedAttempts).toHaveBeenCalledTimes(1);
   });
 
   it('TOTP success but challenge race-loss: 401 challenge_invalid', async () => {
@@ -389,7 +386,7 @@ describe('POST /api/user/auth/totp', () => {
     mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
     mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
     mocks.updateUserSuccess.mockResolvedValue([]); // replay-guard rejects
-    mocks.updateFailedAttempts.mockResolvedValue([{ attempts: 1, lockedUntil: null }]);
+    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 1, lockedUntil: null });
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
@@ -418,7 +415,7 @@ describe('POST /api/user/auth/totp', () => {
     // No failed_attempts++ on this path — the recovery code matched, so
     // the user wasn't "wrong"; the failure is the challenge being
     // already-consumed/expired by the time we got here.
-    expect(mocks.updateFailedAttempts).not.toHaveBeenCalled();
+    expect(mocks.bumpTotpFailedAttempts).not.toHaveBeenCalled();
   });
 
   it('Malformed challengeId (non-UUID) returns 401 challenge_invalid before DB query', async () => {
