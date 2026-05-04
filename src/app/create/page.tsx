@@ -7,6 +7,7 @@ import { type Hex } from 'viem';
 import { decodeMarketCreatedId, MarketType } from '@/lib/contract';
 import { useCreateMarket, type CreateMarketResult } from '@/lib/hooks';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { toBytes32 } from '@/lib/oracle';
 import { humanizeUntil } from '@/lib/time';
 import {
@@ -262,6 +263,7 @@ export default function CreateMarketPage() {
 
   return (
     <main className="flex-1 flex flex-col w-full pb-16">
+      <MobileChromeHeader />
       {/* Sticky chrome header — matches the home page LIVE MARKETS bar.
           Title condenses NEW MARKET / CREATE / tagline trio into a single
           NEW MARKET label; the tagline reappears on mobile only. */}
@@ -488,19 +490,25 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
           <span className="mako-label text-muted">LIVE PRICES * TAP TO SELECT</span>
           <span className="mako-label text-subtle">REFRESH 10S</span>
         </div>
-        {/* 10 assets laid out 2x5 on mobile and 5-wide x 2 rows on desktop. */}
-        <div className="grid grid-cols-2 md:grid-cols-5 border-t-2 border-ink">
+        {/* 10 assets laid out 2x5 on mobile and 5-wide x 2 rows on desktop.
+            Per-cell border math doesn't survive a column-count change
+            across breakpoints — `i % 5` and `i / 5` only describe the
+            desktop layout, so on mobile the rules fell on the wrong
+            edges and tiles in rows 2-5 were missing their top dividers.
+            Using `gap-[2px]` with an `bg-ink` container draws clean
+            ink-colored dividers between every cell at any column count;
+            cells just need a non-transparent fill so the gaps show
+            through as lines. */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-[2px] bg-ink border-t-2 border-ink">
           {[...CRYPTO_ASSETS]
             .sort((a, b) => a.priority - b.priority)
-            .map((asset, i) => {
+            .map((asset) => {
               const sym = asset.symbol;
               const price = prices?.[sym];
               const change = price?.change24h ?? 0;
               const arrow = change > 0 ? 'UP' : change < 0 ? 'DN' : '*';
               const isSelected = selectedSymbol === sym;
               const isTestnet = price?.testnet === true;
-              const col = i % 5;
-              const row = Math.floor(i / 5);
               return (
                 <button
                   key={sym}
@@ -512,8 +520,6 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
                   }}
                   disabled={isBusy}
                   className={`py-5 px-2 flex flex-col items-center justify-center transition-colors disabled:opacity-50 ${
-                    col > 0 ? 'border-l-2 border-ink' : ''
-                  } ${row > 0 ? 'border-t-2 border-ink' : ''} ${
                     isSelected
                       ? 'bg-ink text-paper'
                       : 'bg-paper hover:bg-surface-elevated'

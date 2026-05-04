@@ -6,8 +6,8 @@ import { useMarkets } from '@/lib/hooks';
 import { useUser } from '@/lib/use-user';
 import { MarketType } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
-import { Logo } from '@/components/Logo';
 import { AuthMenu } from '@/components/AuthMenu';
+import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 type Tab = 'all' | 'crypto' | 'football' | 'nba';
@@ -74,45 +74,6 @@ const EMPTY_COPY: Record<Tab, string> = {
   nba: 'No NBA markets open.',
 };
 
-function MobileHeader() {
-  return (
-    <header className="md:hidden flex items-center justify-between px-4 py-3 bg-chrome text-chrome-fg border-b-2 border-chrome-divider sticky top-0 z-40">
-      <Link href="/" className="flex items-center gap-2">
-        <Logo size={28} className="text-chrome-fg" title="Mako Market" />
-        <span className="font-display font-black text-2xl tracking-tight text-chrome-fg">MAKO</span>
-      </Link>
-      {/* Single SIGN IN / SIGN OUT button surfaces the email-first flow.
-          External-wallet (RainbowKit) connection lives on /me, where the
-          wagmi-driven wallet UI already runs — keeping the home header
-          to one auth action only. */}
-      <div className="flex items-center gap-2">
-        <ThemeToggle />
-        <AuthMenu className="px-3 py-2 text-[11px]" />
-      </div>
-    </header>
-  );
-}
-
-function MobileBottomNav() {
-  return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-chrome border-t-2 border-chrome-divider md:hidden">
-      <div className="flex justify-around items-center h-16 px-2">
-        <Link href="/" className="flex flex-col items-center gap-1 text-mako-red">
-          <div className="w-5 h-5 rounded-sm border-2 border-mako-red bg-mako-red/10" />
-          <span className="mako-label text-[10px] tracking-normal">Markets</span>
-        </Link>
-        <Link href="/me" className="flex flex-col items-center gap-1 text-muted hover:text-chrome-fg">
-          <div className="w-5 h-5 rounded-sm border-2 border-current" />
-          <span className="mako-label text-[10px] tracking-normal">Portfolio</span>
-        </Link>
-        <Link href="/create" className="flex flex-col items-center gap-1 text-muted hover:text-chrome-fg">
-          <div className="w-5 h-5 rounded-sm border-2 border-current" />
-          <span className="mako-label text-[10px] tracking-normal">Create</span>
-        </Link>
-      </div>
-    </nav>
-  );
-}
 
 export default function Home() {
   const { markets, isLoading } = useMarkets();
@@ -140,8 +101,8 @@ export default function Home() {
   });
 
   return (
-    <main className="flex-1 flex flex-col min-h-screen pb-20 md:pb-0">
-      <MobileHeader />
+    <main className="flex-1 flex flex-col min-h-screen">
+      <MobileChromeHeader />
 
       <div className="flex-1 w-full flex flex-col">
         {/* Top header bar — fixed h-12 matches the Sidebar brand row and
@@ -225,8 +186,6 @@ export default function Home() {
           )}
         </div>
       </div>
-
-      <MobileBottomNav />
     </main>
   );
 }

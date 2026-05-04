@@ -10,6 +10,7 @@ import { MarketCard } from '@/components/MarketCard';
 import { MarketResolveActions } from '@/components/MarketResolveActions';
 import { MarketClaimAction } from '@/components/MarketClaimAction';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { useIsAdmin } from '@/lib/admin';
 import { useUser } from '@/lib/use-user';
 
@@ -159,7 +160,9 @@ export default function MyMarketsPage() {
   }
 
   return (
-    <main className="flex-1 flex flex-col w-full pb-20 md:pb-10">
+    <main className="flex-1 flex flex-col w-full pb-10">
+      <MobileChromeHeader />
+
       {/* Sticky chrome header — matches the home page's LIVE MARKETS bar
           (h-12, chrome surface, full-width border). Title shifts from
           PORTFOLIO/MY MARKETS double-stack to a single MY MARKETS label. */}

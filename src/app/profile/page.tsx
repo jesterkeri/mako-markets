@@ -12,6 +12,7 @@ import { useWriteContract } from 'wagmi';
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 import { WarningModal } from '@/components/WarningModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { runSendUsdc } from '@/lib/aa-client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS } from '@/lib/contract';
@@ -539,7 +540,8 @@ export default function ProfilePage() {
 
   if (isUserLoading) {
     return (
-      <main className="flex-1 flex flex-col pb-20 md:pb-10 w-full">
+      <main className="flex-1 flex flex-col pb-10 w-full">
+        <MobileChromeHeader />
         <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
           <h1 className="mako-display text-sm lg:text-base">ACCOUNT</h1>
           <ThemeToggle />
@@ -555,7 +557,8 @@ export default function ProfilePage() {
   const identityLabel = user ? user.email : formatAddress(connectedWallet);
 
   return (
-    <main className="flex-1 flex flex-col w-full pb-20 md:pb-10">
+    <main className="flex-1 flex flex-col w-full pb-10">
+      <MobileChromeHeader />
       <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
         <h1 className="mako-display text-sm lg:text-base">ACCOUNT</h1>
         <ThemeToggle />
