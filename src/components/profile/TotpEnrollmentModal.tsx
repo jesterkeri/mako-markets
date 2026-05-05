@@ -387,6 +387,12 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
                     >
                       COPY SECRET
                     </button>
+                    <p className="mako-body text-[11px] text-muted leading-snug">
+                      Tip: also save this secret to a password manager or
+                      encrypted drive (e.g., Proton Drive, 1Password). It
+                      lets you restore the same code on a new phone if you
+                      lose your current authenticator.
+                    </p>
                   </div>
                 </details>
               )}
@@ -469,7 +475,9 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
                 <strong>Save these recovery codes now.</strong> They are
                 shown <strong>only once</strong>. Each code lets you sign in
                 if you lose access to your authenticator. Store them in a
-                password manager or print them.
+                password manager, encrypted drive (e.g., Proton Drive), or
+                print them and keep the paper somewhere safe — not in the
+                same email account that signs in to Mako.
               </p>
               <RecoveryCodesPanel codes={recoveryCodes} />
               <label className="flex items-start gap-3 cursor-pointer mt-2">

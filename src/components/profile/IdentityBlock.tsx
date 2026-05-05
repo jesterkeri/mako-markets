@@ -19,8 +19,8 @@ import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 //   - SIGNED IN AS: email + EDIT (subject to 365-day cooldown)
 //   - DISPLAY NAME: edit / clear, validated client-side mirroring
 //     /api/user/profile/update server regex
-//   - AVATAR URL: edit / clear, validated client-side; the AvatarCircle
-//     above renders a live preview while editing
+//   - AVATAR: image upload (PNG/JPG/WEBP, ≤4 MB) → server resizes to
+//     256×256 webp and stores in Vercel Blob. REMOVE clears the field.
 //   - LAST SIGN-IN line + recovery copy
 //
 // Wallet-only users see a stripped-down version: address + format,
@@ -34,8 +34,8 @@ import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 // unmount.
 //
 // Display name validation: `/^[A-Za-z0-9 ._-]{1,32}$/` after trim.
-// Avatar URL validation: parses via `new URL()`, rejects non-https,
-// userinfo, fragments, and lengths > 512.
+// Avatar upload: client-side reject for size > 4 MB or non-allow-listed
+// MIME (PNG / JPG / WEBP); server re-validates with sharp.metadata().
 // ----------------------------------------------------------------------------
 
 type IdentityBlockProps = {
@@ -47,7 +47,8 @@ type EmailEditPhase = 'closed' | 'open' | 'updating' | 'unsupported';
 type FieldPhase = 'idle' | 'editing' | 'submitting';
 
 const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
-const AVATAR_URL_MAX = 512;
+const AVATAR_MAX_BYTES = 4 * 1024 * 1024;
+const AVATAR_MIME_ALLOW = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 function formatAddress(address: string | undefined): string {
   if (!address) return '';
@@ -60,24 +61,6 @@ function validateDisplayName(value: string): string | null {
   if (!DISPLAY_NAME_RE.test(trimmed)) {
     return 'Use letters, numbers, space, dot, underscore, or dash. Max 32.';
   }
-  return null;
-}
-
-function validateAvatarUrl(value: string): string | null {
-  if (value.length > AVATAR_URL_MAX) {
-    return `URL must be ${AVATAR_URL_MAX} characters or fewer.`;
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return 'Enter a valid URL (https://…).';
-  }
-  if (parsed.protocol !== 'https:') return 'URL must use https://.';
-  if (parsed.username !== '' || parsed.password !== '') {
-    return 'URL must not contain user:password@host.';
-  }
-  if (parsed.hash !== '') return 'URL must not contain a fragment (#…).';
   return null;
 }
 
@@ -296,33 +279,94 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
     }
   }
 
-  // ── Avatar URL state ──────────────────────────────────────────────────
-  const [avatarPhase, setAvatarPhase] = useState<FieldPhase>('idle');
-  const [avatarInput, setAvatarInput] = useState('');
+  // ── Avatar state ──────────────────────────────────────────────────────
+  // Two distinct in-flight states: `uploading` for POST /avatar/upload
+  // (multipart), `removing` for POST /profile/update with avatarUrl: null.
+  // They could share a single 'busy' phase, but the button labels differ
+  // and a clearer state machine is cheaper than mapping a generic flag
+  // back to copy at render time.
+  type AvatarPhase = 'idle' | 'uploading' | 'removing';
+  const [avatarPhase, setAvatarPhase] = useState<AvatarPhase>('idle');
   const [avatarError, setAvatarError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function handleStartEditAvatar() {
-    setAvatarInput(user?.avatarUrl ?? '');
+  function handlePickFile() {
     setAvatarError('');
-    setAvatarPhase('editing');
+    fileInputRef.current?.click();
   }
 
-  function handleCancelEditAvatar() {
-    setAvatarPhase('idle');
-    setAvatarInput('');
-    setAvatarError('');
-  }
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Reset so picking the same file twice in a row still fires change.
+    e.target.value = '';
+    if (!file) return;
 
-  async function handleSubmitAvatar(value: string | null) {
-    setAvatarError('');
-    if (value !== null) {
-      const err = validateAvatarUrl(value);
-      if (err) {
-        setAvatarError(err);
+    if (file.size === 0) {
+      setAvatarError('Image is empty.');
+      return;
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarError('Image too large. Max 4 MB.');
+      return;
+    }
+    if (!AVATAR_MIME_ALLOW.has(file.type)) {
+      setAvatarError('Use PNG, JPG, or WEBP.');
+      return;
+    }
+
+    setAvatarPhase('uploading');
+    avatarCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    avatarCtrlRef.current = ctrl;
+
+    const fd = new FormData();
+    fd.append('avatar', file);
+
+    try {
+      const res = await fetch('/api/user/avatar/upload', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+        signal: ctrl.signal,
+      });
+      if (!mountedRef.current) return;
+      if (!res.ok) {
+        setAvatarError(
+          res.status === 400 ? 'Image rejected. Try a different file.'
+            : res.status === 401 ? 'Sign-in expired. Please refresh.'
+            : res.status === 502 ? 'Upload service unavailable. Retry shortly.'
+            : 'Upload failed. Please retry.',
+        );
+        setAvatarPhase('idle');
         return;
       }
+      const body = (await res.json()) as Partial<AuthedUser>;
+      if (!mountedRef.current) return;
+      queryClient.setQueryData<AuthedUser>(USER_QUERY_KEY, (old) =>
+        old && old.authed
+          ? { ...old, avatarUrl: body.avatarUrl ?? null }
+          : old,
+      );
+      await queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
+      if (!mountedRef.current) return;
+      setAvatarPhase('idle');
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        if (mountedRef.current && avatarCtrlRef.current === ctrl) {
+          setAvatarPhase('idle');
+        }
+        return;
+      }
+      if (!mountedRef.current) return;
+      console.error('[identity-block] avatar upload failed', err);
+      setAvatarError('Network error. Please retry.');
+      setAvatarPhase('idle');
     }
-    setAvatarPhase('submitting');
+  }
+
+  async function handleClearAvatar() {
+    setAvatarError('');
+    setAvatarPhase('removing');
     avatarCtrlRef.current?.abort();
     const ctrl = new AbortController();
     avatarCtrlRef.current = ctrl;
@@ -332,42 +376,32 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ avatarUrl: value }),
+        body: JSON.stringify({ avatarUrl: null }),
         signal: ctrl.signal,
       });
       if (!mountedRef.current) return;
       if (!res.ok) {
-        setAvatarError(
-          res.status === 400
-            ? 'URL was rejected. Make sure it starts with https:// and has no userinfo or fragment.'
-            : 'Update failed. Please retry.',
-        );
-        setAvatarPhase('editing');
+        setAvatarError('Clear failed. Please retry.');
+        setAvatarPhase('idle');
         return;
       }
-      const body = (await res.json()) as Partial<AuthedUser>;
-      if (!mountedRef.current) return;
-      // Functional cache update (codex round-1 MINOR 2): see
-      // display-name handler for rationale.
       queryClient.setQueryData<AuthedUser>(USER_QUERY_KEY, (old) =>
-        old && old.authed
-          ? { ...old, avatarUrl: body.avatarUrl ?? null }
-          : old,
+        old && old.authed ? { ...old, avatarUrl: null } : old,
       );
       await queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
       if (!mountedRef.current) return;
-      handleCancelEditAvatar();
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') {
+      setAvatarPhase('idle');
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
         if (mountedRef.current && avatarCtrlRef.current === ctrl) {
-          setAvatarPhase('editing');
+          setAvatarPhase('idle');
         }
         return;
       }
       if (!mountedRef.current) return;
-      console.error('[identity-block] avatar URL update failed', e);
+      console.error('[identity-block] avatar clear failed', err);
       setAvatarError('Network error. Please retry.');
-      setAvatarPhase('editing');
+      setAvatarPhase('idle');
     }
   }
 
@@ -398,28 +432,15 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
       ? hero.displayName
       : hero.email;
 
-  // Live preview for avatar editing: pass the current input through the
-  // same parser to decide what to render. If invalid, fall back to the
-  // saved value (or initials).
-  const previewAvatarUrl = (() => {
-    if (avatarPhase !== 'editing') return hero.avatarUrl;
-    if (avatarInput.length === 0) return null;
-    const err = validateAvatarUrl(avatarInput);
-    if (err) return hero.avatarUrl;
-    return avatarInput;
-  })();
-
   return (
     <div className="flex flex-col gap-6">
       {/* Hero row */}
       <div className="flex items-center gap-4">
         <AvatarCircle
-          displayName={
-            avatarPhase === 'editing' ? hero.displayName : hero.displayName
-          }
+          displayName={hero.displayName}
           email={hero.email}
           magicEoa={hero.magicEoa}
-          avatarUrl={previewAvatarUrl}
+          avatarUrl={hero.avatarUrl}
           size={64}
         />
         <div className="flex-1 min-w-0">
@@ -661,91 +682,53 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
         )}
       </div>
 
-      {/* AVATAR URL row */}
-      <div className="flex flex-col gap-1">
-        <div className="flex justify-between items-center">
-          <h3 className="mako-label text-muted">AVATAR URL</h3>
-          {avatarPhase === 'idle' && (
+      {/* AVATAR row — file upload */}
+      <div className="flex flex-col gap-2">
+        <h3 className="mako-label text-muted">AVATAR</h3>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          onChange={(e) => void handleFileChange(e)}
+          className="hidden"
+          disabled={avatarPhase !== 'idle'}
+          aria-label="Upload avatar image"
+        />
+        <div className="flex flex-wrap gap-2 items-center">
+          <button
+            type="button"
+            onClick={handlePickFile}
+            disabled={avatarPhase !== 'idle'}
+            className="mako-button mako-label text-[10px]"
+          >
+            {avatarPhase === 'uploading'
+              ? 'UPLOADING…'
+              : hero.avatarUrl
+                ? 'REPLACE IMAGE'
+                : 'UPLOAD IMAGE'}
+          </button>
+          {hero.avatarUrl && (
             <button
               type="button"
-              onClick={handleStartEditAvatar}
-              className="mako-label text-[10px] text-ink opacity-60 hover:opacity-100 hover:underline transition-opacity"
+              onClick={() => void handleClearAvatar()}
+              disabled={avatarPhase !== 'idle'}
+              className="mako-button mako-button--ghost mako-label text-[10px] text-mako-red"
             >
-              {hero.avatarUrl ? 'EDIT' : 'SET'}
+              {avatarPhase === 'removing' ? 'REMOVING…' : 'REMOVE'}
             </button>
           )}
         </div>
-        {avatarPhase === 'idle' && (
-          <p className="mako-mono text-xs break-all leading-tight">
-            {hero.avatarUrl ?? (
-              <span className="text-muted italic">Not set</span>
-            )}
+        {avatarError && (
+          <p
+            role="alert"
+            className="mako-body text-xs font-medium text-mako-red"
+          >
+            {avatarError}
           </p>
         )}
-        {avatarPhase !== 'idle' && (
-          <div className="mt-1 flex flex-col gap-2 bg-paper p-3 rounded-xl border-2 border-ink">
-            <label className="mako-label text-[10px] text-ink" htmlFor="avatar-url-input">
-              NEW AVATAR URL
-            </label>
-            <input
-              id="avatar-url-input"
-              type="url"
-              value={avatarInput}
-              onChange={(e) => setAvatarInput(e.target.value)}
-              placeholder="https://example.com/avatar.png"
-              className="mako-input mako-mono text-sm bg-white"
-              maxLength={AVATAR_URL_MAX}
-              disabled={avatarPhase === 'submitting'}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void handleSubmitAvatar(avatarInput);
-                }
-              }}
-            />
-            {avatarError && (
-              <p
-                role="alert"
-                className="mako-body text-xs font-medium text-mako-red"
-              >
-                {avatarError}
-              </p>
-            )}
-            <div className="flex gap-2 mt-1 flex-wrap">
-              <button
-                type="button"
-                onClick={() => void handleSubmitAvatar(avatarInput)}
-                disabled={avatarPhase === 'submitting'}
-                className="mako-button mako-label text-[10px] flex-1 sm:flex-initial"
-              >
-                {avatarPhase === 'submitting' ? 'SAVING…' : 'SAVE'}
-              </button>
-              <button
-                type="button"
-                onClick={handleCancelEditAvatar}
-                disabled={avatarPhase === 'submitting'}
-                className="mako-button mako-button--ghost mako-label text-[10px] flex-1 sm:flex-initial"
-              >
-                CANCEL
-              </button>
-              {hero.avatarUrl && (
-                <button
-                  type="button"
-                  onClick={() => void handleSubmitAvatar(null)}
-                  disabled={avatarPhase === 'submitting'}
-                  className="mako-button mako-button--ghost mako-label text-[10px] text-mako-red"
-                >
-                  CLEAR
-                </button>
-              )}
-            </div>
-            <p className="mako-body text-[10px] text-muted leading-snug mt-1">
-              https only, no fragments. Image is rendered with
-              referrerPolicy=&quot;no-referrer&quot;. Up to 512 characters.
-            </p>
-          </div>
-        )}
+        <p className="mako-body text-[10px] text-muted leading-snug">
+          PNG, JPG, or WEBP up to 4 MB. Server resizes to 256×256.
+        </p>
       </div>
     </div>
   );

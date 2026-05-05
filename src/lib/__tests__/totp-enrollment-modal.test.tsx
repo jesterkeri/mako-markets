@@ -253,6 +253,45 @@ describe('TotpEnrollmentModal', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('Save-gate: top header CLOSE button refused while savedConfirmed=false (real-browser regression repro)', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(ENROLL_RES),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, recoveryCodes: TEN_CODES }),
+      });
+    const onClose = vi.fn();
+    const { container, queryByTestId } = render(
+      withQc(<TotpEnrollmentModal open={true} onClose={onClose} />),
+    );
+    await waitFor(() => expect(queryByTestId('qr-code')).not.toBeNull());
+    const codeInput = container.querySelector(
+      '#totp-enroll-code',
+    ) as HTMLInputElement;
+    fireEvent.change(codeInput, { target: { value: '123456' } });
+    const verifyBtn = Array.from(
+      container.querySelectorAll('button'),
+    ).find((b) => b.textContent === 'VERIFY')!;
+    fireEvent.click(verifyBtn);
+    await waitFor(() => {
+      expect(container.textContent).toContain(TEN_CODES[0]);
+    });
+
+    // The top header CLOSE button has aria-label="Close" — find by that
+    // (the bottom button text is "CHECK THE BOX TO CONTINUE" when
+    // savedConfirmed=false, so textContent doesn't match here).
+    const headerClose = container.querySelector(
+      'button[aria-label="Close"]',
+    ) as HTMLButtonElement;
+    expect(headerClose).not.toBeNull();
+    expect(headerClose.disabled).toBe(true);
+    fireEvent.click(headerClose);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('Tick checkbox + close → optimistic cache flips totpEnabled=true + onClose fires', async () => {
     fetchMock
       .mockResolvedValueOnce({

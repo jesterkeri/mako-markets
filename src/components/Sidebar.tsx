@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
+import { AvatarCircle } from '@/components/AvatarCircle';
 import { Logo } from '@/components/Logo';
 import { useUser } from '@/lib/use-user';
 
@@ -107,14 +108,28 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
           </div>
         </Link>
       ) : (
-        <Link href="/profile" className="flex items-center justify-center py-3 hover:bg-chrome-fg/10 transition-colors block">
-          <div
-            className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm mx-auto"
-            aria-label={`Signed in as ${label}`}
-            title={label}
-          >
-            {initial}
-          </div>
+        <Link
+          href="/profile"
+          className="flex items-center justify-center py-3 hover:bg-chrome-fg/10 transition-colors block"
+          aria-label={`Signed in as ${label}`}
+          title={label}
+        >
+          {user ? (
+            <AvatarCircle
+              displayName={user.displayName}
+              email={user.email}
+              magicEoa={user.magicEoa}
+              avatarUrl={user.avatarUrl}
+              size={36}
+              className="mx-auto"
+            />
+          ) : (
+            <div
+              className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm mx-auto"
+            >
+              {initial}
+            </div>
+          )}
         </Link>
       )}
     </div>

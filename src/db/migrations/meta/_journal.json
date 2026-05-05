@@ -29,6 +29,13 @@
       "when": 1778199600000,
       "tag": "0003_users_last_email_changed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778803200000,
+      "tag": "0004_users_display_name_avatar_totp",
+      "breakpoints": true
     }
   ]
 }

@@ -82,16 +82,22 @@ describe('IdentityBlock — wallet-only branch', () => {
   });
 });
 
-// When both displayName and avatarUrl are null, two SET buttons
-// appear. Index 0 is the display-name section; index 1 is the
-// avatar-url section. Same goes for SAVE / CANCEL / CLEAR while
-// both edit forms might be open simultaneously.
+// Display-name section uses a SET / EDIT / CLEAR button affordance.
+// Avatar section is now a file-upload picker (no SET; the trigger is
+// UPLOAD IMAGE / REPLACE IMAGE depending on whether a value exists).
 function clickSetForDisplayName(getAllByText: (s: string) => HTMLElement[]) {
   fireEvent.click(getAllByText('SET')[0]);
 }
-function clickSetForAvatarUrl(getAllByText: (s: string) => HTMLElement[]) {
-  const all = getAllByText('SET');
-  fireEvent.click(all[all.length - 1]);
+
+function getAvatarFileInput(): HTMLInputElement {
+  const input = document.querySelector('input[type="file"]');
+  if (!input) throw new Error('avatar file input not found');
+  return input as HTMLInputElement;
+}
+
+function pickAvatarFile(file: File) {
+  const input = getAvatarFileInput();
+  fireEvent.change(input, { target: { files: [file] } });
 }
 
 describe('IdentityBlock — display name', () => {
@@ -234,67 +240,51 @@ describe('IdentityBlock — display name', () => {
   });
 });
 
-describe('IdentityBlock — avatar URL', () => {
-  it('client-side validation rejects http://, userinfo, fragments, length > 512', async () => {
+describe('IdentityBlock — avatar upload', () => {
+  it('client-side validation rejects oversize file and disallowed MIME without fetching', async () => {
     const qc = makeQueryClient(MAGIC_USER);
-    const { getByText, getByLabelText, getAllByText } = render(
+    render(
       withProvider(
         <IdentityBlock user={MAGIC_USER} connectedWallet={undefined} />,
         qc,
       ),
     );
-    clickSetForAvatarUrl(getAllByText);
-
-    const input = getByLabelText('NEW AVATAR URL') as HTMLInputElement;
 
     function getAlert(): HTMLElement | null {
       return document.querySelector('[role="alert"]');
     }
 
-    fireEvent.change(input, { target: { value: 'http://example.com/a.png' } });
-    fireEvent.click(getByText('SAVE'));
+    // Oversize: 5 MB > 4 MB cap.
+    const oversize = new File(['x'.repeat(5 * 1024 * 1024)], 'big.png', {
+      type: 'image/png',
+    });
+    pickAvatarFile(oversize);
     await waitFor(() => {
-      const alert = getAlert();
-      expect(alert?.textContent ?? '').toMatch(/https/i);
+      expect(getAlert()?.textContent ?? '').toMatch(/4 MB/);
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    fireEvent.change(input, {
-      target: { value: 'https://user:pass@example.com/a.png' },
-    });
-    fireEvent.click(getByText('SAVE'));
+    // Disallowed MIME: image/gif is not in the allowlist.
+    const wrongMime = new File(['gif'], 'a.gif', { type: 'image/gif' });
+    pickAvatarFile(wrongMime);
     await waitFor(() => {
-      const alert = getAlert();
-      expect(alert?.textContent ?? '').toMatch(/user:password@host/i);
+      expect(getAlert()?.textContent ?? '').toMatch(/PNG, JPG, or WEBP/i);
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    fireEvent.change(input, {
-      target: { value: 'https://example.com/a.png#frag' },
-    });
-    fireEvent.click(getByText('SAVE'));
+    // Empty file: zero bytes.
+    const empty = new File([], 'empty.png', { type: 'image/png' });
+    pickAvatarFile(empty);
     await waitFor(() => {
-      const alert = getAlert();
-      expect(alert?.textContent ?? '').toMatch(/fragment/i);
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-
-    // Length > 512. The native maxLength caps keyboard entry; a paste
-    // / programmatic value of 513 chars should still bounce off the
-    // length guard without a fetch (codex round-2 MINOR).
-    input.removeAttribute('maxlength');
-    const longUrl = 'https://example.com/' + 'a'.repeat(500); // 520 chars
-    expect(longUrl.length).toBeGreaterThan(512);
-    fireEvent.change(input, { target: { value: longUrl } });
-    fireEvent.click(getByText('SAVE'));
-    await waitFor(() => {
-      expect(getAlert()?.textContent ?? '').toMatch(/512/);
+      expect(getAlert()?.textContent ?? '').toMatch(/empty/i);
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('SAVE posts { avatarUrl: value } and writes optimistic cache', async () => {
+  it('upload posts FormData to /api/user/avatar/upload and writes optimistic cache', async () => {
     const qc = makeQueryClient(MAGIC_USER);
+    const blobUrl =
+      'https://abc123.public.blob.vercel-storage.com/avatars/u/123.webp';
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -302,30 +292,34 @@ describe('IdentityBlock — avatar URL', () => {
           ...MAGIC_USER,
           ok: true,
           authed: true,
-          avatarUrl: 'https://example.com/a.png',
+          avatarUrl: blobUrl,
         }),
     });
-    const { getByText, getByLabelText, getAllByText } = render(
+    render(
       withProvider(
         <IdentityBlock user={MAGIC_USER} connectedWallet={undefined} />,
         qc,
       ),
     );
-    clickSetForAvatarUrl(getAllByText);
-    fireEvent.change(getByLabelText('NEW AVATAR URL'), {
-      target: { value: 'https://example.com/a.png' },
-    });
-    fireEvent.click(getByText('SAVE'));
+
+    const file = new File(['png-bytes'], 'avatar.png', { type: 'image/png' });
+    pickAvatarFile(file);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const body = JSON.parse(
-      (fetchMock.mock.calls[0][1] as { body: string }).body,
-    );
-    expect(body).toEqual({ avatarUrl: 'https://example.com/a.png' });
+    const [url, init] = fetchMock.mock.calls[0] as [
+      string,
+      { method: string; body: FormData },
+    ];
+    expect(url).toBe('/api/user/avatar/upload');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeInstanceOf(FormData);
+    const sent = (init.body as FormData).get('avatar');
+    expect(sent).toBeInstanceOf(File);
+    expect((sent as File).name).toBe('avatar.png');
 
     await waitFor(() => {
       const cached = qc.getQueryData(USER_QUERY_KEY) as AuthedUser | undefined;
-      expect(cached?.avatarUrl).toBe('https://example.com/a.png');
+      expect(cached?.avatarUrl).toBe(blobUrl);
     });
   });
 });
@@ -361,23 +355,19 @@ describe('IdentityBlock — concurrent edits', () => {
       ),
     );
 
-    // Open BOTH edit forms.
+    // Open the display-name edit form (avatar upload is one-shot file
+    // picker — no edit form to open).
     clickSetForDisplayName(getAllByText);
-    clickSetForAvatarUrl(getAllByText);
 
     // Submit display first.
     fireEvent.change(getByLabelText('NEW DISPLAY NAME'), {
       target: { value: 'Joshua' },
     });
-    const saves1 = getAllByText(/SAVE/i);
-    fireEvent.click(saves1[0]); // display-name SAVE
+    fireEvent.click(getByText('SAVE'));
 
-    // Now submit avatar BEFORE display resolves.
-    fireEvent.change(getByLabelText('NEW AVATAR URL'), {
-      target: { value: 'https://example.com/a.png' },
-    });
-    const saves2 = getAllByText(/SAVE/i);
-    fireEvent.click(saves2[saves2.length - 1]); // avatar SAVE
+    // Now upload avatar BEFORE display resolves.
+    const file = new File(['png'], 'avatar.png', { type: 'image/png' });
+    pickAvatarFile(file);
 
     // Avatar should land synchronously; display should still be
     // mid-flight (SAVING…). Resolve display now.
@@ -396,15 +386,15 @@ describe('IdentityBlock — concurrent edits', () => {
     // Wait for both fetches to land.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
-    // Critical assertion: NO leftover SAVING… anywhere. Both forms
-    // either closed (success) or back to SAVE (re-editable). The
-    // codex MAJOR regression would manifest as a stuck SAVING…
-    // button on the display field.
+    // Critical assertion: NO leftover SAVING… / UPLOADING… stuck on a
+    // dead in-flight controller. Codex round-1 MAJOR regression would
+    // manifest as a stuck SAVING… on display when avatar upload
+    // aborted its sibling controller.
     await waitFor(() => {
-      const savingButtons = Array.from(
+      const stuckButtons = Array.from(
         document.querySelectorAll('button'),
-      ).filter((b) => /SAVING/.test(b.textContent ?? ''));
-      expect(savingButtons.length).toBe(0);
+      ).filter((b) => /SAVING|UPLOADING/.test(b.textContent ?? ''));
+      expect(stuckButtons.length).toBe(0);
     });
   });
 });

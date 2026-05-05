@@ -115,13 +115,18 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  // window=0 strict: only the current step matches. The user just
-  // entered the code from their authenticator — there's no legitimate
-  // reason for clock drift on the enrollment confirmation step.
+  // Default window=1 (±1 step = 90s tolerance). Earlier this was
+  // strict window=0 to "prove the authenticator is synced", but in
+  // practice almost every enrollment failure was a window-boundary
+  // race: the code was correct when the user typed it, but the
+  // 30-second window had rolled over by the time fetch + DB lookup +
+  // verify completed. Real users hit "scan twice to enroll" as a
+  // baseline. Sign-in (auth/totp), disable, and regenerate already
+  // use the default — keeping enrollment strict was inconsistent
+  // and made the worse-UX path harder.
   const verifyResult = verifyTotpCode({
     secret: plaintextSecret,
     code,
-    window: 0,
   });
   if (!verifyResult.ok) {
     // Leave the pending row in place so the user can re-enter without

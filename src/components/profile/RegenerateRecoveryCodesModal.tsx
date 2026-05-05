@@ -389,7 +389,9 @@ export function RegenerateRecoveryCodesModal({ open, onClose }: Props) {
               <p className="mako-body text-sm text-ink leading-relaxed">
                 <strong>Save these new recovery codes now.</strong> They are
                 shown <strong>only once</strong>. Your previous codes no
-                longer work.
+                longer work. Store them in a password manager, encrypted
+                drive (e.g., Proton Drive), or print them — not in the
+                same email account that signs in to Mako.
               </p>
               <RecoveryCodesPanel codes={recoveryCodes} />
               <label className="flex items-start gap-3 cursor-pointer mt-2">

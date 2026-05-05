@@ -79,22 +79,33 @@ export function TotpSection({ user }: TotpSectionProps) {
       )}
 
       {enabled && (
-        <div className="flex flex-col sm:flex-row gap-3">
-          <button
-            type="button"
-            onClick={() => setDisableOpen(true)}
-            className="mako-button mako-button--no"
-          >
-            DISABLE 2FA
-          </button>
-          <button
-            type="button"
-            onClick={() => setRegenerateOpen(true)}
-            className="mako-button mako-button--ghost"
-          >
-            REGENERATE RECOVERY CODES
-          </button>
-        </div>
+        <>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="button"
+              onClick={() => setDisableOpen(true)}
+              className="mako-button mako-button--no"
+            >
+              DISABLE 2FA
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegenerateOpen(true)}
+              className="mako-button mako-button--ghost"
+            >
+              REGENERATE RECOVERY CODES
+            </button>
+          </div>
+          <p className="mako-body text-xs text-ink leading-relaxed bg-paper border-2 border-ink rounded-xl p-3 mt-1">
+            <strong>Did you save your recovery codes?</strong> They were
+            shown only at enrollment and can&apos;t be viewed again. Store
+            them in a password manager, encrypted drive (e.g., Proton
+            Drive), or print them — not in the same email account that
+            signs in to Mako. If you lost them, click{' '}
+            <strong>REGENERATE RECOVERY CODES</strong> to issue a fresh
+            batch (this invalidates the old ones).
+          </p>
+        </>
       )}
 
       <TotpEnrollmentModal
