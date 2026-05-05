@@ -11,6 +11,7 @@ import { MarketResolveActions } from '@/components/MarketResolveActions';
 import { MarketClaimAction } from '@/components/MarketClaimAction';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
+import { AvatarCircle } from '@/components/AvatarCircle';
 import { useIsAdmin } from '@/lib/admin';
 import { useUser } from '@/lib/use-user';
 
@@ -169,9 +170,28 @@ export default function MyMarketsPage() {
       <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
         <h1 className="mako-display text-sm lg:text-base text-chrome-fg">MY MARKETS</h1>
         <div className="flex items-center gap-3">
-          <span className="mako-mono text-[10px] text-muted">
-            {address.slice(0, 6)}…{address.slice(-4)}
-          </span>
+          {user ? (
+            <Link
+              href="/profile"
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+              title={user.email}
+            >
+              <AvatarCircle
+                displayName={user.displayName}
+                email={user.email}
+                magicEoa={user.magicEoa}
+                avatarUrl={user.avatarUrl}
+                size={28}
+              />
+              <span className="mako-label text-[11px] truncate max-w-[10rem]">
+                {user.displayName ?? user.email}
+              </span>
+            </Link>
+          ) : (
+            <span className="mako-mono text-[10px] text-muted">
+              {address.slice(0, 6)}…{address.slice(-4)}
+            </span>
+          )}
           <ThemeToggle />
         </div>
       </header>

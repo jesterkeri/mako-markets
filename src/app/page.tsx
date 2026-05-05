@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMarkets } from '@/lib/hooks';
-import { useUser } from '@/lib/use-user';
 import { MarketType } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
 import { AuthMenu } from '@/components/AuthMenu';
@@ -77,7 +76,6 @@ const EMPTY_COPY: Record<Tab, string> = {
 
 export default function Home() {
   const { markets, isLoading } = useMarkets();
-  const { user } = useUser();
   const [tab, setTab] = useState<Tab>('all');
   const [nowSec, setNowSec] = useState(() => BigInt(Math.floor(Date.now() / 1000)));
 
@@ -112,6 +110,13 @@ export default function Home() {
         <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
           <h1 className="mako-display text-sm lg:text-base text-chrome-fg">LIVE MARKETS</h1>
           <div className="flex items-center gap-2">
+            {/* Top-header auth slot. Phase 1G Group 5A: identity pill
+                (avatar + display name → /profile) sits leftmost in the
+                cluster so the user's "this is me" affordance is the
+                first thing scanned, ahead of the action chrome
+                (theme toggle, NEW MARKET). Was acquisition-only /
+                SIGN IN before; now always rendered. */}
+            <AuthMenu className="px-3! py-1.5! text-[11px]!" />
             <ThemeToggle />
             <Link
               href="/create"
@@ -119,11 +124,6 @@ export default function Home() {
             >
               + NEW MARKET
             </Link>
-            {/* Top-header auth slot is acquisition-only: SIGN IN when unauthed,
-                nothing when authed (the post-auth account UI lives in the
-                sidebar). Loading state renders nothing here so there's no
-                skeleton-to-empty flash for already-authed users on cold load. */}
-            {!user && <AuthMenu className="px-3! py-1.5! text-[11px]!" />}
           </div>
         </header>
 

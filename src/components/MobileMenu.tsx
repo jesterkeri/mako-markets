@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAccount, useDisconnect } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 
+import { AvatarCircle } from '@/components/AvatarCircle';
 import { Logo } from '@/components/Logo';
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 
@@ -289,18 +290,29 @@ export function MobileMenu({ className }: { className?: string }) {
                       onClick={() => setOpen(false)}
                       className="flex items-center gap-3 hover:opacity-80 transition-opacity"
                     >
-                      <div
-                        className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm shrink-0"
-                        aria-hidden="true"
-                      >
-                        {initial}
-                      </div>
+                      {user ? (
+                        <AvatarCircle
+                          displayName={user.displayName}
+                          email={user.email}
+                          magicEoa={user.magicEoa}
+                          avatarUrl={user.avatarUrl}
+                          size={36}
+                          className="shrink-0"
+                        />
+                      ) : (
+                        <div
+                          className="flex items-center justify-center w-9 h-9 rounded-full border-2 border-chrome-divider bg-signal text-ink font-display font-black text-sm shrink-0"
+                          aria-hidden="true"
+                        >
+                          {initial}
+                        </div>
+                      )}
                       <div className="flex flex-col min-w-0">
                         <span
                           className="mako-label text-[10px] text-muted truncate"
                           title={identity}
                         >
-                          {identity}
+                          {user && user.displayName ? user.displayName : identity}
                         </span>
                         <span className="mako-label text-[11px] text-chrome-fg">
                           PROFILE

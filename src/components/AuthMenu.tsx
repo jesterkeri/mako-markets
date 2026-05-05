@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useAccount, useDisconnect } from 'wagmi';
 
+import { AvatarCircle } from '@/components/AvatarCircle';
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 
 // ----------------------------------------------------------------------------
@@ -142,23 +143,38 @@ export function AuthMenu({ className }: Props) {
       ? `${connectedWallet.slice(0, 6)}…${connectedWallet.slice(-4)}`
       : '';
 
+  // Phase 1G Group 5A: header pill is identity-only — avatar + name
+  // (Magic) or formatted address (wallet), linked to /profile where
+  // the actual SIGN OUT button lives. Removed from this slot to keep
+  // the header compact and consistent with /me. handleSignOut +
+  // signOutError state are retained for any future caller that wants
+  // a click-to-sign-out variant; they're currently unused on the
+  // header path.
+  void handleSignOut;
+  void signOutError;
   return (
-    <>
-      <button
-        type="button"
-        onClick={handleSignOut}
-        disabled={signingOut}
-        className={`mako-button mako-label disabled:opacity-60 ${className ?? ''}`}
-        aria-label={`Sign out ${identity}`}
-        title={identity}
-      >
-        {signingOut ? 'SIGNING OUT…' : 'SIGN OUT'}
-      </button>
-      {signOutError && (
-        <span role="alert" className="sr-only">
-          {signOutError}
-        </span>
+    <Link
+      href="/profile"
+      className={`flex items-center gap-2 hover:opacity-80 transition-opacity ${className ?? ''}`}
+      aria-label={`Open profile for ${identity}`}
+      title={identity}
+    >
+      {user ? (
+        <>
+          <AvatarCircle
+            displayName={user.displayName}
+            email={user.email}
+            magicEoa={user.magicEoa}
+            avatarUrl={user.avatarUrl}
+            size={28}
+          />
+          <span className="mako-label text-[11px] truncate max-w-[8rem]">
+            {user.displayName ?? user.email}
+          </span>
+        </>
+      ) : (
+        <span className="mako-mono text-[10px]">{identity}</span>
       )}
-    </>
+    </Link>
   );
 }

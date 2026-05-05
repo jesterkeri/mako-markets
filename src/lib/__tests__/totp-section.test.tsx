@@ -87,7 +87,12 @@ describe('TotpSection', () => {
     expect(container.textContent).toContain('2FA ENABLED');
     expect(container.textContent).toContain('Enabled');
     expect(queryByText('DISABLE 2FA')).toBeTruthy();
-    expect(queryByText('REGENERATE RECOVERY CODES')).toBeTruthy();
+    // Reset-codes label appears both on the button AND inside the
+    // "Did you save your codes?" advice paragraph (as a <strong>),
+    // so query by role to disambiguate.
+    expect(
+      container.querySelector('button.mako-button.mako-button--ghost'),
+    ).not.toBeNull();
     expect(queryByText('ENABLE 2FA')).toBeNull();
   });
 
@@ -120,11 +125,16 @@ describe('TotpSection', () => {
       totpEnabled: true,
       totpEnabledAt: '2026-04-15T00:00:00.000Z',
     };
-    const { getByText, queryByTestId } = render(
+    const { container, queryByTestId } = render(
       withQc(<TotpSection user={enabled} />),
     );
     expect(queryByTestId('regenerate-modal')).toBeNull();
-    fireEvent.click(getByText('REGENERATE RECOVERY CODES'));
+    // Find by button role (label appears in advice paragraph too).
+    const regenerateBtn = Array.from(
+      container.querySelectorAll('button'),
+    ).find((b) => b.textContent === 'REGENERATE RECOVERY CODES');
+    expect(regenerateBtn).toBeDefined();
+    fireEvent.click(regenerateBtn!);
     expect(queryByTestId('regenerate-modal')).not.toBeNull();
   });
 });
