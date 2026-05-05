@@ -53,15 +53,26 @@ type SubmitState =
   | { kind: 'awaiting_otp' }
   | { kind: 'verifying'; didToken: string }
   | { kind: 'retry_available'; didToken: string; message: string }
-  /// User passed Magic OTP but their account has TOTP enabled. The
-  /// auth route returned `{ ok: true, status: 'totp_required',
-  /// challengeId }` instead of issuing a session. Phase 1G Group 5
-  /// will wire the second-factor step UI and consume the
-  /// challengeId via /api/user/auth/totp; until then we stop the
-  /// flow here with an explicit blocking message rather than silently
-  /// routing the user home unauthed (where they'd see a SIGN IN CTA
-  /// despite having just entered their OTP).
-  | { kind: 'totp_unsupported'; challengeId: string }
+  /// Magic OTP verified, user has TOTP enabled. Server issued a
+  /// challengeId; this is the second-factor step. `mode` flips
+  /// between 6-digit TOTP entry and recovery-code entry. `submitting`
+  /// gates the action button. `error` surfaces an inline retryable
+  /// failure ('That code is wrong'). `lockedUntil` is the ISO ms
+  /// timestamp at which the 15-min lockout elapses — non-null while
+  /// locked, cleared when the live countdown reaches zero.
+  /// `terminal` flips to a non-null value when the challenge can't
+  /// be retried in place: `challenge_invalid` (expired / consumed)
+  /// or `eoa_drift` (server-side defensive guard tripped). Both
+  /// require restarting from email.
+  | {
+      kind: 'totp_required';
+      challengeId: string;
+      mode: 'totp' | 'recovery';
+      submitting: boolean;
+      error: string | null;
+      lockedUntil: number | null;
+      terminal: 'challenge_invalid' | 'eoa_drift' | null;
+    }
   | { kind: 'error'; message: string };
 
 type AuthSuccessBody = { ok: true } & AuthedUser;
@@ -83,6 +94,182 @@ function WalletConnectRedirectGate({
     if (enabled) onRedirect();
   }, [enabled, onRedirect]);
   return null;
+}
+
+type TotpRequiredState = Extract<SubmitState, { kind: 'totp_required' }>;
+
+/// Format an ISO ms timestamp as MM:SS countdown to NOW. Caps at 0:00.
+/// Used by the TotpStep lockout UI; ticks once per second via the
+/// parent's interval-driven setState. Pure for testability — call sites
+/// pass `Date.now()` or a frozen value as `now`.
+function formatLockoutRemaining(lockedUntilMs: number, now: number): string {
+  const remaining = Math.max(0, lockedUntilMs - now);
+  const totalSec = Math.ceil(remaining / 1000);
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  return `${mm}:${ss.toString().padStart(2, '0')}`;
+}
+
+/// Second-factor step UI. Three sub-states:
+///   - terminal (challenge_invalid / eoa_drift): can't retry in place;
+///     show alert + RESTART SIGN-IN button that returns to email.
+///   - locked (lockedUntil set): input hidden, live countdown shown.
+///   - input (default): 6-digit TOTP entry with toggle to recovery code
+///     mode. The input field's id and ARIA label change with mode so
+///     screen readers track which factor is in flight.
+function TotpStep({
+  state,
+  onSubmit,
+  onToggleMode,
+  onRestart,
+}: {
+  state: TotpRequiredState;
+  onSubmit: (code: string) => void;
+  onToggleMode: () => void;
+  onRestart: () => void;
+}) {
+  const [code, setCode] = useState('');
+  const [now, setNow] = useState(() => Date.now());
+
+  // Tick every 500ms while locked so the MM:SS readout updates without
+  // visible drift. The parent's countdown effect handles the source-of-
+  // truth flip when lockedUntil elapses; this local tick is purely for
+  // display refresh and wouldn't survive a parent re-render anyway.
+  useEffect(() => {
+    if (state.lockedUntil === null) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [state.lockedUntil]);
+
+  // Reset the input when mode flips so a half-typed TOTP code doesn't
+  // leak into the recovery field (or vice versa). The toggle button
+  // also clears state.error in the parent.
+  useEffect(() => {
+    setCode('');
+  }, [state.mode]);
+
+  if (state.terminal !== null) {
+    const message =
+      state.terminal === 'eoa_drift'
+        ? 'Account state changed. Please sign in again.'
+        : 'Sign-in session expired. Please sign in again.';
+    return (
+      <div className="flex flex-col gap-3 mt-2">
+        <p
+          role="alert"
+          className="mako-label text-center text-[12px] text-mako-red bg-mako-red/10 border-2 border-mako-red p-3 rounded-xl"
+        >
+          {message}
+        </p>
+        <button
+          type="button"
+          onClick={onRestart}
+          className="mako-button mako-button--action mako-label"
+        >
+          RESTART SIGN-IN
+        </button>
+      </div>
+    );
+  }
+
+  if (state.lockedUntil !== null) {
+    return (
+      <div className="flex flex-col gap-3 mt-2">
+        <div
+          role="status"
+          aria-live="polite"
+          className="mako-label text-center text-[12px] text-mako-red bg-mako-red/10 border-2 border-mako-red p-3 rounded-xl"
+        >
+          <span className="block mako-label text-[11px] mb-1">LOCKED</span>
+          <span>
+            Too many failed attempts. Try again in{' '}
+            <span className="mako-mono">
+              {formatLockoutRemaining(state.lockedUntil, now)}
+            </span>
+            .
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const inputId =
+    state.mode === 'totp' ? 'totp-signin-code' : 'totp-signin-recovery';
+  const inputLabel =
+    state.mode === 'totp' ? '6-DIGIT CODE' : 'RECOVERY CODE';
+  const inputPlaceholder =
+    state.mode === 'totp' ? '••••••' : 'XXXX-XXXX-XXXX';
+  const inputProps =
+    state.mode === 'totp'
+      ? {
+          inputMode: 'numeric' as const,
+          pattern: '[0-9]*',
+          maxLength: 6,
+          autoComplete: 'one-time-code',
+        }
+      : {
+          inputMode: 'text' as const,
+          maxLength: 32,
+          autoComplete: 'off' as const,
+        };
+
+  return (
+    <div className="flex flex-col gap-2 mt-2">
+      <label
+        className="mako-label text-[10px] text-ink"
+        htmlFor={inputId}
+      >
+        {inputLabel}
+      </label>
+      <input
+        id={inputId}
+        type="text"
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        placeholder={inputPlaceholder}
+        disabled={state.submitting}
+        className="mako-input mako-mono text-lg bg-white tracking-widest text-center"
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSubmit(code);
+          }
+        }}
+        {...inputProps}
+      />
+      {state.error !== null && (
+        <p
+          role="alert"
+          className="mako-body text-xs font-medium text-mako-red"
+        >
+          {state.error}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => onSubmit(code)}
+        disabled={state.submitting}
+        className="mako-button mako-button--action mako-label"
+      >
+        {state.submitting
+          ? 'VERIFYING…'
+          : state.mode === 'totp'
+            ? 'VERIFY CODE'
+            : 'USE RECOVERY CODE'}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleMode}
+        disabled={state.submitting}
+        className="mako-label text-[11px] text-muted underline underline-offset-2 hover:text-ink mt-1"
+      >
+        {state.mode === 'totp'
+          ? 'Lost your authenticator? Use a recovery code'
+          : 'Back to authenticator code'}
+      </button>
+    </div>
+  );
 }
 
 export default function SignupPage() {
@@ -193,13 +380,20 @@ export default function SignupPage() {
       }
 
       if (body && (body as TotpRequiredBody).status === 'totp_required') {
-        // Phase 1G Group 5 will replace this branch with the second-
-        // factor step UI. Until then, surface an explicit blocking
-        // message rather than routing the user home unauthed. The
-        // challenge stays valid for ~5 minutes server-side; the user
-        // can refresh and start over.
+        // Phase 1G Group 5B: transition to second-factor step. Server
+        // issued a challengeId valid for ~5 minutes. UI presents the
+        // 6-digit input by default (most common path); recovery toggle
+        // is a button that swaps mode without losing the challengeId.
         const challengeId = (body as TotpRequiredBody).challengeId ?? '';
-        setState({ kind: 'totp_unsupported', challengeId });
+        setState({
+          kind: 'totp_required',
+          challengeId,
+          mode: 'totp',
+          submitting: false,
+          error: null,
+          lockedUntil: null,
+          terminal: null,
+        });
         return;
       }
 
@@ -346,6 +540,186 @@ export default function SignupPage() {
     setEmail('');
     setState({ kind: 'idle' });
   }
+
+  /// Submit the TOTP / recovery factor for an issued challengeId. Routes
+  /// the response through the same bucket-A handling as the Magic OTP
+  /// success path (cache hydrate → wallet disconnect → addRecentEmail →
+  /// router.replace('/')). Error mapping per /api/user/auth/totp:
+  ///   - 200            → success, identical to /api/user/auth success
+  ///   - 401 totp_failed → inline error, retryable in place
+  ///   - 401 challenge_invalid / eoa_drift → terminal, restart from email
+  ///   - 429 totp_locked + retryAt → switch to lockout countdown view
+  ///   - 5xx / network → inline retry-able error
+  async function handleSubmitTotp(rawCode: string) {
+    if (state.kind !== 'totp_required') return;
+    if (state.submitting) return;
+    if (state.lockedUntil) return;
+    if (state.terminal) return;
+
+    const trimmed = rawCode.trim();
+    if (trimmed.length === 0) {
+      setState({ ...state, error: state.mode === 'totp'
+        ? 'Enter the 6-digit code from your authenticator.'
+        : 'Enter a recovery code.' });
+      return;
+    }
+
+    setState({ ...state, submitting: true, error: null });
+
+    let res: Response;
+    try {
+      res = await fetch('/api/user/auth/totp', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(
+          state.mode === 'totp'
+            ? { challengeId: state.challengeId, code: trimmed }
+            : { challengeId: state.challengeId, recoveryCode: trimmed },
+        ),
+      });
+    } catch {
+      setState({
+        ...state,
+        submitting: false,
+        error: 'Network error. Please retry.',
+      });
+      return;
+    }
+
+    if (res.ok) {
+      // Bucket-A success envelope. Mirrors postDidToken's success path —
+      // wallet disconnect, recent-email cache, query cache pre-populate,
+      // route home. Keep this in sync if the Magic-OTP success path
+      // changes.
+      let body: Partial<AuthSuccessBody> | null = null;
+      try {
+        body = (await res.json()) as Partial<AuthSuccessBody>;
+      } catch {
+        setState({
+          ...state,
+          submitting: false,
+          error: 'Unexpected response. Please retry.',
+        });
+        return;
+      }
+
+      try {
+        disconnect();
+      } catch (e) {
+        console.warn('Wallet disconnect on TOTP sign-in failed', e);
+      }
+
+      addRecentEmail(email);
+
+      if (body && body.authed === true) {
+        const { ok: _ok, ...authedUser } = body as AuthSuccessBody;
+        void _ok;
+        queryClient.setQueryData(
+          USER_QUERY_KEY,
+          authedUser satisfies AuthedUser,
+        );
+      }
+      router.replace('/');
+      return;
+    }
+
+    // Error path. Read body once to grab the discriminator + retryAt.
+    let json: { error?: string; retryAt?: string } = {};
+    try {
+      json = (await res.json()) as { error?: string; retryAt?: string };
+    } catch {
+      // fall through with empty json — error code defaults to generic
+    }
+
+    if (res.status === 429 && json.error === 'totp_locked' && json.retryAt) {
+      const retryAtMs = Date.parse(json.retryAt);
+      setState({
+        ...state,
+        submitting: false,
+        error: null,
+        lockedUntil: Number.isFinite(retryAtMs) ? retryAtMs : null,
+      });
+      return;
+    }
+
+    if (res.status === 401 && json.error === 'challenge_invalid') {
+      setState({
+        ...state,
+        submitting: false,
+        error: null,
+        terminal: 'challenge_invalid',
+      });
+      return;
+    }
+
+    if (res.status === 401 && json.error === 'eoa_drift') {
+      setState({
+        ...state,
+        submitting: false,
+        error: null,
+        terminal: 'eoa_drift',
+      });
+      return;
+    }
+
+    if (res.status === 401 && json.error === 'totp_failed') {
+      setState({
+        ...state,
+        submitting: false,
+        error: state.mode === 'totp'
+          ? 'That code is wrong. Try a fresh one from your authenticator.'
+          : 'That recovery code is wrong or already used.',
+      });
+      return;
+    }
+
+    setState({
+      ...state,
+      submitting: false,
+      error: 'Sign-in failed. Please retry.',
+    });
+  }
+
+  /// Toggle between TOTP code and recovery code modes. Clears any
+  /// inline error so a wrong-code message from one mode doesn't bleed
+  /// into the other input box.
+  function handleToggleTotpMode() {
+    if (state.kind !== 'totp_required') return;
+    if (state.submitting || state.lockedUntil || state.terminal) return;
+    setState({
+      ...state,
+      mode: state.mode === 'totp' ? 'recovery' : 'totp',
+      error: null,
+    });
+  }
+
+  /// Restart from the email form. Used when challenge_invalid or
+  /// eoa_drift makes the current TOTP step un-retryable. Keeps the
+  /// email field so the user doesn't have to retype.
+  function handleRestartFromTotp() {
+    setState({ kind: 'idle' });
+  }
+
+  /// Live lockout countdown. While `state.kind === 'totp_required'` and
+  /// `lockedUntil` is set, tick once per second; clear lockedUntil
+  /// when the timestamp elapses so the input re-enables.
+  useEffect(() => {
+    if (state.kind !== 'totp_required') return;
+    if (state.lockedUntil === null) return;
+    const tick = () => {
+      setState((prev) => {
+        if (prev.kind !== 'totp_required') return prev;
+        if (prev.lockedUntil === null) return prev;
+        if (Date.now() >= prev.lockedUntil) {
+          return { ...prev, lockedUntil: null };
+        }
+        return { ...prev };
+      });
+    };
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [state.kind, state.kind === 'totp_required' ? state.lockedUntil : null]);
 
   const isBusy = state.kind === 'awaiting_otp' || state.kind === 'verifying';
   const isRetryAvailable = state.kind === 'retry_available';
@@ -523,14 +897,13 @@ export default function SignupPage() {
                 </p>
               )}
 
-              {state.kind === 'totp_unsupported' && (
-                <p
-                  role="alert"
-                  className="mako-label text-center text-[12px] text-mako-red bg-mako-red/10 border-2 border-mako-red p-3 rounded-xl mt-2"
-                >
-                  Two-factor sign-in isn&apos;t available yet. Please try again
-                  shortly, or contact support.
-                </p>
+              {state.kind === 'totp_required' && (
+                <TotpStep
+                  state={state}
+                  onSubmit={handleSubmitTotp}
+                  onToggleMode={handleToggleTotpMode}
+                  onRestart={handleRestartFromTotp}
+                />
               )}
             </form>
 
