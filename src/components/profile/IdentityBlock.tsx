@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { AvatarCircle } from '@/components/AvatarCircle';
 import {
   EmailUpdateNotSupported,
   updateEmailWithMagic,
@@ -15,7 +14,6 @@ import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 //
 // The /profile identity surface for both Magic-authed and wallet-only
 // sessions. Magic users see:
-//   - Hero row: AvatarCircle + display name (or email fallback)
 //   - SIGNED IN AS: email + EDIT (subject to 365-day cooldown)
 //   - DISPLAY NAME: edit / clear, validated client-side mirroring
 //     /api/user/profile/update server regex
@@ -427,31 +425,14 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
 
   // Magic branch.
   const hero = user!;
-  const displayLabel =
-    hero.displayName && hero.displayName.trim().length > 0
-      ? hero.displayName
-      : hero.email;
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Hero row */}
-      <div className="flex items-center gap-4">
-        <AvatarCircle
-          displayName={hero.displayName}
-          email={hero.email}
-          magicEoa={hero.magicEoa}
-          avatarUrl={hero.avatarUrl}
-          size={64}
-        />
-        <div className="flex-1 min-w-0">
-          <p className="mako-title text-2xl leading-tight truncate">
-            {displayLabel}
-          </p>
-          <p className="mako-mono text-xs text-muted truncate">
-            {hero.email}
-          </p>
-        </div>
-      </div>
+      {/* Hero (avatar + display name / email) lives in its own outer
+          mako-card on /profile/page.tsx — extracted so the user
+          identity reads as a stand-alone "this is me" card above
+          the editable identity rows + balance card. IdentityBlock
+          now starts at the SIGNED IN AS row. */}
 
       {/* SIGNED IN AS / email row */}
       <div className="flex flex-col gap-1">

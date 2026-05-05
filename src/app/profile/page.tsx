@@ -13,6 +13,7 @@ import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 import { WarningModal } from '@/components/WarningModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
+import { AvatarCircle } from '@/components/AvatarCircle';
 import { IdentityBlock } from '@/components/profile/IdentityBlock';
 import { TotpSection } from '@/components/profile/TotpSection';
 import { runSendUsdc } from '@/lib/aa-client';
@@ -470,39 +471,32 @@ export default function ProfilePage() {
           {/* LEFT COLUMN: Identity, Balance & Security */}
           <div className="lg:col-span-6 flex flex-col gap-8">
 
-            {/* 1. Identity & Balance */}
-            <section className="mako-card text-ink flex flex-col">
-              <IdentityBlock user={user} connectedWallet={connectedWallet} />
-
-              <div className="border-t-2 border-ink pt-6 mt-6">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="mako-label text-muted">AVAILABLE BALANCE</h3>
-                  <div className="mako-sticker mako-sticker--ink whitespace-nowrap scale-75 origin-right">
-                    MONAD TESTNET
-                  </div>
+            {/* 0. Hero card — Magic-only "this is me" identity surface
+                (avatar + display name / email). Stands alone so the
+                identity reads as a primary card above the editable
+                rows + balance. Wallet-only sessions skip this card
+                entirely and start at the identity-rows card below. */}
+            {user && (
+              <section className="mako-card text-ink flex items-center gap-4">
+                <AvatarCircle
+                  displayName={user.displayName}
+                  email={user.email}
+                  magicEoa={user.magicEoa}
+                  avatarUrl={user.avatarUrl}
+                  size={64}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="mako-title text-2xl leading-tight truncate">
+                    {user.displayName && user.displayName.trim().length > 0
+                      ? user.displayName
+                      : user.email}
+                  </p>
+                  <p className="mako-mono text-xs text-muted truncate">
+                    {user.email}
+                  </p>
                 </div>
-
-                <div className="flex items-end gap-3">
-                  {isBalanceLoading ? (
-                    <div className="mako-skeleton h-12 w-48" />
-                  ) : isBalanceError ? (
-                    <div className="flex items-center gap-3">
-                      <span className="font-display font-black text-4xl md:text-5xl tracking-tighter text-ink leading-none">--- USDC</span>
-                      <button onClick={() => refetchBalance()} className="w-10 h-10 flex items-center justify-center border-2 border-ink rounded-full hover:bg-ink hover:text-white transition-colors" aria-label="Retry">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                          <path d="M3 3v5h5" />
-                        </svg>
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="font-display font-black text-5xl md:text-6xl tracking-tighter text-ink leading-none">
-                      {balanceData ? parseFloat(balanceData.formatted).toFixed(2) : '0.00'} <span className="text-3xl text-muted ml-1">USDC</span>
-                    </span>
-                  )}
-                </div>
-              </div>
-            </section>
+              </section>
+            )}
 
             {/* 4. Security & Recovery */}
             <section className={`mako-card text-ink relative overflow-hidden flex flex-col gap-5 ${isMagicUser ? 'border-mako-red shadow-[4px_4px_0_0_#D94A3D]' : ''}`}>
@@ -571,8 +565,45 @@ export default function ProfilePage() {
             </section>
           </div>
 
-          {/* RIGHT COLUMN: Send & Receive */}
+          {/* RIGHT COLUMN: Identity rows + Balance, Send & Receive */}
           <div className="lg:col-span-6 flex flex-col gap-8">
+
+            {/* 1. Identity & Balance — moved from left col so the
+                hero card stands alone over the SECURITY card on the
+                left, while editable identity rows + balance share
+                space with the action surfaces (Send / Receive). */}
+            <section className="mako-card text-ink flex flex-col">
+              <IdentityBlock user={user} connectedWallet={connectedWallet} />
+
+              <div className="border-t-2 border-ink pt-6 mt-6">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="mako-label text-muted">AVAILABLE BALANCE</h3>
+                  <div className="mako-sticker mako-sticker--ink whitespace-nowrap scale-75 origin-right">
+                    MONAD TESTNET
+                  </div>
+                </div>
+
+                <div className="flex items-end gap-3">
+                  {isBalanceLoading ? (
+                    <div className="mako-skeleton h-12 w-48" />
+                  ) : isBalanceError ? (
+                    <div className="flex items-center gap-3">
+                      <span className="font-display font-black text-4xl md:text-5xl tracking-tighter text-ink leading-none">--- USDC</span>
+                      <button onClick={() => refetchBalance()} className="w-10 h-10 flex items-center justify-center border-2 border-ink rounded-full hover:bg-ink hover:text-white transition-colors" aria-label="Retry">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                          <path d="M3 3v5h5" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="font-display font-black text-5xl md:text-6xl tracking-tighter text-ink leading-none">
+                      {balanceData ? parseFloat(balanceData.formatted).toFixed(2) : '0.00'} <span className="text-3xl text-muted ml-1">USDC</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </section>
 
             {/* 3. Send USDC */}
             {canonicalAddress && (
