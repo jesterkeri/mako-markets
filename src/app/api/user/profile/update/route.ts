@@ -30,15 +30,14 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 //     preserved.
 //
 // avatarUrl validation:
-//   - string, length ≤ 512
-//   - parses via `new URL(value)` (parse failure → 400)
-//   - https only (`parsed.protocol === 'https:'`)
-//   - no userinfo (`parsed.username === '' && parsed.password === ''`)
-//   - no fragments (`parsed.hash === ''`)
-//   - stored as `parsed.toString()` (normalised). May differ from the
-//     raw input by host casing, percent-encoding, or an added trailing
-//     slash for origin-only URLs (e.g. https://example.com →
-//     https://example.com/). Documented behaviour, not a bug.
+//   - only `null` is accepted (clears the column).
+//   - any non-null value is rejected with 400. The upload route
+//     (POST /api/user/avatar/upload) is the ONLY path that may set
+//     avatarUrl to a non-null value. Allowing arbitrary HTTPS URLs
+//     here would let a caller (a) impersonate another user by
+//     pasting their blob URL, and (b) trick the upload route's
+//     cleanup into deleting another user's blob. Both are closed by
+//     refusing non-null writes here.
 //
 // Response (success): the canonical bucket-A envelope identical to
 // /api/user/me's authed branch and /api/user/auth's session-branch
@@ -49,7 +48,6 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // ----------------------------------------------------------------------------
 
 const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
-const AVATAR_URL_MAX_LEN = 512;
 
 type UpdateInput = {
   displayName?: string | null;
@@ -92,19 +90,9 @@ function validateBody(raw: unknown): ValidatedFields | { error: string } {
     const v = body.avatarUrl;
     if (v === null) {
       out.avatarUrl = null;
-    } else if (typeof v === 'string') {
-      if (v.length > AVATAR_URL_MAX_LEN) return { error: 'bad_body' };
-      let parsed: URL;
-      try {
-        parsed = new URL(v);
-      } catch {
-        return { error: 'bad_body' };
-      }
-      if (parsed.protocol !== 'https:') return { error: 'bad_body' };
-      if (parsed.username !== '' || parsed.password !== '') return { error: 'bad_body' };
-      if (parsed.hash !== '') return { error: 'bad_body' };
-      out.avatarUrl = parsed.toString();
     } else {
+      // Non-null avatar writes go through /api/user/avatar/upload only.
+      // See header for rationale.
       return { error: 'bad_body' };
     }
   }

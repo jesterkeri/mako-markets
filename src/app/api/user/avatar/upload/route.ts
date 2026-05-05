@@ -25,10 +25,12 @@ import { userToWire } from '@/lib/users-wire';
 //      mismatches the declared content type (anti–MIME-spoof).
 //   4. Resize cover 256×256, output webp, strip EXIF (sharp default).
 //   5. put() to Vercel Blob at avatars/<userId>/<unique>.webp, public.
-//   6. If prior avatar_url is a Vercel Blob URL, del() the old blob.
-//      Failures here are logged but don't fail the request — the new
-//      upload is what matters; orphan blobs are cleaned by a later cron
-//      (out of scope for this PR).
+//   6. If prior avatar_url is a Vercel Blob URL UNDER THIS USER'S
+//      avatars/<userId>/ prefix, del() the old blob. The path-prefix
+//      check is load-bearing — without it a caller could paste another
+//      user's blob URL via /api/user/profile/update and then trigger an
+//      upload to delete it. Failures are logged but don't fail the
+//      request; orphans are cleaned by a later cron (out of scope).
 //   7. Update users.avatar_url to the new URL.
 //
 // Vercel route body limit is 4.5 MB. We cap at 4 MB to leave headroom
@@ -135,7 +137,7 @@ export async function POST(req: Request) {
   }
   const row = updated[0];
 
-  if (priorAvatarUrl && isVercelBlobUrl(priorAvatarUrl)) {
+  if (priorAvatarUrl && isOwnedAvatarBlobUrl(priorAvatarUrl, session.userId)) {
     void del(priorAvatarUrl).catch((e) => {
       console.warn('[avatar-upload] prior blob delete failed', e);
     });
@@ -175,11 +177,21 @@ export async function POST(req: Request) {
   });
 }
 
-function isVercelBlobUrl(url: string): boolean {
+// Only delete blobs we know this user owns. The cleanup must NOT delete
+// arbitrary Vercel Blob URLs — a malicious caller could otherwise paste
+// another user's avatar URL through /api/user/profile/update, then
+// trigger an upload to delete that user's blob.
+//
+// Ownership is established by the path prefix `/avatars/<userId>/`,
+// which is the only shape this route ever writes to (see `path` above).
+function isOwnedAvatarBlobUrl(url: string, userId: string): boolean {
   try {
     const u = new URL(url);
-    return u.hostname.endsWith('.public.blob.vercel-storage.com')
+    const hostMatches =
+      u.hostname.endsWith('.public.blob.vercel-storage.com')
       || u.hostname.endsWith('.blob.vercel-storage.com');
+    if (!hostMatches) return false;
+    return u.pathname.startsWith(`/avatars/${userId}/`);
   } catch {
     return false;
   }

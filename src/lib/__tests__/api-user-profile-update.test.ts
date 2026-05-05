@@ -6,9 +6,10 @@
 //     lastSignInAt, nextEmailChangeAvailableAt }
 //   - displayName regex /^[A-Za-z0-9 ._-]{1,32}$/ after trim;
 //     null clears, absence leaves unchanged
-//   - avatarUrl validation: https only, no userinfo, no fragments,
-//     ≤512 chars, parse failure → 400; stored as parsed.toString()
-//     (host-case + path-encoding + trailing-slash normalisation)
+//   - avatarUrl validation: only `null` (clear) is accepted. Any
+//     non-null value → 400. The upload route is the sole writer of
+//     non-null avatar URLs (prevents URL-paste impersonation +
+//     foreign-blob deletion via /avatar/upload cleanup path).
 //   - SET clause includes only the columns the body explicitly touched
 //   - session-points-to-deleted-user → 401 unauthorized
 //   - cross_origin / unauthorized / bad_body gates
@@ -208,36 +209,24 @@ describe('POST /api/user/profile/update', () => {
     expect(res.status).toBe(400);
   });
 
-  it('avatarUrl http:// → 400 (https-only)', async () => {
+  // avatar URLs: any non-null value rejected. Only the upload route
+  // may write non-null avatarUrl (see route header for rationale).
+  it.each([
+    'http://example.com/a.png',
+    'https://example.com/a.png',
+    'https://user:pass@example.com/a.png',
+    'https://example.com/a.png#frag',
+    'https://Example.com/A?q=1',
+    'https://example.com',
+    'https://example.com/' + 'a'.repeat(500),
+    '',
+    'not-a-url',
+  ])('avatarUrl non-null value %p → 400', async (value) => {
     setupHappy();
     const { POST } = await import('../../app/api/user/profile/update/route');
-    const res = await POST(makeRequest({ avatarUrl: 'http://example.com/a.png' }));
+    const res = await POST(makeRequest({ avatarUrl: value }));
     expect(res.status).toBe(400);
     expect(mocks.updateSet).not.toHaveBeenCalled();
-  });
-
-  it('avatarUrl with userinfo → 400 (no user:pass@host)', async () => {
-    setupHappy();
-    const { POST } = await import('../../app/api/user/profile/update/route');
-    const res = await POST(
-      makeRequest({ avatarUrl: 'https://user:pass@example.com/a.png' }),
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it('avatarUrl with fragment → 400', async () => {
-    setupHappy();
-    const { POST } = await import('../../app/api/user/profile/update/route');
-    const res = await POST(makeRequest({ avatarUrl: 'https://example.com/a.png#frag' }));
-    expect(res.status).toBe(400);
-  });
-
-  it('avatarUrl > 512 chars → 400', async () => {
-    setupHappy();
-    const { POST } = await import('../../app/api/user/profile/update/route');
-    const long = 'https://example.com/' + 'a'.repeat(500);
-    const res = await POST(makeRequest({ avatarUrl: long }));
-    expect(res.status).toBe(400);
   });
 
   it('avatarUrl: null → SET sets avatar_url=null', async () => {
@@ -247,24 +236,6 @@ describe('POST /api/user/profile/update', () => {
     expect(res.status).toBe(200);
     const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
     expect(setArg).toEqual({ avatarUrl: null });
-  });
-
-  it('avatarUrl normalisation: https://Example.com/A?q=1 stored as parsed.toString() with normalised host', async () => {
-    setupHappy({ avatarUrl: 'https://example.com/A?q=1' });
-    const { POST } = await import('../../app/api/user/profile/update/route');
-    const res = await POST(makeRequest({ avatarUrl: 'https://Example.com/A?q=1' }));
-    expect(res.status).toBe(200);
-    const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(setArg.avatarUrl).toBe('https://example.com/A?q=1');
-  });
-
-  it('avatarUrl normalisation adds trailing slash for origin-only URLs', async () => {
-    setupHappy({ avatarUrl: 'https://example.com/' });
-    const { POST } = await import('../../app/api/user/profile/update/route');
-    const res = await POST(makeRequest({ avatarUrl: 'https://example.com' }));
-    expect(res.status).toBe(200);
-    const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(setArg.avatarUrl).toBe('https://example.com/');
   });
 
   it('updating only displayName does NOT touch avatar_url (SET clause has only displayName)', async () => {
@@ -277,10 +248,10 @@ describe('POST /api/user/profile/update', () => {
     expect(setArg).not.toHaveProperty('avatarUrl');
   });
 
-  it('updating only avatarUrl does NOT touch display_name', async () => {
-    setupHappy({ avatarUrl: 'https://example.com/a.png' });
+  it('updating only avatarUrl (clearing) does NOT touch display_name', async () => {
+    setupHappy({ avatarUrl: null });
     const { POST } = await import('../../app/api/user/profile/update/route');
-    const res = await POST(makeRequest({ avatarUrl: 'https://example.com/a.png' }));
+    const res = await POST(makeRequest({ avatarUrl: null }));
     expect(res.status).toBe(200);
     const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
     expect(Object.keys(setArg).sort()).toEqual(['avatarUrl']);
