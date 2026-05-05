@@ -47,10 +47,12 @@ export type AuthedUser = {
   /// when the user hasn't picked one — sidebar/AuthMenu render the
   /// email or formatted EOA as a fallback.
   displayName: string | null;
-  /// Plain https URL the user pastes via /api/user/profile/update.
-  /// Validated server-side as https-only, no userinfo, no fragments,
-  /// length ≤ 512. Rendered client-side with
-  /// referrerPolicy="no-referrer" (camelCase JSX). Null when unset.
+  /// Vercel Blob URL produced by POST /api/user/avatar/upload. The
+  /// upload route is the SOLE non-null writer — /api/user/profile/update
+  /// accepts only `null` for this field (clear). Server resizes the
+  /// uploaded image to 256x256 webp + strips EXIF before storage.
+  /// Rendered client-side with referrerPolicy="no-referrer" (camelCase
+  /// JSX). Null when unset.
   avatarUrl: string | null;
   /// True when users.totp_secret IS NOT NULL. Drives "DISABLE 2FA" vs
   /// "ENABLE 2FA" UI affordances. Derived server-side; the encrypted

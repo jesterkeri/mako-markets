@@ -1,13 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { useAccount, useDisconnect } from 'wagmi';
+import { useAccount } from 'wagmi';
 
 import { AvatarCircle } from '@/components/AvatarCircle';
-import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
+import { useUser } from '@/lib/use-user';
 
 // ----------------------------------------------------------------------------
 // src/components/AuthMenu.tsx
@@ -16,21 +13,19 @@ import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 //
 //   isLoading                → skeleton chip
 //   isError + !cached user   → RETRY button
-//   user (Magic)             → SIGN OUT — POST /api/user/logout, setQueryData
-//   wallet only (no Magic)   → SIGN OUT — wagmi disconnect (Phase 1E)
+//   user (Magic) | wallet    → identity pill linking to /profile
 //   none                     → SIGN IN — Link to /signup
 //
 // Phase 1E added the wallet-only auth path. Before 1E this component checked
 // `useUser()` only, which made a wallet-connected user appear unauthed in the
 // header (SIGN IN button visible despite an active wallet connection).
 //
-// Sign-out for Magic users mutates the server session: POST /api/user/logout
-// → on 200, write the unauthed payload directly into the ['user'] cache.
-// setQueryData is the AUTHORITATIVE transition (invalidateQueries would keep
-// stale authed data rendering during the background refetch, causing a flash).
-//
-// Sign-out for wallet-only users is wagmi-side: `disconnect()`. There is no
-// server session to clear (the wallet path doesn't create one in Phase 1E).
+// Phase 1G Group 5A moved sign-out off the header. The header is now an
+// identity surface only — clicking the pill takes the user to /profile,
+// where the actual SIGN OUT control lives. Keeping sign-out on the header
+// would have duplicated state (logout fetch + wagmi disconnect + cache
+// reset) on two surfaces, and the /profile surface is the canonical place
+// for account actions.
 // ----------------------------------------------------------------------------
 
 type Props = {
@@ -40,61 +35,15 @@ type Props = {
 };
 
 export function AuthMenu({ className }: Props) {
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const { user, isLoading, isError, refetch } = useUser();
   const { address: connectedWallet } = useAccount();
-  const { disconnect } = useDisconnect();
-  const [signingOut, setSigningOut] = useState(false);
-  const [signOutError, setSignOutError] = useState<string | null>(null);
 
-  // Either authentication method counts. Magic-session takes priority
-  // because in beta a user shouldn't have BOTH simultaneously (the
-  // mutual-exclusion policy enforced by /signup auto-disconnect on
-  // Magic sign-in). If both are present somehow, treat the Magic
-  // session as authoritative for the SIGN OUT action.
+  // Either authentication method counts. In beta a user shouldn't have
+  // BOTH simultaneously — /signup auto-disconnects the wallet on Magic
+  // sign-in. If both are somehow present, the identity pill prefers the
+  // Magic surface (avatar + display name) and the wallet path becomes
+  // a fallback only when there's no Magic session.
   const isAuthed = !!user || !!connectedWallet;
-
-  async function handleSignOut() {
-    if (signingOut) return;
-    setSigningOut(true);
-    setSignOutError(null);
-    try {
-      // Magic session path: POST /api/user/logout, then setQueryData
-      // to flip the cached payload to unauthed.
-      if (user) {
-        const res = await fetch('/api/user/logout', {
-          method: 'POST',
-          credentials: 'same-origin',
-        });
-        if (!res.ok) {
-          // The route refused. Don't optimistically clear the cache — that
-          // would mask a real backend problem behind a logged-out UI.
-          setSignOutError('Sign-out failed. Please retry.');
-          setSigningOut(false);
-          return;
-        }
-        queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
-      }
-      // Wallet path: wagmi disconnect. No server session to clear.
-      // Run this AFTER the Magic logout so a user with both auth
-      // methods active (legacy state from before mutual-exclusion
-      // enforcement) ends up fully signed out.
-      if (connectedWallet) {
-        try {
-          disconnect();
-        } catch (e) {
-          console.warn('Wallet disconnect during sign-out failed', e);
-        }
-      }
-      // Send the user back home as a clean unauthed state.
-      router.push('/');
-    } catch {
-      setSignOutError('Network error. Please retry.');
-    } finally {
-      setSigningOut(false);
-    }
-  }
 
   if (isLoading) {
     return (
@@ -145,13 +94,7 @@ export function AuthMenu({ className }: Props) {
 
   // Phase 1G Group 5A: header pill is identity-only — avatar + name
   // (Magic) or formatted address (wallet), linked to /profile where
-  // the actual SIGN OUT button lives. Removed from this slot to keep
-  // the header compact and consistent with /me. handleSignOut +
-  // signOutError state are retained for any future caller that wants
-  // a click-to-sign-out variant; they're currently unused on the
-  // header path.
-  void handleSignOut;
-  void signOutError;
+  // the actual SIGN OUT button lives.
   return (
     <Link
       href="/profile"

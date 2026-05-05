@@ -137,9 +137,14 @@ export const users = pgTable('users', {
   /// display_name is mutable any time, validated server-side as
   /// [a-zA-Z0-9 ._-]{1,32}. Null = use email/EOA fallback in UI.
   displayName: text('display_name'),
-  /// avatar_url is a plain https:// URL the user pastes. 1G does not
-  /// run server-side fetches against the URL — it's rendered client-side
-  /// with referrerpolicy="no-referrer". Upload-to-Blob is deferred.
+  /// avatar_url is a Vercel Blob URL produced by
+  /// /api/user/avatar/upload (multipart → sharp resize 256x256 webp →
+  /// blob put). The upload route is the ONLY non-null writer:
+  /// /api/user/profile/update accepts only `null` for this column
+  /// (clear). The route's prior-blob cleanup is scoped to
+  /// `/avatars/<sessionUserId>/` paths so a foreign URL can't trigger
+  /// deletion of someone else's blob. Rendered client-side with
+  /// referrerPolicy="no-referrer" (camelCase JSX prop).
   avatarUrl: text('avatar_url'),
   /// totp_secret is the AES-256-GCM ciphertext of the user's TOTP secret,
   /// bound to (userId, slot='users.totp_secret') as AAD. Null = 2FA off.

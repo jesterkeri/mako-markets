@@ -23,11 +23,12 @@ import {
 // happy-dom.
 //
 // Security:
-// - `referrerPolicy="no-referrer"` (camelCase JSX) prevents leaking the
-//   user's session to whatever host the avatar URL points at. Server-side
-//   validation (see /api/user/profile/update) already enforces https,
-//   no userinfo, no fragments, ≤512 chars; this component does NOT
-//   re-validate. Garbage in = broken-image fallback, not XSS.
+// - `referrerPolicy="no-referrer"` (camelCase JSX) is defense-in-depth
+//   against leaking session info to the avatar host. Avatars are now
+//   exclusively Vercel Blob URLs produced by /api/user/avatar/upload —
+//   /api/user/profile/update refuses non-null avatarUrl writes, so
+//   arbitrary cross-origin URLs cannot enter the column. The component
+//   does NOT re-validate; garbage in = broken-image fallback, not XSS.
 // - On `<img>` onError we swap to the initials path. The fallback does
 //   not contain another <img>, so the error path cannot loop.
 //
@@ -79,12 +80,15 @@ export function AvatarCircle({
 
   if (showImage) {
     return (
-      // We deliberately use a plain <img> instead of next/image: the
-      // user-pasted URL is arbitrary cross-origin, and next/image's
-      // optimization proxy would require remote-pattern config + load
-      // an unbounded set of upstream hosts. For 32-48px avatars the
-      // optimization payoff is negligible; the security boundary
-      // (referrerPolicy="no-referrer") is what matters here.
+      // We deliberately use a plain <img> instead of next/image. Even
+      // though avatars are now exclusively Vercel Blob URLs (single
+      // origin, single subdomain pattern under
+      // *.public.blob.vercel-storage.com — see /api/user/avatar/upload
+      // for the lockdown), next/image would still require a
+      // remote-pattern entry per deployment's blob host AND its
+      // optimization payoff at 32-48px is negligible. The plain <img>
+      // keeps the component framework-free; referrerPolicy="no-referrer"
+      // is defense-in-depth.
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={avatarUrl!}

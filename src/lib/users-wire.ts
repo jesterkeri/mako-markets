@@ -15,7 +15,8 @@ import { type User } from '@/db/schema';
 // plan at C:\Users\hr\AppData\Local\Temp\phase-1g-group-3-plan.md):
 //   A. Returns full identity → spread `userToWire(row, safeAddress)`.
 //      Today: /api/user/me, /api/user/auth (session branch),
-//      /api/user/auth/totp (success), /api/user/profile/update.
+//      /api/user/auth/totp (success), /api/user/profile/update,
+//      /api/user/avatar/upload.
 //   B. Returns one just-set field as the source of truth before /me
 //      re-fetches → typed as `Pick<WireUser, …>` but does NOT call the
 //      helper (the value being returned is the just-written input,

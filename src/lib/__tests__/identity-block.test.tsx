@@ -1,22 +1,24 @@
 // ----------------------------------------------------------------------------
 // identity-block.test.tsx
 //
-// DOM-level tests for IdentityBlock (Group 4 Sub-B). The component
-// owns the display-name + avatar-URL edit state machines plus the
-// extracted email-edit flow; the validation + mounted-ref +
-// AbortController discipline mirror the load-bearing patterns the
-// modals will use in Sub-C.
+// DOM-level tests for IdentityBlock (Group 4 Sub-B + 4-E avatar
+// upload migration). The component owns the display-name edit state
+// machine + avatar file-upload flow + email-edit flow; the
+// mounted-ref + AbortController discipline mirrors the load-bearing
+// patterns the modals will use in Sub-C.
 //
 // Pins:
 //   - Wallet-only branch shows address + no edit affordances
-//   - Magic branch surfaces SIGNED IN AS / DISPLAY NAME / AVATAR URL
+//   - Magic branch surfaces SIGNED IN AS / DISPLAY NAME / AVATAR
 //   - Display name SAVE posts { displayName: <trimmed> } and writes
 //     the optimistic cache entry
 //   - Display name CLEAR posts { displayName: null }
 //   - Client-side validation catches bad display names BEFORE fetch
-//   - Avatar URL validation: http://, userinfo, fragment, > 512 all
-//     rejected before fetch
-//   - Avatar URL SAVE posts { avatarUrl: <value> }
+//   - Avatar upload: oversize file rejected client-side; bad MIME
+//     rejected client-side; valid file POSTs FormData to
+//     /api/user/avatar/upload; success path writes the optimistic
+//     cache entry. (URL paste is gone since 1G Group 4-E — the
+//     upload route is the SOLE non-null avatarUrl writer.)
 //   - Late response after unmount drops without console.error
 //   - 400 from server stays on form + surfaces inline error
 // ----------------------------------------------------------------------------
