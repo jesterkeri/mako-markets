@@ -155,15 +155,25 @@ export function TotpStep({
   const [code, setCode] = useState('');
   const [now, setNow] = useState(() => Date.now());
 
+  // Reset the typed code when mode toggles between 'totp' and
+  // 'recovery'. Done as a render-phase comparison instead of a
+  // setState-in-effect because the React docs flag the effect
+  // pattern as a cascading-render footgun. See
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  // — the prevMode comparison runs synchronously during render, so
+  // the cleared `code` lands in the same render as the mode change
+  // (no extra commit).
+  const [prevMode, setPrevMode] = useState(state.mode);
+  if (prevMode !== state.mode) {
+    setPrevMode(state.mode);
+    setCode('');
+  }
+
   useEffect(() => {
     if (state.lockedUntil === null) return;
     const id = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(id);
   }, [state.lockedUntil]);
-
-  useEffect(() => {
-    setCode('');
-  }, [state.mode]);
 
   if (state.terminal !== null) {
     const message =
