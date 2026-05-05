@@ -19,7 +19,7 @@
     "verify:safe-init": "tsx scripts/verify-init-code-parity.mts",
     "test:aa": "vitest run src/lib/__tests__",
     "test:aa:watch": "vitest src/lib/__tests__",
-    "db:generate": "drizzle-kit generate",
+    "db:generate": "tsx scripts/db-generate-guard.mts",
     "db:migrate": "tsx scripts/db-migrate.mts",
     "db:studio": "drizzle-kit studio",
     "verify:aa-tables": "tsx scripts/verify-aa-tables.mts",
