@@ -15,11 +15,20 @@
 //     restart UI; clicking restart calls onRestart
 //   - formatLockoutRemaining math: 0:00 floor, MM:SS pad
 //
-// What's NOT covered (deferred):
-//   - End-to-end fetch wiring inside SignupPage's handleSubmitTotp.
-//     That handler reads/writes router.replace, queryClient,
-//     wagmi.disconnect — exercised by manual smoke. Pin in a
-//     follow-up if a contract regression slips through smoke.
+//   - mapTotpResponse: pure response→next-state mapping that
+//     SignupPage.handleSubmitTotp delegates to. Covers every branch
+//     of the route's response shape — totp_locked / challenge_invalid
+//     / eoa_drift / totp_failed / generic-failure / 2xx-success — so
+//     a route-side discriminator rename can't slip past type-checking
+//     into manual smoke.
+//
+// What's still NOT covered:
+//   - The success-side effects (wagmi.disconnect, addRecentEmail,
+//     queryClient.setQueryData, router.replace) called by
+//     SignupPage.handleSubmitTotp on a 2xx outcome. Those are wagmi
+//     /next.js boundaries and are exercised by manual smoke. The
+//     mapping test below pins the *decision* to fire them; the
+//     wiring itself is a separate boundary.
 // ----------------------------------------------------------------------------
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -32,6 +41,7 @@ afterEach(() => {
 import {
   TotpStep,
   formatLockoutRemaining,
+  mapTotpResponse,
   type TotpRequiredState,
 } from '../../components/signup/TotpStep';
 
@@ -233,5 +243,127 @@ describe('TotpStep — terminal', () => {
       />,
     );
     expect(getByRole('alert').textContent).toContain('Account state changed');
+  });
+});
+
+describe('mapTotpResponse — handler-level response mapping', () => {
+  const baseTotp: TotpRequiredState = {
+    kind: 'totp_required',
+    challengeId: '00000000-0000-0000-0000-000000000001',
+    mode: 'totp',
+    submitting: true,
+    error: null,
+    lockedUntil: null,
+    terminal: null,
+  };
+  const baseRecovery: TotpRequiredState = { ...baseTotp, mode: 'recovery' };
+
+  it('200 with authed body → success outcome', () => {
+    expect(mapTotpResponse(baseTotp, 200, { authed: true } as never)).toEqual({
+      kind: 'success',
+    });
+  });
+
+  // The mapper itself treats any 2xx as success, but the call site in
+  // SignupPage.handleSubmitTotp parses res.json() BEFORE invoking the
+  // mapper. A 204 (no body) would short-circuit at JSON parse and
+  // surface "Unexpected response" instead of reaching the mapper, so
+  // the route is effectively pinned to 200 with a body in production.
+  // We deliberately do NOT pin a "204 → success" expectation here —
+  // see comment.
+
+  it('429 totp_locked + retryAt ISO → lockedUntil set, error cleared', () => {
+    const retryAt = '2026-05-05T12:34:56.000Z';
+    const out = mapTotpResponse(baseTotp, 429, {
+      error: 'totp_locked',
+      retryAt,
+    });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.lockedUntil).toBe(Date.parse(retryAt));
+    expect(out.next.submitting).toBe(false);
+    expect(out.next.error).toBeNull();
+    expect(out.next.terminal).toBeNull();
+  });
+
+  it('429 totp_locked with unparseable retryAt → lockedUntil null (not NaN)', () => {
+    const out = mapTotpResponse(baseTotp, 429, {
+      error: 'totp_locked',
+      retryAt: 'not-a-date',
+    });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.lockedUntil).toBeNull();
+  });
+
+  it('429 totp_locked with no retryAt → falls through to generic failure', () => {
+    const out = mapTotpResponse(baseTotp, 429, { error: 'totp_locked' });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.error).toBe('Sign-in failed. Please retry.');
+    expect(out.next.lockedUntil).toBeNull();
+  });
+
+  it('401 challenge_invalid → terminal=challenge_invalid', () => {
+    const out = mapTotpResponse(baseTotp, 401, { error: 'challenge_invalid' });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.terminal).toBe('challenge_invalid');
+    expect(out.next.submitting).toBe(false);
+    expect(out.next.error).toBeNull();
+  });
+
+  it('401 eoa_drift → terminal=eoa_drift', () => {
+    const out = mapTotpResponse(baseTotp, 401, { error: 'eoa_drift' });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.terminal).toBe('eoa_drift');
+  });
+
+  it('401 totp_failed in TOTP mode → authenticator-specific copy', () => {
+    const out = mapTotpResponse(baseTotp, 401, { error: 'totp_failed' });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.error).toContain('authenticator');
+    expect(out.next.terminal).toBeNull();
+    expect(out.next.lockedUntil).toBeNull();
+  });
+
+  it('401 totp_failed in recovery mode → recovery-code-specific copy', () => {
+    const out = mapTotpResponse(baseRecovery, 401, { error: 'totp_failed' });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.error).toContain('recovery');
+  });
+
+  it('401 with unknown error → generic failure', () => {
+    const out = mapTotpResponse(baseTotp, 401, { error: 'something_else' });
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.error).toBe('Sign-in failed. Please retry.');
+  });
+
+  it('500 with no body → generic failure', () => {
+    const out = mapTotpResponse(baseTotp, 500, null);
+    expect(out.kind).toBe('state');
+    if (out.kind !== 'state') return;
+    expect(out.next.error).toBe('Sign-in failed. Please retry.');
+  });
+
+  it('all error branches set submitting=false (caller can re-enable input)', () => {
+    const cases: Array<[number, { error: string; retryAt?: string } | null]> = [
+      [429, { error: 'totp_locked', retryAt: '2026-05-05T00:00:00Z' }],
+      [401, { error: 'challenge_invalid' }],
+      [401, { error: 'eoa_drift' }],
+      [401, { error: 'totp_failed' }],
+      [401, { error: 'unknown' }],
+      [500, null],
+    ];
+    for (const [status, body] of cases) {
+      const out = mapTotpResponse(baseTotp, status, body);
+      expect(out.kind).toBe('state');
+      if (out.kind !== 'state') continue;
+      expect(out.next.submitting).toBe(false);
+    }
   });
 });

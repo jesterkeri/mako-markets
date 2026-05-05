@@ -466,18 +466,47 @@ export default function ProfilePage() {
           <ThemeToggle />
         </div>
 
+        {/* Mobile-only Hero (Magic users). Renders above the two-column
+            grid so the identity surface comes first on mobile. On
+            desktop (lg) this clone is hidden — the desktop instance
+            lives inside the LEFT column below, preserving the
+            Hero+Security stack on the left. */}
+        {user && (
+          <section className="lg:hidden mako-card text-ink flex items-center gap-4">
+            <AvatarCircle
+              displayName={user.displayName}
+              email={user.email}
+              magicEoa={user.magicEoa}
+              avatarUrl={user.avatarUrl}
+              size={64}
+            />
+            <div className="flex-1 min-w-0">
+              <p className="mako-title text-2xl leading-tight truncate">
+                {user.displayName && user.displayName.trim().length > 0
+                  ? user.displayName
+                  : user.email}
+              </p>
+              <p className="mako-mono text-xs text-muted truncate">
+                {user.email}
+              </p>
+            </div>
+          </section>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
-          {/* LEFT COLUMN: Identity, Balance & Security */}
-          <div className="lg:col-span-6 flex flex-col gap-8">
+          {/* LEFT COLUMN: Identity, Balance & Security.
+              Mobile order: 2nd (after the right column). This puts
+              SECURITY at the bottom of the mobile flow instead of
+              squeezing it between the mobile-only Hero clone and the
+              identity rows / balance. Desktop: order is the natural
+              source order (left column on the left). */}
+          <div className="lg:col-span-6 order-2 lg:order-1 flex flex-col gap-8">
 
-            {/* 0. Hero card — Magic-only "this is me" identity surface
-                (avatar + display name / email). Stands alone so the
-                identity reads as a primary card above the editable
-                rows + balance. Wallet-only sessions skip this card
-                entirely and start at the identity-rows card below. */}
+            {/* 0. Hero card — desktop instance. Hidden on mobile
+                because the lg:hidden clone above already rendered. */}
             {user && (
-              <section className="mako-card text-ink flex items-center gap-4">
+              <section className="hidden lg:flex mako-card text-ink items-center gap-4">
                 <AvatarCircle
                   displayName={user.displayName}
                   email={user.email}
@@ -565,8 +594,9 @@ export default function ProfilePage() {
             </section>
           </div>
 
-          {/* RIGHT COLUMN: Identity rows + Balance, Send & Receive */}
-          <div className="lg:col-span-6 flex flex-col gap-8">
+          {/* RIGHT COLUMN: Identity rows + Balance, Send & Receive.
+              Mobile order: 1st. See LEFT col comment above. */}
+          <div className="lg:col-span-6 order-1 lg:order-2 flex flex-col gap-8">
 
             {/* 1. Identity & Balance — moved from left col so the
                 hero card stands alone over the SECURITY card on the

@@ -14,7 +14,7 @@ import {
 } from '@/lib/recent-emails';
 import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { TotpStep } from '@/components/signup/TotpStep';
+import { TotpStep, mapTotpResponse } from '@/components/signup/TotpStep';
 
 // ----------------------------------------------------------------------------
 // /signup — Phase 1A email auth entry point.
@@ -413,15 +413,20 @@ export default function SignupPage() {
       return;
     }
 
-    if (res.ok) {
-      // Bucket-A success envelope. Mirrors postDidToken's success path —
-      // wallet disconnect, recent-email cache, query cache pre-populate,
-      // route home. Keep this in sync if the Magic-OTP success path
-      // changes.
-      let body: Partial<AuthSuccessBody> | null = null;
-      try {
-        body = (await res.json()) as Partial<AuthSuccessBody>;
-      } catch {
+    // Read body once. Used both by success (auth payload) and error
+    // (discriminator + retryAt) branches.
+    let body: Partial<AuthSuccessBody> & { error?: string; retryAt?: string }
+      | null = null;
+    try {
+      body = (await res.json()) as Partial<AuthSuccessBody> & {
+        error?: string;
+        retryAt?: string;
+      };
+    } catch {
+      // body stays null; mapping treats this as a generic failure on the
+      // error branch, and as an unexpected-response failure on the
+      // success branch (we need an authed payload to populate the cache).
+      if (res.ok) {
         setState({
           ...state,
           submitting: false,
@@ -429,82 +434,34 @@ export default function SignupPage() {
         });
         return;
       }
+    }
 
-      try {
-        disconnect();
-      } catch (e) {
-        console.warn('Wallet disconnect on TOTP sign-in failed', e);
-      }
-
-      addRecentEmail(email);
-
-      if (body && body.authed === true) {
-        const { ok: _ok, ...authedUser } = body as AuthSuccessBody;
-        void _ok;
-        queryClient.setQueryData(
-          USER_QUERY_KEY,
-          authedUser satisfies AuthedUser,
-        );
-      }
-      router.replace('/');
+    const outcome = mapTotpResponse(state, res.status, body ?? null);
+    if (outcome.kind === 'state') {
+      setState(outcome.next);
       return;
     }
 
-    // Error path. Read body once to grab the discriminator + retryAt.
-    let json: { error?: string; retryAt?: string } = {};
+    // Success path. Mirrors postDidToken's success branch — wallet
+    // disconnect, recent-email cache, query cache pre-populate, route
+    // home. Keep this in sync if the Magic-OTP success path changes.
     try {
-      json = (await res.json()) as { error?: string; retryAt?: string };
-    } catch {
-      // fall through with empty json — error code defaults to generic
+      disconnect();
+    } catch (e) {
+      console.warn('Wallet disconnect on TOTP sign-in failed', e);
     }
 
-    if (res.status === 429 && json.error === 'totp_locked' && json.retryAt) {
-      const retryAtMs = Date.parse(json.retryAt);
-      setState({
-        ...state,
-        submitting: false,
-        error: null,
-        lockedUntil: Number.isFinite(retryAtMs) ? retryAtMs : null,
-      });
-      return;
-    }
+    addRecentEmail(email);
 
-    if (res.status === 401 && json.error === 'challenge_invalid') {
-      setState({
-        ...state,
-        submitting: false,
-        error: null,
-        terminal: 'challenge_invalid',
-      });
-      return;
+    if (body && body.authed === true) {
+      const { ok: _ok, ...authedUser } = body as AuthSuccessBody;
+      void _ok;
+      queryClient.setQueryData(
+        USER_QUERY_KEY,
+        authedUser satisfies AuthedUser,
+      );
     }
-
-    if (res.status === 401 && json.error === 'eoa_drift') {
-      setState({
-        ...state,
-        submitting: false,
-        error: null,
-        terminal: 'eoa_drift',
-      });
-      return;
-    }
-
-    if (res.status === 401 && json.error === 'totp_failed') {
-      setState({
-        ...state,
-        submitting: false,
-        error: state.mode === 'totp'
-          ? 'That code is wrong. Try a fresh one from your authenticator.'
-          : 'That recovery code is wrong or already used.',
-      });
-      return;
-    }
-
-    setState({
-      ...state,
-      submitting: false,
-      error: 'Sign-in failed. Please retry.',
-    });
+    router.replace('/');
   }
 
   /// Toggle between TOTP code and recovery code modes. Clears any

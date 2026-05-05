@@ -54,6 +54,93 @@ export function formatLockoutRemaining(
   return `${mm}:${ss.toString().padStart(2, '0')}`;
 }
 
+/// Pure mapping from the /api/user/auth/totp response to the next
+/// TotpRequiredState (or `success` to signal the caller should run
+/// the success-side effects: setQueryData, disconnect, addRecentEmail,
+/// router.replace).
+///
+/// Extracted from SignupPage.handleSubmitTotp so route-shape changes
+/// are pinned by a focused unit test instead of relying on manual
+/// smoke. Keep the discriminator strings (`totp_locked`,
+/// `challenge_invalid`, `eoa_drift`, `totp_failed`) in lockstep with
+/// the route's response codes — the test enumerates every branch.
+export type TotpResponseOutcome =
+  | { kind: 'success' }
+  | { kind: 'state'; next: TotpRequiredState };
+
+export function mapTotpResponse(
+  state: TotpRequiredState,
+  status: number,
+  body: { error?: string; retryAt?: string } | null,
+): TotpResponseOutcome {
+  if (status >= 200 && status < 300) {
+    return { kind: 'success' };
+  }
+
+  if (
+    status === 429
+    && body?.error === 'totp_locked'
+    && typeof body.retryAt === 'string'
+  ) {
+    const retryAtMs = Date.parse(body.retryAt);
+    return {
+      kind: 'state',
+      next: {
+        ...state,
+        submitting: false,
+        error: null,
+        lockedUntil: Number.isFinite(retryAtMs) ? retryAtMs : null,
+      },
+    };
+  }
+
+  if (status === 401 && body?.error === 'challenge_invalid') {
+    return {
+      kind: 'state',
+      next: {
+        ...state,
+        submitting: false,
+        error: null,
+        terminal: 'challenge_invalid',
+      },
+    };
+  }
+
+  if (status === 401 && body?.error === 'eoa_drift') {
+    return {
+      kind: 'state',
+      next: {
+        ...state,
+        submitting: false,
+        error: null,
+        terminal: 'eoa_drift',
+      },
+    };
+  }
+
+  if (status === 401 && body?.error === 'totp_failed') {
+    return {
+      kind: 'state',
+      next: {
+        ...state,
+        submitting: false,
+        error: state.mode === 'totp'
+          ? 'That code is wrong. Try a fresh one from your authenticator.'
+          : 'That recovery code is wrong or already used.',
+      },
+    };
+  }
+
+  return {
+    kind: 'state',
+    next: {
+      ...state,
+      submitting: false,
+      error: 'Sign-in failed. Please retry.',
+    },
+  };
+}
+
 export function TotpStep({
   state,
   onSubmit,
