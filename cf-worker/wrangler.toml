@@ -9,10 +9,18 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 MAKO_ADDRESS = "0xf9853d7ad6601deF4367524A5802B41227ea5c43"
 MONAD_RPC_URL = "https://testnet-rpc.monad.xyz/"
+# Mako Markets Vercel URL — used by the AA cron scheduler to fire
+# /api/cron/aa-fast (every minute) and /api/cron/aa-slow (every 5 min)
+# against the deployed Next.js app. Vercel Hobby plan rejects sub-daily
+# crons in vercel.json; the Worker fills the gap by acting as the
+# scheduler and HTTP-pinging the cron routes with Bearer CRON_SECRET.
+MAKO_APP_URL = "https://mako-markets.vercel.app"
 
 # Cron: every minute. CF cron is reliable to the minute (unlike GitHub
 # Actions cron which drifts to 1-2 hours under load). Markets with
-# closeTime ≥ 60s will resolve within ~1 tick of close.
+# closeTime ≥ 60s will resolve within ~1 tick of close. The same tick
+# also fires /api/cron/aa-fast every minute and /api/cron/aa-slow once
+# per 5 minutes (gated inside the scheduled handler).
 [triggers]
 crons = ["*/1 * * * *"]
 
@@ -24,3 +32,7 @@ enabled = true
 #   ADMIN_PRIVATE_KEY       — 0x + 64 hex, the resolver wallet
 #   FOOTBALL_DATA_API_KEY   — football-data.org key (football resolution)
 #   BALLDONTLIE_API_KEY     — balldontlie.io key (NBA resolution)
+#   CRON_SECRET             — bearer token for /api/cron/aa-fast +
+#                             /api/cron/aa-slow on the Vercel side.
+#                             MUST match the value set in
+#                             `vercel env ls production`.

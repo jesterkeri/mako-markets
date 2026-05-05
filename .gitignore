@@ -56,3 +56,6 @@ HANDOVER*.md
 # Operator audit log for ambiguous AA pending-op resolutions
 # (scripts/resolve-ambiguous-op.mts). Local to the operator's machine.
 .local-ops/
+
+# Local-only paid-services tracker (per Joshua's request)
+/COSTS.md

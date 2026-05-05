@@ -44,10 +44,22 @@ export interface Env {
   ADMIN_PRIVATE_KEY: string;
   FOOTBALL_DATA_API_KEY?: string;
   BALLDONTLIE_API_KEY?: string;
+  /// Bearer token for /api/cron/aa-fast + /api/cron/aa-slow on the
+  /// Vercel side. The same value must be in `vercel env ls production`.
+  /// Optional only so the Worker still runs market resolution if the
+  /// AA scheduler isn't configured yet — but if MAKO_APP_URL is set
+  /// and CRON_SECRET is missing, the AA pings are skipped with a log
+  /// (we don't fall back to no-auth, which would let any caller hit
+  /// the cron routes).
+  CRON_SECRET?: string;
 
   // Public config — safe to log.
   MAKO_ADDRESS: string;
   MONAD_RPC_URL: string;
+  /// Mako Markets Vercel URL. When set, the scheduled handler fires
+  /// AA cron routes against this origin. Absent → AA scheduling is
+  /// off (Worker falls back to market-resolution-only behaviour).
+  MAKO_APP_URL?: string;
 
   // Optional switch for dry-run testing.
   DRY_RUN?: string;
@@ -1080,12 +1092,60 @@ export async function runResolver(env: Env): Promise<void> {
   );
 }
 
+/// Fire one HTTP cron tick against the Vercel app. Runs as a
+/// "fire and forget" inside ctx.waitUntil so a slow Vercel response
+/// doesn't block the market resolver. We don't await the body; the
+/// status code alone tells us whether the bearer auth + handler ran.
+async function pingAaCron(
+  env: Env,
+  path: '/api/cron/aa-fast' | '/api/cron/aa-slow',
+): Promise<void> {
+  if (!env.MAKO_APP_URL) return; // AA scheduling not configured.
+  if (!env.CRON_SECRET) {
+    // Loud, but only once per missing tick — better than silently
+    // falling back to no-auth, which would expose the cron routes to
+    // anyone who finds the URL.
+    console.warn(`[aa-cron] ${path}: CRON_SECRET unset — skipping`);
+    return;
+  }
+  const url = `${env.MAKO_APP_URL.replace(/\/$/, '')}${path}`;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${env.CRON_SECRET}`,
+        // Vercel checks for this header on its own crons; setting it
+        // here lets cron-auth.ts treat the Worker tick the same way
+        // it treats Vercel-native cron triggers.
+        'User-Agent': 'vercel-cron/1.0 (mako-auto-resolver)',
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[aa-cron] ${path} → ${res.status}`);
+    }
+  } catch (e) {
+    console.warn(`[aa-cron] ${path} fetch failed:`, shortErrorMessage(e));
+  }
+}
+
 export default {
   // CF cron fires scheduled() at every trigger in wrangler.toml.
   // ctx.waitUntil keeps the Worker alive until runResolver finishes
   // (otherwise the event ends when scheduled() returns synchronously).
+  //
+  // Three jobs share this single per-minute tick:
+  //   1. Market resolver (always — sports/crypto market lifecycle).
+  //   2. AA fast cron (every minute — drains aa_pending_user_ops rows
+  //      whose receipt poll died on the request path).
+  //   3. AA slow cron (every 5 minutes — sweeps stale rows + emits
+  //      ambiguous-row alerts).
+  //
+  // The AA pings live HERE (not in vercel.json) because Vercel Hobby
+  // plan rejects sub-daily crons. The Worker fires them via
+  // pingAaCron with Bearer CRON_SECRET; the routes themselves still
+  // gate via cron-auth.ts.
   async scheduled(
-    _event: ScheduledController,
+    event: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
@@ -1094,6 +1154,17 @@ export default {
         console.error('[resolver] tick error:', shortErrorMessage(error));
       }),
     );
+
+    ctx.waitUntil(pingAaCron(env, '/api/cron/aa-fast'));
+
+    // Slow cron: every 5 minutes. CF Worker fires every minute, so we
+    // gate by minute % 5 === 0. Use scheduledTime (epoch ms) rather
+    // than `new Date()` so behaviour is deterministic against CF's
+    // scheduled time and not the Worker's wall clock at handler entry.
+    const minute = new Date(event.scheduledTime).getUTCMinutes();
+    if (minute % 5 === 0) {
+      ctx.waitUntil(pingAaCron(env, '/api/cron/aa-slow'));
+    }
   },
 
   // No HTTP triggers — a public /tick endpoint would let anyone drain the
