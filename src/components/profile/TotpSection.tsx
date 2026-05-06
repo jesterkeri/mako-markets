@@ -41,6 +41,11 @@ export function TotpSection({ user }: TotpSectionProps) {
   const [regenerateOpen, setRegenerateOpen] = useState(false);
 
   if (!user) return null;
+  // Magic-only by definition. Currently called only inside
+  // IdentityBlock's magic branch, so this guard is defensive — but
+  // cheap, and keeps the discriminated narrow local rather than
+  // depending on the parent's branch shape.
+  if (user.authType !== 'magic') return null;
 
   const enabled = user.totpEnabled;
   const enabledAtLabel = user.totpEnabledAt

@@ -64,6 +64,7 @@ import { AuthMenu } from '../../components/AuthMenu';
 
 const MAGIC_USER_BASE: AuthedUser = {
   authed: true,
+  authType: 'magic',
   email: 'joshua@example.com',
   magicEoa: '0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
   safeAddress: '0xff00ff00ff00ff00ff00ff00ff00ff00ff00ff00',

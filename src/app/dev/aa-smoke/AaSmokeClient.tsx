@@ -76,6 +76,25 @@ export default function AaSmokeClient() {
       />
     );
   }
+  // Magic-only — wallet sessions have no Safe and can't drive the
+  // ERC-4337 sponsor / send routes (plan step 18 narrowing). Render a
+  // wallet-shape "use a Magic account" notice instead of a notFound,
+  // because this page is already MAKO_STAGE-gated by the Server
+  // Component wrapper.
+  if (user.authType !== 'magic') {
+    return (
+      <Shell
+        title="wallet sessions cannot use this dev surface"
+        body={
+          <p>
+            The AA dev surface drives ERC-4337 user-ops via your derived
+            Safe. Wallet-session users have no Safe — sign out and sign
+            in via Magic at <a href="/signup">/signup</a>.
+          </p>
+        }
+      />
+    );
+  }
 
   const safeAddress = user.safeAddress as Address;
   const magicEoa = user.magicEoa as Address;

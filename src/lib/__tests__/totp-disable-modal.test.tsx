@@ -12,12 +12,17 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { TotpDisableModal } from '../../components/profile/TotpDisableModal';
-import { USER_QUERY_KEY, type AuthedUser } from '../use-user';
+import {
+  USER_QUERY_KEY,
+  type AuthedUser,
+  type MagicAuthedUser,
+} from '../use-user';
 
 afterEach(cleanup);
 
 const ENABLED_USER: AuthedUser = {
   authed: true,
+  authType: 'magic',
   email: 'joshua@example.com',
   magicEoa: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   safeAddress: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
@@ -78,7 +83,7 @@ describe('TotpDisableModal', () => {
     expect(body).toEqual({ totpCode: '123456' });
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    const cached = qc.getQueryData(USER_QUERY_KEY) as AuthedUser;
+    const cached = qc.getQueryData(USER_QUERY_KEY) as MagicAuthedUser;
     expect(cached.totpEnabled).toBe(false);
     expect(cached.totpEnabledAt).toBeNull();
   });
@@ -227,7 +232,7 @@ describe('TotpDisableModal', () => {
       const alert = document.querySelector('[role="alert"]');
       expect(alert?.textContent ?? '').toMatch(/try again/i);
     });
-    const cached = qc.getQueryData(USER_QUERY_KEY) as AuthedUser;
+    const cached = qc.getQueryData(USER_QUERY_KEY) as MagicAuthedUser;
     expect(cached.totpEnabled).toBe(true); // unchanged
   });
 
@@ -287,7 +292,7 @@ describe('TotpDisableModal', () => {
     await Promise.resolve();
 
     // Cache should be unchanged — still totpEnabled=true.
-    const cached = qc.getQueryData(USER_QUERY_KEY) as AuthedUser;
+    const cached = qc.getQueryData(USER_QUERY_KEY) as MagicAuthedUser;
     expect(cached.totpEnabled).toBe(true);
     // Fresh modal still shows the form (phase='idle').
     expect(queryByLabelText('6-DIGIT CODE')).not.toBeNull();

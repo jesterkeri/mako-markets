@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useAccount } from 'wagmi';
 
 import { AvatarCircle } from '@/components/AvatarCircle';
+import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 import { useUser } from '@/lib/use-user';
 
 // ----------------------------------------------------------------------------
@@ -84,13 +85,22 @@ export function AuthMenu({ className }: Props) {
     );
   }
 
-  // Identity label for the title attribute: prefer email when Magic
-  // user, fall back to truncated wallet address for wallet-only users.
+  // Identity label for the title attribute: per AuthedUser
+  // discriminator (Magic → email, wallet → formatted address), or
+  // truncated connected-wallet address when signed in solely via
+  // wagmi (no `mako_user_session`).
   const identity = user
-    ? user.email
+    ? getIdentityLabel(user)
     : connectedWallet
       ? `${connectedWallet.slice(0, 6)}…${connectedWallet.slice(-4)}`
       : '';
+
+  const initialSource = user
+    ? (user.authType === 'magic' ? user.email : user.walletAddress)
+    : '';
+  const seedKey = user
+    ? (user.authType === 'magic' ? user.magicEoa : user.walletAddress)
+    : '';
 
   // Phase 1G Group 5A: header pill is identity-only — avatar + name
   // (Magic) or formatted address (wallet), linked to /profile where
@@ -106,13 +116,13 @@ export function AuthMenu({ className }: Props) {
         <>
           <AvatarCircle
             displayName={user.displayName}
-            email={user.email}
-            magicEoa={user.magicEoa}
+            initialSource={initialSource}
+            seedKey={seedKey}
             avatarUrl={user.avatarUrl}
             size={28}
           />
           <span className="mako-label text-[11px] truncate max-w-[8rem]">
-            {user.displayName ?? user.email}
+            {getDisplayName(user)}
           </span>
         </>
       ) : (

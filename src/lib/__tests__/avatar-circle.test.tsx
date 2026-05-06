@@ -23,8 +23,8 @@ describe('AvatarCircle', () => {
     const { container } = render(
       <AvatarCircle
         displayName="Joshua"
-        email={EMAIL}
-        magicEoa={EOA}
+        initialSource={EMAIL}
+        seedKey={EOA}
         avatarUrl="https://example.com/a.png"
       />,
     );
@@ -38,8 +38,8 @@ describe('AvatarCircle', () => {
     const { container } = render(
       <AvatarCircle
         displayName="Joshua"
-        email={EMAIL}
-        magicEoa={EOA}
+        initialSource={EMAIL}
+        seedKey={EOA}
         avatarUrl={null}
       />,
     );
@@ -51,8 +51,8 @@ describe('AvatarCircle', () => {
     const { container } = render(
       <AvatarCircle
         displayName="Joshua"
-        email={EMAIL}
-        magicEoa={EOA}
+        initialSource={EMAIL}
+        seedKey={EOA}
         avatarUrl="https://example.com/broken.png"
       />,
     );
@@ -68,8 +68,8 @@ describe('AvatarCircle', () => {
     const { container } = render(
       <AvatarCircle
         displayName={null}
-        email="alice@example.com"
-        magicEoa={EOA}
+        initialSource="alice@example.com"
+        seedKey={EOA}
         avatarUrl={null}
       />,
     );
@@ -92,8 +92,8 @@ describe('AvatarCircle', () => {
           </button>
           <AvatarCircle
             displayName="Joshua"
-            email={EMAIL}
-            magicEoa={EOA}
+            initialSource={EMAIL}
+            seedKey={EOA}
             avatarUrl={url}
           />
         </div>
@@ -119,8 +119,8 @@ describe('AvatarCircle', () => {
     const { container, rerender } = render(
       <AvatarCircle
         displayName={null}
-        email={EMAIL}
-        magicEoa={EOA}
+        initialSource={EMAIL}
+        seedKey={EOA}
         avatarUrl={null}
       />,
     );
@@ -128,8 +128,8 @@ describe('AvatarCircle', () => {
     rerender(
       <AvatarCircle
         displayName={null}
-        email={EMAIL}
-        magicEoa={EOA}
+        initialSource={EMAIL}
+        seedKey={EOA}
         avatarUrl={null}
       />,
     );

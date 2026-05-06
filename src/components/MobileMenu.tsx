@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AvatarCircle } from '@/components/AvatarCircle';
 import { Logo } from '@/components/Logo';
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
+import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 
 // ---------------------------------------------------------------------------
 // MobileMenu
@@ -144,12 +145,12 @@ export function MobileMenu({ className }: { className?: string }) {
 
   const isAuthed = !!user || !!connectedWallet;
   const identity = user
-    ? user.email
+    ? getIdentityLabel(user)
     : connectedWallet
       ? `${connectedWallet.slice(0, 6)}…${connectedWallet.slice(-4)}`
       : '';
   const initial = user
-    ? user.email.trim().charAt(0).toUpperCase() || '?'
+    ? getDisplayName(user).trim().charAt(0).toUpperCase() || '?'
     : connectedWallet
       ? '0x'
       : '';
@@ -293,8 +294,8 @@ export function MobileMenu({ className }: { className?: string }) {
                       {user ? (
                         <AvatarCircle
                           displayName={user.displayName}
-                          email={user.email}
-                          magicEoa={user.magicEoa}
+                          initialSource={user.authType === 'magic' ? user.email : user.walletAddress}
+                          seedKey={user.authType === 'magic' ? user.magicEoa : user.walletAddress}
                           avatarUrl={user.avatarUrl}
                           size={36}
                           className="shrink-0"
@@ -312,7 +313,7 @@ export function MobileMenu({ className }: { className?: string }) {
                           className="mako-label text-[10px] text-muted truncate"
                           title={identity}
                         >
-                          {user && user.displayName ? user.displayName : identity}
+                          {user ? getDisplayName(user) : identity}
                         </span>
                         <span className="mako-label text-[11px] text-chrome-fg">
                           PROFILE

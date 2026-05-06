@@ -38,21 +38,18 @@ import { useQuery } from '@tanstack/react-query';
 // nuke the auth cache entry we just wrote.
 // ----------------------------------------------------------------------------
 
-export type AuthedUser = {
+/**
+ * Magic-shape authenticated user. Carried by sessions where the
+ * underlying users row is `auth_type='magic'` — email + magic_eoa
+ * pair, derived Safe address, TOTP state, email-change cooldown.
+ */
+export type MagicAuthedUser = {
   authed: true;
+  authType: 'magic';
   email: string;
   magicEoa: string;
   safeAddress: string;
-  /// Optional human label set via POST /api/user/profile/update. Null
-  /// when the user hasn't picked one — sidebar/AuthMenu render the
-  /// email or formatted EOA as a fallback.
   displayName: string | null;
-  /// Vercel Blob URL produced by POST /api/user/avatar/upload. The
-  /// upload route is the SOLE non-null writer — /api/user/profile/update
-  /// accepts only `null` for this field (clear). Server resizes the
-  /// uploaded image to 256x256 webp + strips EXIF before storage.
-  /// Rendered client-side with referrerPolicy="no-referrer" (camelCase
-  /// JSX). Null when unset.
   avatarUrl: string | null;
   /// True when users.totp_secret IS NOT NULL. Drives "DISABLE 2FA" vs
   /// "ENABLE 2FA" UI affordances. Derived server-side; the encrypted
@@ -75,6 +72,35 @@ export type AuthedUser = {
   /// Server-side enforcement lives in /api/user/email/update.
   nextEmailChangeAvailableAt: string | null;
 };
+
+/**
+ * Wallet-shape authenticated user. Carried by sessions where the
+ * underlying users row is `auth_type='wallet'` — wallet_address only.
+ * No email, no Safe (wallet users sign tx through their connected
+ * wagmi wallet, not through an AA Safe), no TOTP.
+ */
+export type WalletAuthedUser = {
+  authed: true;
+  authType: 'wallet';
+  walletAddress: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  /// Same semantics as the Magic shape's `lastSignInAt`. Duplicated
+  /// across both shapes because wallet users see the same compromise-
+  /// detection signal in /profile.
+  lastSignInAt: string | null;
+};
+
+/**
+ * Discriminated union — narrow on `user.authType` before reading any
+ * shape-specific field. The TypeScript compiler will refuse a read of
+ * `user.email` outside an `if (user.authType === 'magic')` branch
+ * (and similarly for `user.walletAddress` outside a wallet branch).
+ * That refusal is the load-bearing safety net: any consumer that
+ * still treats wallet users as Magic surfaces as a TS error rather
+ * than a runtime undefined-read.
+ */
+export type AuthedUser = MagicAuthedUser | WalletAuthedUser;
 
 type UnauthedResponse = { authed: false };
 type UserMeResponse = AuthedUser | UnauthedResponse;

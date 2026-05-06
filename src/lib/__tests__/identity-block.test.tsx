@@ -34,6 +34,7 @@ afterEach(cleanup);
 
 const MAGIC_USER: AuthedUser = {
   authed: true,
+  authType: 'magic',
   email: 'joshua@example.com',
   magicEoa: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   safeAddress: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',

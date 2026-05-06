@@ -10,6 +10,7 @@ import { isAddress, parseUnits, type Address, erc20Abi } from 'viem';
 import { useWriteContract } from 'wagmi';
 
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
+import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 import { WarningModal } from '@/components/WarningModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
@@ -135,10 +136,12 @@ export default function ProfilePage() {
   const [sendError, setSendError] = useState('');
   const [sendTxHash, setSendTxHash] = useState<`0x${string}` | null>(null);
 
-  // Address resolution: Magic Safe takes precedence if logged in,
-  // otherwise connected wallet.
-  const isMagicUser = !!user;
-  const canonicalAddress = user
+  // Address resolution: Magic Safe takes precedence; wallet-session
+  // and wagmi-only users canonicalize on the connected wallet (plan
+  // step 18 narrowing). The wallet-drift banner (plan step 21) is
+  // what surfaces a wallet-session ≠ connected mismatch.
+  const isMagicUser = user?.authType === 'magic';
+  const canonicalAddress = isMagicUser
     ? (user.safeAddress as `0x${string}`)
     : connectedWallet;
 
@@ -408,7 +411,14 @@ export default function ProfilePage() {
         recipient: sendDestination as Address,
         amountUsdc: amountBaseUnits,
         usdcAddress: usdcAddress as Address,
-        magicEoa: user.magicEoa as Address,
+        magicEoa:
+          user?.authType === 'magic'
+            ? (user.magicEoa as Address)
+            : (() => {
+                throw new Error(
+                  'send-usdc magic-flow guard fell through for non-magic user',
+                );
+              })(),
       });
     } catch (e) {
       console.error('Send failed', e);
@@ -531,19 +541,17 @@ export default function ProfilePage() {
           <section className="lg:hidden mako-card text-ink flex items-center gap-4">
             <AvatarCircle
               displayName={user.displayName}
-              email={user.email}
-              magicEoa={user.magicEoa}
+              initialSource={user.authType === 'magic' ? user.email : user.walletAddress}
+              seedKey={user.authType === 'magic' ? user.magicEoa : user.walletAddress}
               avatarUrl={user.avatarUrl}
               size={64}
             />
             <div className="flex-1 min-w-0">
               <p className="mako-title text-2xl leading-tight truncate">
-                {user.displayName && user.displayName.trim().length > 0
-                  ? user.displayName
-                  : user.email}
+                {getDisplayName(user)}
               </p>
               <p className="mako-mono text-xs text-muted truncate">
-                {user.email}
+                {getIdentityLabel(user)}
               </p>
             </div>
           </section>
@@ -567,19 +575,17 @@ export default function ProfilePage() {
               <section className="hidden lg:flex mako-card text-ink items-center gap-4">
                 <AvatarCircle
                   displayName={user.displayName}
-                  email={user.email}
-                  magicEoa={user.magicEoa}
+                  initialSource={user.authType === 'magic' ? user.email : user.walletAddress}
+                  seedKey={user.authType === 'magic' ? user.magicEoa : user.walletAddress}
                   avatarUrl={user.avatarUrl}
                   size={64}
                 />
                 <div className="flex-1 min-w-0">
                   <p className="mako-title text-2xl leading-tight truncate">
-                    {user.displayName && user.displayName.trim().length > 0
-                      ? user.displayName
-                      : user.email}
+                    {getDisplayName(user)}
                   </p>
                   <p className="mako-mono text-xs text-muted truncate">
-                    {user.email}
+                    {getIdentityLabel(user)}
                   </p>
                 </div>
               </section>
@@ -615,7 +621,7 @@ export default function ProfilePage() {
                         <svg className={`w-4 h-4 transition-transform ${showTechnicalDetails ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
                       </button>
 
-                      {showTechnicalDetails && user && (
+                      {showTechnicalDetails && user?.authType === 'magic' && (
                         <div className="mt-6 flex flex-col gap-6">
                           <div className="bg-paper p-4 rounded-xl border-2 border-ink flex flex-col gap-2">
                             <span className="mako-label text-ink">UNDERLYING SIGNER (EOA)</span>
@@ -1053,7 +1059,7 @@ export default function ProfilePage() {
         title="SWITCH ACCOUNT"
         message={
           isMagicUser
-            ? `This signs you out of ${user?.email ?? 'this account'} and takes you to sign-in for a different email.\n\nYour wallet stays safe, only the active session changes.`
+            ? `This signs you out of ${user?.authType === 'magic' ? user.email : 'this account'} and takes you to sign-in for a different email.\n\nYour wallet stays safe, only the active session changes.`
             : `This disconnects ${formatAddress(connectedWallet)} and takes you to sign-in. You can connect a different wallet or sign in with email there.\n\nYour funds stay safe, only the active connection changes.`
         }
         confirmLabel="SWITCH ACCOUNT"

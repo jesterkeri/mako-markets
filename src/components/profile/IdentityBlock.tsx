@@ -64,7 +64,12 @@ function validateDisplayName(value: string): string | null {
 
 export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
   const queryClient = useQueryClient();
-  const isMagicUser = !!user;
+  // Plan step 18 narrowing: a wallet-session user is also `!!user` but
+  // has no `email` / `nextEmailChangeAvailableAt` / TOTP. The Magic
+  // identity edit affordances below all require Magic. Narrow here so
+  // the rest of the component can read `user.email` etc. without
+  // optional chaining.
+  const isMagicUser = user?.authType === 'magic';
 
   // Mount + cancellation discipline. Per-field controllers so that
   // submitting one field doesn't abort an in-flight submit of another
@@ -96,7 +101,8 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
   // here keeps render pure — no client-side clock comparison needed.
   // If the cooldown elapses while the page is open, the next /me
   // refetch flips this back to null and the EDIT button re-enables.
-  const emailChangeAvailableAt = user?.nextEmailChangeAvailableAt ?? null;
+  const emailChangeAvailableAt =
+    user?.authType === 'magic' ? user.nextEmailChangeAvailableAt : null;
   const emailChangeLocked = !!emailChangeAvailableAt;
   const emailChangeAvailableLabel = emailChangeAvailableAt
     ? new Date(emailChangeAvailableAt).toLocaleDateString()
@@ -121,7 +127,7 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
       setEmailEditError('Enter a valid email address.');
       return;
     }
-    if (user && trimmed.toLowerCase() === user.email.toLowerCase()) {
+    if (user?.authType === 'magic' && trimmed.toLowerCase() === user.email.toLowerCase()) {
       setEmailEditError('That is already your email.');
       return;
     }

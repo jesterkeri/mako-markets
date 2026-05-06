@@ -19,23 +19,42 @@ export const STATIC_PALETTE = [
   { bg: 'bg-mako-purple', fg: 'text-paper' },
 ] as const;
 
+/**
+ * Returns the single uppercase initial used in the AvatarCircle
+ * fallback. Prefer the user's chosen displayName; fall back to
+ * `fallback` (Magic users pass their email, wallet users pass their
+ * formatted address). 'M' is the final fallback for empty input.
+ *
+ * Param renamed from `email` → `fallback` so the helper is shape-
+ * agnostic (codex round-2 plan step 17).
+ */
 export function deriveInitial(
   displayName: string | null,
-  email: string,
+  fallback: string,
 ): string {
   if (displayName) {
     const trimmed = displayName.trim();
     if (trimmed.length > 0) return trimmed[0]!.toUpperCase();
   }
-  if (email && email.length > 0) return email[0]!.toUpperCase();
+  if (fallback && fallback.length > 0) return fallback[0]!.toUpperCase();
   return 'M';
 }
 
-export function derivePaletteIndex(magicEoa: string): number {
+/**
+ * Returns a deterministic STATIC_PALETTE index from the first 5 hex
+ * chars of the seed (after stripping the 0x prefix if present). The
+ * seed is the user's identity address — Magic passes magicEoa,
+ * wallet passes walletAddress. Both are normalized to lowercase
+ * upstream, so the same identity always lands on the same palette.
+ *
+ * Param renamed from `magicEoa` → `seed` so the helper is shape-
+ * agnostic (codex round-2 plan step 17).
+ */
+export function derivePaletteIndex(seed: string): number {
   let sum = 0;
-  const start = magicEoa.startsWith('0x') ? 2 : 0;
-  for (let i = start; i < Math.min(start + 5, magicEoa.length); i++) {
-    sum += magicEoa.charCodeAt(i);
+  const start = seed.startsWith('0x') ? 2 : 0;
+  for (let i = start; i < Math.min(start + 5, seed.length); i++) {
+    sum += seed.charCodeAt(i);
   }
   return sum % STATIC_PALETTE.length;
 }

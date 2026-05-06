@@ -8,6 +8,7 @@ import { useAccount } from 'wagmi';
 import { AvatarCircle } from '@/components/AvatarCircle';
 import { Logo } from '@/components/Logo';
 import { useUser } from '@/lib/use-user';
+import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 
 /**
  * Neobrutalist hover-expand sidebar.
@@ -83,15 +84,22 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
 
   if (!user && !connectedWallet) return null;
 
-  // Identity label: Magic email if signed in via OTP, truncated wallet
-  // otherwise. The avatar circle displays the first email letter for
-  // Magic users, "0x" for wallet users.
+  // Identity label: Magic email or wallet address (per AuthedUser
+  // discriminator), or formatted connected-wallet address when signed
+  // in solely via wagmi.
   const label = user
-    ? user.email
+    ? getIdentityLabel(user)
     : `${connectedWallet!.slice(0, 6)}…${connectedWallet!.slice(-4)}`;
   const initial = user
-    ? user.email.trim().charAt(0).toUpperCase() || '?'
+    ? getDisplayName(user).trim().charAt(0).toUpperCase() || '?'
     : '0x';
+  // AvatarCircle prop fan-out per authType.
+  const avatarInitialSource = user
+    ? user.authType === 'magic' ? user.email : user.walletAddress
+    : '';
+  const avatarSeedKey = user
+    ? user.authType === 'magic' ? user.magicEoa : user.walletAddress
+    : '';
 
   return (
     <div className="mt-auto border-t-2 border-chrome-divider shrink-0">
@@ -117,8 +125,8 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
           {user ? (
             <AvatarCircle
               displayName={user.displayName}
-              email={user.email}
-              magicEoa={user.magicEoa}
+              initialSource={avatarInitialSource}
+              seedKey={avatarSeedKey}
               avatarUrl={user.avatarUrl}
               size={36}
               className="mx-auto"

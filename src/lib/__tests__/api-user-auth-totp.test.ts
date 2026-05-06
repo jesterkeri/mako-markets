@@ -234,8 +234,9 @@ function makeRequest(body: Record<string, unknown>): Request {
 
 function userRow(overrides: Partial<{
   id: string;
-  email: string;
-  magicEoa: string;
+  authType: 'magic' | 'wallet';
+  email: string | null;
+  magicEoa: string | null;
   displayName: string | null;
   avatarUrl: string | null;
   totpSecret: string | null;

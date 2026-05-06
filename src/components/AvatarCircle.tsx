@@ -40,8 +40,10 @@ import {
 
 type AvatarCircleProps = {
   displayName: string | null;
-  email: string;
-  magicEoa: string;
+  /** First-letter initial source. Magic: email; wallet: formatted address. */
+  initialSource: string;
+  /** Color seed. Magic: magicEoa; wallet: walletAddress. */
+  seedKey: string;
   avatarUrl: string | null;
   size?: number;
   className?: string;
@@ -49,8 +51,8 @@ type AvatarCircleProps = {
 
 export function AvatarCircle({
   displayName,
-  email,
-  magicEoa,
+  initialSource,
+  seedKey,
   avatarUrl,
   size = 48,
   className = '',
@@ -72,8 +74,8 @@ export function AvatarCircle({
   // initials path flash for one render.
   const showImage = avatarUrl !== null && (!imgFailed || urlChanged);
 
-  const initial = deriveInitial(displayName, email);
-  const palette = STATIC_PALETTE[derivePaletteIndex(magicEoa)];
+  const initial = deriveInitial(displayName, initialSource);
+  const palette = STATIC_PALETTE[derivePaletteIndex(seedKey)];
 
   const dim = `${size}px`;
   const fontSize = `${Math.round(size * 0.45)}px`;

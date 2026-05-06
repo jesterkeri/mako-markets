@@ -345,7 +345,10 @@ export function usePlaceBet() {
     // through /api/aa/sponsor + /api/aa/send. ONE Magic signature, gas
     // sponsored by Mako. Wallet-connected users without a Magic session
     // fall through to the existing wagmi 2-tx path below.
-    if (user && !userLoading) {
+    // Plan step 18 narrowing: only Magic-shape users have a Safe +
+    // magicEoa. Wallet-session users fall through to the wagmi path
+    // below — their connected wallet IS their signer.
+    if (user?.authType === 'magic' && !userLoading) {
       try {
         const amount = parseUsdc(amountUsdc);
         const safeAddress = user.safeAddress as `0x${string}`;
@@ -552,7 +555,7 @@ export function usePlaceBet() {
 
   const flow: 'magic' | 'wallet' | 'loading' = userLoading
     ? 'loading'
-    : user
+    : user?.authType === 'magic'
       ? 'magic'
       : 'wallet';
 
@@ -576,8 +579,8 @@ export function usePlaceBet() {
     /// user with an underfunded connected wallet doesn't see
     /// "INSUFFICIENT USDC" against the wrong account (round-1 MAJOR 1
     /// fix from Group 5 review).
-    bettingAccount: (flow === 'magic'
-      ? (user!.safeAddress as `0x${string}`)
+    bettingAccount: (flow === 'magic' && user?.authType === 'magic'
+      ? (user.safeAddress as `0x${string}`)
       : address) as `0x${string}` | undefined,
   };
 }
@@ -690,7 +693,7 @@ export function useCreateMarket() {
 
   const flow: 'magic' | 'wallet' | 'loading' = userLoading
     ? 'loading'
-    : user
+    : user?.authType === 'magic'
       ? 'magic'
       : 'wallet';
 
@@ -752,7 +755,14 @@ export function useCreateMarket() {
             bettingCloseTime: args.bettingCloseTime,
             closeTime: args.closeTime,
             question: args.question,
-            magicEoa: user.magicEoa as `0x${string}`,
+            magicEoa:
+              user?.authType === 'magic'
+                ? (user.magicEoa as `0x${string}`)
+                : (() => {
+                    throw new Error(
+                      'createMarket magic-flow guard fell through for non-magic user',
+                    );
+                  })(),
           });
 
           setMagicPhase('awaiting');

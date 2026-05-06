@@ -14,6 +14,7 @@ import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { AvatarCircle } from '@/components/AvatarCircle';
 import { useIsAdmin } from '@/lib/admin';
 import { useUser } from '@/lib/use-user';
+import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 
 type PositionsTab = 'active' | 'closed';
 
@@ -36,8 +37,13 @@ export default function MyMarketsPage() {
   } = useUser();
   // Phase 1H integration fix: Magic users have no `useAccount()` address
   // but their bets are owned by their derived Safe. Magic Safe takes
-  // precedence; wallet-only users keep the previous behavior.
-  const address = (user?.safeAddress as `0x${string}` | undefined) ?? connectedWallet;
+  // precedence; wallet-only users keep the previous behavior. Wallet-
+  // session users have NO Safe — their bets live under the connected
+  // wallet, same as wagmi-only users (plan step 18 narrowing).
+  const address =
+    user?.authType === 'magic'
+      ? (user.safeAddress as `0x${string}`)
+      : connectedWallet;
   const { markets, isLoading, refetch } = useMarkets();
   const isAdmin = useIsAdmin();
   const [tab, setTab] = useState<PositionsTab>('active');
@@ -174,17 +180,17 @@ export default function MyMarketsPage() {
             <Link
               href="/profile"
               className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-              title={user.email}
+              title={getIdentityLabel(user)}
             >
               <AvatarCircle
                 displayName={user.displayName}
-                email={user.email}
-                magicEoa={user.magicEoa}
+                initialSource={user.authType === 'magic' ? user.email : user.walletAddress}
+                seedKey={user.authType === 'magic' ? user.magicEoa : user.walletAddress}
                 avatarUrl={user.avatarUrl}
                 size={28}
               />
               <span className="mako-label text-[11px] truncate max-w-[10rem]">
-                {user.displayName ?? user.email}
+                {getDisplayName(user)}
               </span>
             </Link>
           ) : (

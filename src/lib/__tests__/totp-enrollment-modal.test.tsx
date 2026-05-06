@@ -18,7 +18,11 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { TotpEnrollmentModal } from '../../components/profile/TotpEnrollmentModal';
-import { USER_QUERY_KEY, type AuthedUser } from '../use-user';
+import {
+  USER_QUERY_KEY,
+  type AuthedUser,
+  type MagicAuthedUser,
+} from '../use-user';
 
 // Stub qrcode.react so the test environment doesn't need to render
 // SVG QR pixels — we only care that the component renders + that
@@ -33,6 +37,7 @@ afterEach(cleanup);
 
 const DISABLED_USER: AuthedUser = {
   authed: true,
+  authType: 'magic',
   email: 'joshua@example.com',
   magicEoa: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   safeAddress: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
@@ -329,7 +334,7 @@ describe('TotpEnrollmentModal', () => {
     fireEvent.click(closeBtn);
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    const cached = qc.getQueryData(USER_QUERY_KEY) as AuthedUser;
+    const cached = qc.getQueryData(USER_QUERY_KEY) as MagicAuthedUser;
     expect(cached.totpEnabled).toBe(true);
     expect(cached.totpEnabledAt).not.toBeNull();
   });
@@ -400,7 +405,7 @@ describe('TotpEnrollmentModal', () => {
       await Promise.resolve();
 
       // Cache must NOT have been written by the late verify response.
-      const cached = qc.getQueryData(USER_QUERY_KEY) as AuthedUser;
+      const cached = qc.getQueryData(USER_QUERY_KEY) as MagicAuthedUser;
       expect(cached.totpEnabled).toBe(false);
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {
