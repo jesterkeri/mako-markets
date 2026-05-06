@@ -215,135 +215,130 @@ export function BetSheet({
     : successText ?? errorText ?? submittedText;
 
   return (
-    <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 px-4">
-      <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
-        {/* Balance pill — shows whenever a betting account exists, which
-            is true for both Magic users (Safe address) and wallet users
-            (connected wallet address). */}
-        {bettingAccount && (
-          <div className="px-5 py-2 border-b-2 border-ink bg-paper flex items-center justify-between">
-            <span className="mako-label text-muted">BAL</span>
-            <span className="mako-display text-sm tabular-nums">
-              {formatUsdc(balanceBn)} USDC
-            </span>
-          </div>
-        )}
-
-        {/* Amount input */}
-        <div className="px-5 py-3 border-b-2 border-ink flex items-center gap-3 bg-surface-elevated">
-          <label htmlFor="bet-amount" className="mako-label text-muted">
-            AMOUNT
-          </label>
-          <input
-            id="bet-amount"
-            type="text"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-            disabled={isBusy}
-            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-3xl tabular-nums disabled:opacity-50"
-            placeholder="0"
-          />
-          <span className="mako-label text-muted">USDC</span>
-        </div>
-
-        {/* Payout preview */}
-        <div className="px-5 py-3 border-b-2 border-ink bg-paper mako-label leading-relaxed">
-          {betUsdc === 0n ? (
-            <span className="text-muted">ENTER AMOUNT TO PREVIEW PAYOUT</span>
-          ) : wouldRefund ? (
-            <span className="text-mako-red">POOL ONE-SIDED · STAKE REFUNDED AT RESOLVE (1×)</span>
-          ) : (
-            <div className="flex justify-between gap-4">
-              <div className="text-muted">
-                WIN{' '}
-                <span className="text-ink tabular-nums ml-1">
-                  {formatUsdc(payoutUsdc)}
-                </span>
-              </div>
-              <div className="text-muted">
-                PROFIT{' '}
-                <span className="text-ink tabular-nums ml-1">
-                  +{formatUsdc(profitUsdc)}
-                </span>
-              </div>
+    <div className="w-full bg-paper border-t-2 lg:border-2 border-ink lg:shadow-[8px_8px_0_0_var(--mako-shadow)] lg:rounded-none flex flex-col relative overflow-hidden transition-all duration-300 lg:rotate-2 lg:scale-95 transform-gpu origin-center pb-safe lg:pb-0">
+      {/* Top thin accent line indicating side */}
+      <div className={`h-2 w-full transition-colors ${side === 'yes' ? 'bg-signal' : 'bg-mako-red'}`} />
+      
+      <div className="p-4 md:p-6 flex flex-col">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4 md:mb-8">
+          <h2 className="mako-display text-2xl sm:text-4xl tracking-tight leading-none">
+            {side === 'yes' ? 'BUY YES' : 'BUY NO'}
+          </h2>
+          {bettingAccount && (
+            <div className="text-right">
+              <div className="mako-label text-muted text-[8px] sm:text-[9px] mb-1">AVAILABLE BALANCE</div>
+              <div className="mako-mono text-ink text-[10px] sm:text-xs bg-surface-elevated px-2 py-1 border-2 border-ink/10 inline-block">{formatUsdc(balanceBn)} USDC</div>
             </div>
           )}
         </div>
 
-        {/* Place Bet button */}
-        <button
-          type="button"
-          onClick={handlePlaceBet}
-          disabled={disabled}
-          className={`w-full py-4 mako-display text-lg uppercase tracking-tight transition-all ${
-            disabled
-              ? 'bg-surface-elevated text-muted cursor-not-allowed'
-              : side === 'yes'
-                ? 'bg-ink text-paper hover:bg-ink/90'
-                : 'bg-mako-red text-paper hover:bg-mako-red/90'
-          }`}
-        >
-          {buttonLabel}
-        </button>
-
-        {/* First-approval copy (Magic users only, allowance < amount).
-            Phase 1D plan v4 round-2 MINOR 2 fix — broadened condition
-            from `allowance == 0` to `allowance < amount` since the
-            batched MaxUint256 approval grants unlimited spend in either
-            case. Also serves as the "gas covered by Mako" note. */}
-        {flow === 'magic' && betUsdc > 0n && allowanceBn < betUsdc && phase === 'idle' && (
-          <div className="px-4 py-2 mako-label text-[11px] text-muted text-center border-t-2 border-ink break-words leading-relaxed">
-            FIRST-TIME APPROVAL: GRANTS UNLIMITED USDC SPEND TO MAKO ·
-            GAS COVERED BY MAKO
+        {/* Amount Input */}
+        <div className="mb-4 md:mb-8">
+          <div className="flex items-end justify-between border-b-2 md:border-b-4 border-ink py-1 md:py-2 relative group">
+            <span className="mako-display text-xl md:text-2xl text-ink/20 absolute left-0 bottom-2 md:bottom-4 pointer-events-none transition-colors group-focus-within:text-ink/60">$</span>
+            <input
+              id="bet-amount"
+              type="text"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+              disabled={isBusy}
+              className="w-full bg-transparent border-0 outline-none mako-display text-4xl sm:text-6xl tracking-tighter text-right pl-6 md:pl-8 pr-2 placeholder-ink/10 text-ink"
+              placeholder="0"
+            />
           </div>
-        )}
-        {flow === 'magic' && (allowanceBn >= betUsdc || betUsdc === 0n) && phase === 'idle' && (
-          <div className="px-4 py-2 mako-label text-[11px] text-muted text-center border-t-2 border-ink">
-            GAS COVERED BY MAKO
+          <div className="flex justify-between items-center mt-2 md:mt-3">
+             <span className="mako-label text-muted text-[9px] sm:text-[10px]">STAKE AMOUNT</span>
+             <span className="mako-label text-ink bg-ink text-paper px-2 py-0.5 text-[9px] sm:text-[10px]">USDC</span>
           </div>
-        )}
+        </div>
 
-        {/* Non-busy status (success / error / submitted-info).
-            `submitted` is the Magic-flow non-blocking case where the
-            bundler accepted but receipt poll timed out — visually
-            distinct from error so the user understands the bet is
-            probably fine, just slow. Group 5 round-1 MAJOR 2 fix. */}
-        {statusText && !isBusy && (
-          <div
-            className={`px-4 py-2 mako-label text-center border-t-2 border-ink break-words ${
-              phase === 'success'
-                ? 'bg-signal/30 text-ink'
-                : phase === 'submitted'
-                  ? 'bg-paper text-muted'
-                  : 'bg-mako-red/15 text-mako-red'
-            }`}
-          >
-            {statusText}
-          </div>
-        )}
+        {/* Payout Details */}
+        <div className="bg-surface-elevated border-2 border-ink/20 p-3 md:p-4 mb-4 md:mb-8 flex flex-col gap-2 md:gap-3 relative">
+          <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(var(--mako-ink) 2px, transparent 2px)', backgroundSize: '16px 16px' }} />
+          
+          {betUsdc === 0n ? (
+            <div className="text-center text-muted mako-label py-2 md:py-4 text-xs md:text-sm">ENTER AMOUNT TO CALCULATE</div>
+          ) : wouldRefund ? (
+            <div className="text-center text-mako-red mako-label py-2 md:py-4 text-xs md:text-sm">ONE-SIDED POOL · REFUND AT RESOLVE</div>
+          ) : (
+            <>
+              <div className="flex justify-between items-end border-b-2 border-ink/10 pb-1 md:pb-2">
+                <span className="mako-label text-muted text-[9px] sm:text-[10px]">ESTIMATED PAYOUT</span>
+                <span className="mako-display text-xl sm:text-2xl tabular-nums">{formatUsdc(payoutUsdc)}</span>
+              </div>
+              <div className="flex justify-between items-end pt-1">
+                <span className="mako-label text-muted text-[9px] sm:text-[10px]">POTENTIAL PROFIT</span>
+                <span className="mako-display text-lg sm:text-xl tabular-nums text-ink">+{formatUsdc(profitUsdc)}</span>
+              </div>
+            </>
+          )}
+        </div>
 
-        {/* Dismiss button for the submitted state so the user isn't
-            visually stuck. Resets to idle, freeing the BetSheet for
-            another bet (the partial unique index will block until the
-            cron resolves the in-flight row, but that's the route's
-            problem, not the UI's). */}
-        {phase === 'submitted' && (
+        {/* Submit */}
+        <div className="relative">
           <button
             type="button"
-            onClick={reset}
-            className="w-full px-4 py-2 mako-label text-[11px] text-center border-t-2 border-ink bg-paper hover:bg-surface-elevated"
+            onClick={handlePlaceBet}
+            disabled={disabled}
+            className={`w-full py-3 md:py-4 mako-display text-lg md:text-xl uppercase tracking-tight transition-all border-2 border-ink shadow-[4px_4px_0_0_var(--mako-ink)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0_0_var(--mako-ink)] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none ${
+              disabled
+                ? 'bg-surface-elevated text-muted border-muted/50 shadow-none cursor-not-allowed translate-x-[4px] translate-y-[4px]'
+                : 'bg-ink text-paper hover:bg-ink/90'
+            }`}
           >
-            DISMISS
+            {buttonLabel}
           </button>
-        )}
+        </div>
 
-        {/* Tx hash chips for debugging — hidden in release polish */}
-        {betHash && phase === 'awaitingBet' && (
-          <div className="px-4 py-1 mako-label text-[10px] text-muted text-center break-all">
-            {betHash}
-          </div>
-        )}
+        {/* Status Messages */}
+        <div className="mt-4 flex flex-col gap-2">
+          {/* First-approval copy */}
+          {flow === 'magic' && betUsdc > 0n && allowanceBn < betUsdc && phase === 'idle' && (
+            <div className="mako-label text-[11px] text-muted text-center leading-relaxed">
+              FIRST-TIME APPROVAL: GRANTS UNLIMITED USDC SPEND TO MAKO<br/>GAS COVERED BY MAKO
+            </div>
+          )}
+          {flow === 'magic' && (allowanceBn >= betUsdc || betUsdc === 0n) && phase === 'idle' && (
+            <div className="mako-label text-[11px] text-muted text-center">
+              GAS COVERED BY MAKO
+            </div>
+          )}
+
+          {/* Non-busy status */}
+          {statusText && !isBusy && (
+            <div
+              className={`px-5 py-4 mako-label text-center border-2 border-ink break-words ${
+                phase === 'success'
+                  ? 'bg-signal text-ink'
+                  : phase === 'submitted'
+                    ? 'bg-surface-elevated text-muted'
+                    : 'bg-mako-red text-paper'
+              }`}
+            >
+              {statusText}
+            </div>
+          )}
+
+          {/* Dismiss button */}
+          {phase === 'submitted' && (
+            <button
+              type="button"
+              onClick={reset}
+              className="w-full px-5 py-4 mako-label text-sm text-center border-2 border-ink bg-paper hover:bg-surface-elevated transition-colors"
+            >
+              DISMISS
+            </button>
+          )}
+
+          {/* Tx hash chips */}
+          {betHash && phase === 'awaitingBet' && (
+            <div className="px-4 mako-label text-[10px] text-muted text-center break-all">
+              {betHash}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

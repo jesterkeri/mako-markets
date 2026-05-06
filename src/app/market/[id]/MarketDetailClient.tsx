@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWaitForTransactionReceipt } from 'wagmi';
 import { useMarket, useResolveMarket } from '@/lib/hooks';
+import { useUser } from '@/lib/use-user';
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import { useIsAdmin } from '@/lib/admin';
 import {
@@ -19,7 +20,9 @@ import { ClaimButton } from '@/components/ClaimButton';
 import { ShareMarketButton } from '@/components/ShareMarketButton';
 import { BroadcastButton } from '@/components/BroadcastButton';
 import { formatTime, humanizeUntil } from '@/lib/time';
-
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { MobileChromeHeader } from '@/components/MobileChromeHeader';
+import { AuthMenu } from '@/components/AuthMenu';
 /**
  * Interactive client half of the market detail page. The parent server
  * page.tsx owns metadata (og:title / og:image) + awaits the dynamic route
@@ -38,6 +41,10 @@ export function MarketDetailClient({ id }: { id: string }) {
   }
 
   const { market, isLoading, refetch } = useMarket(parsedId ?? 0n);
+
+  const { address, isConnecting, isReconnecting } = useAccount();
+  const { user, isLoading: userLoading } = useUser();
+  const isUnauthed = !user && !address && !userLoading && !isConnecting && !isReconnecting;
 
   const [betSide, setBetSide] = useState<'yes' | 'no'>('yes');
 
@@ -77,6 +84,9 @@ export function MarketDetailClient({ id }: { id: string }) {
   // accept a resolveMarket call.
   const awaitingResolution = !market.resolved && resolutionTimeLeft <= 0;
 
+  const isYesEmpty = market?.totalYes === 0n;
+  const isNoEmpty = market?.totalNo === 0n;
+
   const badgeText =
     market.mType === MarketType.FOOTBALL ? 'FOOTBALL'
     : market.mType === MarketType.CRYPTO ? 'CRYPTO'
@@ -89,126 +99,148 @@ export function MarketDetailClient({ id }: { id: string }) {
       ? formatTime(bettingTimeLeft)
       : 'AWAITING RESOLUTION';
 
+  const totalYesNum = Number(formatUsdc(market.totalYes));
+  const totalNoNum = Number(formatUsdc(market.totalNo));
+  const totalPoolNum = totalYesNum + totalNoNum;
+
+  const yesProb = totalPoolNum > 0 ? (totalYesNum / totalPoolNum) * 100 : 50;
+  const noProb = totalPoolNum > 0 ? (totalNoNum / totalPoolNum) * 100 : 50;
+
   return (
-    <main className="flex-1 flex flex-col w-full pb-48">
-      <div className="px-4 sm:px-6 lg:px-8 py-6 md:py-10 max-w-3xl mx-auto w-full">
-        {/* Category + countdown sticker row */}
-        <div className="flex items-center justify-between mb-5">
-          <span className="mako-label text-muted">{badgeText}</span>
-          <span
-            className={`mako-label ${
-              isWarning ? 'text-mako-red' : bettingClosed ? 'text-muted' : 'text-mako-red'
-            }`}
+    <main className="flex-1 w-full pb-[450px] lg:pb-12 max-w-[1400px] mx-auto flex flex-col">
+      <MobileChromeHeader />
+
+      <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
+        <div className="flex items-center gap-4">
+          <Link 
+            href="/" 
+            className="flex items-center gap-2 px-3 py-1 rounded-full border-2 border-chrome-divider hover:border-chrome-fg hover:bg-chrome-fg hover:text-chrome transition-colors text-chrome-fg mako-label text-[10px] tracking-widest"
           >
-            {statusLabel}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            FEED
+          </Link>
+          <span className="mako-label text-chrome-fg/50 hidden sm:inline-block">
+            MARKET #{market.id.toString()}
           </span>
         </div>
-
-        {/* Question card */}
-        <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal p-6 md:p-8 mb-6">
-          <h1 className="mako-display text-3xl md:text-5xl leading-[1.05]">
-            {market.question}
-          </h1>
-        </div>
-
-        {/* YES / NO side picker — tap either to switch BetSheet side */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <button
-            type="button"
-            onClick={() => setBetSide('yes')}
-            disabled={bettingClosed}
-            aria-pressed={betSide === 'yes'}
-            className={`p-5 border-2 border-ink rounded-2xl transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed ${
-              betSide === 'yes'
-                ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
-                : 'bg-paper text-ink shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'
-            }`}
+        <div className="flex items-center gap-2">
+          <AuthMenu className="px-3! py-1.5! text-[11px]!" />
+          <ThemeToggle />
+          <Link
+            href="/create"
+            className="mako-button mako-button--signal mako-label px-3! py-1.5! text-[11px]!"
           >
-            <div className={`mako-label ${betSide === 'yes' ? 'text-paper/80' : 'text-muted'}`}>
-              YES
-            </div>
-            <div className="mako-display text-3xl md:text-4xl tabular-nums mt-2">
-              {yesMult > 0 ? `${yesMult.toFixed(2)}x` : '—'}
-            </div>
-            <div className={`mako-mono text-[11px] mt-2 tabular-nums ${betSide === 'yes' ? 'text-paper/60' : 'text-muted'}`}>
-              {formatUsdc(market.totalYes)} USDC
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setBetSide('no')}
-            disabled={bettingClosed}
-            aria-pressed={betSide === 'no'}
-            className={`p-5 border-2 border-ink rounded-2xl transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed ${
-              betSide === 'no'
-                ? 'bg-mako-red text-paper shadow-brutal -translate-y-[2px] -translate-x-[2px]'
-                : 'bg-paper text-ink shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'
-            }`}
-          >
-            <div className={`mako-label ${betSide === 'no' ? 'text-paper/80' : 'text-muted'}`}>
-              NO
-            </div>
-            <div className="mako-display text-3xl md:text-4xl tabular-nums mt-2">
-              {noMult > 0 ? `${noMult.toFixed(2)}x` : '—'}
-            </div>
-            <div className={`mako-mono text-[11px] mt-2 tabular-nums ${betSide === 'no' ? 'text-paper/60' : 'text-muted'}`}>
-              {formatUsdc(market.totalNo)} USDC
-            </div>
-          </button>
-        </div>
-
-        {/* Metrics grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-          <div className="mako-metric">
-            <div className="mako-metric__label">POOL</div>
-            <div className="mako-metric__value tabular-nums">{poolSize.toFixed(2)}</div>
-            <div className="mako-metric__sub text-muted">USDC</div>
-          </div>
-          <div className="mako-metric">
-            <div className="mako-metric__label">BETTORS</div>
-            <div className="mako-metric__value tabular-nums">{totalBettors}</div>
-          </div>
-          <div className="mako-metric">
-            <div className="mako-metric__label">YES</div>
-            <div className="mako-metric__value tabular-nums">{market.yesBettorCount}</div>
-          </div>
-          <div className="mako-metric">
-            <div className="mako-metric__label">NO</div>
-            <div className="mako-metric__value tabular-nums">{market.noBettorCount}</div>
-          </div>
-        </div>
-
-        {/* Action row — share / broadcast / new market */}
-        <div className="flex flex-wrap gap-3 mb-6">
-          <ShareMarketButton marketId={market.id} />
-          <BroadcastButton
-            marketId={market.id}
-            question={market.question}
-            bettingCloseTimeSec={market.bettingCloseTime}
-          />
-          <Link href="/create" className="mako-button mako-label">
-            NEW MARKET
+            + NEW MARKET
           </Link>
         </div>
+      </header>
 
-        {/* Creator address */}
-        <div className="mako-mono text-[11px] text-muted break-all mb-4">
-          Created by {market.creator}
+      <div className="px-4 sm:px-6 lg:px-8 py-10 md:py-16 flex flex-col lg:flex-row gap-12 lg:gap-16 items-start">
+        <div className="flex-1 w-full max-w-4xl flex flex-col gap-10">
+          {/* Floating Massive Question */}
+          <h1 className="mako-display text-4xl sm:text-6xl md:text-[80px] leading-[0.95] tracking-tighter text-canvas-fg">
+            {market.question}
+          </h1>
+
+          {/* Tug of War Probability Bar */}
+          <div className="flex flex-col gap-3">
+            <div className="flex justify-between items-end px-2">
+              <span className={`mako-display text-3xl transition-all duration-300 ${betSide === 'yes' ? 'text-signal scale-105 origin-bottom-left' : 'text-muted'}`}>YES {yesProb.toFixed(0)}%</span>
+              <span className={`mako-display text-3xl transition-all duration-300 ${betSide === 'no' ? 'text-mako-red scale-105 origin-bottom-right' : 'text-muted'}`}>{noProb.toFixed(0)}% NO</span>
+            </div>
+            
+            <div className="w-full h-20 md:h-24 flex rounded-full border-4 border-ink overflow-hidden shadow-[8px_8px_0_0_var(--mako-ink)] relative bg-paper cursor-pointer group" onClick={(e) => {
+              if (bettingClosed) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = e.clientX - rect.left;
+              setBetSide(x < rect.width / 2 ? 'yes' : 'no');
+            }}>
+              {/* YES Fill */}
+              <div 
+                className={`h-full bg-signal transition-all duration-500 ease-out flex items-center justify-start px-6 ${betSide === 'yes' && !bettingClosed ? 'brightness-110' : ''}`}
+                style={{ width: `${Math.max(15, Math.min(85, yesProb))}%` }}
+              >
+                {betSide === 'yes' && !bettingClosed && <div className="w-4 h-4 bg-ink rounded-full animate-pulse" />}
+              </div>
+              {/* NO Fill (Remaining) */}
+              <div className={`flex-1 h-full bg-mako-red border-l-4 border-ink flex items-center justify-end px-6 transition-all duration-500 ease-out ${betSide === 'no' && !bettingClosed ? 'brightness-110' : ''}`}>
+                {betSide === 'no' && !bettingClosed && <div className="w-4 h-4 bg-paper rounded-full animate-pulse" />}
+              </div>
+            </div>
+            
+            <div className="flex justify-between px-4 text-muted mako-mono text-xs">
+              <span>{formatUsdc(market.totalYes)} USDC STAKED</span>
+              <span>{formatUsdc(market.totalNo)} USDC STAKED</span>
+            </div>
+          </div>
+
+          {/* Floating Stats Row */}
+          <div className="flex flex-wrap gap-4 items-center mt-4">
+            <div className="bg-paper border-2 border-ink rounded-xl px-5 py-3 shadow-[4px_4px_0_0_var(--mako-ink)] mako-tilt-left">
+              <span className="mako-label text-muted block text-[10px]">TOTAL POOL</span>
+              <span className="mako-display text-2xl">{poolSize.toFixed(2)} USDC</span>
+            </div>
+            <div className="bg-paper border-2 border-ink rounded-xl px-5 py-3 shadow-[4px_4px_0_0_var(--mako-ink)] mako-tilt-right">
+              <span className="mako-label text-muted block text-[10px]">BETTORS</span>
+              <span className="mako-display text-2xl">{totalBettors}</span>
+            </div>
+            <div className="ml-auto mako-mono text-[10px] text-muted flex flex-col items-end">
+              <span>Created by {market.creator.slice(0, 6)}...{market.creator.slice(-4)}</span>
+              <span>ID: #{market.id.toString()}</span>
+            </div>
+          </div>
+
+          {/* Action Tools */}
+          <div className="flex flex-wrap gap-3 mt-4">
+            <ShareMarketButton marketId={market.id} />
+            <BroadcastButton
+              marketId={market.id}
+              question={market.question}
+              bettingCloseTimeSec={market.bettingCloseTime}
+            />
+            <Link href="/create" className="mako-button mako-label">
+              NEW MARKET
+            </Link>
+          </div>
+
+          {/* Awaiting resolution banner */}
+          {awaitingResolution && (
+            <div className="mt-8">
+              <AwaitingResolutionPanel market={market} onResolved={refetch} />
+            </div>
+          )}
         </div>
 
-        {/* Awaiting resolution banner + admin inline resolve */}
-        {awaitingResolution && (
-          <AwaitingResolutionPanel market={market} onResolved={refetch} />
+        {/* Right Sidebar for Desktop / Fixed bottom for Mobile */}
+        {(market.resolved || !bettingClosed) && (
+          <div className="w-full lg:w-[400px] shrink-0 lg:sticky lg:top-8 z-40 mt-4 lg:mt-0">
+            <div className="fixed bottom-0 left-0 w-full z-50 lg:static shadow-[0_-12px_40px_rgba(0,0,0,0.15)] lg:shadow-none">
+              {market.resolved ? (
+                <div className="p-4 bg-paper lg:p-0 lg:bg-transparent border-t-2 border-ink lg:border-0">
+                  <ClaimButton market={market} onSuccess={refetch} />
+                </div>
+              ) : !bettingClosed ? (
+                isUnauthed ? (
+                  <div className="bg-paper border-t-2 lg:border-2 border-ink lg:rounded-[24px] lg:shadow-[8px_8px_0_0_var(--mako-ink)] overflow-hidden w-full mx-auto max-w-md lg:max-w-none flex flex-col items-center justify-center p-8 pb-safe lg:pb-8 text-center">
+                    <h2 className="mako-display text-3xl mb-3">READY TO BET?</h2>
+                    <p className="mako-body text-muted mb-8 text-[15px]">Sign in or connect a wallet to place your position.</p>
+                    <Link
+                      href="/signup"
+                      className="flex items-center justify-center w-full py-5 text-center bg-signal text-ink mako-display text-xl uppercase tracking-tight hover:translate-x-[2px] hover:translate-y-[2px] border-2 border-ink rounded-xl shadow-[4px_4px_0_0_var(--mako-ink)] hover:shadow-[2px_2px_0_0_var(--mako-ink)] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all"
+                    >
+                      SIGN IN TO BET
+                    </Link>
+                  </div>
+                ) : (
+                  <BetSheet market={market} side={betSide} onSuccess={refetch} />
+                )
+              ) : null}
+            </div>
+          </div>
         )}
       </div>
-
-      {/* Fixed-bottom action UI */}
-      {market.resolved ? (
-        <ClaimButton market={market} onSuccess={refetch} />
-      ) : !bettingClosed ? (
-        <BetSheet market={market} side={betSide} onSuccess={refetch} />
-      ) : null}
     </main>
   );
 }

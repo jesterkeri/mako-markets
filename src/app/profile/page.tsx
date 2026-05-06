@@ -27,6 +27,60 @@ function formatAddress(address: string | undefined): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+const WALLET_HERO_PALETTE = [
+  'bg-mako-yellow text-ink',
+  'bg-mako-red text-paper',
+  'bg-mako-blue text-paper',
+  'bg-mako-green text-ink',
+  'bg-mako-pink text-ink',
+  'bg-mako-purple text-paper',
+] as const;
+
+function walletPaletteIndex(address: string): number {
+  let sum = 0;
+  const start = address.startsWith('0x') ? 2 : 0;
+  for (let i = start; i < Math.min(start + 5, address.length); i++) {
+    sum += address.charCodeAt(i);
+  }
+  return sum % WALLET_HERO_PALETTE.length;
+}
+
+/**
+ * Wallet-only hero card. Mirrors the Magic-user Hero (avatar + display
+ * line + monospace subtitle) so the LEFT column has parity in both
+ * auth modes. Uses a deterministic-color glyph derived from the
+ * address since wallet users have no email or display name.
+ */
+function WalletHero({
+  address,
+  className = '',
+}: {
+  address: string;
+  className?: string;
+}) {
+  const palette = WALLET_HERO_PALETTE[walletPaletteIndex(address)]!;
+  const initials = address.slice(2, 4).toUpperCase();
+  return (
+    <section className={`mako-card text-ink items-center gap-4 ${className || 'flex'}`}>
+      <div
+        className={`shrink-0 rounded-full border-2 border-ink flex items-center justify-center mako-display ${palette}`}
+        style={{ width: 64, height: 64, fontSize: 22 }}
+        aria-hidden
+      >
+        {initials}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="mako-title text-2xl leading-tight truncate tabular-nums">
+          {formatAddress(address)}
+        </p>
+        <p className="mako-mono text-xs text-muted truncate">
+          External wallet
+        </p>
+      </div>
+    </section>
+  );
+}
+
 const SEND_USDC_MAX_PER_OP_USDC = Number(
   SEND_USDC_MAX_PER_OP_BASE_UNITS / 1_000_000n,
 );
@@ -466,12 +520,14 @@ export default function ProfilePage() {
           <ThemeToggle />
         </div>
 
-        {/* Mobile-only Hero (Magic users). Renders above the two-column
-            grid so the identity surface comes first on mobile. On
-            desktop (lg) this clone is hidden — the desktop instance
-            lives inside the LEFT column below, preserving the
-            Hero+Security stack on the left. */}
-        {user && (
+        {/* Mobile-only Hero. Renders above the two-column grid so the
+            identity surface comes first on mobile. On desktop (lg) this
+            clone is hidden — the desktop instance lives inside the LEFT
+            column below, preserving the Hero+Security stack on the
+            left. Two flavours: Magic (avatar + display name + email)
+            vs wallet-only (deterministic-color glyph + formatted
+            address). */}
+        {user ? (
           <section className="lg:hidden mako-card text-ink flex items-center gap-4">
             <AvatarCircle
               displayName={user.displayName}
@@ -491,7 +547,9 @@ export default function ProfilePage() {
               </p>
             </div>
           </section>
-        )}
+        ) : connectedWallet ? (
+          <WalletHero address={connectedWallet} className="flex lg:hidden" />
+        ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
@@ -505,7 +563,7 @@ export default function ProfilePage() {
 
             {/* 0. Hero card — desktop instance. Hidden on mobile
                 because the lg:hidden clone above already rendered. */}
-            {user && (
+            {user ? (
               <section className="hidden lg:flex mako-card text-ink items-center gap-4">
                 <AvatarCircle
                   displayName={user.displayName}
@@ -525,7 +583,9 @@ export default function ProfilePage() {
                   </p>
                 </div>
               </section>
-            )}
+            ) : connectedWallet ? (
+              <WalletHero address={connectedWallet} className="hidden lg:flex" />
+            ) : null}
 
             {/* 4. Security & Recovery */}
             <section className={`mako-card text-ink relative overflow-hidden flex flex-col gap-5 ${isMagicUser ? 'border-mako-red shadow-[4px_4px_0_0_#D94A3D]' : ''}`}>

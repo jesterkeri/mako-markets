@@ -114,25 +114,27 @@ export function ClaimButton({
             : null;
 
   return (
-    <div className="fixed bottom-9 left-1/2 -translate-x-1/2 w-full max-w-md z-40 px-4">
-      <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
-        <div className="px-5 py-3 border-b-2 border-ink bg-surface-elevated flex justify-between items-center">
-          <span className="mako-label text-muted">
-            {outcome === Outcome.REFUND ? 'REFUND' : 'CLAIMABLE'}
-          </span>
-          <span className="mako-display text-xl tabular-nums">
-            {formatUsdc(claimableUsdc)} USDC
-          </span>
-        </div>
+    <div className="bg-paper border-2 border-ink lg:rounded-[24px] shadow-[0_-12px_40px_rgba(0,0,0,0.12)] lg:shadow-[8px_8px_0_0_var(--mako-ink)] overflow-hidden w-full mx-auto max-w-md lg:max-w-none flex flex-col">
+      <div className="px-6 py-6 border-b-2 border-ink bg-surface-elevated flex flex-col items-center justify-center">
+        <span className="mako-label text-muted mb-2">
+          {outcome === Outcome.REFUND ? 'REFUND' : 'CLAIMABLE'}
+        </span>
+        <span className="mako-display text-6xl md:text-7xl tabular-nums tracking-tighter">
+          <span className="text-4xl text-ink/40 mr-1">$</span>
+          {formatUsdc(claimableUsdc)}
+        </span>
+        <span className="mako-label text-ink mt-3">USDC</span>
+      </div>
 
+      <div className="p-5 bg-paper border-t-2 border-ink">
         <button
           type="button"
           onClick={handleClaim}
           disabled={disabled}
-          className={`w-full py-5 mako-display text-lg uppercase tracking-tight transition-all ${
+          className={`w-full py-5 mako-display text-xl uppercase tracking-tight transition-all border-2 border-ink rounded-xl shadow-[4px_4px_0_0_var(--mako-ink)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0_0_var(--mako-ink)] active:translate-x-[4px] active:translate-y-[4px] active:shadow-none ${
             disabled
-              ? 'bg-surface-elevated text-muted cursor-not-allowed'
-              : 'bg-signal text-ink hover:bg-signal/90'
+              ? 'bg-surface-elevated text-muted border-muted/50 shadow-none cursor-not-allowed translate-x-[4px] translate-y-[4px]'
+              : 'bg-signal text-ink'
           }`}
         >
           {isBusy || hasClaimed ? statusText : claimLabel}
