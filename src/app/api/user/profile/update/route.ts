@@ -1,12 +1,13 @@
 import { type Address } from 'viem';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { sessions, users } from '@/db/schema';
+import { users } from '@/db/schema';
 import { checkSameOrigin } from '@/lib/csrf';
+import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
-import { magicUserToWire } from '@/lib/users-wire';
+import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -39,12 +40,16 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 //     cleanup into deleting another user's blob. Both are closed by
 //     refusing non-null writes here.
 //
-// Response (success): the canonical bucket-A envelope identical to
-// /api/user/me's authed branch and /api/user/auth's session-branch
-// success — `{ ok, authed, ...WireUser, lastSignInAt,
-// nextEmailChangeAvailableAt }`. The eager-cache caller (Group 4
-// /profile UI) strips `ok` and writes the rest into the ['user']
-// React Query cache.
+// Response (success): the canonical bucket-A envelope, branched on
+// session.authType. Magic returns `{ ok, authed,
+// ...MagicWireUser, lastSignInAt, nextEmailChangeAvailableAt }`;
+// wallet returns `{ ok, authed, ...WalletWireUser, lastSignInAt }`
+// — wallet sessions have no email change to cool down, so
+// `nextEmailChangeAvailableAt` is omitted entirely (NOT set to
+// null). The eager-cache caller (Group 4 /profile UI) strips `ok`
+// and writes the rest into the ['user'] React Query cache; the
+// `useUser` discriminated union (plan step 14) is what makes
+// missing-vs-null safe at the type level.
 // ----------------------------------------------------------------------------
 
 const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
@@ -154,41 +159,42 @@ export async function POST(req: Request) {
   }
   const row = updated[0];
 
-  // Read the prior-session row (same shape /me uses) so the eager
-  // cache write in the client doesn't lose lastSignInAt and force a
-  // /me round-trip. Excludes the current session because this is an
-  // authed write — the cookie's session is "now," not the prior
-  // sign-in moment users care about.
-  const priorSession = await db
-    .select({ createdAt: sessions.createdAt })
-    .from(sessions)
-    .where(
-      and(
-        eq(sessions.userId, session.userId),
-        ne(sessions.id, session.sessionId),
-      ),
-    )
-    .orderBy(desc(sessions.createdAt))
-    .limit(1);
+  // Read prior-session createdAt for the eager cache write in the
+  // client (so the response can be written into the ['user'] cache
+  // without forcing a /me round-trip to recover lastSignInAt). The
+  // current session is excluded because the cookie's session is
+  // "now", not the prior sign-in moment users care about.
+  const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);
 
-  const lastSignInAt =
-    priorSession.length > 0 ? priorSession[0].createdAt.toISOString() : null;
+  if (session.authType === 'magic') {
+    const safeAddress = deriveSafeAddress(session.magicEoa as Address);
 
-  const safeAddress = deriveSafeAddress(row.magicEoa as Address);
-
-  let nextEmailChangeAvailableAt: string | null = null;
-  if (row.lastEmailChangedAt) {
-    const cooldownEnd = row.lastEmailChangedAt.getTime() + EMAIL_CHANGE_COOLDOWN_MS;
-    if (Date.now() < cooldownEnd) {
-      nextEmailChangeAvailableAt = new Date(cooldownEnd).toISOString();
+    let nextEmailChangeAvailableAt: string | null = null;
+    if (row.lastEmailChangedAt) {
+      const cooldownEnd = row.lastEmailChangedAt.getTime() + EMAIL_CHANGE_COOLDOWN_MS;
+      if (Date.now() < cooldownEnd) {
+        nextEmailChangeAvailableAt = new Date(cooldownEnd).toISOString();
+      }
     }
+
+    return Response.json({
+      ok: true,
+      authed: true,
+      ...magicUserToWire(row, safeAddress),
+      lastSignInAt,
+      nextEmailChangeAvailableAt,
+    });
   }
 
+  // session.authType === 'wallet'. The UPDATE returned every column
+  // (the projection is shared across branches) — the wallet helper
+  // takes only displayName + avatarUrl off it. No safeAddress, no
+  // nextEmailChangeAvailableAt — wallet users have no Safe and no
+  // email-change cooldown.
   return Response.json({
     ok: true,
     authed: true,
-    ...magicUserToWire(row, safeAddress),
+    ...walletUserToWire(row, session.walletAddress),
     lastSignInAt,
-    nextEmailChangeAvailableAt,
   });
 }

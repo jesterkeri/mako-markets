@@ -43,6 +43,12 @@ export async function POST(req: Request) {
   if (!session) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
+  // Magic-only — wallet sessions never enroll TOTP. Defence-in-depth:
+  // the UI's TOTP affordances are gated on authType, but the route
+  // enforces independently.
+  if (session.authType !== 'magic') {
+    return Response.json({ error: 'wallet_session' }, { status: 400 });
+  }
 
   // Already-enabled check happens here (cheap row read) so we don't waste
   // an INSERT + base32 generation on a state the route can't fulfil.
@@ -59,6 +65,13 @@ export async function POST(req: Request) {
   }
   if (userRows[0].totpSecret) {
     return Response.json({ error: 'already_enabled' }, { status: 409 });
+  }
+  // Magic-only route (guard above narrows session.authType). The CHECK
+  // constraint guarantees magic rows have non-null email; the column
+  // is `string | null` because wallet rows have no email. Assert to
+  // narrow for the otpauthUri builder below.
+  if (!userRows[0].email) {
+    throw new Error('[totp/enroll] magic row missing email');
   }
 
   // Opportunistic cleanup of expired pending rows across ALL users.

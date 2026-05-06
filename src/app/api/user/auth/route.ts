@@ -216,6 +216,14 @@ export async function POST(req: Request) {
           ? new Date(cooldownAvailable).toISOString()
           : null;
 
+      // CHECK constraint guarantees magic rows have non-null email +
+      // magic_eoa (the upsert just wrote auth_type='magic'). The DB
+      // column types are nullable to accommodate wallet rows; assert
+      // here so TS sees `string` and a corrupt CHECK surfaces as a 5xx.
+      if (!user.email || !user.magicEoa) {
+        throw new Error('[user-auth] magic row missing email/magic_eoa post-upsert');
+      }
+
       const token = await createSession(user.id, { tx });
       return {
         kind: 'session',

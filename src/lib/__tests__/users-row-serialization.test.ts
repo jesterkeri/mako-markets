@@ -20,10 +20,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { magicUserToWire, type WireUser } from '../users-wire';
+import { magicUserToWire, type MagicWireUser } from '../users-wire';
 import { type User } from '@/db/schema';
 
+// Pinned key allowlist for the Magic shape. Pick<WireUser, ...> with
+// the discriminated union would only allow `displayName | avatarUrl |
+// authType` (the intersection across magic + wallet). The Magic-shape
+// assertion lives here; the wallet-shape assertion is in the wallet
+// upsert/route tests where it belongs.
 const PINNED_WIRE_KEYS = [
+  'authType',
   'avatarUrl',
   'displayName',
   'email',
@@ -31,7 +37,7 @@ const PINNED_WIRE_KEYS = [
   'safeAddress',
   'totpEnabled',
   'totpEnabledAt',
-] as const satisfies readonly (keyof WireUser)[];
+] as const satisfies readonly (keyof MagicWireUser)[];
 
 const SAFE = '0x1111111111111111111111111111111111111111';
 

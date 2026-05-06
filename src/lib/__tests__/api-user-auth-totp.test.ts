@@ -246,6 +246,7 @@ function userRow(overrides: Partial<{
 }> = {}) {
   return [{
     id: USER_ID,
+    authType: 'magic',
     email: 'a@b.com',
     magicEoa: MAGIC_EOA,
     displayName: null,
@@ -396,6 +397,7 @@ describe('POST /api/user/auth/totp', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual([
+      'authType',
       'authed',
       'avatarUrl',
       'displayName',
@@ -633,6 +635,73 @@ describe('POST /api/user/auth/totp', () => {
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: 'internal' });
+    expect(mocks.consumeSigninChallengeInTx).not.toHaveBeenCalled();
+  });
+
+  // Step-13 (codex round-8 MINOR): a challenge-loaded user row whose
+  // auth_type is somehow 'wallet' must be refused with 401
+  // challenge_invalid WITHOUT consuming the challenge. The plan's
+  // stated intent: refuse without consuming so the challenge stays
+  // valid for re-issue / observability.
+  it('refuses wallet-typed user row with 401 challenge_invalid without consuming challenge', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.validateSigninChallenge.mockResolvedValue({
+      userId: USER_ID,
+      magicEoa: MAGIC_EOA,
+    });
+    // Challenge loads a row whose auth_type was somehow flipped to
+    // 'wallet'. Real DB CHECK should make this impossible — the test
+    // simulates the "corrupt DB / stale challenge" branch.
+    mocks.selectUser.mockResolvedValue(userRow({ authType: 'wallet' }));
+
+    const { POST } = await import('../../app/api/user/auth/totp/route');
+    const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'challenge_invalid' });
+    // Critical: the challenge must NOT be consumed. Decrypt + verify
+    // also must not have run.
+    expect(mocks.consumeSigninChallengeInTx).not.toHaveBeenCalled();
+    expect(mocks.decryptTotpSecret).not.toHaveBeenCalled();
+    expect(mocks.verifyTotpCode).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.cookiesStore.set).not.toHaveBeenCalled();
+  });
+
+  // Step-13 (codex round-8 MINOR): a magic-typed row missing email or
+  // magic_eoa is a CHECK violation — observability data, not a soft
+  // deauth. The throw surfaces as a 5xx the operator sees in logs;
+  // returning 401 would mask the underlying DB corruption.
+  it('throws on magic row missing email (CHECK violation surfaces as uncaught error, not soft 401)', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.validateSigninChallenge.mockResolvedValue({
+      userId: USER_ID,
+      magicEoa: MAGIC_EOA,
+    });
+    mocks.selectUser.mockResolvedValue(userRow({ email: null }));
+
+    const { POST } = await import('../../app/api/user/auth/totp/route');
+    // Throw is uncaught at this point in the route — Next.js converts
+    // it to a 500 in production; vitest sees the rejection directly.
+    // Either way, the challenge must NOT have been consumed before
+    // the throw.
+    await expect(
+      POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' })),
+    ).rejects.toThrow(/magic row missing email\/magic_eoa/);
+    expect(mocks.consumeSigninChallengeInTx).not.toHaveBeenCalled();
+  });
+
+  it('throws on magic row missing magic_eoa', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.validateSigninChallenge.mockResolvedValue({
+      userId: USER_ID,
+      magicEoa: MAGIC_EOA,
+    });
+    mocks.selectUser.mockResolvedValue(userRow({ magicEoa: null }));
+
+    const { POST } = await import('../../app/api/user/auth/totp/route');
+    await expect(
+      POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' })),
+    ).rejects.toThrow(/magic row missing email\/magic_eoa/);
     expect(mocks.consumeSigninChallengeInTx).not.toHaveBeenCalled();
   });
 });

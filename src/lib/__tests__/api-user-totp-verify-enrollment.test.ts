@@ -148,9 +148,11 @@ afterEach(() => vi.clearAllMocks());
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
 const ENROLLMENT_ID = '00000000-0000-0000-0000-000000000010';
 const SESSION = {
+  authType: 'magic' as const,
   userId: USER_ID,
   email: 'a@b.com',
   magicEoa: '0xa',
+  walletAddress: null,
   sessionId: 's',
 };
 
@@ -293,5 +295,25 @@ describe('POST /api/user/totp/verify-enrollment', () => {
     const { POST } = await import('../../app/api/user/totp/verify-enrollment/route');
     const res = await POST(makeRequest({ enrollmentId: ENROLLMENT_ID, code: '123456' }));
     expect(res.status).toBe(500);
+  });
+
+  it('rejects wallet session with 400 wallet_session before factor work', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'wallet',
+      userId: USER_ID,
+      email: null,
+      magicEoa: null,
+      walletAddress: '0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed',
+      sessionId: 's',
+    });
+    const { POST } = await import('../../app/api/user/totp/verify-enrollment/route');
+    const res = await POST(makeRequest({ enrollmentId: ENROLLMENT_ID, code: '123456' }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'wallet_session' });
+    // Guard precedes the pending-row SELECT, decrypt, and verify.
+    expect(mocks.selectPending).not.toHaveBeenCalled();
+    expect(mocks.decryptTotpSecret).not.toHaveBeenCalled();
+    expect(mocks.verifyTotpCode).not.toHaveBeenCalled();
   });
 });

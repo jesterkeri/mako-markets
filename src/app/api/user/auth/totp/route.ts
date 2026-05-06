@@ -154,6 +154,7 @@ export async function POST(req: Request) {
   const userRows = await db
     .select({
       id: users.id,
+      authType: users.authType,
       email: users.email,
       magicEoa: users.magicEoa,
       displayName: users.displayName,
@@ -171,6 +172,23 @@ export async function POST(req: Request) {
     return Response.json({ error: 'challenge_invalid' }, { status: 401 });
   }
   const user = userRows[0];
+
+  // Sign-in TOTP is pre-session — the regular `getUserSession` guard
+  // can't run here. Guard on the challenge-loaded user row's auth_type
+  // instead. Challenges are issued only by the Magic auth route, so
+  // hitting this branch implies a corrupt DB or a stale challenge for
+  // a row whose auth_type was somehow flipped to 'wallet'. Refuse
+  // without consuming so the challenge stays valid for a re-issue.
+  if (user.authType !== 'magic') {
+    return Response.json({ error: 'challenge_invalid' }, { status: 401 });
+  }
+  // CHECK constraint guarantees magic rows have non-null email + magicEoa,
+  // but the DB column types are nullable. The auth_type guard above
+  // narrows the runtime invariant; assert loudly if the CHECK was
+  // bypassed somehow.
+  if (!user.email || !user.magicEoa) {
+    throw new Error('[user-auth-totp] magic row missing email/magic_eoa');
+  }
 
   if (user.magicEoa.toLowerCase() !== challenge.magicEoa.toLowerCase()) {
     return Response.json({ error: 'eoa_drift' }, { status: 401 });

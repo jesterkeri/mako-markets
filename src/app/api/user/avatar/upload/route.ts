@@ -1,14 +1,15 @@
 import { type Address } from 'viem';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { put, del } from '@vercel/blob';
 import sharp from 'sharp';
 
 import { db } from '@/db/client';
-import { sessions, users } from '@/db/schema';
+import { users } from '@/db/schema';
 import { checkSameOrigin } from '@/lib/csrf';
+import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
-import { magicUserToWire } from '@/lib/users-wire';
+import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
 
 // ----------------------------------------------------------------------------
 // POST /api/user/avatar/upload
@@ -143,37 +144,36 @@ export async function POST(req: Request) {
     });
   }
 
-  const priorSession = await db
-    .select({ createdAt: sessions.createdAt })
-    .from(sessions)
-    .where(
-      and(
-        eq(sessions.userId, session.userId),
-        ne(sessions.id, session.sessionId),
-      ),
-    )
-    .orderBy(desc(sessions.createdAt))
-    .limit(1);
+  const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);
 
-  const lastSignInAt =
-    priorSession.length > 0 ? priorSession[0].createdAt.toISOString() : null;
+  if (session.authType === 'magic') {
+    const safeAddress = deriveSafeAddress(session.magicEoa as Address);
 
-  const safeAddress = deriveSafeAddress(row.magicEoa as Address);
-
-  let nextEmailChangeAvailableAt: string | null = null;
-  if (row.lastEmailChangedAt) {
-    const cooldownEnd = row.lastEmailChangedAt.getTime() + EMAIL_CHANGE_COOLDOWN_MS;
-    if (Date.now() < cooldownEnd) {
-      nextEmailChangeAvailableAt = new Date(cooldownEnd).toISOString();
+    let nextEmailChangeAvailableAt: string | null = null;
+    if (row.lastEmailChangedAt) {
+      const cooldownEnd = row.lastEmailChangedAt.getTime() + EMAIL_CHANGE_COOLDOWN_MS;
+      if (Date.now() < cooldownEnd) {
+        nextEmailChangeAvailableAt = new Date(cooldownEnd).toISOString();
+      }
     }
+
+    return Response.json({
+      ok: true,
+      authed: true,
+      ...magicUserToWire(row, safeAddress),
+      lastSignInAt,
+      nextEmailChangeAvailableAt,
+    });
   }
 
+  // session.authType === 'wallet'. The /avatars/<userId>/ blob path is
+  // keyed off session.userId which exists in both shapes — no path
+  // change. The wire helper drops the magic-only fields.
   return Response.json({
     ok: true,
     authed: true,
-    ...magicUserToWire(row, safeAddress),
+    ...walletUserToWire(row, session.walletAddress),
     lastSignInAt,
-    nextEmailChangeAvailableAt,
   });
 }
 

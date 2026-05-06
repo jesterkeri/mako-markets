@@ -108,7 +108,14 @@ vi.mock('drizzle-orm', () => ({
 afterEach(() => vi.clearAllMocks());
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
-const SESSION = { userId: USER_ID, email: 'a@b.com', magicEoa: '0xa', sessionId: 's' };
+const SESSION = {
+  authType: 'magic' as const,
+  userId: USER_ID,
+  email: 'a@b.com',
+  magicEoa: '0xa',
+  walletAddress: null,
+  sessionId: 's',
+};
 
 function makeRequest(body: Record<string, unknown>) {
   return new Request('http://localhost/api/user/totp/regenerate-recovery-codes', {
@@ -294,5 +301,25 @@ describe('POST /api/user/totp/regenerate-recovery-codes', () => {
     expect(res.status).toBe(500);
     expect(mocks.generateRecoveryCodes).not.toHaveBeenCalled();
     expect(mocks.hashRecoveryCode).not.toHaveBeenCalled();
+  });
+
+  it('rejects wallet session with 400 wallet_session before factor work', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'wallet',
+      userId: USER_ID,
+      email: null,
+      magicEoa: null,
+      walletAddress: '0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed',
+      sessionId: 's',
+    });
+    const { POST } = await import('../../app/api/user/totp/regenerate-recovery-codes/route');
+    const res = await POST(makeRequest({ totpCode: '123456' }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'wallet_session' });
+    expect(mocks.selectUser).not.toHaveBeenCalled();
+    expect(mocks.decryptTotpSecret).not.toHaveBeenCalled();
+    expect(mocks.verifyTotpCode).not.toHaveBeenCalled();
+    expect(mocks.generateRecoveryCodes).not.toHaveBeenCalled();
   });
 });

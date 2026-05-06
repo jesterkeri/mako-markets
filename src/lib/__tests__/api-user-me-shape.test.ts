@@ -96,9 +96,11 @@ describe('GET /api/user/me — wire shape', () => {
 
   it('returns { authed: false } when session points to deleted user', async () => {
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: USER_ID,
       email: 'a@b.com',
       magicEoa: EOA,
+      walletAddress: null,
       sessionId: 'sid-1',
     });
     mocks.deriveSafeAddress.mockReturnValue(SAFE);
@@ -112,9 +114,11 @@ describe('GET /api/user/me — wire shape', () => {
 
   it('authed response keys match WireUser ∪ {authed, lastSignInAt, nextEmailChangeAvailableAt}; sensitive fields absent', async () => {
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: USER_ID,
       email: 'a@b.com',
       magicEoa: EOA,
+      walletAddress: null,
       sessionId: 'sid-1',
     });
     mocks.deriveSafeAddress.mockReturnValue(SAFE);
@@ -136,6 +140,7 @@ describe('GET /api/user/me — wire shape', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual([
+      'authType',
       'authed',
       'avatarUrl',
       'displayName',
@@ -147,6 +152,7 @@ describe('GET /api/user/me — wire shape', () => {
       'totpEnabled',
       'totpEnabledAt',
     ]);
+    expect(body.authType).toBe('magic');
     expect(body).not.toHaveProperty('totpSecret');
     expect(body).not.toHaveProperty('totpFailedAttempts');
     expect(body).not.toHaveProperty('totpLockedUntil');
@@ -161,9 +167,11 @@ describe('GET /api/user/me — wire shape', () => {
 
   it('lastSignInAt is null on first sign-in (no prior session)', async () => {
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: USER_ID,
       email: 'a@b.com',
       magicEoa: EOA,
+      walletAddress: null,
       sessionId: 'sid-1',
     });
     mocks.deriveSafeAddress.mockReturnValue(SAFE);
@@ -188,9 +196,11 @@ describe('GET /api/user/me — wire shape', () => {
 
   it('lastSignInAt is the prior session createdAt verbatim', async () => {
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: USER_ID,
       email: 'a@b.com',
       magicEoa: EOA,
+      walletAddress: null,
       sessionId: 'sid-1',
     });
     mocks.deriveSafeAddress.mockReturnValue(SAFE);
@@ -212,5 +222,69 @@ describe('GET /api/user/me — wire shape', () => {
     const res = await GET();
     const body = await res.json() as { lastSignInAt: string };
     expect(body.lastSignInAt).toBe('2026-04-15T08:00:00.000Z');
+  });
+
+  // Wallet branch: pins the wire-shape contract that future frontend
+  // work (useUser discriminated union, IdentityBlock 3-branch) builds
+  // on. Wallet rows have NO email / magicEoa / safeAddress / totp /
+  // nextEmailChangeAvailableAt — all five must be absent (not null).
+  it('wallet session: returns walletAddress + displayName + avatarUrl + lastSignInAt; magic-only fields ABSENT', async () => {
+    const WALLET = '0x2222222222222222222222222222222222222222';
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'wallet',
+      userId: USER_ID,
+      email: null,
+      magicEoa: null,
+      walletAddress: WALLET,
+      sessionId: 'sid-1',
+    });
+    mocks.selectPriorSession.mockResolvedValue([]);
+    mocks.selectUserRow.mockResolvedValue([
+      { displayName: 'WalletUser', avatarUrl: 'https://example.com/w.png' },
+    ]);
+
+    const { GET } = await import('../../app/api/user/me/route');
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual([
+      'authType',
+      'authed',
+      'avatarUrl',
+      'displayName',
+      'lastSignInAt',
+      'walletAddress',
+    ]);
+    expect(body.authType).toBe('wallet');
+    expect(body.walletAddress).toBe(WALLET);
+    expect(body.displayName).toBe('WalletUser');
+    expect(body.avatarUrl).toBe('https://example.com/w.png');
+    expect(body.lastSignInAt).toBeNull();
+    // The five magic-only fields MUST be absent (not present-and-null).
+    expect(body).not.toHaveProperty('email');
+    expect(body).not.toHaveProperty('magicEoa');
+    expect(body).not.toHaveProperty('safeAddress');
+    expect(body).not.toHaveProperty('totpEnabled');
+    expect(body).not.toHaveProperty('totpEnabledAt');
+    expect(body).not.toHaveProperty('nextEmailChangeAvailableAt');
+    // deriveSafeAddress MUST NOT be called — wallet branch never derives.
+    expect(mocks.deriveSafeAddress).not.toHaveBeenCalled();
+  });
+
+  it('wallet session: returns { authed: false } when user row missing', async () => {
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'wallet',
+      userId: USER_ID,
+      email: null,
+      magicEoa: null,
+      walletAddress: '0x3333333333333333333333333333333333333333',
+      sessionId: 'sid-1',
+    });
+    mocks.selectPriorSession.mockResolvedValue([]);
+    mocks.selectUserRow.mockResolvedValue([]);
+
+    const { GET } = await import('../../app/api/user/me/route');
+    const res = await GET();
+    expect(await res.json()).toEqual({ authed: false });
   });
 });

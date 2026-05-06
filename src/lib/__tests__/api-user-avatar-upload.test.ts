@@ -158,9 +158,11 @@ function setupHappy(opts: {
 } = {}) {
   mocks.checkSameOrigin.mockReturnValue({ ok: true });
   mocks.getUserSession.mockResolvedValue({
+    authType: 'magic',
     userId: USER_ID,
     email: 'a@b.com',
     magicEoa: EOA,
+    walletAddress: null,
     sessionId: SESSION_ID,
   });
   mocks.deriveSafeAddress.mockReturnValue(SAFE);
@@ -383,6 +385,70 @@ describe('POST /api/user/avatar/upload', () => {
       await new Promise((r) => setImmediate(r));
       // Was attempted — and rejected — but the route still 200s.
       expect(mocks.blobDel).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // Wallet branch: blobs land at the same `avatars/<userId>/` path,
+  // but the response envelope drops every Magic-only field.
+  describe('wallet session', () => {
+    it('returns walletAddress + new avatarUrl + lastSignInAt; magic-only fields ABSENT', async () => {
+      const WALLET = '0x5555555555555555555555555555555555555555';
+      mocks.checkSameOrigin.mockReturnValue({ ok: true });
+      mocks.getUserSession.mockResolvedValue({
+        authType: 'wallet',
+        userId: USER_ID,
+        email: null,
+        magicEoa: null,
+        walletAddress: WALLET,
+        sessionId: SESSION_ID,
+      });
+      mocks.sharpMetadata.mockResolvedValue({ format: 'png' });
+      mocks.sharpToBuffer.mockResolvedValue(Buffer.from('webp-bytes'));
+      mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
+      mocks.selectPriorAvatar.mockResolvedValue([{ avatarUrl: null }]);
+      mocks.selectPriorSession.mockResolvedValue([]);
+      // Same shape as Magic UPDATE projection — populated with leak-bait
+      // values so a regression that spreads `row` into the response
+      // would surface here.
+      mocks.updateReturning.mockResolvedValue([
+        {
+          email: 'leak@example.com',
+          magicEoa: '0xleak',
+          displayName: 'WalletJoshua',
+          avatarUrl: NEW_BLOB_URL,
+          totpSecret: 'leak:enc',
+          totpEnabledAt: new Date('2026-04-15T00:00:00Z'),
+          lastEmailChangedAt: new Date('2026-04-15T00:00:00Z'),
+        },
+      ]);
+
+      const { POST } = await import('../../app/api/user/avatar/upload/route');
+      const res = await POST(makeRequest(makeImageFile({})));
+      expect(res.status).toBe(200);
+      const body = await res.json() as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual([
+        'authType',
+        'authed',
+        'avatarUrl',
+        'displayName',
+        'lastSignInAt',
+        'ok',
+        'walletAddress',
+      ]);
+      expect(body.authType).toBe('wallet');
+      expect(body.walletAddress).toBe(WALLET);
+      expect(body.avatarUrl).toBe(NEW_BLOB_URL);
+      expect(body).not.toHaveProperty('email');
+      expect(body).not.toHaveProperty('magicEoa');
+      expect(body).not.toHaveProperty('safeAddress');
+      expect(body).not.toHaveProperty('totpEnabled');
+      expect(body).not.toHaveProperty('totpEnabledAt');
+      expect(body).not.toHaveProperty('nextEmailChangeAvailableAt');
+      expect(mocks.deriveSafeAddress).not.toHaveBeenCalled();
+      // Blob path is keyed off session.userId — same convention for both
+      // shapes, no per-authType branching expected.
+      const putArg = mocks.blobPut.mock.calls[0][0] as string;
+      expect(putArg.startsWith(`avatars/${USER_ID}/`)).toBe(true);
     });
   });
 });

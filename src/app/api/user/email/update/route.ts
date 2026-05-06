@@ -3,7 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
-import { type WireUser } from '@/lib/users-wire';
+import { type MagicWireUser } from '@/lib/users-wire';
 
 /// Email-change cooldown in milliseconds. Mako policy: at most one
 /// change per 365 days per user. The recovery model is "secure your
@@ -77,6 +77,14 @@ export async function POST(req: Request) {
   const session = await getUserSession();
   if (!session) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
+  }
+  // Magic-only — wallet sessions have no email column to update.
+  // Defence-in-depth: the UI never surfaces this affordance to wallet
+  // users (IdentityBlock branches on authType), but the route enforces
+  // independently so a hand-crafted POST from a wallet session can't
+  // bypass the UI gate.
+  if (session.authType !== 'magic') {
+    return Response.json({ error: 'wallet_session' }, { status: 400 });
   }
 
   let body: { didToken?: unknown };
@@ -220,7 +228,10 @@ export async function POST(req: Request) {
         .where(eq(users.id, session.userId))
         .limit(1);
       const row = after[0];
-      if (row && row.magicEoa.toLowerCase() !== didEoa.toLowerCase()) {
+      // Magic-only route (guard at top); the CHECK constraint guarantees
+      // magic rows have non-null magic_eoa even though the column type
+      // is nullable for wallet rows.
+      if (row && row.magicEoa && row.magicEoa.toLowerCase() !== didEoa.toLowerCase()) {
         return Response.json({ error: 'eoa_mismatch' }, { status: 409 });
       }
       if (row?.lastEmailChangedAt) {
@@ -251,7 +262,10 @@ export async function POST(req: Request) {
     return Response.json({ error: 'internal' }, { status: 500 });
   }
 
-  const responseBody: { ok: true } & Pick<WireUser, 'email'> = {
+  // Magic-only route — `email` is a Magic-shape field, so we narrow
+  // the Pick to MagicWireUser. (Pick<WireUser, 'email'> doesn't
+  // typecheck because `email` isn't in the union's intersection.)
+  const responseBody: { ok: true } & Pick<MagicWireUser, 'email'> = {
     ok: true,
     email: newEmail,
   };

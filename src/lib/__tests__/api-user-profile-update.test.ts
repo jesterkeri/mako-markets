@@ -102,9 +102,11 @@ function makeRequest(body: unknown): Request {
 function setupHappy(rowOverrides: Record<string, unknown> = {}) {
   mocks.checkSameOrigin.mockReturnValue({ ok: true });
   mocks.getUserSession.mockResolvedValue({
+    authType: 'magic',
     userId: USER_ID,
     email: 'a@b.com',
     magicEoa: EOA,
+    walletAddress: null,
     sessionId: SESSION_ID,
   });
   mocks.deriveSafeAddress.mockReturnValue(SAFE);
@@ -269,6 +271,7 @@ describe('POST /api/user/profile/update', () => {
     const res = await POST(makeRequest({ displayName: 'Joshua' }));
     const body = await res.json() as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual([
+      'authType',
       'authed',
       'avatarUrl',
       'displayName',
@@ -322,5 +325,62 @@ describe('POST /api/user/profile/update', () => {
     const res = await POST(makeRequest({ displayName: 'Joshua' }));
     const body = await res.json() as { nextEmailChangeAvailableAt: string | null };
     expect(body.nextEmailChangeAvailableAt).not.toBeNull();
+  });
+
+  // Wallet branch: pins the wallet wire-shape contract for the same
+  // route. Wallet users CAN update displayName + avatarUrl — the
+  // validation path is shared — only the response envelope differs.
+  it('wallet session: response carries walletAddress (not safeAddress/email/magicEoa/totp/nextEmailChangeAvailableAt)', async () => {
+    const WALLET = '0x4444444444444444444444444444444444444444';
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'wallet',
+      userId: USER_ID,
+      email: null,
+      magicEoa: null,
+      walletAddress: WALLET,
+      sessionId: SESSION_ID,
+    });
+    // The UPDATE projection is shared across branches — return a row
+    // with non-null email/magicEoa to prove the wallet branch DROPS
+    // them rather than reading them. This guards against a future
+    // refactor that accidentally spreads `row` into the response.
+    mocks.updateReturning.mockResolvedValue([
+      {
+        email: 'leak@example.com',
+        magicEoa: '0xleak',
+        displayName: 'WalletJoshua',
+        avatarUrl: null,
+        totpSecret: 'leak:enc',
+        totpEnabledAt: new Date('2026-04-15T00:00:00Z'),
+        lastEmailChangedAt: new Date('2026-04-15T00:00:00Z'),
+      },
+    ]);
+    mocks.selectPriorSession.mockResolvedValue([]);
+
+    const { POST } = await import('../../app/api/user/profile/update/route');
+    const res = await POST(makeRequest({ displayName: 'WalletJoshua' }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual([
+      'authType',
+      'authed',
+      'avatarUrl',
+      'displayName',
+      'lastSignInAt',
+      'ok',
+      'walletAddress',
+    ]);
+    expect(body.authType).toBe('wallet');
+    expect(body.walletAddress).toBe(WALLET);
+    expect(body.displayName).toBe('WalletJoshua');
+    // Magic-only fields MUST NOT leak even though the row carries them.
+    expect(body).not.toHaveProperty('email');
+    expect(body).not.toHaveProperty('magicEoa');
+    expect(body).not.toHaveProperty('safeAddress');
+    expect(body).not.toHaveProperty('totpEnabled');
+    expect(body).not.toHaveProperty('totpEnabledAt');
+    expect(body).not.toHaveProperty('nextEmailChangeAvailableAt');
+    expect(mocks.deriveSafeAddress).not.toHaveBeenCalled();
   });
 });

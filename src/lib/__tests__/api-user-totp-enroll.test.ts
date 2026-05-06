@@ -82,9 +82,11 @@ afterEach(() => vi.clearAllMocks());
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
 const SESSION = {
+  authType: 'magic' as const,
   userId: USER_ID,
   email: 'a@b.com',
   magicEoa: '0xa',
+  walletAddress: null,
   sessionId: 's',
 };
 
@@ -168,5 +170,28 @@ describe('POST /api/user/totp/enroll', () => {
 
     // Opportunistic stale-row cleanup runs on every enroll.
     expect(mocks.deletePending).toHaveBeenCalledTimes(1);
+  });
+
+  // Magic-only guard: a wallet session must be refused with 400
+  // wallet_session BEFORE any DB read or factor work.
+  it('rejects wallet session with 400 wallet_session before DB work', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'wallet',
+      userId: USER_ID,
+      email: null,
+      magicEoa: null,
+      walletAddress: '0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed',
+      sessionId: 's',
+    });
+    const { POST } = await import('../../app/api/user/totp/enroll/route');
+    const res = await POST(makeRequest());
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'wallet_session' });
+    // Guard is BEFORE DB read + secret generation — assert nothing
+    // got called.
+    expect(mocks.selectUser).not.toHaveBeenCalled();
+    expect(mocks.deletePending).not.toHaveBeenCalled();
+    expect(mocks.encryptTotpSecret).not.toHaveBeenCalled();
   });
 });

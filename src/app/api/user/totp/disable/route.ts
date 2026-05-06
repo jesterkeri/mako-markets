@@ -54,6 +54,10 @@ export async function POST(req: Request) {
   if (!session) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
+  // Magic-only — see /totp/enroll route for the rationale.
+  if (session.authType !== 'magic') {
+    return Response.json({ error: 'wallet_session' }, { status: 400 });
+  }
 
   let body: { totpCode?: unknown; recoveryCode?: unknown };
   try {
