@@ -111,12 +111,31 @@ export const aaPendingStatusEnum = pgEnum('aa_pending_status', [
 ]);
 
 // ----------------------------------------------------------------------------
-// users — source of truth: this DB. One row per Magic account.
+// users — source of truth: this DB. One row per identity, where an identity
+// is either a Magic account (auth_type='magic', email + magic_eoa NOT NULL,
+// wallet_address NULL) or an external wallet (auth_type='wallet',
+// wallet_address NOT NULL, email + magic_eoa NULL). The DB enforces the
+// shape via `users_auth_type_chk` (see migration 0005). Application code
+// MUST route writes through `upsertMagicUser` or `upsertWalletUser` — never
+// hand-rolled INSERTs — so the CHECK never gets a chance to reject in the
+// hot path.
 // ----------------------------------------------------------------------------
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
-  email: text('email').notNull(),
-  magicEoa: text('magic_eoa').notNull(),
+  /// Magic-side identity. NULL for wallet rows.
+  email: text('email'),
+  /// Magic-side identity. NULL for wallet rows.
+  magicEoa: text('magic_eoa'),
+  /// Wallet-side identity. NULL for Magic rows. Stored canonical
+  /// lowercase (DB CHECK + helper assertion both enforce). Partial
+  /// unique index `users_wallet_address_uniq` lives in raw migration
+  /// SQL because Drizzle's index DSL can't emit `WHERE` clauses
+  /// reliably.
+  walletAddress: text('wallet_address'),
+  /// Discriminator. 'magic' for legacy + Magic-onboarded rows;
+  /// 'wallet' for SIWE-authed external-wallet rows. Default 'magic'
+  /// matches every row that existed pre-migration 0005.
+  authType: text('auth_type').notNull().default('magic'),
   kycStatus: kycStatusEnum('kyc_status').notNull().default('none'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

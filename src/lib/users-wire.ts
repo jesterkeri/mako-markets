@@ -7,46 +7,49 @@ import { type User } from '@/db/schema';
 //
 // THE canonical serializer for user-shaped wire data. Every route that
 // returns identity fields to the browser MUST pass its row through
-// `userToWire` rather than spreading the row or hand-picking columns.
-// One helper means one place to audit when a new column is added to
-// the users table.
+// `magicUserToWire` or `walletUserToWire` rather than spreading the row or
+// hand-picking columns. One helper means one place to audit when a new
+// column is added to the users table.
 //
-// Bucket policy (mirrored in the route headers, pinned in the Group 3
-// plan at C:\Users\hr\AppData\Local\Temp\phase-1g-group-3-plan.md):
-//   A. Returns full identity → spread `userToWire(row, safeAddress)`.
-//      Today: /api/user/me, /api/user/auth (session branch),
-//      /api/user/auth/totp (success), /api/user/profile/update,
-//      /api/user/avatar/upload.
+// Phase 1H wallet-auth: the wire shape became a discriminated union. Magic
+// rows carry email + magic_eoa + safe_address + TOTP; wallet rows carry
+// only the wallet_address + the editable identity columns (display_name,
+// avatar_url). The route is responsible for picking the right helper based
+// on the session's auth_type.
+//
+// Bucket policy (mirrored in the route headers):
+//   A. Returns full identity → spread `magicUserToWire(row, safeAddress)`
+//      OR `walletUserToWire(row, walletAddress)` per session shape.
+//      Today: /api/user/me, /api/user/auth (Magic session branch),
+//      /api/user/auth/wallet (wallet session), /api/user/auth/totp
+//      (Magic success), /api/user/profile/update, /api/user/avatar/upload.
 //   B. Returns one just-set field as the source of truth before /me
-//      re-fetches → typed as `Pick<WireUser, …>` but does NOT call the
-//      helper (the value being returned is the just-written input,
-//      not a row read). Today: /api/user/email/update returns
-//      `{ ok, email }`.
-//   C. Returns no user identity → `{ ok: true }` (plus route extras
-//      like recoveryCodes). Not a consumer; not allowed to spread
-//      user rows. Today: /api/user/totp/{enroll, verify-enrollment,
-//      disable, regenerate-recovery-codes}, /api/user/logout.
+//      re-fetches → typed as `Pick<MagicWireUser, …>` but does NOT call the
+//      helper. Today: /api/user/email/update returns `{ ok, email }`.
+//      No wallet equivalent — wallet rows have no email.
+//   C. Returns no user identity → `{ ok: true }`. Today: /api/user/totp/*
+//      and /api/user/logout.
 //
-// `WireUser` is an explicit allowlist. Adding a new column to the
-// users table does NOT auto-expose it — the helper will simply not
-// include it until this file (or a future intentional PR) does. The
-// snapshot test in users-row-serialization.test.ts pins
-// `Object.keys(userToWire(row, safe))` so any field that sneaks into
-// the helper without intent fails CI.
+// Adding a new column to the users table does NOT auto-expose it — the
+// helpers will simply not include it until this file (or a future
+// intentional PR) does.
 //
-// `safeAddress` is computed by the caller (it's not a column on
-// `users` — it's derived via `deriveSafeAddress(magicEoa)` per Path X).
-// Routes already derive once; the helper takes the value as an
-// argument rather than re-deriving so it stays a pure, framework-free
-// module without a viem dependency.
+// `safeAddress` for the magic helper is computed by the caller via
+// `deriveSafeAddress(magicEoa)` per Path X. The helper takes it as an
+// argument rather than re-deriving so it stays a pure module without a
+// viem dependency.
 //
 // `totpEnabled` is the boundary at `row.totpSecret !== null`, NOT
-// truthiness. Encrypted ciphertext is never empty in practice, but
-// the explicit-null boundary is the only one that matches how
-// /api/user/totp/disable clears the column.
+// truthiness — matches /api/user/totp/disable's clear behavior.
+//
+// Both helpers throw if the row is shape-violating (e.g. a Magic row
+// with NULL email). The DB CHECK should make this impossible; the
+// throw makes a CHECK violation surface as a 5xx the operator sees,
+// not a silent serialization with bogus fields.
 // ----------------------------------------------------------------------------
 
-export type WireUser = {
+export type MagicWireUser = {
+  authType: 'magic';
   email: string;
   magicEoa: string;
   safeAddress: string;
@@ -59,24 +62,37 @@ export type WireUser = {
   totpEnabledAt: string | null;
 };
 
+export type WalletWireUser = {
+  authType: 'wallet';
+  walletAddress: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+};
+
+export type WireUser = MagicWireUser | WalletWireUser;
+
 /**
- * Strip a users row down to the canonical wire shape. Pass the columns
- * the helper needs (the `Pick` constrains callers — forgetting one is
- * a TypeScript error). Pass the derived Safe address as the second
- * argument; routes already compute this and we don't re-derive here.
+ * Strip a Magic users row down to the canonical wire shape. Pass the
+ * derived Safe address as the second argument; routes already compute
+ * this and we don't re-derive here.
  *
- * The return value is a plain object. Spread it into the response body
- * alongside any route-specific fields (e.g., `lastSignInAt`,
- * `nextEmailChangeAvailableAt`).
+ * Throws if the row is missing email or magic_eoa — the DB CHECK
+ * should prevent that for `auth_type='magic'`, so a throw here
+ * surfaces a real CHECK violation instead of silently returning a
+ * malformed shape.
  */
-export function userToWire(
+export function magicUserToWire(
   row: Pick<
     User,
     'email' | 'magicEoa' | 'displayName' | 'avatarUrl' | 'totpSecret' | 'totpEnabledAt'
   >,
   safeAddress: string,
-): WireUser {
+): MagicWireUser {
+  if (!row.email || !row.magicEoa) {
+    throw new Error('[users-wire] magic row missing email/magic_eoa');
+  }
   return {
+    authType: 'magic',
     email: row.email,
     magicEoa: row.magicEoa,
     safeAddress,
@@ -84,5 +100,24 @@ export function userToWire(
     avatarUrl: row.avatarUrl,
     totpEnabled: row.totpSecret !== null,
     totpEnabledAt: row.totpEnabledAt ? row.totpEnabledAt.toISOString() : null,
+  };
+}
+
+/**
+ * Strip a wallet users row down to the canonical wire shape. The
+ * `walletAddress` argument is taken from the session (canonical
+ * lowercase) — the row's column should match, but the session value
+ * is what the client sees, so we use it for symmetry with the
+ * magic helper.
+ */
+export function walletUserToWire(
+  row: Pick<User, 'displayName' | 'avatarUrl'>,
+  walletAddress: string,
+): WalletWireUser {
+  return {
+    authType: 'wallet',
+    walletAddress,
+    displayName: row.displayName,
+    avatarUrl: row.avatarUrl,
   };
 }
