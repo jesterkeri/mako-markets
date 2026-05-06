@@ -445,15 +445,28 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
     // mine. The user-visible "5 minutes" question stays honest within
     // the buffer; closeTime ends up at 5min 60s on chain.
     const submitNowSec = Math.floor(Date.now() / 1000);
-    // Clamp at MAX_DURATION_SEC so a user pick AT the cap (7d) doesn't
-    // get bumped over by the 60s tx-landing buffer and fail validation.
-    // Buffer exists to defend the MIN_DURATION edge (slow mining
-    // shrinks contract-seen duration below the floor); at the MAX edge,
-    // slow mining only REDUCES contract-seen duration, so dropping the
-    // buffer here is safe.
+    // Clamp at MAX_DURATION_SEC - TX_LANDING_BUFFER_SEC so a 7d pick
+    // (at the contract's exact MAX) doesn't fail the sponsor's
+    // duration_too_long check. Two clocks at play:
+    //   - UI uses Date.now() (wall clock, what the user sees).
+    //   - Sponsor route validates against the latest Monad block
+    //     timestamp (chain clock), which trails wall clock by a few
+    //     seconds because the latest mined block is always slightly
+    //     in the past.
+    // For durations well below MAX (5M..3D), the duration + buffer
+    // is comfortably below MAX, so the wall-vs-chain delta doesn't
+    // matter. For 7D AT the cap, even a 5s chain-lag pushes
+    // (closeTime - chainNow) over MAX → bad_create_timestamps.
+    // Subtracting one TX_LANDING_BUFFER_SEC from the clamp gives
+    // ~60s of slack, comfortably exceeding typical Monad chain lag.
+    // Net UX: a 7D pick becomes 7D - 60s ≈ 6d 23h 59min, which is
+    // imperceptible to users.
     const submitCloseSec =
       submitNowSec +
-      Math.min(durationSec + TX_LANDING_BUFFER_SEC, MAX_DURATION_SEC);
+      Math.min(
+        durationSec + TX_LANDING_BUFFER_SEC,
+        MAX_DURATION_SEC - TX_LANDING_BUFFER_SEC,
+      );
     const submitBettingCloseSec = Number(
       suggestedCryptoBettingCloseTimeMirror(submitNowSec, submitCloseSec),
     );
