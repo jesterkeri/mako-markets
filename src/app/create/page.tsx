@@ -2,10 +2,13 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWaitForTransactionReceipt } from 'wagmi';
 import { type Hex } from 'viem';
 import { decodeMarketCreatedId, MarketType } from '@/lib/contract';
 import { useCreateMarket, type CreateMarketResult } from '@/lib/hooks';
+import { useUser } from '@/lib/use-user';
+import { isWalletDrifted } from '@/lib/wallet-drift';
+import { WalletDriftBanner } from '@/components/WalletDriftBanner';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { toBytes32 } from '@/lib/oracle';
@@ -157,6 +160,17 @@ export default function CreateMarketPage() {
   //   - 'error'             — sponsor / send / network error
   const { create, hash, isPending, error, flow } = useCreateMarket();
   const { data: receipt, isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({ hash });
+
+  // Wallet-session drift gate (plan step 23). Computed once at the
+  // page top and threaded through to every tab via TabProps. The
+  // page-level WalletDriftBanner renders below the tab strip when
+  // drifted; the per-tab CREATE submit handler + disabled predicate
+  // each enforce `|| drifted` independently so a programmatic submit
+  // (e.g. enter-key on a stale field) cannot bypass the visible
+  // disabled affordance.
+  const { user } = useUser();
+  const { address: connectedWallet } = useAccount();
+  const drifted = isWalletDrifted(user ?? null, connectedWallet);
 
   // For the wallet path: derive the decoded new id from the receipt
   // (same as 1C). The Magic path resolves `create()` with newId
@@ -312,10 +326,23 @@ export default function CreateMarketPage() {
           })}
         </div>
 
+        {/* Page-level wallet-drift banner (plan step 23). Renders ONLY
+            when a wallet-authed session no longer matches the connected
+            wallet — see `isWalletDrifted`. One banner, regardless of
+            which tab is active. */}
+        {drifted && user?.authType === 'wallet' && connectedWallet && (
+          <div className="mb-6">
+            <WalletDriftBanner
+              sessionWallet={user.walletAddress}
+              connectedWallet={connectedWallet}
+            />
+          </div>
+        )}
+
         <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
-          {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
-          {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
-          {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} />}
+          {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
+          {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
+          {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
         </div>
 
         {/* Non-busy status line below the submit button */}
@@ -343,9 +370,15 @@ type TabProps = {
   onSubmit: (args: CreateArgs) => Promise<void>;
   isBusy: boolean;
   statusText: string | null;
+  // Wallet-session drift gate (plan step 23). Computed at the page top
+  // and threaded through to each tab. The hook is intentionally
+  // drift-unaware (admin / dev surfaces still need it), so per-tab
+  // submit handlers are responsible for the early-return + the disabled
+  // predicate.
+  drifted: boolean;
 };
 
-function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
+function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
   const [prices, setPrices] = useState<CryptoPrices | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<CryptoSymbol>('BTC');
   const [direction, setDirection] = useState<Direction>('above');
@@ -432,7 +465,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
     // rejects such oracleRefs in parseCryptoOracleRef and the market would
     // get stuck until forceRefund. Belt-and-suspenders with the button's
     // `disabled` guard below.
-    if (effectiveStrike <= 0 || isBusy) return;
+    if (effectiveStrike <= 0 || isBusy || drifted) return;
 
     const op = direction === 'above' ? 'gt' : 'lt';
     const oracleRefStr = `${selectedSymbol}:${op}:${effectiveStrike}`;
@@ -493,7 +526,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
     });
   };
 
-  const disabled = isBusy || effectiveStrike <= 0;
+  const disabled = isBusy || effectiveStrike <= 0 || drifted;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
@@ -684,7 +717,7 @@ function CryptoTab({ onSubmit, isBusy, statusText }: TabProps) {
 // FOOTBALL TAB -- EPL fixtures from football-data.org + question builder
 // ======================================================================
 
-function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
+function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
   const [fixtures, setFixtures] = useState<FootballFixture[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedFixture, setSelectedFixture] = useState<FootballFixture | null>(null);
@@ -779,6 +812,7 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
       || oracleRefTooLong
       || timestamps === null
       || tooFarOut
+      || drifted
     ) {
       return;
     }
@@ -812,7 +846,8 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
     || !selectedFixture
     || oracleRefTooLong
     || closeTooSoon
-    || tooFarOut;
+    || tooFarOut
+    || drifted;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
@@ -962,7 +997,7 @@ function FootballTab({ onSubmit, isBusy, statusText }: TabProps) {
 // BASKETBALL TAB -- NBA games from balldontlie + home/away/total points
 // ======================================================================
 
-function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
+function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
   const [games, setGames] = useState<BasketballGame[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedGame, setSelectedGame] = useState<BasketballGame | null>(null);
@@ -1057,7 +1092,8 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
       oracleRefTooLong ||
       (isTotalQ && totalNumber <= 0) ||
       timestamps === null ||
-      tooFarOut
+      tooFarOut ||
+      drifted
     ) {
       return;
     }
@@ -1091,7 +1127,8 @@ function BasketballTab({ onSubmit, isBusy, statusText }: TabProps) {
     oracleRefTooLong ||
     (isTotalQ && totalNumber <= 0) ||
     closeTooSoon ||
-    tooFarOut;
+    tooFarOut ||
+    drifted;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">

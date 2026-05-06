@@ -7,29 +7,34 @@ import {
   EmailUpdateNotSupported,
   updateEmailWithMagic,
 } from '@/lib/magic-browser';
-import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
+import {
+  USER_QUERY_KEY,
+  type AuthedUser,
+  type MagicAuthedUser,
+} from '@/lib/use-user';
+import { WalletEditableIdentity } from './WalletEditableIdentity';
+import { WalletSignInPrompt } from './WalletSignInPrompt';
 
 // ----------------------------------------------------------------------------
 // IdentityBlock
 //
-// The /profile identity surface for both Magic-authed and wallet-only
-// sessions. Magic users see:
-//   - SIGNED IN AS: email + EDIT (subject to 365-day cooldown)
-//   - DISPLAY NAME: edit / clear, validated client-side mirroring
-//     /api/user/profile/update server regex
-//   - AVATAR: image upload (PNG/JPG/WEBP, ≤4 MB) → server resizes to
-//     256×256 webp and stores in Vercel Blob. REMOVE clears the field.
-//   - LAST SIGN-IN line + recovery copy
+// The /profile identity surface. Three-branch routing depending on
+// (user, connectedWallet):
+//   1. user is Magic         → MagicEditableIdentity (email + display
+//                              name + avatar + recovery copy + email
+//                              cooldown handling).
+//   2. user is wallet        → WalletEditableIdentity (read-only
+//                              address + display name + avatar +
+//                              seed-phrase recovery copy).
+//   3. !user, connectedWallet present → WalletSignInPrompt: sign a
+//                              SIWE message to enable a profile.
+//   4. !user, no wallet      → NotSignedIn placeholder (the sign-in
+//                              CTA lives elsewhere on the page).
 //
-// Wallet-only users see a stripped-down version: address + format,
-// no edit affordances. Mirrors /profile's existing isMagicUser
-// branching.
-//
-// Async safety (Group 4 plan invariant): every fetch uses a mounted
-// ref guard + AbortController so a late response after route
-// navigation / component unmount cannot setState on a dead
-// component. The COPIED!-style transient flags also clear on
-// unmount.
+// Async safety (Group 4 plan invariant): every Magic-side fetch uses a
+// mounted ref guard + AbortController so a late response after route
+// navigation / component unmount cannot setState on a dead component.
+// The COPIED!-style transient flags also clear on unmount.
 //
 // Display name validation: `/^[A-Za-z0-9 ._-]{1,32}$/` after trim.
 // Avatar upload: client-side reject for size > 4 MB or non-allow-listed
@@ -48,11 +53,6 @@ const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
 const AVATAR_MAX_BYTES = 4 * 1024 * 1024;
 const AVATAR_MIME_ALLOW = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
-function formatAddress(address: string | undefined): string {
-  if (!address) return '';
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
 function validateDisplayName(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) return 'Display name cannot be empty.';
@@ -63,13 +63,38 @@ function validateDisplayName(value: string): string | null {
 }
 
 export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
+  // Three-branch routing (plan step 19). The Magic body is in the
+  // sibling `MagicEditableIdentity` to keep this wrapper focused on
+  // the auth-state ↦ surface mapping.
+  if (!user) {
+    if (connectedWallet) {
+      return <WalletSignInPrompt address={connectedWallet} />;
+    }
+    return <NotSignedIn />;
+  }
+  if (user.authType === 'wallet') {
+    return <WalletEditableIdentity user={user} />;
+  }
+  return <MagicEditableIdentity user={user} />;
+}
+
+function NotSignedIn() {
+  return (
+    <div className="flex flex-col gap-2">
+      <h2 className="mako-label text-muted">SIGNED IN AS</h2>
+      <p className="mako-body text-base text-muted leading-tight">
+        Not signed in.
+      </p>
+      <p className="mako-body text-[11px] text-muted leading-snug mt-1">
+        Sign in with email or connect a wallet to set a display name
+        and avatar.
+      </p>
+    </div>
+  );
+}
+
+function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
   const queryClient = useQueryClient();
-  // Plan step 18 narrowing: a wallet-session user is also `!!user` but
-  // has no `email` / `nextEmailChangeAvailableAt` / TOTP. The Magic
-  // identity edit affordances below all require Magic. Narrow here so
-  // the rest of the component can read `user.email` etc. without
-  // optional chaining.
-  const isMagicUser = user?.authType === 'magic';
 
   // Mount + cancellation discipline. Per-field controllers so that
   // submitting one field doesn't abort an in-flight submit of another
@@ -101,8 +126,7 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
   // here keeps render pure — no client-side clock comparison needed.
   // If the cooldown elapses while the page is open, the next /me
   // refetch flips this back to null and the EDIT button re-enables.
-  const emailChangeAvailableAt =
-    user?.authType === 'magic' ? user.nextEmailChangeAvailableAt : null;
+  const emailChangeAvailableAt = user.nextEmailChangeAvailableAt;
   const emailChangeLocked = !!emailChangeAvailableAt;
   const emailChangeAvailableLabel = emailChangeAvailableAt
     ? new Date(emailChangeAvailableAt).toLocaleDateString()
@@ -127,7 +151,7 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
       setEmailEditError('Enter a valid email address.');
       return;
     }
-    if (user?.authType === 'magic' && trimmed.toLowerCase() === user.email.toLowerCase()) {
+    if (trimmed.toLowerCase() === user.email.toLowerCase()) {
       setEmailEditError('That is already your email.');
       return;
     }
@@ -204,7 +228,7 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
   const [displayError, setDisplayError] = useState('');
 
   function handleStartEditDisplay() {
-    setDisplayInput(user?.displayName ?? '');
+    setDisplayInput(user.displayName ?? '');
     setDisplayError('');
     setDisplayPhase('editing');
   }
@@ -411,26 +435,7 @@ export function IdentityBlock({ user, connectedWallet }: IdentityBlockProps) {
 
   // ── Render ────────────────────────────────────────────────────────────
 
-  // Wallet-only branch: short-circuit to the existing copy. Magic
-  // identity edit affordances stay hidden because the backend routes
-  // require a Magic session (getUserSession returns 401 otherwise).
-  if (!isMagicUser) {
-    return (
-      <div className="flex flex-col gap-2">
-        <h2 className="mako-label text-muted">SIGNED IN AS</h2>
-        <p className="mako-title text-xl break-all leading-tight">
-          {formatAddress(connectedWallet)}
-        </p>
-        <p className="mako-body text-[11px] text-muted leading-snug mt-1">
-          You are signed in with an external wallet. Identity controls are
-          available for email-authenticated accounts.
-        </p>
-      </div>
-    );
-  }
-
-  // Magic branch.
-  const hero = user!;
+  const hero = user;
 
   return (
     <div className="flex flex-col gap-6">

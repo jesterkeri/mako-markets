@@ -11,6 +11,8 @@ import { useWriteContract } from 'wagmi';
 
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
+import { isWalletDrifted } from '@/lib/wallet-drift';
+import { WalletDriftBanner } from '@/components/WalletDriftBanner';
 import { WarningModal } from '@/components/WarningModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
@@ -144,6 +146,13 @@ export default function ProfilePage() {
   const canonicalAddress = isMagicUser
     ? (user.safeAddress as `0x${string}`)
     : connectedWallet;
+
+  // Wallet-session drift (plan step 21). Computed once at the page top
+  // and threaded into Send-button disable + the page-level banner.
+  // `isWalletDrifted` returns false for Magic sessions, for null users,
+  // and when no wallet is connected — so the banner is gated to the
+  // exact "wallet-authed AND connected wallet differs" case.
+  const drifted = isWalletDrifted(user ?? null, connectedWallet);
 
   // Fetch USDC Balance
   const usdcAddress =
@@ -328,6 +337,12 @@ export default function ProfilePage() {
   // ── Send flow ─────────────────────────────────────────────────────────────
   const handleReviewSend = () => {
     setSendError('');
+    // Drift gate (codex round-11 MAJOR fix). The visible button's
+    // `disabled` already covers this, but a stale-submit path (e.g.
+    // enter-key on a pre-drift form, programmatic click) could still
+    // open the SEND NOW modal. Hard-return here so a drift that
+    // appears between mount and click cannot reach `executeSend`.
+    if (drifted) return;
     if (!isAddress(sendDestination)) {
       setSendError('Invalid destination address.');
       return;
@@ -363,6 +378,18 @@ export default function ProfilePage() {
 
   const executeSend = async () => {
     setActiveModal('none');
+    // Drift gate (codex round-11 MAJOR fix). The user might have
+    // opened the SEND NOW modal pre-drift and switched the connected
+    // wallet before clicking SEND NOW. Re-check here so the
+    // wallet-session-vs-connected mismatch can't bypass the
+    // handleReviewSend gate via that race.
+    if (drifted) {
+      setSendPhase('error');
+      setSendError(
+        'Connected wallet changed during review. Send was not sent.',
+      );
+      return;
+    }
     if (!canonicalAddress) {
       setSendPhase('error');
       setSendError('You must be connected to send USDC.');
@@ -558,6 +585,19 @@ export default function ProfilePage() {
         ) : connectedWallet ? (
           <WalletHero address={connectedWallet} className="flex lg:hidden" />
         ) : null}
+
+        {/* Page-level wallet-drift banner (plan step 21). Renders ONLY
+            when a wallet-authed session's stored address no longer
+            matches the connected wallet — see `isWalletDrifted`. The
+            banner offers SIGN OUT (clears session) and DISCONNECT
+            WALLET (drops the wagmi connection) so the user can pick
+            their resolution. */}
+        {drifted && user?.authType === 'wallet' && connectedWallet && (
+          <WalletDriftBanner
+            sessionWallet={user.walletAddress}
+            connectedWallet={connectedWallet}
+          />
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
@@ -841,7 +881,7 @@ export default function ProfilePage() {
 
                     <button
                       onClick={handleReviewSend}
-                      disabled={!sendAmount || !sendDestination}
+                      disabled={!sendAmount || !sendDestination || drifted}
                       className="mako-button mako-button--yes w-full mt-2"
                     >
                       REVIEW SEND
@@ -874,7 +914,10 @@ export default function ProfilePage() {
 
                   <div className="flex flex-col gap-3 flex-1 w-full min-w-0">
                     <p className="mako-body text-sm">
-                      Send USDC directly to this address on Monad. This is your personal smart wallet.
+                      Send USDC directly to this address on Monad.{' '}
+                      {isMagicUser
+                        ? 'This is your personal smart wallet.'
+                        : 'This is your connected wallet.'}
                       <strong className="block text-mako-red mt-1">Any other tokens or chains will be permanently lost.</strong>
                     </p>
                     <div className="mako-label text-[9px] text-muted break-all">
@@ -984,7 +1027,9 @@ export default function ProfilePage() {
                 Deposit missing or hit an error? We&apos;re here to help.
               </p>
               <a
-                href={`mailto:support@makomarkets.com?subject=Mako%20Beta%20Support&body=Safe%20Address:%20${canonicalAddress ?? ''}%0A%0APlease%20describe%20your%20issue:%20`}
+                href={`mailto:support@makomarkets.com?subject=Mako%20Beta%20Support&body=${
+                  isMagicUser ? 'Safe%20Address' : 'Wallet%20Address'
+                }:%20${canonicalAddress ?? ''}%0A%0APlease%20describe%20your%20issue:%20`}
                 className="font-display font-black uppercase tracking-widest text-sm px-8 py-4 border-2 border-chrome-divider text-chrome-fg hover:border-chrome-fg hover:bg-chrome-fg hover:text-chrome transition-colors w-full sm:w-auto text-center"
               >
                 CONTACT SUPPORT

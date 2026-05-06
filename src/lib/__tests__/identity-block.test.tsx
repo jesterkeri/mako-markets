@@ -27,6 +27,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+// Mock wagmi at the test level so the new wallet-pre-signin branch
+// (WalletSignInPrompt → useSignMessage) doesn't require a real
+// WagmiProvider in this test surface. The Magic-user tests below don't
+// touch wagmi at all; they're unaffected by the mock.
+vi.mock('wagmi', () => ({
+  useSignMessage: () => ({ signMessageAsync: vi.fn() }),
+}));
+
 import { IdentityBlock } from '../../components/profile/IdentityBlock';
 import { USER_QUERY_KEY, type AuthedUser } from '../use-user';
 

@@ -1,10 +1,14 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
+import { useAccount } from 'wagmi';
 import { type MarketWithId } from '@/lib/contract';
 import { usePlaceBet, useUsdcAllowance, useUsdcBalance } from '@/lib/hooks';
 import { computePreviewPayout } from '@/lib/bet';
 import { parseUsdc, formatUsdc } from '@/lib/usdc';
+import { useUser } from '@/lib/use-user';
+import { isWalletDrifted } from '@/lib/wallet-drift';
+import { WalletDriftBanner } from '@/components/WalletDriftBanner';
 
 /**
  * v4 minimum bet — `MakoMarketsV4.MIN_BET` = 1_000_000 base units (1 USDC).
@@ -98,6 +102,17 @@ export function BetSheet({
     bettingAccount,
   } = usePlaceBet();
 
+  // Wallet-session drift gate (plan step 22). Hook stays drift-unaware
+  // — this is enforced at the call-site so admin / dev surfaces that
+  // bypass the cookie can still place bets via their connected wallet.
+  // For wallet-authed users on /market/[id], a drift between the cookie
+  // wallet and the connected wallet means edits would land on identity
+  // A while bets would sign with B; we disable the button + render an
+  // inline banner with the resolution choice.
+  const { user } = useUser();
+  const { address: connectedWallet } = useAccount();
+  const drifted = isWalletDrifted(user ?? null, connectedWallet);
+
   // Balance + allowance run against `bettingAccount` — the address that
   // ACTUALLY funds the bet. For Magic users that's the Safe; for wallet
   // users it's `walletAddress`. Group 5 round-1 MAJOR 1 fix.
@@ -144,6 +159,12 @@ export function BetSheet({
 
   const handlePlaceBet = async () => {
     if (!validation.ok) return;
+    // Drift gate at the call-site (codex round-11 MINOR fix). Mirrors
+    // the per-tab guard in /create — the visible button's `disabled`
+    // already gates this, but a stale-submit path (programmatic click,
+    // enter-key on a stale field) could otherwise reach `placeBet()`
+    // while the connected wallet has drifted from the session wallet.
+    if (drifted) return;
     await placeBet({
       id: market.id,
       isYes: side === 'yes',
@@ -167,7 +188,7 @@ export function BetSheet({
   // click during the 2.5s success window can't fire a second placeBet
   // before reset() flips us back to idle.
   const disabled =
-    isBusy || authLoading || phase === 'success' || !validation.ok;
+    isBusy || authLoading || phase === 'success' || !validation.ok || drifted;
 
   const buttonLabel = (() => {
     if (authLoading) return 'CHECKING AUTH…';
@@ -275,6 +296,18 @@ export function BetSheet({
             </>
           )}
         </div>
+
+        {/* Wallet-drift banner (plan step 22). Inline above the Place
+            Bet button so the user sees the resolution choice the moment
+            they look at the action surface. */}
+        {drifted && user?.authType === 'wallet' && connectedWallet && (
+          <div className="mb-4">
+            <WalletDriftBanner
+              sessionWallet={user.walletAddress}
+              connectedWallet={connectedWallet}
+            />
+          </div>
+        )}
 
         {/* Submit */}
         <div className="relative">
