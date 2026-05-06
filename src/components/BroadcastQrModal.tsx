@@ -98,7 +98,7 @@ export function BroadcastQrModal({
           e.stopPropagation();
           onClose();
         }}
-        className="absolute top-5 right-5 font-black text-xs uppercase tracking-widest px-4 py-2 border border-black hover:bg-black hover:text-background transition-colors"
+        className="absolute top-5 right-5 font-black text-xs uppercase tracking-widest px-4 py-2 border border-ink hover:bg-ink hover:text-paper transition-colors"
         aria-label="Close broadcast"
       >
         [ CLOSE · ESC ]
@@ -114,7 +114,7 @@ export function BroadcastQrModal({
 
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-[var(--color-background)] p-6 border-4 border-black"
+        className="bg-paper p-6 border-4 border-ink"
       >
         <QRCodeSVG
           value={shareUrl}

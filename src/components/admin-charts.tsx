@@ -92,8 +92,8 @@ function DauTooltip({ active, payload }: TooltipProps) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload as DauDatum;
   return (
-    <div className="bg-black text-background px-3 py-2 text-[10px] font-black uppercase tracking-widest border border-black">
-      <div className="text-background/70">{d.dateISO}</div>
+    <div className="bg-ink text-paper px-3 py-2 text-[10px] font-black uppercase tracking-widest border border-ink">
+      <div className="text-paper/70">{d.dateISO}</div>
       <div className="mt-1 tabular-nums">
         {d.wallets} WALLET{d.wallets === 1 ? '' : 'S'} · {d.bets} BET{d.bets === 1 ? '' : 'S'}
       </div>
@@ -153,8 +153,8 @@ function GrowthTooltip({ active, payload }: TooltipProps) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload as GrowthDatum;
   return (
-    <div className="bg-black text-background px-3 py-2 text-[10px] font-black uppercase tracking-widest border border-black">
-      <div className="text-background/70">{d.dateISO}</div>
+    <div className="bg-ink text-paper px-3 py-2 text-[10px] font-black uppercase tracking-widest border border-ink">
+      <div className="text-paper/70">{d.dateISO}</div>
       <div className="mt-1 tabular-nums">
         TOTAL {d.cumulativeUsers} · +{d.newUsers} NEW
       </div>

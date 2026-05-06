@@ -638,7 +638,7 @@ export default function ProfilePage() {
               {isMagicUser && <div className="absolute inset-0 bg-mako-red/5 pointer-events-none" />}
 
               <div className="relative z-10 flex flex-col gap-5">
-                <h2 className={`mako-display text-2xl ${isMagicUser ? 'text-mako-red' : 'text-ink'}`}>SECURITY</h2>
+                <h2 className={`mako-display text-[clamp(1.5rem,2.5vw,1.75rem)] ${isMagicUser ? 'text-mako-red' : 'text-ink'}`}>SECURITY</h2>
 
                 {isMagicUser ? (
                   <>
@@ -724,7 +724,7 @@ export default function ProfilePage() {
                     <div className="mako-skeleton h-12 w-48" />
                   ) : isBalanceError ? (
                     <div className="flex items-center gap-3">
-                      <span className="font-display font-black text-4xl md:text-5xl tracking-tighter text-ink leading-none">--- USDC</span>
+                      <span className="font-display font-black text-[clamp(2.25rem,4vw,3rem)] tracking-tighter text-ink leading-none">--- USDC</span>
                       <button onClick={() => refetchBalance()} className="w-10 h-10 flex items-center justify-center border-2 border-ink rounded-full hover:bg-ink hover:text-white transition-colors" aria-label="Retry">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -733,7 +733,7 @@ export default function ProfilePage() {
                       </button>
                     </div>
                   ) : (
-                    <span className="font-display font-black text-5xl md:text-6xl tracking-tighter text-ink leading-none">
+                    <span className="font-display font-black text-[clamp(3rem,5vw,3.75rem)] tracking-tighter text-ink leading-none">
                       {balanceData ? parseFloat(balanceData.formatted).toFixed(2) : '0.00'} <span className="text-3xl text-muted ml-1">USDC</span>
                     </span>
                   )}
@@ -744,7 +744,7 @@ export default function ProfilePage() {
             {/* 3. Send USDC */}
             {canonicalAddress && (
                <section className="mako-card text-ink flex flex-col gap-5 border-4 border-ink relative overflow-hidden">
-                <h2 className="mako-display text-2xl">SEND USDC</h2>
+                <h2 className="mako-display text-[clamp(1.5rem,2.5vw,1.75rem)]">SEND USDC</h2>
 
                 {sendPhase === 'sending' && (
                   <div className="flex flex-col items-center justify-center py-10 gap-4">
@@ -895,7 +895,7 @@ export default function ProfilePage() {
             {canonicalAddress && (
               <section className="mako-card text-ink flex flex-col gap-6">
                 <div className="flex justify-between items-center">
-                  <h2 className="mako-display text-2xl">RECEIVE USDC</h2>
+                  <h2 className="mako-display text-[clamp(1.5rem,2.5vw,1.75rem)]">RECEIVE USDC</h2>
                   <a href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer" className="mako-label text-[10px] text-mako-red hover:underline flex items-center gap-1">
                     GET TESTNET FUNDS <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>
                   </a>

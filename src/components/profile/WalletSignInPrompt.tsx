@@ -30,7 +30,7 @@ export function WalletSignInPrompt({ address }: { address: `0x${string}` }) {
   return (
     <div className="flex flex-col gap-3">
       <h2 className="mako-label text-muted">SIGNED IN AS</h2>
-      <p className="mako-title text-xl break-all leading-tight">
+      <p className="mako-title text-[clamp(1.25rem,2vw,1.5rem)] break-all leading-tight">
         {formatAddress(address)}
       </p>
       <div className="bg-paper border-2 border-ink p-3 rounded-xl flex flex-col gap-2 mt-2">

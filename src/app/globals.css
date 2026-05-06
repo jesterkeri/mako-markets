@@ -54,6 +54,32 @@
   --mako-link-hover: #FACC15;      /* signal yellow holds up on ink */
 }
 
+/*
+ * Spacing tokens (Gemini visual-sweep round 1). These are theme-agnostic
+ * so they live alongside :root and don't need to repeat under data-theme.
+ *
+ * --ticker-safe-area  — bottom padding any page/page-fragment must reserve
+ *                       so the fixed-bottom PriceTicker (h-9 + 1px border ≈
+ *                       37px) does not clip content. 2.5rem = 40px.
+ *                       Used by `pb-[var(--ticker-safe-area)]` in layout.tsx
+ *                       and the MobileMenu drawer footer.
+ * --card-pad-mobile   — small-screen card inner padding. Applied via
+ *                       `p-[var(--card-pad-mobile)]` on .mako-card-aware
+ *                       wrappers (TBD).
+ * --card-pad-desktop  — same on desktop.
+ * --page-safe-pb      — fluid bottom padding on pages with a fixed-bottom
+ *                       BetSheet (e.g. /market/[id]). max(8rem,20vh) so
+ *                       short viewports get at least 8rem and tall ones
+ *                       get a 20% reserve, both well clear of the
+ *                       collapsed BetSheet (~80px) plus the ticker (37px).
+ */
+:root {
+  --ticker-safe-area: 2.5rem;
+  --card-pad-mobile: 1.25rem;
+  --card-pad-desktop: 1.5rem;
+  --page-safe-pb: max(8rem, 20vh);
+}
+
 /* Expose tokens as Tailwind v4 theme so utilities like `bg-canvas`,
  * `text-chrome-fg`, `border-chrome-divider`, `shadow-brutal` resolve. */
 @theme {

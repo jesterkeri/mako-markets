@@ -204,7 +204,7 @@ export default function MyMarketsPage() {
 
       <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10">
         {/* Mobile-only title — desktop title lives in the sticky header above */}
-        <h1 className="md:hidden mako-display text-3xl mb-6 text-canvas-fg">MY MARKETS</h1>
+        <h1 className="md:hidden mako-display text-[clamp(1.875rem,3vw,2.25rem)] mb-6 text-canvas-fg">MY MARKETS</h1>
 
         {/* Tabs */}
         <div className="flex gap-3 mb-8 border-b-2 border-canvas-divider pb-4">

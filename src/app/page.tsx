@@ -130,7 +130,7 @@ export default function Home() {
         <div className="px-4 sm:px-6 lg:px-8 py-5 md:py-6 max-w-6xl mx-auto w-full">
             {/* Mobile heading — the desktop version lives in the flush header bar above */}
             <div className="flex items-baseline justify-between mb-6 md:hidden">
-              <h1 className="mako-display text-3xl text-canvas-fg">LIVE MARKETS</h1>
+              <h1 className="mako-display text-[clamp(1.875rem,3vw,2.25rem)] text-canvas-fg">LIVE MARKETS</h1>
             </div>
 
             {/* Category tabs — each in its own brand color. See TABS above.
@@ -160,13 +160,13 @@ export default function Home() {
             </nav>
 
             {isLoading && filtered.length === 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-5">
                 {Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="mako-skeleton h-[220px]" aria-hidden="true" />
                 ))}
               </div>
             ) : filtered.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-5">
                 {filtered.map((market) => (
                   <Link
                     key={market.id.toString()}

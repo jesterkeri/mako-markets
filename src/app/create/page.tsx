@@ -289,7 +289,7 @@ export default function CreateMarketPage() {
       <div className="px-4 sm:px-6 lg:px-8 py-6 md:py-10 max-w-3xl mx-auto w-full">
         {/* Mobile-only title — desktop title lives in the sticky header above */}
         <div className="md:hidden mb-6">
-          <h1 className="mako-display text-3xl mb-2 text-canvas-fg">NEW MARKET</h1>
+          <h1 className="mako-display text-[clamp(1.875rem,3vw,2.25rem)] mb-2 text-canvas-fg">NEW MARKET</h1>
           <p className="mako-body text-muted text-sm">
             Pick a source, build a question, launch.
           </p>
@@ -617,7 +617,7 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
                   isActive
-                    ? 'bg-ink text-canvas-fg shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
                     : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
                 }`}
               >
@@ -669,7 +669,7 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-2.5 mako-label rounded-lg border-2 border-ink transition-all disabled:opacity-50 tabular-nums ${
                   isActive
-                    ? 'bg-ink text-canvas-fg shadow-[3px_3px_0_0_#D94A3D] -translate-y-[1px] -translate-x-[1px]'
+                    ? 'bg-ink text-paper shadow-[3px_3px_0_0_#D94A3D] -translate-y-[1px] -translate-x-[1px]'
                     : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px]'
                 }`}
               >
@@ -925,7 +925,7 @@ function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
                   isActive
-                    ? 'bg-ink text-canvas-fg shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
                     : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
                 }`}
               >
@@ -1204,7 +1204,7 @@ function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
                 aria-pressed={isActive}
                 className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
                   isActive
-                    ? 'bg-ink text-canvas-fg shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                    ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
                     : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
                 }`}
               >

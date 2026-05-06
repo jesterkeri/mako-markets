@@ -106,7 +106,7 @@ export function AdminLogin({ onDone }: { onDone?: () => void }) {
         type="button"
         onClick={signIn}
         disabled={busy || !address || !!wrongWallet}
-        className="mt-4 bg-black text-background font-black text-[11px] uppercase tracking-widest px-6 py-3 hover:bg-transparent hover:text-foreground border border-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="mt-4 bg-ink text-paper font-black text-[11px] uppercase tracking-widest px-6 py-3 hover:bg-transparent hover:text-canvas-fg border border-ink transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {busy ? 'WAITING FOR SIGNATURE…' : '[ SIGN IN AS ADMIN ]'}
       </button>

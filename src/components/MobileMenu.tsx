@@ -213,7 +213,7 @@ export function MobileMenu({ className }: { className?: string }) {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
               onClick={() => setOpen(false)}
-              className="fixed inset-0 z-50 bg-ink/60 md:hidden"
+              className="fixed inset-0 z-[60] bg-ink/60 md:hidden"
               aria-hidden="true"
             />
             <motion.aside
@@ -222,7 +222,7 @@ export function MobileMenu({ className }: { className?: string }) {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', stiffness: 320, damping: 36 }}
-              className="fixed top-0 right-0 z-50 h-dvh w-[85%] max-w-sm bg-chrome text-chrome-fg border-l-2 border-chrome-divider flex flex-col md:hidden"
+              className="fixed top-0 right-0 z-[60] h-dvh w-[85%] max-w-sm bg-chrome text-chrome-fg border-l-2 border-chrome-divider flex flex-col md:hidden"
               role="dialog"
               aria-modal="true"
               aria-label="Mobile navigation"
@@ -236,7 +236,7 @@ export function MobileMenu({ className }: { className?: string }) {
                 >
                   <Logo size={22} className="text-chrome-fg" title="Mako Market" />
                   <span className="font-display font-black text-base tracking-tight text-chrome-fg">
-                    MAKO
+                    MAKO MARKET
                   </span>
                 </Link>
                 <button
@@ -279,7 +279,12 @@ export function MobileMenu({ className }: { className?: string }) {
                   expanded-state account section. Loading state is a
                   thin skeleton so the drawer doesn't flash an empty
                   bottom on cold open for already-authed users. */}
-              <div className="mt-auto border-t-2 border-chrome-divider shrink-0">
+              {/* Footer block: account row + SIGN OUT (or SIGN IN).
+                  `pb-[var(--ticker-safe-area)]` reserves space for the
+                  fixed-bottom PriceTicker so SIGN OUT can't be clipped
+                  by the crawl strip on mobile. Same token as
+                  layout.tsx. */}
+              <div className="mt-auto border-t-2 border-chrome-divider shrink-0 pb-[var(--ticker-safe-area)]">
                 {isUserLoading && !isAuthed ? (
                   <div className="p-4">
                     <div className="mako-skeleton h-10 w-full" aria-hidden="true" />

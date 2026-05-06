@@ -176,7 +176,7 @@ export function Sidebar() {
               transition={{ duration: 0.15 }}
               className="font-display font-black text-base tracking-tight leading-none text-chrome-fg whitespace-nowrap"
             >
-              MAKO
+              MAKO MARKET
             </motion.span>
           )}
         </AnimatePresence>
@@ -216,7 +216,7 @@ export function Sidebar() {
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
-                    className="font-display font-black text-lg tracking-tight leading-none whitespace-nowrap"
+                    className="font-display font-black text-[clamp(1.125rem,2vw,1.25rem)] tracking-tight leading-none whitespace-nowrap"
                   >
                     {item.label}
                   </motion.span>

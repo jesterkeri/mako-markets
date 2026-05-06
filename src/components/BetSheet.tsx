@@ -53,6 +53,12 @@ export function BetSheet({
   onSuccess?: () => void;
 }) {
   const [amount, setAmount] = useState('1');
+  // Collapsed state. When true the sheet shrinks to just the header bar
+  // (BUY YES/NO + balance pill + chevron) so the user can read the
+  // market detail underneath without dismissing the bet flow entirely.
+  // Mobile-first feature — on lg+ the sheet sits in the right column
+  // and there's no overlap to clear, but the toggle still works.
+  const [collapsed, setCollapsed] = useState(false);
 
   const betUsdc = useMemo(() => {
     try {
@@ -240,12 +246,39 @@ export function BetSheet({
       {/* Top thin accent line indicating side */}
       <div className={`h-2 w-full transition-colors ${side === 'yes' ? 'bg-signal' : 'bg-mako-red'}`} />
       
-      <div className="p-4 md:p-6 flex flex-col">
+      <div className={`p-4 md:p-6 flex flex-col ${collapsed ? 'pb-4' : ''}`}>
         {/* Header */}
-        <div className="flex items-start justify-between mb-4 md:mb-8">
-          <h2 className="mako-display text-2xl sm:text-4xl tracking-tight leading-none">
-            {side === 'yes' ? 'BUY YES' : 'BUY NO'}
-          </h2>
+        <div className={`flex items-start justify-between ${collapsed ? '' : 'mb-4 md:mb-8'}`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setCollapsed((c) => !c)}
+              aria-label={collapsed ? 'Expand bet sheet' : 'Collapse bet sheet'}
+              aria-expanded={!collapsed}
+              className="shrink-0 w-8 h-8 flex items-center justify-center border-2 border-ink rounded-md hover:bg-ink hover:text-paper transition-colors"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`w-4 h-4 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+                aria-hidden="true"
+              >
+                <polyline points="6 15 12 9 18 15" />
+              </svg>
+            </button>
+            <h2 className="mako-display text-[clamp(1.5rem,3vw,2.25rem)] tracking-tight leading-none truncate">
+              {side === 'yes' ? 'BUY YES' : 'BUY NO'}
+              {collapsed && betUsdc > 0n && (
+                <span className="mako-mono text-sm sm:text-base text-muted ml-2 align-middle">
+                  · {amount} USDC
+                </span>
+              )}
+            </h2>
+          </div>
           {bettingAccount && (
             <div className="text-right">
               <div className="mako-label text-muted text-[8px] sm:text-[9px] mb-1">AVAILABLE BALANCE</div>
@@ -254,6 +287,12 @@ export function BetSheet({
           )}
         </div>
 
+        {/* Body — hidden when the user has tapped the chevron to
+            collapse the sheet. The header above stays visible so the
+            user retains context of what they were betting and a one-tap
+            way to re-expand. */}
+        {!collapsed && (
+        <>
         {/* Amount Input */}
         <div className="mb-4 md:mb-8">
           <div className="flex items-end justify-between border-b-2 md:border-b-4 border-ink py-1 md:py-2 relative group">
@@ -265,7 +304,7 @@ export function BetSheet({
               value={amount}
               onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
               disabled={isBusy}
-              className="w-full bg-transparent border-0 outline-none mako-display text-4xl sm:text-6xl tracking-tighter text-right pl-6 md:pl-8 pr-2 placeholder-ink/10 text-ink"
+              className="w-full bg-transparent border-0 outline-none mako-display text-[clamp(2.25rem,5vw,3.75rem)] tracking-tighter text-right pl-6 md:pl-8 pr-2 placeholder-ink/10 text-ink"
               placeholder="0"
             />
           </div>
@@ -372,6 +411,8 @@ export function BetSheet({
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );

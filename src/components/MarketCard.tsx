@@ -99,8 +99,10 @@ export function MarketCard({ market }: { market: MarketWithId }) {
           </span>
         </div>
 
-        {/* Question */}
-        <h3 className="mako-title text-xl mb-6 line-clamp-3 group-hover:underline underline-offset-4 decoration-2">
+        {/* Question. Fluid title: 16px min (cramped 3-up cards),
+            20px max (widest 1-up). The previous `text-xl` (20px)
+            forced word-by-word truncation on narrow columns. */}
+        <h3 className="mako-title text-[clamp(1.25rem,1.4vw,1.5rem)] mb-6 line-clamp-3 group-hover:underline underline-offset-4 decoration-2">
           {market.question}
         </h3>
 

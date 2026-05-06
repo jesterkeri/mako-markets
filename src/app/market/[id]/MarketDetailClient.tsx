@@ -107,7 +107,7 @@ export function MarketDetailClient({ id }: { id: string }) {
   const noProb = totalPoolNum > 0 ? (totalNoNum / totalPoolNum) * 100 : 50;
 
   return (
-    <main className="flex-1 w-full pb-[450px] lg:pb-12 max-w-[1400px] mx-auto flex flex-col">
+    <main className="flex-1 w-full pb-[var(--page-safe-pb)] lg:pb-12 max-w-[1400px] mx-auto flex flex-col">
       <MobileChromeHeader />
 
       <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
@@ -140,15 +140,20 @@ export function MarketDetailClient({ id }: { id: string }) {
       <div className="px-4 sm:px-6 lg:px-8 py-10 md:py-16 flex flex-col lg:flex-row gap-12 lg:gap-16 items-start">
         <div className="flex-1 w-full max-w-4xl flex flex-col gap-10">
           {/* Floating Massive Question */}
-          <h1 className="mako-display text-4xl sm:text-6xl md:text-[80px] leading-[0.95] tracking-tighter text-canvas-fg">
+          {/* Fluid title typography. clamp(min, fluid, max) — 36px at
+              the narrowest phone, scales with viewport up to a 72px cap
+              on wide desktop. The previous breakpoint ladder locked at
+              80px on md+, which dominated wide screens (the question
+              text would eat half the viewport). */}
+          <h1 className="mako-display text-[clamp(2.25rem,5.5vw,4.5rem)] leading-[0.95] tracking-tighter text-canvas-fg">
             {market.question}
           </h1>
 
           {/* Tug of War Probability Bar */}
           <div className="flex flex-col gap-3">
             <div className="flex justify-between items-end px-2">
-              <span className={`mako-display text-3xl transition-all duration-300 ${betSide === 'yes' ? 'text-signal scale-105 origin-bottom-left' : 'text-muted'}`}>YES {yesProb.toFixed(0)}%</span>
-              <span className={`mako-display text-3xl transition-all duration-300 ${betSide === 'no' ? 'text-mako-red scale-105 origin-bottom-right' : 'text-muted'}`}>{noProb.toFixed(0)}% NO</span>
+              <span className={`mako-display text-[clamp(1.875rem,3vw,2.25rem)] transition-all duration-300 ${betSide === 'yes' ? 'text-signal scale-105 origin-bottom-left' : 'text-muted'}`}>YES {yesProb.toFixed(0)}%</span>
+              <span className={`mako-display text-[clamp(1.875rem,3vw,2.25rem)] transition-all duration-300 ${betSide === 'no' ? 'text-mako-red scale-105 origin-bottom-right' : 'text-muted'}`}>{noProb.toFixed(0)}% NO</span>
             </div>
             
             <div className="w-full h-20 md:h-24 flex rounded-full border-4 border-ink overflow-hidden shadow-[8px_8px_0_0_var(--mako-ink)] relative bg-paper cursor-pointer group" onClick={(e) => {
@@ -180,11 +185,11 @@ export function MarketDetailClient({ id }: { id: string }) {
           <div className="flex flex-wrap gap-4 items-center mt-4">
             <div className="bg-paper border-2 border-ink rounded-xl px-5 py-3 shadow-[4px_4px_0_0_var(--mako-ink)] mako-tilt-left">
               <span className="mako-label text-muted block text-[10px]">TOTAL POOL</span>
-              <span className="mako-display text-2xl">{poolSize.toFixed(2)} USDC</span>
+              <span className="mako-display text-[clamp(1.5rem,2vw,1.75rem)]">{poolSize.toFixed(2)} USDC</span>
             </div>
             <div className="bg-paper border-2 border-ink rounded-xl px-5 py-3 shadow-[4px_4px_0_0_var(--mako-ink)] mako-tilt-right">
               <span className="mako-label text-muted block text-[10px]">BETTORS</span>
-              <span className="mako-display text-2xl">{totalBettors}</span>
+              <span className="mako-display text-[clamp(1.5rem,2vw,1.75rem)]">{totalBettors}</span>
             </div>
             <div className="ml-auto mako-mono text-[10px] text-muted flex flex-col items-end">
               <span>Created by {market.creator.slice(0, 6)}...{market.creator.slice(-4)}</span>
@@ -216,7 +221,19 @@ export function MarketDetailClient({ id }: { id: string }) {
         {/* Right Sidebar for Desktop / Fixed bottom for Mobile */}
         {(market.resolved || !bettingClosed) && (
           <div className="w-full lg:w-[400px] shrink-0 lg:sticky lg:top-8 z-40 mt-4 lg:mt-0">
-            <div className="fixed bottom-0 left-0 w-full z-50 lg:static shadow-[0_-12px_40px_rgba(0,0,0,0.15)] lg:shadow-none">
+            {/* Mobile + tablet fixed-bottom wrapper.
+                `bottom-10` lifts the sheet 40px above viewport
+                bottom, reserving the ticker safe area (h-9 + 1px
+                border = 37px). At `md+` the Sidebar takes 80px on
+                the left (sticky column), so the wrapper shifts
+                `md:left-20` to stop sliding under it. `right-0`
+                instead of `w-full` keeps the right edge pinned and
+                lets width fall out naturally. At `lg+`, `lg:static`
+                joins normal flow as the right column — paired with
+                MarketIntelAside hiding on this route below xl, the
+                content gets the full middle band rather than a
+                three-column squeeze. */}
+            <div className="fixed bottom-10 left-0 right-0 z-50 md:left-20 lg:static lg:left-auto lg:right-auto lg:bottom-auto shadow-[0_-12px_40px_rgba(0,0,0,0.15)] lg:shadow-none">
               {market.resolved ? (
                 <div className="p-4 bg-paper lg:p-0 lg:bg-transparent border-t-2 border-ink lg:border-0">
                   <ClaimButton market={market} onSuccess={refetch} />

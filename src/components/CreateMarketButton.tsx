@@ -12,7 +12,7 @@ export function CreateMarketButton() {
   return (
     <Link
       href="/create"
-      className="block w-full px-6 py-4 border-b border-black font-black text-xs uppercase tracking-widest hover:bg-black hover:text-background transition-colors text-center"
+      className="block w-full px-6 py-4 border-b border-ink font-black text-xs uppercase tracking-widest hover:bg-ink hover:text-paper transition-colors text-center"
     >
       [ + CREATE NEW MARKET ]
     </Link>

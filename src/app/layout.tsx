@@ -36,7 +36,13 @@ export default function RootLayout({
         <Providers>
           <div className="w-full min-h-[100dvh] flex flex-col md:flex-row relative bg-transparent transition-all duration-500">
             <Sidebar />
-            <div className="relative z-10 flex-1 flex flex-col items-stretch w-full min-w-0 max-w-full">
+            {/* `pb-[var(--ticker-safe-area)]` reserves space for the
+                fixed-bottom PriceTicker (h-9 = 36px + 1px border).
+                Token defined in `globals.css` so all ticker-clearing
+                paddings update from one knob if the ticker ever
+                resizes. Individual pages still apply their own pb-*
+                for breathing room above the ticker. */}
+            <div className="relative z-10 flex-1 flex flex-col items-stretch w-full min-w-0 max-w-full pb-[var(--ticker-safe-area)]">
               {children}
             </div>
             {/* MARKET INTEL — right-hand column on xl+ screens. Lives at

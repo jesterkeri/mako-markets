@@ -552,7 +552,7 @@ export default function SignupPage() {
         </div>
 
         <div className="relative z-10 pt-12 pb-12">
-          <h1 className="font-display text-6xl xl:text-[7rem] font-black tracking-tighter text-ink leading-[0.85]">
+          <h1 className="font-display text-[clamp(3.75rem,8vw,7rem)] font-black tracking-tighter text-ink leading-[0.85]">
             MAKO<br />
             MARKET
           </h1>
