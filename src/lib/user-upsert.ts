@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { eq, or } from 'drizzle-orm';
+import { eq, or, sql } from 'drizzle-orm';
 
 import { type DbOrTx } from '@/db/client';
 import { users, type User } from '@/db/schema';
@@ -9,7 +9,22 @@ import { normalizeEmail } from './email';
 // ----------------------------------------------------------------------------
 // src/lib/user-upsert.ts
 //
-// Strict (email, EOA) upsert for the Magic auth flow.
+// Two upsert helpers, mirroring the magic/wallet split that
+// `users-wire.ts` enforces on the read side:
+//
+//   • `upsertMagicUser(tx, email, eoa)` — find-or-create for the Magic
+//     auth flow. Strict identity invariance (see big comment below).
+//   • `upsertWalletUser(walletAddress, { tx })` — find-or-create for the
+//     wallet auth flow. Idempotent on `wallet_address`; defensive
+//     lowercase + EVM-format assertion before the write.
+//
+// The DB CHECK constraints (auth_type / wallet_address_lower /
+// wallet_address_format) are the ultimate backstop. These helpers are
+// the application-side mirror so callers never construct raw INSERT
+// statements against `users`.
+//
+// Magic helper — strict (email, EOA) upsert
+// ------------------------------------------
 //
 // Both `email` and `magic_eoa` are uniquely indexed in the users table. A
 // successful Magic login produces a (validated email, EOA) pair from
@@ -46,6 +61,20 @@ import { normalizeEmail } from './email';
 // or write. EOA is normalized to lowercase here — the DB column is plain
 // text and we want equality lookups to be case-insensitive even though
 // `viem.getAddress()` returns checksummed form upstream.
+//
+// Wallet helper — idempotent (wallet_address) upsert
+// ---------------------------------------------------
+//
+// Wallet rows have no email/EOA fields — only `wallet_address`. The
+// `users_wallet_address_uniq` partial unique index (WHERE
+// wallet_address IS NOT NULL) guarantees one row per address. We use a
+// raw INSERT with the same partial-where clause because Drizzle's
+// `onConflict()` doesn't reliably emit WHERE on partial indexes (the
+// plan called this out as a codex round-1 MAJOR risk).
+//
+// Defensive lowercase + format assert before the write — mirrors the
+// DB CHECKs so callers don't have to remember. Mixed-case input
+// canonicalizes to a single row.
 // ----------------------------------------------------------------------------
 
 export class IdentityConflictError extends Error {
@@ -74,7 +103,7 @@ function normalizeEoa(eoa: string): string {
  *
  * Returns the canonical user row (whether newly inserted or pre-existing).
  */
-export async function upsertUserStrict(
+export async function upsertMagicUser(
   tx: DbOrTx,
   rawEmail: string,
   rawEoa: string,
@@ -87,7 +116,7 @@ export async function upsertUserStrict(
   // and we fall through to the strict re-select.
   const inserted = await tx
     .insert(users)
-    .values({ email, magicEoa: eoa })
+    .values({ email, magicEoa: eoa, authType: 'magic' })
     .onConflictDoNothing()
     .returning();
 
@@ -126,4 +155,77 @@ export async function upsertUserStrict(
   }
   // row.magicEoa === eoa but email differs
   throw new IdentityConflictError('eoa_with_different_email');
+}
+
+/**
+ * Find-or-create a `users` row keyed on `wallet_address`. Idempotent —
+ * repeat calls with the same address (any case) resolve to the same row.
+ *
+ * Lowercases + format-asserts the address before the write. The DB
+ * CHECK constraints (`users_wallet_address_lower_chk`,
+ * `users_wallet_address_format_chk`) reject malformed inputs at the
+ * boundary regardless; this mirror lets callers see a clear error in
+ * application code rather than a generic CHECK violation.
+ *
+ * Returns the narrower wire-relevant shape (id + editable identity
+ * columns). Wallet rows don't have email/magic_eoa, so returning the
+ * full `User` row would model them as nullable everywhere.
+ */
+export async function upsertWalletUser(
+  raw: `0x${string}` | string,
+  opts: { tx: DbOrTx },
+): Promise<{ id: string; displayName: string | null; avatarUrl: string | null }> {
+  const walletAddress = raw.toLowerCase() as `0x${string}`;
+  if (!/^0x[0-9a-f]{40}$/.test(walletAddress)) {
+    throw new Error(`upsertWalletUser: invalid address format: ${raw}`);
+  }
+
+  const w = opts.tx;
+
+  // Raw ON CONFLICT against the partial unique index. Drizzle's
+  // `onConflict()` does not reliably emit a `WHERE` clause for partial
+  // unique indexes (codex round-1 MAJOR), so we hand-write the same
+  // predicate the index uses.
+  //
+  // `tx.execute<T>(sql)` on the postgres-js driver returns a `RowList<T[]>`
+  // — that's an array directly, NOT a `{ rows: [...] }` wrapper. The
+  // adjacent `aa-sponsor-limits.incrementOrReject` uses the same access
+  // pattern; treating this as `{ rows }` silently undefines `.length` and
+  // produces `tx_failed` on every wallet sign-in (codex round-6 MAJOR).
+  const inserted = await w.execute<{
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  }>(sql`
+    INSERT INTO users (wallet_address, auth_type)
+    VALUES (${walletAddress}, 'wallet')
+    ON CONFLICT (wallet_address) WHERE wallet_address IS NOT NULL
+    DO NOTHING
+    RETURNING id, display_name, avatar_url
+  `);
+
+  if (inserted.length > 0) {
+    return {
+      id: inserted[0].id,
+      displayName: inserted[0].display_name,
+      avatarUrl: inserted[0].avatar_url,
+    };
+  }
+
+  // ON CONFLICT skipped → existing row. Re-select.
+  const existing = await w
+    .select({
+      id: users.id,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+    })
+    .from(users)
+    .where(eq(users.walletAddress, walletAddress))
+    .limit(1);
+
+  if (existing.length === 0) {
+    throw new Error('upsertWalletUser: row missing after ON CONFLICT DO NOTHING');
+  }
+
+  return existing[0];
 }

@@ -8,7 +8,7 @@ import { sessions, users } from '@/db/schema';
 import { checkSameOrigin } from '@/lib/csrf';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
-import { userToWire } from '@/lib/users-wire';
+import { magicUserToWire } from '@/lib/users-wire';
 
 // ----------------------------------------------------------------------------
 // POST /api/user/avatar/upload
@@ -171,7 +171,7 @@ export async function POST(req: Request) {
   return Response.json({
     ok: true,
     authed: true,
-    ...userToWire(row, safeAddress),
+    ...magicUserToWire(row, safeAddress),
     lastSignInAt,
     nextEmailChangeAvailableAt,
   });

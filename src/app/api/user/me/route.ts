@@ -1,11 +1,12 @@
 import { type Address } from 'viem';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
-import { sessions, users } from '@/db/schema';
+import { users } from '@/db/schema';
+import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
-import { userToWire } from '@/lib/users-wire';
+import { magicUserToWire } from '@/lib/users-wire';
 
 /// Mirror of EMAIL_CHANGE_COOLDOWN_MS in /api/user/email/update. The
 /// value is small enough to inline here rather than introduce a new
@@ -18,7 +19,7 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // GET /api/user/me
 //
 // Bucket A in the wire-shape policy (see src/lib/users-wire.ts). The
-// authenticated user's identity goes through `userToWire`; never spread
+// authenticated user's identity goes through `magicUserToWire`; never spread
 // the row directly. New columns added to the users table are NOT
 // auto-exposed — they have to be added to `WireUser` in users-wire.ts
 // first.
@@ -53,28 +54,15 @@ export async function GET() {
 
   // Most recent session for this user that is NOT the current session.
   // limit 1 + index on user_id makes this O(1) lookup.
-  const priorSession = await db
-    .select({ createdAt: sessions.createdAt })
-    .from(sessions)
-    .where(
-      and(
-        eq(sessions.userId, session.userId),
-        ne(sessions.id, session.sessionId),
-      ),
-    )
-    .orderBy(desc(sessions.createdAt))
-    .limit(1);
+  const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);
 
-  const lastSignInAt =
-    priorSession.length > 0 ? priorSession[0].createdAt.toISOString() : null;
-
-  // Single SELECT pulls every column userToWire needs (email, magicEoa,
+  // Single SELECT pulls every column magicUserToWire needs (email, magicEoa,
   // displayName, avatarUrl, totpSecret, totpEnabledAt) plus
   // lastEmailChangedAt for the cooldown calc. Note the SELECT lists
   // every column explicitly — we don't `.from(users)` without a
   // projection because that would pull totp_failed_attempts,
   // totp_locked_until, totp_last_used_step into memory only to drop
-  // them. The Pick narrowing on userToWire would catch a missing
+  // them. The Pick narrowing on magicUserToWire would catch a missing
   // column at the type level.
   const userRow = await db
     .select({
@@ -107,7 +95,7 @@ export async function GET() {
 
   return Response.json({
     authed: true,
-    ...userToWire(row, safeAddress),
+    ...magicUserToWire(row, safeAddress),
     lastSignInAt,
     nextEmailChangeAvailableAt,
   });

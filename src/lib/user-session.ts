@@ -27,12 +27,30 @@ export const USER_SESSION_MAX_AGE_SEC = 60 * 60 * 24 * 7;
 
 type SessionCookiePayload = { sid: string; exp: number };
 
-export type UserSession = {
+// Phase 1H: a session row is backed by either a Magic users row (email +
+// magic_eoa) or a wallet users row (wallet_address). The DB CHECK
+// constraint guarantees these shapes are mutually exclusive — we mirror
+// that invariant in the type. `authType` is the discriminator and any
+// route that branches on identity (TOTP guards, email-update guards,
+// AA-flow gating) MUST narrow on it before reading the shape-specific
+// fields.
+export type MagicUserSession = {
+  authType: 'magic';
   userId: string;
   email: string;
   magicEoa: string;
+  walletAddress: null;
   sessionId: string;
 };
+export type WalletUserSession = {
+  authType: 'wallet';
+  userId: string;
+  email: null;
+  magicEoa: null;
+  walletAddress: string;
+  sessionId: string;
+};
+export type UserSession = MagicUserSession | WalletUserSession;
 
 function getSecret(): Buffer {
   const s = process.env.USER_SESSION_SECRET;
@@ -64,7 +82,11 @@ function sign(payloadJson: string): string {
 }
 
 function verify<T extends { exp: number }>(token: string): T | null {
-  const [body, mac] = token.split('.');
+  // Strict 2-segment tokenizer — reject `body.mac.extra` (codex round-7
+  // NIT). Mirror of the wallet-auth-server verifier; same rationale.
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [body, mac] = parts;
   if (!body || !mac) return null;
   const expected = b64url(
     createHmac('sha256', getSecret()).update(body).digest(),
@@ -91,10 +113,21 @@ export function signSessionToken(sid: string): string {
   return sign(JSON.stringify(payload));
 }
 
+/**
+ * Verify a session cookie token. Same shape-narrowing posture as
+ * `verifyWalletNonceToken` — the HMAC + exp checks live in the generic
+ * `verify<T>` helper; here we additionally require `sid: string`. Both
+ * cookies are signed with `USER_SESSION_SECRET`, so a wallet-nonce-
+ * shaped `{ nonce, exp }` payload pasted into the session cookie would
+ * otherwise pass HMAC + exp and fall through to a DB lookup with
+ * `sid === undefined` (codex round-6 MINOR generalization).
+ */
 export function verifySessionToken(
   token: string,
 ): SessionCookiePayload | null {
-  return verify<SessionCookiePayload>(token);
+  const parsed = verify<SessionCookiePayload>(token);
+  if (!parsed || typeof parsed.sid !== 'string') return null;
+  return parsed;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,8 +195,10 @@ export async function getUserSession(): Promise<UserSession | null> {
 
   let rows: Array<{
     userId: string;
-    email: string;
-    magicEoa: string;
+    authType: string;
+    email: string | null;
+    magicEoa: string | null;
+    walletAddress: string | null;
     sessionId: string;
     expiresAt: Date;
   }>;
@@ -171,8 +206,10 @@ export async function getUserSession(): Promise<UserSession | null> {
     rows = await db
       .select({
         userId: users.id,
+        authType: users.authType,
         email: users.email,
         magicEoa: users.magicEoa,
+        walletAddress: users.walletAddress,
         sessionId: sessions.id,
         expiresAt: sessions.expiresAt,
       })
@@ -195,12 +232,37 @@ export async function getUserSession(): Promise<UserSession | null> {
   // without every cookie becoming instantly invalid).
   if (row.expiresAt.getTime() < Date.now()) return null;
 
-  return {
-    userId: row.userId,
-    email: row.email,
-    magicEoa: row.magicEoa,
-    sessionId: row.sessionId,
-  };
+  // CHECK constraint should make these missing-field cases impossible.
+  // A throw here surfaces a malformed users row as a 5xx the operator
+  // sees in logs — silent null-return would deauth legitimate users
+  // while masking the underlying DB corruption (codex round-1 MINOR).
+  if (row.authType === 'magic') {
+    if (!row.email || !row.magicEoa) {
+      throw new Error('[user-session] magic row missing email/magic_eoa');
+    }
+    return {
+      authType: 'magic',
+      userId: row.userId,
+      email: row.email,
+      magicEoa: row.magicEoa,
+      walletAddress: null,
+      sessionId: row.sessionId,
+    };
+  }
+  if (row.authType === 'wallet') {
+    if (!row.walletAddress) {
+      throw new Error('[user-session] wallet row missing wallet_address');
+    }
+    return {
+      authType: 'wallet',
+      userId: row.userId,
+      email: null,
+      magicEoa: null,
+      walletAddress: row.walletAddress,
+      sessionId: row.sessionId,
+    };
+  }
+  throw new Error(`[user-session] unknown auth_type: ${row.authType}`);
 }
 
 /**

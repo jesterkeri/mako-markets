@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // api-user-auth-totp-required.test.ts
 //
-// Phase 1G branch on /api/user/auth: when upsertUserStrict returns a row
+// Phase 1G branch on /api/user/auth: when upsertMagicUser returns a row
 // with totp_secret set, the route MUST:
 //   1. NOT issue a session cookie.
 //   2. INSERT an auth_challenges row scoped to (user.id, magicEoa,
@@ -16,7 +16,7 @@
 //      safeAddress } shape.
 //
 // Boundary mocks for csrf, allowlist, magic-server, deriveSafeAddress,
-// upsertUserStrict, createSession, createSigninChallenge, db, and the
+// upsertMagicUser, createSession, createSigninChallenge, db, and the
 // userSafes insert chain.
 // ----------------------------------------------------------------------------
 
@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   getMetadataByDidToken: vi.fn(),
   isAllowedForCurrentStage: vi.fn(),
   deriveSafeAddress: vi.fn(),
-  upsertUserStrict: vi.fn(),
+  upsertMagicUser: vi.fn(),
   createSession: vi.fn(),
   createSigninChallenge: vi.fn(),
   selectPriorSession: vi.fn(),
@@ -48,7 +48,7 @@ vi.mock('@/lib/safe', () => ({
   deriveSafeAddress: mocks.deriveSafeAddress,
 }));
 vi.mock('@/lib/user-upsert', () => ({
-  upsertUserStrict: mocks.upsertUserStrict,
+  upsertMagicUser: mocks.upsertMagicUser,
   IdentityConflictError: class IdentityConflictError extends Error {},
 }));
 vi.mock('@/lib/user-session', () => ({
@@ -168,7 +168,7 @@ function setupHappyPathBase(opts: {
   });
   mocks.isAllowedForCurrentStage.mockResolvedValue(true);
   mocks.deriveSafeAddress.mockReturnValue(SAFE);
-  mocks.upsertUserStrict.mockResolvedValue({
+  mocks.upsertMagicUser.mockResolvedValue({
     id: USER_ID,
     email: EMAIL,
     magicEoa: EOA,
@@ -191,6 +191,7 @@ describe('POST /api/user/auth — TOTP branch', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual([
+      'authType',
       'authed',
       'avatarUrl',
       'displayName',
@@ -203,6 +204,7 @@ describe('POST /api/user/auth — TOTP branch', () => {
       'totpEnabled',
       'totpEnabledAt',
     ]);
+    expect(body.authType).toBe('magic');
     expect(body.ok).toBe(true);
     expect(body.authed).toBe(true);
     expect(body.email).toBe(EMAIL);
@@ -218,7 +220,7 @@ describe('POST /api/user/auth — TOTP branch', () => {
     expect(mocks.createSession).toHaveBeenCalledTimes(1);
     // Atomicity guard: createSession MUST receive the tx client so the
     // session insert participates in the same transaction as
-    // upsertUserStrict + the userSafes upsert. A future refactor that
+    // upsertMagicUser + the userSafes upsert. A future refactor that
     // dropped the second arg would silently break ROLLBACK semantics
     // (the session row would persist on a tx that otherwise rolled
     // back).

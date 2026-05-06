@@ -6,7 +6,7 @@
 // the users table" — this test makes that audit fail loudly.
 //
 // Three categories of assertion:
-//   1. Object.keys(userToWire(...)) deep-equals the alphabetised
+//   1. Object.keys(magicUserToWire(...)) deep-equals the alphabetised
 //      WireUser allowlist. Adding a key without intent fails CI.
 //   2. Sensitive columns absent regardless of input value. Construct a
 //      fully-populated User row via `as User` cast (every column non-
@@ -20,7 +20,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { userToWire, type WireUser } from '../users-wire';
+import { magicUserToWire, type WireUser } from '../users-wire';
 import { type User } from '@/db/schema';
 
 const PINNED_WIRE_KEYS = [
@@ -37,7 +37,7 @@ const SAFE = '0x1111111111111111111111111111111111111111';
 
 function fullUserRow(overrides: Partial<User> = {}): User {
   // Construct a row with every column non-null. The cast is required
-  // because we're asserting against fields the Pick on userToWire
+  // because we're asserting against fields the Pick on magicUserToWire
   // narrows away — that's the point: we test the helper drops them
   // even when the test passes the full object.
   return {
@@ -58,14 +58,14 @@ function fullUserRow(overrides: Partial<User> = {}): User {
   } as User;
 }
 
-describe('userToWire', () => {
+describe('magicUserToWire', () => {
   it('Object.keys deep-equals the pinned WireUser allowlist (alphabetised)', () => {
-    const wire = userToWire(fullUserRow(), SAFE);
+    const wire = magicUserToWire(fullUserRow(), SAFE);
     expect(Object.keys(wire).sort()).toEqual([...PINNED_WIRE_KEYS]);
   });
 
   it('drops every sensitive column even when the input has them populated', () => {
-    const wire = userToWire(fullUserRow(), SAFE);
+    const wire = magicUserToWire(fullUserRow(), SAFE);
     const SENSITIVE = [
       'totpSecret',
       'totpFailedAttempts',
@@ -82,12 +82,12 @@ describe('userToWire', () => {
   });
 
   it('totpEnabled is true when totp_secret is non-null (explicit-null boundary)', () => {
-    const wire = userToWire(fullUserRow({ totpSecret: 'enc:blob' }), SAFE);
+    const wire = magicUserToWire(fullUserRow({ totpSecret: 'enc:blob' }), SAFE);
     expect(wire.totpEnabled).toBe(true);
   });
 
   it('totpEnabled is false when totp_secret is null', () => {
-    const wire = userToWire(fullUserRow({ totpSecret: null }), SAFE);
+    const wire = magicUserToWire(fullUserRow({ totpSecret: null }), SAFE);
     expect(wire.totpEnabled).toBe(false);
   });
 
@@ -96,28 +96,28 @@ describe('userToWire', () => {
     // ciphertext is never empty in practice, but explicit-null is the
     // only way to disable per /api/user/totp/disable. This pin would
     // fail if a future regression switched to truthiness.
-    const wire = userToWire(fullUserRow({ totpSecret: '' }), SAFE);
+    const wire = magicUserToWire(fullUserRow({ totpSecret: '' }), SAFE);
     expect(wire.totpEnabled).toBe(true);
   });
 
   it('totpEnabledAt is ISO-8601 when set, null when null', () => {
-    const wire1 = userToWire(
+    const wire1 = magicUserToWire(
       fullUserRow({ totpEnabledAt: new Date('2026-04-15T12:34:56.789Z') }),
       SAFE,
     );
     expect(wire1.totpEnabledAt).toBe('2026-04-15T12:34:56.789Z');
 
-    const wire2 = userToWire(fullUserRow({ totpEnabledAt: null }), SAFE);
+    const wire2 = magicUserToWire(fullUserRow({ totpEnabledAt: null }), SAFE);
     expect(wire2.totpEnabledAt).toBeNull();
   });
 
   it('safeAddress is forwarded verbatim from the second argument', () => {
-    const wire = userToWire(fullUserRow(), '0xdeadbeef');
+    const wire = magicUserToWire(fullUserRow(), '0xdeadbeef');
     expect(wire.safeAddress).toBe('0xdeadbeef');
   });
 
   it('displayName and avatarUrl pass through unchanged', () => {
-    const wire = userToWire(
+    const wire = magicUserToWire(
       fullUserRow({ displayName: 'Joshua  Z', avatarUrl: 'https://x.com/a.png' }),
       SAFE,
     );
@@ -126,7 +126,7 @@ describe('userToWire', () => {
   });
 
   it('null displayName and avatarUrl pass through as null', () => {
-    const wire = userToWire(
+    const wire = magicUserToWire(
       fullUserRow({ displayName: null, avatarUrl: null }),
       SAFE,
     );

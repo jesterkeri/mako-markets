@@ -1,14 +1,13 @@
 import { cookies } from 'next/headers';
 import { type Address } from 'viem';
-import { desc, eq } from 'drizzle-orm';
-
 import { db } from '@/db/client';
-import { sessions, userSafes } from '@/db/schema';
+import { userSafes } from '@/db/schema';
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
 import { createSigninChallenge } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
 import { normalizeEmail } from '@/lib/email';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
+import { readLastSignIn } from '@/lib/last-sign-in';
 import {
   MagicConfigError,
   getMetadataByDidToken,
@@ -22,9 +21,9 @@ import {
 } from '@/lib/user-session';
 import {
   IdentityConflictError,
-  upsertUserStrict,
+  upsertMagicUser,
 } from '@/lib/user-upsert';
-import { userToWire } from '@/lib/users-wire';
+import { magicUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -40,7 +39,7 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // 2. Pull canonical { email, publicAddress } via the same admin SDK
 // 3. Normalize email + EOA, gate on the allowlist for non-dev stages
 // 4. In a single Drizzle transaction:
-//      a. upsertUserStrict — find-or-create the users row (throws on conflict)
+//      a. upsertMagicUser — find-or-create the users row (throws on conflict)
 //      b. derive the Safe address (pure CREATE2; same value on every chain
 //         under Path X) and INSERT a user_safes row per tracked chain id
 //      c. BRANCH:
@@ -168,7 +167,7 @@ export async function POST(req: Request) {
   let outcome: Outcome;
   try {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
-      const user = await upsertUserStrict(tx, email, eoa);
+      const user = await upsertMagicUser(tx, email, eoa);
 
       // user_safes is keyed (user_id, chain_id) and uniquely indexed on the
       // pair. Insert with onConflictDoNothing so a returning user (existing
@@ -189,7 +188,7 @@ export async function POST(req: Request) {
           });
       }
 
-      // Phase 1G: split on TOTP. upsertUserStrict returns the full users
+      // Phase 1G: split on TOTP. upsertMagicUser returns the full users
       // row including `totpSecret`. Non-null means 2FA is on for this
       // user; gate the session cookie behind /api/user/auth/totp.
       if (user.totpSecret) {
@@ -206,16 +205,7 @@ export async function POST(req: Request) {
       // more existing sessions; none of them are "current" because we
       // haven't issued one yet, so the latest is the prior sign-in
       // moment. First-ever sign-in returns lastSignInAt: null.
-      const priorSession = await tx
-        .select({ createdAt: sessions.createdAt })
-        .from(sessions)
-        .where(eq(sessions.userId, user.id))
-        .orderBy(desc(sessions.createdAt))
-        .limit(1);
-      const lastSignInAt =
-        priorSession.length > 0
-          ? priorSession[0].createdAt.toISOString()
-          : null;
+      const lastSignInAt = await readLastSignIn(user.id, null, { tx });
 
       const cooldownAvailable =
         user.lastEmailChangedAt
@@ -273,7 +263,7 @@ export async function POST(req: Request) {
   return Response.json({
     ok: true,
     authed: true,
-    ...userToWire(outcome.user, safeAddress),
+    ...magicUserToWire(outcome.user, safeAddress),
     lastSignInAt: outcome.lastSignInAt,
     nextEmailChangeAvailableAt: outcome.nextEmailChangeAvailableAt,
   });

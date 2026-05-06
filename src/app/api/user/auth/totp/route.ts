@@ -25,7 +25,7 @@ import {
   USER_SESSION_MAX_AGE_SEC,
   createSession,
 } from '@/lib/user-session';
-import { userToWire } from '@/lib/users-wire';
+import { magicUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -372,7 +372,7 @@ export async function POST(req: Request) {
   return Response.json({
     ok: true,
     authed: true,
-    ...userToWire(user, safeAddress),
+    ...magicUserToWire(user, safeAddress),
     lastSignInAt: success.lastSignInAt,
     nextEmailChangeAvailableAt: success.nextEmailChangeAvailableAt,
   });
