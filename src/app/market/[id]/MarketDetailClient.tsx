@@ -137,8 +137,8 @@ export function MarketDetailClient({ id }: { id: string }) {
         </div>
       </header>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-10 md:py-16 flex flex-col lg:flex-row gap-12 lg:gap-16 items-start">
-        <div className="flex-1 w-full max-w-4xl flex flex-col gap-10">
+      <div className="px-4 sm:px-6 lg:px-8 py-10 md:py-16 flex flex-col md:flex-row gap-8 lg:gap-16 items-start">
+        <div className="flex-1 w-full min-w-[320px] max-w-4xl flex flex-col gap-10">
           {/* Floating Massive Question */}
           {/* Fluid title typography. clamp(min, fluid, max) — 36px at
               the narrowest phone, scales with viewport up to a 72px cap
@@ -220,27 +220,19 @@ export function MarketDetailClient({ id }: { id: string }) {
 
         {/* Right Sidebar for Desktop / Fixed bottom for Mobile */}
         {(market.resolved || !bettingClosed) && (
-          <div className="w-full lg:w-[400px] shrink-0 lg:sticky lg:top-8 z-40 mt-4 lg:mt-0">
-            {/* Mobile + tablet fixed-bottom wrapper.
-                `bottom-10` lifts the sheet 40px above viewport
-                bottom, reserving the ticker safe area (h-9 + 1px
-                border = 37px). At `md+` the Sidebar takes 80px on
-                the left (sticky column), so the wrapper shifts
-                `md:left-20` to stop sliding under it. `right-0`
-                instead of `w-full` keeps the right edge pinned and
-                lets width fall out naturally. At `lg+`, `lg:static`
-                joins normal flow as the right column — paired with
-                MarketIntelAside hiding on this route below xl, the
-                content gets the full middle band rather than a
-                three-column squeeze. */}
-            <div className="fixed bottom-10 left-0 right-0 z-50 md:left-20 lg:static lg:left-auto lg:right-auto lg:bottom-auto shadow-[0_-12px_40px_rgba(0,0,0,0.15)] lg:shadow-none">
+          <div className="w-full md:w-[280px] lg:w-[400px] shrink-0 md:sticky md:top-8 z-40 mt-4 md:mt-0">
+            {/* Mobile fixed-bottom wrapper.
+                `bottom-10` lifts the sheet 40px above viewport bottom.
+                At `md+` (tablets/foldables), `md:static` joins normal flow
+                as the right column, moving side-by-side. */}
+            <div className="fixed bottom-10 left-0 right-0 z-50 md:static md:left-auto md:right-auto md:bottom-auto shadow-[0_-12px_40px_rgba(0,0,0,0.15)] md:shadow-none">
               {market.resolved ? (
-                <div className="p-4 bg-paper lg:p-0 lg:bg-transparent border-t-2 border-ink lg:border-0">
+                <div className="p-4 bg-paper md:p-0 md:bg-transparent border-t-2 border-ink md:border-0">
                   <ClaimButton market={market} onSuccess={refetch} />
                 </div>
               ) : !bettingClosed ? (
                 isUnauthed ? (
-                  <div className="bg-paper border-t-2 lg:border-2 border-ink lg:rounded-[24px] lg:shadow-[8px_8px_0_0_var(--mako-ink)] overflow-hidden w-full mx-auto max-w-md lg:max-w-none flex flex-col items-center justify-center p-8 pb-safe lg:pb-8 text-center">
+                  <div className="bg-paper border-t-2 md:border-2 border-ink md:rounded-[24px] md:shadow-[8px_8px_0_0_var(--mako-ink)] overflow-hidden w-full mx-auto max-w-md md:max-w-none flex flex-col items-center justify-center p-8 pb-safe md:pb-8 text-center">
                     <h2 className="mako-display text-3xl mb-3">READY TO BET?</h2>
                     <p className="mako-body text-muted mb-8 text-[15px]">Sign in or connect a wallet to place your position.</p>
                     <Link

@@ -54,7 +54,7 @@ export function BetSheet({
 }) {
   const [amount, setAmount] = useState('1');
   // Collapsed state. When true the sheet shrinks to just the header bar
-  // (BUY YES/NO + balance pill + chevron) so the user can read the
+  // (BET YES/NO + balance pill + chevron) so the user can read the
   // market detail underneath without dismissing the bet flow entirely.
   // Mobile-first feature — on lg+ the sheet sits in the right column
   // and there's no overlap to clear, but the toggle still works.
@@ -246,16 +246,16 @@ export function BetSheet({
       {/* Top thin accent line indicating side */}
       <div className={`h-2 w-full transition-colors ${side === 'yes' ? 'bg-signal' : 'bg-mako-red'}`} />
       
-      <div className={`p-4 md:p-6 flex flex-col ${collapsed ? 'pb-4' : ''}`}>
+      <div className={`p-4 md:p-6 flex flex-col ${collapsed ? 'pb-4 lg:pb-6' : ''}`}>
         {/* Header */}
-        <div className={`flex items-start justify-between ${collapsed ? '' : 'mb-4 md:mb-8'}`}>
-          <div className="flex items-center gap-3 min-w-0">
+        <div className={`flex flex-wrap items-start justify-between gap-y-3 gap-x-2 ${collapsed ? '' : 'mb-4 md:mb-8'}`}>
+          <div className="flex items-center gap-2 md:gap-3 shrink-0">
             <button
               type="button"
               onClick={() => setCollapsed((c) => !c)}
               aria-label={collapsed ? 'Expand bet sheet' : 'Collapse bet sheet'}
               aria-expanded={!collapsed}
-              className="shrink-0 w-8 h-8 flex items-center justify-center border-2 border-ink rounded-md hover:bg-ink hover:text-paper transition-colors"
+              className="shrink-0 w-8 h-8 lg:hidden flex items-center justify-center border-2 border-ink rounded-md hover:bg-ink hover:text-paper transition-colors"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -271,9 +271,9 @@ export function BetSheet({
               </svg>
             </button>
             <h2 className="mako-display text-[clamp(1.5rem,3vw,2.25rem)] tracking-tight leading-none truncate">
-              {side === 'yes' ? 'BUY YES' : 'BUY NO'}
+              {side === 'yes' ? 'BET YES' : 'BET NO'}
               {collapsed && betUsdc > 0n && (
-                <span className="mako-mono text-sm sm:text-base text-muted ml-2 align-middle">
+                <span className="mako-mono text-sm sm:text-base text-muted ml-2 align-middle lg:hidden">
                   · {amount} USDC
                 </span>
               )}
@@ -290,9 +290,12 @@ export function BetSheet({
         {/* Body — hidden when the user has tapped the chevron to
             collapse the sheet. The header above stays visible so the
             user retains context of what they were betting and a one-tap
-            way to re-expand. */}
-        {!collapsed && (
-        <>
+            way to re-expand. The collapse mechanic is mobile-only — at
+            lg+ the sheet sits in the right column with no overlap, so
+            the body is always shown regardless of `collapsed` state.
+            This also handles the resize-while-collapsed edge case where
+            a user collapses on mobile then enlarges to desktop. */}
+        <div className={collapsed ? 'hidden lg:flex lg:flex-col' : 'flex flex-col'}>
         {/* Amount Input */}
         <div className="mb-4 md:mb-8">
           <div className="flex items-end justify-between border-b-2 md:border-b-4 border-ink py-1 md:py-2 relative group">
@@ -411,8 +414,7 @@ export function BetSheet({
             </div>
           )}
         </div>
-        </>
-        )}
+        </div>
       </div>
     </div>
   );

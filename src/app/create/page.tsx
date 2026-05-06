@@ -657,7 +657,7 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
       {/* Duration -- 8 presets spanning the contract's MAX_DURATION (7 days) */}
       <div className="px-6 py-5 border-b-2 border-ink">
         <label className="mako-label text-muted mb-3 block">DURATION</label>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {DURATIONS.map((d) => {
             const isActive = durationSec === d.seconds;
             return (

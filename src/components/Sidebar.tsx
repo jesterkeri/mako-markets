@@ -149,14 +149,17 @@ export function Sidebar() {
   const [hovering, setHovering] = useState(false);
 
   return (
-    <motion.aside
-      initial={false}
-      animate={{ width: hovering ? EXPANDED_WIDTH : COLLAPSED_WIDTH }}
-      transition={{ type: 'spring', stiffness: 300, damping: 32 }}
-      onHoverStart={() => setHovering(true)}
-      onHoverEnd={() => setHovering(false)}
-      className="hidden md:flex flex-col shrink-0 border-r-2 border-chrome-divider bg-chrome sticky top-0 self-start h-[calc(100dvh-2.25rem)] overflow-y-auto overflow-x-hidden no-scrollbar z-40"
+    <div 
+      className="hidden md:block shrink-0 sticky top-0 self-start w-[80px] h-[calc(100dvh-var(--ticker-safe-area,2.5rem))] z-50"
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
     >
+      <motion.aside
+        initial={false}
+        animate={{ width: hovering ? EXPANDED_WIDTH : COLLAPSED_WIDTH }}
+        transition={{ type: 'spring', stiffness: 300, damping: 32 }}
+        className="absolute left-0 top-0 h-full flex flex-col border-r-2 border-chrome-divider bg-chrome overflow-y-auto overflow-x-hidden no-scrollbar shadow-[4px_0_24px_rgba(0,0,0,0.15)]"
+      >
       {/* Brand row — centered when collapsed (matches the icon-only nav rail
           beneath it); shifts to a left-aligned logo + wordmark when expanded. */}
       <Link
@@ -228,6 +231,7 @@ export function Sidebar() {
       </nav>
 
       <SidebarAccount hovering={hovering} />
-    </motion.aside>
+      </motion.aside>
+    </div>
   );
 }

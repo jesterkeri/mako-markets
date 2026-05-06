@@ -551,10 +551,10 @@ export default function ProfilePage() {
 
       <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10 flex flex-col gap-8">
 
-        {/* Mobile Header */}
-        <div className="md:hidden flex items-center justify-between mb-2">
+        {/* Mobile Header. The ThemeToggle lives in `MobileChromeHeader`
+            globally, so we don't render a second one here. */}
+        <div className="md:hidden flex items-center mb-2">
           <h1 className="mako-display text-3xl text-chrome-fg">ACCOUNT</h1>
-          <ThemeToggle />
         </div>
 
         {/* Mobile-only Hero. Renders above the two-column grid so the
@@ -832,7 +832,7 @@ export default function ProfilePage() {
                         value={sendDestination}
                         onChange={(e) => setSendDestination(e.target.value)}
                         placeholder="0x..."
-                        className="mako-input mako-mono text-sm bg-white"
+                        className="mako-input mako-mono text-sm bg-paper"
                       />
                       {recipientLooksLikeContract && (
                         <p className="mako-body text-[11px] text-mako-red mt-1">
@@ -854,7 +854,7 @@ export default function ProfilePage() {
                           value={sendAmount}
                           onChange={(e) => setSendAmount(e.target.value)}
                           placeholder="0.00"
-                          className="mako-input mako-display text-xl bg-white pr-20"
+                          className="mako-input mako-display text-xl bg-paper pr-20"
                         />
                         <button
                           onClick={() => {

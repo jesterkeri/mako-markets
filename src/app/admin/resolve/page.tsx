@@ -140,7 +140,7 @@ function ResolveRow({
 
   return (
     <div className="border-b-2 border-ink/10 px-4 lg:px-8 py-4">
-      <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
+      <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-x-auto">
         <div className="px-6 py-5 bg-surface-elevated border-b-2 border-ink">
           <div className="mako-label text-muted mb-1">
             ID {market.id.toString()} · POOL {poolUsdc} USDC
