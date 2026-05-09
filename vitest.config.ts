@@ -32,6 +32,7 @@ export default defineConfig({
     include: [
       'src/lib/__tests__/**/*.test.ts',
       'src/lib/__tests__/**/*.test.tsx',
+      'src/lib/private-markets/__tests__/**/*.test.ts',
     ],
     environmentMatchGlobs: [
       ['src/lib/__tests__/**/*.test.tsx', 'happy-dom'],

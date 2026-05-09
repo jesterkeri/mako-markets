@@ -1,0 +1,752 @@
+import 'server-only';
+
+// ----------------------------------------------------------------------------
+// src/lib/private-markets/indexer.ts
+//
+// Phase 2B-2: event-driven indexer for MakoPrivateMarketsV1's
+// MarketCreated and MarketMetadataFrozen events. The other six events
+// (Staked, ResolvedFriendly, ResolvedOpenVote, DistributedPrizePool,
+// Canceled, Claimed) are no-op in 2B-2 — 2B-3 and 2B-4 extend the
+// dispatcher in place.
+//
+// runIndexerOnce orchestrates a single tick:
+//   - Phase A: getLogs over a block-range chunk
+//   - Phase B: multicall prefetch for synthetic-row metadata, batched
+//     by prefetchBatchSize
+//   - Phase C: per-chunk Postgres transaction with handler dispatch
+//     plus an ownership-gated advance of pm_indexer_state.last_indexed_block
+//
+// The mutex is acquired/released via raw SQL keyed by a token
+// (locked_at value), so a stale-recovered slow worker cannot clear or
+// commit progress against a new owner's lock.
+//
+// See `%TEMP%/mako-private-markets-2B-2-plan.md` for the full design
+// and the binding invariants. 9 rounds of Codex review converged here.
+// ----------------------------------------------------------------------------
+
+import { and, eq, sql } from 'drizzle-orm';
+import type { PublicClient } from 'viem';
+
+import type { DbOrTx } from '@/db/client';
+import { pmMarkets, pmOptions, pmResolutions } from '@/db/schema';
+import { privateMarketsAbi } from '@/lib/MakoPrivateMarketsV1.abi';
+
+import { decodePrivateMarketsLogs, type DecodedEvent } from './event-decode';
+import {
+  bigintToNumber,
+  bytesToUtf8,
+  mapShapeEnum,
+  normalizeHex,
+  numberToBigInt,
+  secondsBigIntToDate,
+} from './normalize';
+import { allocateSlug } from './slug';
+
+// ---- Types -----------------------------------------------------------------
+
+export interface RunIndexerArgs {
+  chainId: number;
+  contractAddress: `0x${string}`;
+  /// Block at which the contract was deployed; lower bound on bootstrap.
+  /// Bigint here because viem returns block numbers as bigint; downcast
+  /// happens inside via bigintToNumber().
+  deployBlock: bigint;
+  /// Top-level Drizzle handle. The orchestrator opens a Phase C
+  /// transaction on this; acquire/release run on the same handle
+  /// outside the transaction.
+  db: DbOrTx;
+  publicClient: PublicClient;
+  /// Block-range chunk size for getLogs. Default 5_000.
+  chunkSize?: number;
+  /// Cap on MarketCreated events per Phase B multicall request.
+  /// Default 50. Independent of chunkSize.
+  prefetchBatchSize?: number;
+  /// Stale lock auto-release threshold. Default 5 minutes.
+  mutexStaleAfterMs?: number;
+}
+
+export type RunIndexerResult =
+  | RunIndexerResultProcessed
+  | RunIndexerResultBusy;
+
+export interface RunIndexerResultProcessed {
+  chainId: number;
+  mutex: 'acquired' | 'stale-recovered';
+  fromBlock: number;
+  toBlock: number;
+  decodedEventCount: number;
+  marketsWritten: number;
+}
+
+export interface RunIndexerResultBusy {
+  chainId: number;
+  mutex: 'busy';
+  fromBlock: null;
+  toBlock: null;
+  decodedEventCount: 0;
+  marketsWritten: 0;
+}
+
+export function isBusy(r: RunIndexerResult): r is RunIndexerResultBusy {
+  return r.mutex === 'busy';
+}
+
+// Pure Solidity MarketView struct shape, as viem decodes it.
+export interface MarketViewLike {
+  creator: `0x${string}`;
+  shape: number;
+  clientNonce: `0x${string}`;
+  createdAt: bigint;
+  stakingOpensAt: bigint;
+  closeAt: bigint;
+  viewMode: number;
+  participationMode: number;
+  storedState: number;
+  effectiveState: number;
+  perStakeMin: bigint;
+  perStakeMax: bigint;
+  perWalletCumulativeMax: bigint;
+  fixedStake: bigint;
+  winnersCount: number;
+  totalStake: bigint;
+  friendlyOutcome: number;
+  friendlyEmptyPoolPath: boolean;
+  feeTaken: bigint;
+  dust: bigint;
+  metadataFrozenEmitted: boolean;
+}
+
+export interface PrefetchedMetadata {
+  market: MarketViewLike;
+  title: { value: string; ok: boolean };
+  description: { value: string; ok: boolean };
+  streamUrl: { value: string; ok: boolean };
+  optionLabels: Array<{ value: string; ok: boolean }>;
+  allowlist: `0x${string}`[];
+  participants: `0x${string}`[];
+}
+
+export interface HandlerCtx {
+  /// Phase C transaction client. All DB work in handlers must go
+  /// through this so the chunk's writes commit/rollback atomically.
+  chunkTx: DbOrTx;
+  chainId: number;
+  /// Pre-normalized lowercase. The orchestrator normalises at entry.
+  contractAddress: `0x${string}`;
+  /// Lock token threaded into the Phase C ownership-gated UPDATE.
+  acquiredLockedAt: Date;
+  /// Phase B output, keyed by marketId-as-number.
+  prefetch: Map<number, PrefetchedMetadata>;
+}
+
+export class StaleLockLostError extends Error {
+  constructor(public readonly chainId: number) {
+    super(
+      `Phase C lost the lock on chain ${chainId} (stale-recovered by another worker); rolling back chunk`,
+    );
+    this.name = 'StaleLockLostError';
+  }
+}
+
+// ---- Mutex SQL -------------------------------------------------------------
+
+interface AcquireRow {
+  lastIndexedBlock: number;
+  newContractAddress: string;
+  acquiredLockedAt: Date;
+  priorContractAddress: string | null;
+  inserted: boolean;
+  mutexOutcome: 'acquired' | 'stale-recovered';
+}
+
+async function acquireMutex(
+  db: DbOrTx,
+  chainId: number,
+  contractAddressLower: string,
+  staleMs: number,
+): Promise<AcquireRow[]> {
+  // Single CTE statement: prior snapshot, conditional upsert, derived
+  // mutex_outcome. See the plan's "Bootstrap-and-mutex" section for the
+  // rationale (R5-M1 → R7-M2). All locked_at writes are
+  // date_trunc('milliseconds', now()) so the JS Date round-trips
+  // losslessly when used as a token.
+  const result = await db.execute(sql`
+    WITH prior AS (
+      SELECT chain_id,
+             contract_address AS prior_contract_address,
+             locked_at        AS prior_locked_at
+        FROM pm_indexer_state
+       WHERE chain_id = ${chainId}
+    ),
+    upserted AS (
+      INSERT INTO pm_indexer_state
+            (chain_id, contract_address, last_indexed_block, locked_at,                          updated_at)
+      VALUES (${chainId}, ${contractAddressLower}, 0,
+              date_trunc('milliseconds', now()), now())
+      ON CONFLICT (chain_id) DO UPDATE SET
+        locked_at  = date_trunc('milliseconds', now()),
+        updated_at = now()
+      WHERE pm_indexer_state.locked_at IS NULL
+         OR pm_indexer_state.locked_at < (now() - make_interval(secs => ${staleMs}::numeric / 1000))
+      RETURNING
+        chain_id,
+        contract_address,
+        last_indexed_block,
+        locked_at,
+        (xmax = 0) AS inserted
+    )
+    SELECT
+      u.last_indexed_block AS "lastIndexedBlock",
+      u.contract_address   AS "newContractAddress",
+      u.locked_at          AS "acquiredLockedAt",
+      p.prior_contract_address AS "priorContractAddress",
+      u.inserted           AS "inserted",
+      CASE
+        WHEN u.inserted                      THEN 'acquired'
+        WHEN p.prior_locked_at IS NOT NULL   THEN 'stale-recovered'
+        ELSE                                      'acquired'
+      END                  AS "mutexOutcome"
+    FROM upserted u
+    LEFT JOIN prior p ON p.chain_id = u.chain_id;
+  `);
+  return result as unknown as AcquireRow[];
+}
+
+async function releaseMutex(
+  db: DbOrTx,
+  chainId: number,
+  acquiredLockedAt: Date,
+): Promise<void> {
+  // Token-scoped release. If the token doesn't match (i.e., we lost
+  // the lock to a stale-recovery), zero rows update — that's fine,
+  // the new owner's lock stays intact. Errors here are intentionally
+  // swallowed in the surrounding try/finally caller so the original
+  // error surfaces.
+  await db.execute(sql`
+    UPDATE pm_indexer_state
+       SET locked_at = NULL,
+           updated_at = now()
+     WHERE chain_id  = ${chainId}
+       AND locked_at = ${acquiredLockedAt};
+  `);
+}
+
+async function advanceLastIndexedBlockOrThrow(
+  chunkTx: DbOrTx,
+  chainId: number,
+  acquiredLockedAt: Date,
+  endOfChunk: number,
+): Promise<void> {
+  // Phase C ownership-gated advance. If the lock has been
+  // stale-recovered out from under us, this matches 0 rows — throw to
+  // roll back the whole chunk transaction (events + advance) in one
+  // shot.
+  const result = await chunkTx.execute(sql`
+    UPDATE pm_indexer_state
+       SET last_indexed_block = ${endOfChunk},
+           updated_at         = now()
+     WHERE chain_id  = ${chainId}
+       AND locked_at = ${acquiredLockedAt};
+  `);
+  // postgres-js's RowList carries .count for affected rows.
+  const affected = (result as unknown as { count?: number }).count ?? 0;
+  if (affected === 0) {
+    throw new StaleLockLostError(chainId);
+  }
+}
+
+// ---- Handlers --------------------------------------------------------------
+
+function isUniqueViolationOn(err: unknown, constraintName: string): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: string; constraint_name?: string };
+  return e.code === '23505' && e.constraint_name === constraintName;
+}
+
+export async function processMarketCreated(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'MarketCreated' }>,
+): Promise<{
+  outcome: 'confirmed' | 'synthetic-inserted' | 'replay-noop';
+}> {
+  const { chainId, contractAddress, chunkTx, prefetch } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  const creatorLower = normalizeHex(event.args.creator, 20);
+  const clientNonceLower = normalizeHex(event.args.clientNonce, 32);
+
+  // Confirmed-flip path: try UPDATE first. The WHERE clause's
+  // creator-AND-clientNonce-AND-pending predicate is the same-nonce-
+  // hijack defense from parent plan round 8.
+  const flipResult = await chunkTx
+    .update(pmMarkets)
+    .set({
+      marketId: marketIdNum,
+      createStatus: 'confirmed',
+      confirmedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(pmMarkets.clientNonce, clientNonceLower),
+        eq(pmMarkets.creator, creatorLower),
+        eq(pmMarkets.createStatus, 'pending'),
+      ),
+    )
+    .returning({ id: pmMarkets.id });
+
+  if (flipResult.length > 0) {
+    // R4-M2: confirmed-flip does NOT consume prefetch. Canonical
+    // metadata refresh on confirmed rows is deferred to 2B-5's
+    // resnapshot sweep.
+    return { outcome: 'confirmed' };
+  }
+
+  // Synthetic-insert path. R5-M3: existence pre-check FIRST, before
+  // any prefetch lookup. Replays of already-confirmed markets must
+  // not require metadata.
+  const existing = await chunkTx
+    .select({ id: pmMarkets.id })
+    .from(pmMarkets)
+    .where(
+      and(
+        eq(pmMarkets.chainId, chainId),
+        eq(pmMarkets.contractAddress, contractAddress),
+        eq(pmMarkets.marketId, marketIdNum),
+      ),
+    )
+    .limit(1);
+  if (existing.length > 0) {
+    return { outcome: 'replay-noop' };
+  }
+
+  const meta = prefetch.get(marketIdNum);
+  if (!meta) {
+    throw new Error(
+      `processMarketCreated: prefetch missing marketId=${marketIdNum} ` +
+        `for chainId=${chainId} contract=${contractAddress}; ` +
+        `Phase B should have populated it`,
+    );
+  }
+
+  const slug = await allocateSlug(chunkTx, { syntheticDxRow: true });
+  const stakingOpensAt = secondsBigIntToDate(event.args.stakingOpensAt);
+  const closeAt = secondsBigIntToDate(event.args.closeAt);
+  const isPrizePool = event.args.marketShape === 2;
+
+  try {
+    const inserted = await chunkTx
+      .insert(pmMarkets)
+      .values({
+        chainId,
+        contractAddress,
+        slug,
+        clientNonce: clientNonceLower,
+        marketId: marketIdNum,
+        creator: creatorLower,
+        shape: mapShapeEnum(event.args.marketShape),
+        createStatus: 'confirmed',
+        confirmedAt: new Date(),
+        title: meta.title.value,
+        description: meta.description.value,
+        streamUrl: meta.streamUrl.value,
+        visibilityView: event.args.visibilityView,
+        visibilityParticipation: event.args.visibilityParticipation,
+        stakingOpensAt,
+        closeAt,
+        perStakeMin: meta.market.perStakeMin.toString(),
+        perStakeMax: meta.market.perStakeMax.toString(),
+        perWalletCumulativeMax: meta.market.perWalletCumulativeMax.toString(),
+        fixedStake: meta.market.fixedStake.toString(),
+        winnersCount: meta.market.winnersCount,
+        currentState: 'created',
+        friendlyOutcome:
+          meta.market.friendlyOutcome === 0 || meta.market.friendlyOutcome === 1
+            ? meta.market.friendlyOutcome
+            : null,
+        friendlyEmptyPoolPath: meta.market.friendlyEmptyPoolPath,
+        feeTaken: meta.market.feeTaken.toString(),
+        dust: meta.market.dust.toString(),
+        totalStake: meta.market.totalStake.toString(),
+      })
+      .returning({ id: pmMarkets.id });
+
+    const marketDbId = inserted[0]!.id;
+
+    // pm_options rows: one per optionLabel. participantWallet only
+    // populated for Prize Pool markets where the participants array
+    // has an entry at the matching index.
+    const optionRows = meta.optionLabels.map((labelResult, idx) => ({
+      marketDbId,
+      optionIndex: idx,
+      label: labelResult.value,
+      participantWallet:
+        isPrizePool && meta.participants[idx]
+          ? normalizeHex(meta.participants[idx], 20)
+          : null,
+      poolTotal: '0',
+      firstStakeSequence: null,
+    }));
+    if (optionRows.length > 0) {
+      await chunkTx.insert(pmOptions).values(optionRows);
+    }
+
+    return { outcome: 'synthetic-inserted' };
+  } catch (err: unknown) {
+    // Two-layer guard: pre-check above is the common path; this catch
+    // covers the rare race where a concurrent insert (e.g. stale-lock
+    // recovery) lands a matching row between our SELECT and INSERT.
+    if (isUniqueViolationOn(err, 'pm_markets_chain_market_id_uniq')) {
+      return { outcome: 'replay-noop' };
+    }
+    throw err;
+  }
+}
+
+export async function processMarketMetadataFrozen(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'MarketMetadataFrozen' }>,
+): Promise<{ outcome: 'frozen' | 'replay-noop' | 'orphan-event' }> {
+  const { chainId, contractAddress, chunkTx } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  const txHashLower = normalizeHex(
+    event.log.transactionHash as `0x${string}`,
+    32,
+  );
+  const blockNumberNum = bigintToNumber(event.log.blockNumber as bigint);
+  // Per the "event-arg-as-block-timestamp" rule (R3-M2): frozenAt
+  // equals block.timestamp at emission by contract design.
+  const blockTimestamp = secondsBigIntToDate(event.args.frozenAt);
+  const logIndex = event.log.logIndex as number;
+
+  // Step 1: pm_resolutions INSERT keyed by (tx_hash, log_index).
+  // ON CONFLICT DO NOTHING + RETURNING txHash gives us the
+  // first-write signal.
+  const insertResult = await chunkTx
+    .insert(pmResolutions)
+    .values({
+      chainId,
+      contractAddress,
+      txHash: txHashLower,
+      logIndex,
+      marketId: marketIdNum,
+      eventName: 'MarketMetadataFrozen',
+      payload: { frozenAt: event.args.frozenAt.toString() },
+      blockNumber: blockNumberNum,
+      blockTimestamp,
+    })
+    .onConflictDoNothing({
+      target: [pmResolutions.txHash, pmResolutions.logIndex],
+    })
+    .returning({ txHash: pmResolutions.txHash });
+
+  if (insertResult.length === 0) {
+    // R8-m2: replay-noop short-circuits BEFORE any mirror lookup.
+    return { outcome: 'replay-noop' };
+  }
+
+  // Step 2: mirror frozen_at into pm_markets, first-write-only.
+  const existing = await chunkTx
+    .select({ id: pmMarkets.id, frozenAt: pmMarkets.frozenAt })
+    .from(pmMarkets)
+    .where(
+      and(
+        eq(pmMarkets.chainId, chainId),
+        eq(pmMarkets.contractAddress, contractAddress),
+        eq(pmMarkets.marketId, marketIdNum),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length === 0) {
+    // pm_resolutions row already inserted for audit; the pm_markets
+    // row will be picked up by 2B-5's resnapshot sweep when it lands
+    // (or never, for genuine direct-contract orphans).
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processMarketMetadataFrozen: orphan event for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_resolutions recorded, mirror skipped`,
+    );
+    return { outcome: 'orphan-event' };
+  }
+
+  if (existing[0].frozenAt !== null) {
+    // First-write-only. 2B-5's resnapshot sweep owns later updates.
+    return { outcome: 'frozen' };
+  }
+
+  await chunkTx
+    .update(pmMarkets)
+    .set({ frozenAt: blockTimestamp, updatedAt: new Date() })
+    .where(eq(pmMarkets.id, existing[0].id));
+
+  return { outcome: 'frozen' };
+}
+
+// ---- Orchestrator ----------------------------------------------------------
+
+export async function runIndexerOnce(
+  args: RunIndexerArgs,
+): Promise<RunIndexerResult> {
+  // R9-m3: validate numeric args BEFORE acquiring the mutex.
+  const chunkSize = args.chunkSize ?? 5_000;
+  const prefetchBatchSize = args.prefetchBatchSize ?? 50;
+  const mutexStaleAfterMs = args.mutexStaleAfterMs ?? 5 * 60 * 1000;
+  for (const [name, val] of [
+    ['chunkSize', chunkSize],
+    ['prefetchBatchSize', prefetchBatchSize],
+    ['mutexStaleAfterMs', mutexStaleAfterMs],
+  ] as const) {
+    if (
+      !Number.isInteger(val) ||
+      val <= 0 ||
+      val > Number.MAX_SAFE_INTEGER
+    ) {
+      throw new RangeError(
+        `runIndexerOnce: ${name} must be a positive safe integer; got ${val}`,
+      );
+    }
+  }
+
+  const { chainId, deployBlock, db: coordinationDb, publicClient } = args;
+  const contractAddressLower = normalizeHex(args.contractAddress, 20);
+
+  const acquireRows = await acquireMutex(
+    coordinationDb,
+    chainId,
+    contractAddressLower,
+    mutexStaleAfterMs,
+  );
+
+  // R6-M2: ONLY the busy short-circuit returns before the try.
+  if (acquireRows.length === 0) {
+    return {
+      chainId,
+      mutex: 'busy',
+      fromBlock: null,
+      toBlock: null,
+      decodedEventCount: 0,
+      marketsWritten: 0,
+    };
+  }
+
+  const {
+    lastIndexedBlock,
+    inserted,
+    mutexOutcome,
+    priorContractAddress,
+    acquiredLockedAt,
+  } = acquireRows[0];
+
+  let totalDecodedEvents = 0;
+  let totalMarketsWritten = 0;
+  let actualFromBlock = 0;
+  let actualToBlock = 0;
+
+  try {
+    // Contract-address mismatch guard: redeploying the contract to the
+    // same chain without resetting pm_indexer_state would silently
+    // index logs from the wrong contract. Throw with the documented
+    // reset SQL in the message.
+    if (
+      !inserted &&
+      priorContractAddress !== null &&
+      priorContractAddress !== contractAddressLower
+    ) {
+      throw new Error(
+        `pm_indexer_state row for chain ${chainId} has ` +
+          `contract_address=${priorContractAddress} but call passed ` +
+          `${contractAddressLower}; manual reset required ` +
+          `(DELETE FROM pm_indexer_state WHERE chain_id = ${chainId})`,
+      );
+    }
+
+    const deployBlockNum = bigintToNumber(deployBlock);
+    const fromBlock =
+      inserted || lastIndexedBlock === 0
+        ? deployBlockNum
+        : Math.max(deployBlockNum, lastIndexedBlock - 11);
+    const chainHead = bigintToNumber(await publicClient.getBlockNumber());
+
+    actualFromBlock = fromBlock;
+    actualToBlock = Math.min(fromBlock - 1, chainHead);
+
+    if (fromBlock > chainHead) {
+      // Already at or past head; nothing to do this tick.
+      return {
+        chainId,
+        mutex: mutexOutcome,
+        fromBlock,
+        toBlock: chainHead,
+        decodedEventCount: 0,
+        marketsWritten: 0,
+      };
+    }
+
+    let cursor = fromBlock;
+    while (cursor <= chainHead) {
+      const chunkEnd = Math.min(cursor + chunkSize - 1, chainHead);
+
+      // Phase A: getLogs (RPC, no DB).
+      const logs = await publicClient.getLogs({
+        address: contractAddressLower as `0x${string}`,
+        fromBlock: numberToBigInt(cursor),
+        toBlock: numberToBigInt(chunkEnd),
+      });
+
+      const decoded = decodePrivateMarketsLogs(logs);
+      totalDecodedEvents += decoded.length;
+
+      // Phase B: multicall prefetch for MarketCreated events,
+      // batched by prefetchBatchSize. Independent of chunkSize.
+      const marketCreatedEvents = decoded.filter(
+        (
+          e,
+        ): e is Extract<DecodedEvent, { eventName: 'MarketCreated' }> =>
+          e.eventName === 'MarketCreated',
+      );
+      const prefetch = new Map<number, PrefetchedMetadata>();
+
+      for (
+        let i = 0;
+        i < marketCreatedEvents.length;
+        i += prefetchBatchSize
+      ) {
+        const batch = marketCreatedEvents.slice(i, i + prefetchBatchSize);
+        const contracts = batch.flatMap((ev) => {
+          const mid = ev.args.marketId;
+          return [
+            {
+              address: contractAddressLower as `0x${string}`,
+              abi: privateMarketsAbi,
+              functionName: 'getMarket' as const,
+              args: [mid] as const,
+            },
+            {
+              address: contractAddressLower as `0x${string}`,
+              abi: privateMarketsAbi,
+              functionName: 'getMarketTitle' as const,
+              args: [mid] as const,
+            },
+            {
+              address: contractAddressLower as `0x${string}`,
+              abi: privateMarketsAbi,
+              functionName: 'getMarketDescription' as const,
+              args: [mid] as const,
+            },
+            {
+              address: contractAddressLower as `0x${string}`,
+              abi: privateMarketsAbi,
+              functionName: 'getMarketStreamUrl' as const,
+              args: [mid] as const,
+            },
+            {
+              address: contractAddressLower as `0x${string}`,
+              abi: privateMarketsAbi,
+              functionName: 'getMarketOptions' as const,
+              args: [mid] as const,
+            },
+            {
+              address: contractAddressLower as `0x${string}`,
+              abi: privateMarketsAbi,
+              functionName: 'getMarketAllowlist' as const,
+              args: [mid] as const,
+            },
+            {
+              address: contractAddressLower as `0x${string}`,
+              abi: privateMarketsAbi,
+              functionName: 'getMarketParticipants' as const,
+              args: [mid] as const,
+            },
+          ];
+        });
+
+        // allowFailure: false → any sub-revert throws and aborts the
+        // chunk. Surrounding try/finally clears the mutex.
+        const results = (await publicClient.multicall({
+          allowFailure: false,
+          contracts: contracts as never,
+        })) as readonly unknown[];
+
+        for (let j = 0; j < batch.length; j++) {
+          const ev = batch[j];
+          const base = j * 7;
+          const market = results[base] as MarketViewLike;
+          const titleBytes = results[base + 1] as `0x${string}`;
+          const descBytes = results[base + 2] as `0x${string}`;
+          const streamBytes = results[base + 3] as `0x${string}`;
+          const optionLabelBytes = results[base + 4] as readonly `0x${string}`[];
+          const allowlist = results[base + 5] as readonly `0x${string}`[];
+          const participants = results[base + 6] as readonly `0x${string}`[];
+
+          prefetch.set(bigintToNumber(ev.args.marketId), {
+            market,
+            title: bytesToUtf8(titleBytes),
+            description: bytesToUtf8(descBytes),
+            streamUrl: bytesToUtf8(streamBytes),
+            optionLabels: optionLabelBytes.map(bytesToUtf8),
+            allowlist: allowlist.map((a) => normalizeHex(a, 20)),
+            participants: participants.map((a) => normalizeHex(a, 20)),
+          });
+        }
+      }
+
+      // Phase C: per-chunk transaction. Includes handler dispatch +
+      // ownership-gated last_indexed_block advance.
+      let chunkMarketsWritten = 0;
+      // Drizzle's `transaction` accepts both plain db and tx clients
+      // (savepoints), but at runtime we always pass the top-level
+      // coordinationDb here.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (coordinationDb as any).transaction(async (chunkTx: DbOrTx) => {
+        const ctx: HandlerCtx = {
+          chunkTx,
+          chainId,
+          contractAddress: contractAddressLower,
+          acquiredLockedAt,
+          prefetch,
+        };
+
+        for (const event of decoded) {
+          if (event.eventName === 'MarketCreated') {
+            const r = await processMarketCreated(ctx, event);
+            if (
+              r.outcome === 'confirmed' ||
+              r.outcome === 'synthetic-inserted'
+            ) {
+              chunkMarketsWritten += 1;
+            }
+          } else if (event.eventName === 'MarketMetadataFrozen') {
+            await processMarketMetadataFrozen(ctx, event);
+          }
+          // Other event branches are 2B-3 / 2B-4. No-op in 2B-2.
+        }
+
+        await advanceLastIndexedBlockOrThrow(
+          chunkTx,
+          chainId,
+          acquiredLockedAt,
+          chunkEnd,
+        );
+      });
+
+      totalMarketsWritten += chunkMarketsWritten;
+      cursor = chunkEnd + 1;
+      actualToBlock = chunkEnd;
+    }
+
+    return {
+      chainId,
+      mutex: mutexOutcome,
+      fromBlock: actualFromBlock,
+      toBlock: actualToBlock,
+      decodedEventCount: totalDecodedEvents,
+      marketsWritten: totalMarketsWritten,
+    };
+  } finally {
+    // R6-M3: release does ONE thing — clear the lock IFF this worker
+    // still owns it. last_indexed_block advancement lives entirely in
+    // Phase C.
+    await releaseMutex(coordinationDb, chainId, acquiredLockedAt);
+  }
+}
