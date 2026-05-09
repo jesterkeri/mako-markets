@@ -22,7 +22,7 @@ import 'server-only';
 // undefined).
 // ----------------------------------------------------------------------------
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { pmMarkets, pmOptions } from '@/db/schema';
@@ -154,7 +154,8 @@ export async function getMarketBySlug(
   const options = await db
     .select()
     .from(pmOptions)
-    .where(eq(pmOptions.marketDbId, market.id));
+    .where(eq(pmOptions.marketDbId, market.id))
+    .orderBy(asc(pmOptions.optionIndex));
 
   return rowToView(market, options);
 }
@@ -185,7 +186,8 @@ export async function getMarketByMarketId(
   const options = await db
     .select()
     .from(pmOptions)
-    .where(eq(pmOptions.marketDbId, market.id));
+    .where(eq(pmOptions.marketDbId, market.id))
+    .orderBy(asc(pmOptions.optionIndex));
 
   return rowToView(market, options);
 }

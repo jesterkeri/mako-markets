@@ -79,7 +79,10 @@ export async function allocateSlug(
   const synthetic = opts.syntheticDxRow ?? false;
   const maxRetries = opts.maxRetries ?? 8;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  // Codex round-1 n1: maxRetries is the count of attempts, not an
+  // off-by-one cap. `attempt < maxRetries` runs exactly maxRetries
+  // times (default 8); the final-failure throw fires after.
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     const candidate = synthetic
       ? `${DX_PREFIX}${generateRandomSuffix()}`
       : generateRandomSuffix();

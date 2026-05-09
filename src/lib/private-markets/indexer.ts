@@ -28,7 +28,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { PublicClient } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
-import { pmMarkets, pmOptions, pmResolutions } from '@/db/schema';
+import { pmIndexerState, pmMarkets, pmOptions, pmResolutions } from '@/db/schema';
 import { privateMarketsAbi } from '@/lib/MakoPrivateMarketsV1.abi';
 
 import { decodePrivateMarketsLogs, type DecodedEvent } from './event-decode';
@@ -159,7 +159,27 @@ interface AcquireRow {
   mutexOutcome: 'acquired' | 'stale-recovered';
 }
 
-async function acquireMutex(
+// pglite's `db.execute(sql\`...\`)` returns timestamp columns as raw
+// strings ('2026-05-09 19:02:48.49+01'); postgres-js's `.execute()`
+// auto-converts them to Date. Normalize in JS so both adapters
+// produce the same Date-shape AcquireRow.
+function coerceAcquireDate(value: unknown): Date {
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      throw new Error(
+        `coerceAcquireDate: unparseable timestamp string: ${value}`,
+      );
+    }
+    return d;
+  }
+  throw new Error(
+    `coerceAcquireDate: unexpected timestamp shape: ${typeof value}`,
+  );
+}
+
+export async function acquireMutex(
   db: DbOrTx,
   chainId: number,
   contractAddressLower: string,
@@ -209,7 +229,21 @@ async function acquireMutex(
     FROM upserted u
     LEFT JOIN prior p ON p.chain_id = u.chain_id;
   `);
-  return result as unknown as AcquireRow[];
+  // Both adapters expose row arrays; pglite wraps them in `{ rows }`.
+  const raw =
+    (result as unknown as { rows?: unknown[] }).rows ??
+    (result as unknown as unknown[]);
+  return (raw as Record<string, unknown>[]).map((r) => ({
+    lastIndexedBlock: Number(r.lastIndexedBlock),
+    newContractAddress: String(r.newContractAddress),
+    acquiredLockedAt: coerceAcquireDate(r.acquiredLockedAt),
+    priorContractAddress:
+      r.priorContractAddress === null || r.priorContractAddress === undefined
+        ? null
+        : String(r.priorContractAddress),
+    inserted: Boolean(r.inserted),
+    mutexOutcome: r.mutexOutcome as 'acquired' | 'stale-recovered',
+  }));
 }
 
 async function releaseMutex(
@@ -219,16 +253,18 @@ async function releaseMutex(
 ): Promise<void> {
   // Token-scoped release. If the token doesn't match (i.e., we lost
   // the lock to a stale-recovery), zero rows update — that's fine,
-  // the new owner's lock stays intact. Errors here are intentionally
-  // swallowed in the surrounding try/finally caller so the original
-  // error surfaces.
-  await db.execute(sql`
-    UPDATE pm_indexer_state
-       SET locked_at = NULL,
-           updated_at = now()
-     WHERE chain_id  = ${chainId}
-       AND locked_at = ${acquiredLockedAt};
-  `);
+  // the new owner's lock stays intact. Use the Drizzle update builder
+  // so the call is adapter-agnostic (postgres-js + pglite both
+  // supported via the same surface).
+  await db
+    .update(pmIndexerState)
+    .set({ lockedAt: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(pmIndexerState.chainId, chainId),
+        eq(pmIndexerState.lockedAt, acquiredLockedAt),
+      ),
+    );
 }
 
 async function advanceLastIndexedBlockOrThrow(
@@ -240,17 +276,20 @@ async function advanceLastIndexedBlockOrThrow(
   // Phase C ownership-gated advance. If the lock has been
   // stale-recovered out from under us, this matches 0 rows — throw to
   // roll back the whole chunk transaction (events + advance) in one
-  // shot.
-  const result = await chunkTx.execute(sql`
-    UPDATE pm_indexer_state
-       SET last_indexed_block = ${endOfChunk},
-           updated_at         = now()
-     WHERE chain_id  = ${chainId}
-       AND locked_at = ${acquiredLockedAt};
-  `);
-  // postgres-js's RowList carries .count for affected rows.
-  const affected = (result as unknown as { count?: number }).count ?? 0;
-  if (affected === 0) {
+  // shot. Builder + RETURNING is adapter-agnostic — using
+  // `(result as { count }).count` would have tied us to postgres-js's
+  // RowList shape and broken under pglite tests.
+  const advanced = await chunkTx
+    .update(pmIndexerState)
+    .set({ lastIndexedBlock: endOfChunk, updatedAt: new Date() })
+    .where(
+      and(
+        eq(pmIndexerState.chainId, chainId),
+        eq(pmIndexerState.lockedAt, acquiredLockedAt),
+      ),
+    )
+    .returning({ chainId: pmIndexerState.chainId });
+  if (advanced.length === 0) {
     throw new StaleLockLostError(chainId);
   }
 }
@@ -276,7 +315,12 @@ export async function processMarketCreated(
 
   // Confirmed-flip path: try UPDATE first. The WHERE clause's
   // creator-AND-clientNonce-AND-pending predicate is the same-nonce-
-  // hijack defense from parent plan round 8.
+  // hijack defense from parent plan round 8. Also scope by chainId +
+  // contractAddress (Codex round-1 M1) — the partial unique index on
+  // client_nonce only constrains pending rows by nonce, not by chain
+  // or contract, so without these clauses a redeploy or future
+  // multi-contract context could bind a pending row from the wrong
+  // chain/contract.
   const flipResult = await chunkTx
     .update(pmMarkets)
     .set({
@@ -287,6 +331,8 @@ export async function processMarketCreated(
     })
     .where(
       and(
+        eq(pmMarkets.chainId, chainId),
+        eq(pmMarkets.contractAddress, contractAddress),
         eq(pmMarkets.clientNonce, clientNonceLower),
         eq(pmMarkets.creator, creatorLower),
         eq(pmMarkets.createStatus, 'pending'),
@@ -747,6 +793,20 @@ export async function runIndexerOnce(
     // R6-M3: release does ONE thing — clear the lock IFF this worker
     // still owns it. last_indexed_block advancement lives entirely in
     // Phase C.
-    await releaseMutex(coordinationDb, chainId, acquiredLockedAt);
+    //
+    // Codex round-1 m2: never let a release failure mask the original
+    // error. If the try-block already threw, the in-flight error is
+    // the one the caller needs to see; release errors get logged but
+    // don't propagate.
+    try {
+      await releaseMutex(coordinationDb, chainId, acquiredLockedAt);
+    } catch (releaseErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `runIndexerOnce: releaseMutex failed for chainId=${chainId}; ` +
+          `original error (if any) takes precedence`,
+        releaseErr,
+      );
+    }
   }
 }
