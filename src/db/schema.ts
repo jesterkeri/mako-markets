@@ -110,6 +110,32 @@ export const aaPendingStatusEnum = pgEnum('aa_pending_status', [
   'ambiguous',
 ]);
 
+// Phase 2B: Private Markets. Mirrors MakoPrivateMarketsV1 contract enums.
+// `pmMarketStateEnum` lists ONLY event-driven values — `Open` and
+// `AwaitingCreator` are derived lazily by `effectiveState(row, now)` in
+// queries.ts and never persisted.
+export const pmMarketShapeEnum = pgEnum('pm_market_shape', [
+  'friendly',
+  'open_vote',
+  'prize_pool',
+]);
+
+export const pmMarketStateEnum = pgEnum('pm_market_state', [
+  'created',
+  'resolved',
+  'empty_pool_resolved',
+  'canceled',
+  'timed_out',
+  'zero_stake_expired',
+]);
+
+export const pmCreateStatusEnum = pgEnum('pm_create_status', [
+  'pending',
+  'confirmed',
+  'failed',
+  'abandoned',
+]);
+
 // ----------------------------------------------------------------------------
 // users — source of truth: this DB. One row per identity, where an identity
 // is either a Magic account (auth_type='magic', email + magic_eoa NOT NULL,
@@ -630,6 +656,182 @@ export const authChallenges = pgTable(
 );
 
 // ----------------------------------------------------------------------------
+// Phase 2B: Private Markets indexer mirror.
+//
+// Six tables that mirror MakoPrivateMarketsV1 chain state into Postgres so
+// the UI can serve fast list / detail / profile queries without round-
+// tripping the RPC. The contract is the source of truth — these tables are
+// a denormalized read cache plus the slug ↔ marketId correlation surface.
+//
+// Partial unique indexes (`pm_markets_slug_active_uniq`,
+// `pm_markets_client_nonce_pending_uniq`) and CHECK constraints are emitted
+// as raw SQL in 0006_private_markets.sql; Drizzle's index DSL doesn't
+// reliably emit `WHERE` clauses, same pattern as the AA tables in 0002.
+//
+// Effective state derivation (`Open`, `AwaitingCreator`, lazy `TimedOut`,
+// lazy `ZeroStakeExpired`) is computed by `effectiveState(row, now)` in
+// queries.ts — never persisted. `current_state` mirrors only the contract's
+// stored, event-driven values.
+// ----------------------------------------------------------------------------
+export const pmMarkets = pgTable(
+  'pm_markets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    chainId: integer('chain_id').notNull(),
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    slug: text('slug').notNull(),
+    clientNonce: varchar('client_nonce', { length: 66 }).notNull(),
+    userOpHash: varchar('user_op_hash', { length: 66 }),
+    marketId: bigint('market_id', { mode: 'number' }),
+    creator: varchar('creator', { length: 42 }).notNull(),
+    shape: pmMarketShapeEnum('shape').notNull(),
+    createStatus: pmCreateStatusEnum('create_status').notNull().default('pending'),
+    pendingAt: timestamp('pending_at', { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    failureReason: text('failure_reason'),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    streamUrl: text('stream_url').notNull().default(''),
+    visibilityView: integer('visibility_view').notNull(),
+    visibilityParticipation: integer('visibility_participation').notNull(),
+    stakingOpensAt: timestamp('staking_opens_at', { withTimezone: true }).notNull(),
+    closeAt: timestamp('close_at', { withTimezone: true }).notNull(),
+    perStakeMin: numeric('per_stake_min', { precision: 78, scale: 0 }).notNull().default('0'),
+    perStakeMax: numeric('per_stake_max', { precision: 78, scale: 0 }).notNull().default('0'),
+    perWalletCumulativeMax: numeric('per_wallet_cumulative_max', { precision: 78, scale: 0 })
+      .notNull()
+      .default('0'),
+    fixedStake: numeric('fixed_stake', { precision: 78, scale: 0 }).notNull().default('0'),
+    winnersCount: integer('winners_count').notNull().default(0),
+    currentState: pmMarketStateEnum('current_state').notNull().default('created'),
+    friendlyOutcome: integer('friendly_outcome'),
+    friendlyEmptyPoolPath: boolean('friendly_empty_pool_path'),
+    feeTaken: numeric('fee_taken', { precision: 78, scale: 0 }).notNull().default('0'),
+    dust: numeric('dust', { precision: 78, scale: 0 }).notNull().default('0'),
+    totalStake: numeric('total_stake', { precision: 78, scale: 0 }).notNull().default('0'),
+    frozenAt: timestamp('frozen_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // All indexes (partial uniques + supporting btrees) live in the SQL
+  // migration — see 0006 for the full set.
+);
+
+export const pmOptions = pgTable(
+  'pm_options',
+  {
+    marketDbId: uuid('market_db_id')
+      .notNull()
+      .references(() => pmMarkets.id, { onDelete: 'cascade' }),
+    optionIndex: integer('option_index').notNull(),
+    label: text('label').notNull(),
+    participantWallet: varchar('participant_wallet', { length: 42 }),
+    poolTotal: numeric('pool_total', { precision: 78, scale: 0 }).notNull().default('0'),
+    firstStakeSequence: integer('first_stake_sequence'),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.marketDbId, t.optionIndex] }),
+  }),
+);
+
+export const pmStakes = pgTable(
+  'pm_stakes',
+  {
+    chainId: integer('chain_id').notNull(),
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    txHash: varchar('tx_hash', { length: 66 }).notNull(),
+    logIndex: integer('log_index').notNull(),
+    marketId: bigint('market_id', { mode: 'number' }).notNull(),
+    staker: varchar('staker', { length: 42 }).notNull(),
+    optionIndex: integer('option_index').notNull(),
+    amount: numeric('amount', { precision: 78, scale: 0 }).notNull(),
+    blockNumber: bigint('block_number', { mode: 'number' }).notNull(),
+    blockTimestamp: timestamp('block_timestamp', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.txHash, t.logIndex] }),
+    marketIdx: index('pm_stakes_market').on(t.chainId, t.contractAddress, t.marketId),
+    marketStakerIdx: index('pm_stakes_market_staker').on(
+      t.chainId,
+      t.contractAddress,
+      t.marketId,
+      t.staker,
+    ),
+    stakerIdx: index('pm_stakes_staker').on(t.staker),
+    marketOptionIdx: index('pm_stakes_market_option').on(
+      t.chainId,
+      t.contractAddress,
+      t.marketId,
+      t.optionIndex,
+    ),
+  }),
+);
+
+export const pmResolutions = pgTable(
+  'pm_resolutions',
+  {
+    chainId: integer('chain_id').notNull(),
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    txHash: varchar('tx_hash', { length: 66 }).notNull(),
+    logIndex: integer('log_index').notNull(),
+    marketId: bigint('market_id', { mode: 'number' }).notNull(),
+    eventName: text('event_name').notNull(),
+    payload: jsonb('payload').notNull(),
+    blockNumber: bigint('block_number', { mode: 'number' }).notNull(),
+    blockTimestamp: timestamp('block_timestamp', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.txHash, t.logIndex] }),
+    marketIdx: index('pm_resolutions_market').on(t.chainId, t.contractAddress, t.marketId),
+    marketEventIdx: index('pm_resolutions_market_event').on(
+      t.chainId,
+      t.contractAddress,
+      t.marketId,
+      t.eventName,
+    ),
+  }),
+);
+
+export const pmClaims = pgTable(
+  'pm_claims',
+  {
+    chainId: integer('chain_id').notNull(),
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    txHash: varchar('tx_hash', { length: 66 }).notNull(),
+    logIndex: integer('log_index').notNull(),
+    marketId: bigint('market_id', { mode: 'number' }).notNull(),
+    recipient: varchar('recipient', { length: 42 }).notNull(),
+    amount: numeric('amount', { precision: 78, scale: 0 }).notNull(),
+    blockNumber: bigint('block_number', { mode: 'number' }).notNull(),
+    blockTimestamp: timestamp('block_timestamp', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.txHash, t.logIndex] }),
+    marketIdx: index('pm_claims_market').on(t.chainId, t.contractAddress, t.marketId),
+    marketRecipientIdx: index('pm_claims_market_recipient').on(
+      t.chainId,
+      t.contractAddress,
+      t.marketId,
+      t.recipient,
+    ),
+    recipientIdx: index('pm_claims_recipient').on(t.recipient),
+  }),
+);
+
+export const pmIndexerState = pgTable('pm_indexer_state', {
+  chainId: integer('chain_id').primaryKey(),
+  contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+  lastIndexedBlock: bigint('last_indexed_block', { mode: 'number' }).notNull().default(0),
+  lastCleanupAt: timestamp('last_cleanup_at', { withTimezone: true }),
+  lockedAt: timestamp('locked_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
 // ----------------------------------------------------------------------------
@@ -660,3 +862,18 @@ export type PendingTotpEnrollment = typeof pendingTotpEnrollments.$inferSelect;
 export type NewPendingTotpEnrollment = typeof pendingTotpEnrollments.$inferInsert;
 export type AuthChallenge = typeof authChallenges.$inferSelect;
 export type NewAuthChallenge = typeof authChallenges.$inferInsert;
+export type PmMarket = typeof pmMarkets.$inferSelect;
+export type NewPmMarket = typeof pmMarkets.$inferInsert;
+export type PmMarketShape = PmMarket['shape'];
+export type PmMarketState = PmMarket['currentState'];
+export type PmCreateStatus = PmMarket['createStatus'];
+export type PmOption = typeof pmOptions.$inferSelect;
+export type NewPmOption = typeof pmOptions.$inferInsert;
+export type PmStake = typeof pmStakes.$inferSelect;
+export type NewPmStake = typeof pmStakes.$inferInsert;
+export type PmResolution = typeof pmResolutions.$inferSelect;
+export type NewPmResolution = typeof pmResolutions.$inferInsert;
+export type PmClaim = typeof pmClaims.$inferSelect;
+export type NewPmClaim = typeof pmClaims.$inferInsert;
+export type PmIndexerState = typeof pmIndexerState.$inferSelect;
+export type NewPmIndexerState = typeof pmIndexerState.$inferInsert;

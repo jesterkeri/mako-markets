@@ -36,6 +36,20 @@
       "when": 1778803200000,
       "tag": "0004_users_display_name_avatar_totp",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778033938000,
+      "tag": "0005_users_wallet_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778976000000,
+      "tag": "0006_private_markets",
+      "breakpoints": true
     }
   ]
 }
