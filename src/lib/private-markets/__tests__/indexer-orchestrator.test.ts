@@ -36,6 +36,7 @@ import { pmIndexerState, pmMarkets, pmOptions, pmStakes } from '@/db/schema';
 import { isBusy, runIndexerOnce } from '../indexer';
 import { createTestDb, type TestDb } from './test-db';
 import { sql } from 'drizzle-orm';
+import { pmClaims, pmResolutions } from '@/db/schema';
 
 const CHAIN_ID = 10143;
 const CONTRACT = '0xc9c6575a14d0e84afd5ab21c506916fd2864bb8f' as const;
@@ -962,5 +963,215 @@ describe('runIndexerOnce — orchestrator', () => {
     expect(result.marketsWritten).toBe(1);
     expect(result.releaseWarning).toBeDefined();
     expect(result.releaseWarning).toMatch(/simulated release failure/);
+  });
+
+  // -------------------------------------------------------------------------
+  // 2B-4 orchestrator tests
+  // -------------------------------------------------------------------------
+
+  it('2B-4 mixed-event chunk: MarketCreated → ResolvedFriendly in one chunk; pm_markets advances to resolved + pm_resolutions row', async () => {
+    const t = await setup();
+    const created = buildMarketCreatedLog(50n, DEPLOY_BLOCK + 1n, 0);
+
+    // ResolvedFriendly log encoded via viem helpers — same approach
+    // used by the Staked test above. ResolvedFriendly has 1 indexed
+    // arg (marketId) and 4 non-indexed args (outcome u8, emptyPoolPath
+    // bool, feeTaken u256, totalOwed u256).
+    const resolvedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'ResolvedFriendly',
+      args: { marketId: 50n },
+    });
+    const resolvedData = encodeAbiParameters(
+      parseAbiParameters('uint8, bool, uint256, uint256'),
+      [1, false, 250_000n, 9_750_000n], // outcome=YES, paid path
+    );
+    const resolvedLog = {
+      address: CONTRACT,
+      topics: resolvedTopics as unknown as Log['topics'],
+      data: resolvedData,
+      blockNumber: DEPLOY_BLOCK + 2n,
+      transactionHash: ('0x' + '5'.repeat(64)) as `0x${string}`,
+      transactionIndex: 0,
+      logIndex: 0,
+      blockHash: ('0x' + '6'.repeat(64)) as `0x${string}`,
+      removed: false,
+    } as Log;
+
+    const multicallSpy = vi.fn(
+      async (args: { contracts: Array<{ functionName: string }> }) => {
+        if (args.contracts[0].functionName === 'getMarket') {
+          return buildFriendlyMulticallResults();
+        }
+        throw new Error(
+          `unexpected multicall: ${args.contracts[0].functionName}`,
+        );
+      },
+    );
+
+    const getBlockSpy = vi.fn(async () => ({
+      timestamp: 1778544200n,
+    }));
+
+    const fakeClient = {
+      getLogs: vi.fn(async () => [created, resolvedLog]),
+      multicall: multicallSpy,
+      getBlockNumber: vi.fn(async () => CHAIN_HEAD),
+      getBlock: getBlockSpy,
+    } as unknown as PublicClient;
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: fakeClient,
+    });
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+    expect(result.decodedEventCount).toBe(2);
+    expect(result.marketsWritten).toBe(1);
+
+    // pm_markets is now resolved with friendly_outcome=1, fee_taken=250000.
+    const markets = await t.db.select().from(pmMarkets);
+    expect(markets).toHaveLength(1);
+    expect(markets[0].marketId).toBe(50);
+    expect(markets[0].currentState).toBe('resolved');
+    expect(markets[0].friendlyOutcome).toBe(1);
+    expect(markets[0].feeTaken).toBe('250000');
+
+    // pm_resolutions has the ResolvedFriendly row.
+    const res = await t.db.select().from(pmResolutions);
+    expect(res).toHaveLength(1);
+    expect(res[0].eventName).toBe('ResolvedFriendly');
+    expect(res[0].marketId).toBe(50);
+  });
+
+  it('2B-4 block-timestamp prefetch caches: getBlock invoked exactly once per unique blockHash', async () => {
+    const t = await setup();
+    // Two ResolvedFriendly events sharing the SAME blockHash → only
+    // one getBlock call expected. (No MarketCreated needed; orphan
+    // events still go through Phase B prefetch.)
+    const sharedBlockHash = ('0x' + '7'.repeat(64)) as `0x${string}`;
+
+    function makeResolvedLog(
+      marketId: bigint,
+      txHash: `0x${string}`,
+    ): Log {
+      const topics = encodeEventTopics({
+        abi: privateMarketsAbi,
+        eventName: 'ResolvedFriendly',
+        args: { marketId },
+      });
+      const data = encodeAbiParameters(
+        parseAbiParameters('uint8, bool, uint256, uint256'),
+        [0, true, 0n, 0n],
+      );
+      return {
+        address: CONTRACT,
+        topics: topics as unknown as Log['topics'],
+        data,
+        blockNumber: DEPLOY_BLOCK + 1n,
+        transactionHash: txHash,
+        transactionIndex: 0,
+        logIndex: 0,
+        blockHash: sharedBlockHash,
+        removed: false,
+      } as Log;
+    }
+
+    const log1 = makeResolvedLog(
+      60n,
+      ('0x' + '8'.repeat(64)) as `0x${string}`,
+    );
+    const log2 = makeResolvedLog(
+      61n,
+      ('0x' + '9'.repeat(64)) as `0x${string}`,
+    );
+
+    const getBlockSpy = vi.fn(async () => ({
+      timestamp: 1778544300n,
+    }));
+
+    const fakeClient = {
+      getLogs: vi.fn(async () => [log1, log2]),
+      multicall: vi.fn(async () => {
+        throw new Error('multicall should not be called: no MarketCreated/Staked');
+      }),
+      getBlockNumber: vi.fn(async () => CHAIN_HEAD),
+      getBlock: getBlockSpy,
+    } as unknown as PublicClient;
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: fakeClient,
+    });
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+
+    // Cache hit: second event reuses the first event's getBlock result.
+    expect(getBlockSpy).toHaveBeenCalledTimes(1);
+
+    // Both ResolvedFriendly events are recorded in pm_resolutions
+    // (both orphan-event since pm_markets isn't seeded — the audit
+    // row is still inserted).
+    const res = await t.db.select().from(pmResolutions);
+    expect(res).toHaveLength(2);
+  });
+
+  it('2B-4 missing-blockHash fail-closed: throws BEFORE Phase C; mutex released; last_indexed_block unchanged (Codex r1 m4)', async () => {
+    const t = await setup();
+    // Build a Claimed log with blockHash undefined.
+    const claimedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'Claimed',
+      args: { marketId: 70n, recipient: CREATOR },
+    });
+    const claimedData = encodeAbiParameters(
+      parseAbiParameters('uint256'),
+      [1_000n],
+    );
+    const broken = {
+      address: CONTRACT,
+      topics: claimedTopics as unknown as Log['topics'],
+      data: claimedData,
+      blockNumber: DEPLOY_BLOCK + 1n,
+      transactionHash: ('0x' + 'a'.repeat(64)) as `0x${string}`,
+      transactionIndex: 0,
+      logIndex: 0,
+      // blockHash deliberately omitted (undefined).
+      removed: false,
+    } as unknown as Log;
+
+    const fakeClient = {
+      getLogs: vi.fn(async () => [broken]),
+      multicall: vi.fn(async () => []),
+      getBlockNumber: vi.fn(async () => CHAIN_HEAD),
+      getBlock: vi.fn(async () => ({ timestamp: 1n })),
+    } as unknown as PublicClient;
+
+    await expect(
+      runIndexerOnce({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        deployBlock: DEPLOY_BLOCK,
+        db: t.db as never,
+        publicClient: fakeClient,
+      }),
+    ).rejects.toThrow(/missing blockHash/);
+
+    // Mutex released by try/finally; last_indexed_block unchanged.
+    const stateRows = await t.db.select().from(pmIndexerState);
+    expect(stateRows).toHaveLength(1);
+    expect(stateRows[0].lockedAt).toBeNull();
+    // last_indexed_block stays at 0 (no Phase C advance happened).
+    expect(stateRows[0].lastIndexedBlock).toBe(0);
+
+    // pm_resolutions / pm_claims must be empty (Phase C never ran).
+    expect(await t.db.select().from(pmResolutions)).toHaveLength(0);
+    expect(await t.db.select().from(pmClaims)).toHaveLength(0);
   });
 });

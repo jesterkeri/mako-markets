@@ -29,6 +29,7 @@ import type { PublicClient } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
 import {
+  pmClaims,
   pmIndexerState,
   pmMarkets,
   pmOptions,
@@ -162,6 +163,15 @@ export interface HandlerCtx {
     string,
     { sequence: number; isSet: boolean }
   >;
+  /// 2B-4 addition: per-blockHash block.timestamp cache, populated
+  /// by Phase B for every event whose ABI doesn't carry a timestamp
+  /// arg (ResolvedFriendly / ResolvedOpenVote /
+  /// DistributedPrizePool / Canceled / Claimed). Keyed by lowercase
+  /// 32-byte hex (normalized via normalizeHex). Other 2B-2/2B-3
+  /// handlers ignore this map and read timestamps from event args.
+  /// Optional so tests that only exercise MarketCreated / Staked /
+  /// MarketMetadataFrozen can omit it without breaking.
+  blockTimestamps?: Map<`0x${string}`, Date>;
 }
 
 export class StaleLockLostError extends Error {
@@ -721,6 +731,525 @@ export async function processStaked(
   return { outcome: 'inserted' };
 }
 
+// ---- 2B-4 helpers ----------------------------------------------------------
+
+/// 2B-4: read the per-block timestamp from `ctx.blockTimestamps`,
+/// throwing on missing data. The throw guards against:
+///   - Phase B not running (programmer error in dispatcher wiring)
+///   - Event dispatched without going through the orchestrator
+///     (handler-only test forgot to populate the cache)
+///   - blockHash null/undefined (Phase B's fail-closed throw should
+///     have caught this earlier; this is a second-line guard)
+function readBlockTimestamp(
+  ctx: HandlerCtx,
+  log: { blockHash?: `0x${string}` | null },
+  eventName: string,
+): Date {
+  if (!log.blockHash) {
+    throw new Error(
+      `${eventName}: log.blockHash is missing; Phase B should have ` +
+        `failed closed before reaching the handler`,
+    );
+  }
+  const key = normalizeHex(log.blockHash, 32);
+  const ts = ctx.blockTimestamps?.get(key);
+  if (!ts) {
+    throw new Error(
+      `${eventName}: ctx.blockTimestamps missing entry for blockHash=${key}; ` +
+        `Phase B did not populate the cache`,
+    );
+  }
+  return ts;
+}
+
+/// 2B-4: shared "find pm_markets row by chain/contract/marketId"
+/// helper used by every resolution-shaped handler before the mirror
+/// UPDATE. Returns the row id if present.
+async function findPmMarketRowId(
+  ctx: HandlerCtx,
+  marketIdNum: number,
+): Promise<string | null> {
+  const rows = await ctx.chunkTx
+    .select({ id: pmMarkets.id })
+    .from(pmMarkets)
+    .where(
+      and(
+        eq(pmMarkets.chainId, ctx.chainId),
+        eq(pmMarkets.contractAddress, ctx.contractAddress),
+        eq(pmMarkets.marketId, marketIdNum),
+      ),
+    )
+    .limit(1);
+  return rows.length === 0 ? null : rows[0].id;
+}
+
+// ---- Resolution-shaped handlers (2B-4) -------------------------------------
+
+/// 2B-4: ResolvedFriendly handler. Persists pm_resolutions row,
+/// mirrors current_state + friendlyOutcome + friendlyEmptyPoolPath +
+/// feeTaken onto pm_markets. Outcomes:
+///   - 'replay-noop': pm_resolutions row already exists (idempotent)
+///   - 'orphan-event': pm_markets row absent (cross-chunk ordering)
+///   - 'state-mismatch': pm_markets row exists but current_state !=
+///     'created' (invariant violation, soft-warn)
+///   - 'resolved' / 'empty-pool-resolved': mirror UPDATE succeeded
+export async function processResolvedFriendly(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'ResolvedFriendly' }>,
+): Promise<{
+  outcome:
+    | 'resolved'
+    | 'empty-pool-resolved'
+    | 'replay-noop'
+    | 'orphan-event'
+    | 'state-mismatch';
+}> {
+  const { chainId, contractAddress, chunkTx } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  const txHashLower = normalizeHex(
+    event.log.transactionHash as `0x${string}`,
+    32,
+  );
+  const blockNumber = bigintToNumber(event.log.blockNumber as bigint);
+  const logIndex = event.log.logIndex as number;
+  const blockTimestamp = readBlockTimestamp(ctx, event.log, 'ResolvedFriendly');
+  const outcome = event.args.outcome;
+  const emptyPoolPath = event.args.emptyPoolPath;
+  const feeTakenStr = event.args.feeTaken.toString();
+
+  const insertResult = await chunkTx
+    .insert(pmResolutions)
+    .values({
+      chainId,
+      contractAddress,
+      txHash: txHashLower,
+      logIndex,
+      marketId: marketIdNum,
+      eventName: 'ResolvedFriendly',
+      payload: {
+        outcome,
+        emptyPoolPath,
+        feeTaken: feeTakenStr,
+        totalOwed: event.args.totalOwed.toString(),
+      },
+      blockNumber,
+      blockTimestamp,
+    })
+    .onConflictDoNothing({
+      target: [pmResolutions.txHash, pmResolutions.logIndex],
+    })
+    .returning({ txHash: pmResolutions.txHash });
+
+  if (insertResult.length === 0) {
+    return { outcome: 'replay-noop' };
+  }
+
+  const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
+  if (marketRowId === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processResolvedFriendly: orphan event for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_resolutions recorded, mirror skipped`,
+    );
+    return { outcome: 'orphan-event' };
+  }
+
+  const newState = emptyPoolPath ? 'empty_pool_resolved' : 'resolved';
+  const updated = await chunkTx
+    .update(pmMarkets)
+    .set({
+      currentState: newState,
+      friendlyOutcome:
+        outcome === 0 || outcome === 1 ? outcome : null,
+      friendlyEmptyPoolPath: emptyPoolPath,
+      feeTaken: feeTakenStr,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(pmMarkets.id, marketRowId),
+        eq(pmMarkets.currentState, 'created'),
+      ),
+    )
+    .returning({ id: pmMarkets.id });
+
+  if (updated.length === 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processResolvedFriendly: state-mismatch for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `row exists but current_state != 'created'; pm_resolutions ` +
+        `recorded, mirror skipped`,
+    );
+    return { outcome: 'state-mismatch' };
+  }
+
+  return { outcome: emptyPoolPath ? 'empty-pool-resolved' : 'resolved' };
+}
+
+/// 2B-4: ResolvedOpenVote handler. Persists pm_resolutions row with
+/// `topN` (number[]) + `feeTaken` (string) payload, mirrors
+/// current_state + feeTaken onto pm_markets.
+export async function processResolvedOpenVote(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'ResolvedOpenVote' }>,
+): Promise<{
+  outcome: 'resolved' | 'replay-noop' | 'orphan-event' | 'state-mismatch';
+}> {
+  const { chainId, contractAddress, chunkTx } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  const txHashLower = normalizeHex(
+    event.log.transactionHash as `0x${string}`,
+    32,
+  );
+  const blockNumber = bigintToNumber(event.log.blockNumber as bigint);
+  const logIndex = event.log.logIndex as number;
+  const blockTimestamp = readBlockTimestamp(ctx, event.log, 'ResolvedOpenVote');
+  const feeTakenStr = event.args.feeTaken.toString();
+  // topN values are bounded by MAX_OPTIONS (50) on-chain; bigintToNumber's
+  // safe-integer guard catches any drift.
+  const topN = event.args.topN.map((v) => bigintToNumber(v));
+
+  const insertResult = await chunkTx
+    .insert(pmResolutions)
+    .values({
+      chainId,
+      contractAddress,
+      txHash: txHashLower,
+      logIndex,
+      marketId: marketIdNum,
+      eventName: 'ResolvedOpenVote',
+      payload: { topN, feeTaken: feeTakenStr },
+      blockNumber,
+      blockTimestamp,
+    })
+    .onConflictDoNothing({
+      target: [pmResolutions.txHash, pmResolutions.logIndex],
+    })
+    .returning({ txHash: pmResolutions.txHash });
+
+  if (insertResult.length === 0) {
+    return { outcome: 'replay-noop' };
+  }
+
+  const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
+  if (marketRowId === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processResolvedOpenVote: orphan event for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_resolutions recorded, mirror skipped`,
+    );
+    return { outcome: 'orphan-event' };
+  }
+
+  const updated = await chunkTx
+    .update(pmMarkets)
+    .set({
+      currentState: 'resolved',
+      feeTaken: feeTakenStr,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(pmMarkets.id, marketRowId),
+        eq(pmMarkets.currentState, 'created'),
+      ),
+    )
+    .returning({ id: pmMarkets.id });
+
+  if (updated.length === 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processResolvedOpenVote: state-mismatch for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_resolutions recorded, mirror skipped`,
+    );
+    return { outcome: 'state-mismatch' };
+  }
+  return { outcome: 'resolved' };
+}
+
+/// 2B-4: DistributedPrizePool handler. Persists pm_resolutions row
+/// with full distribution payload, mirrors current_state + feeTaken
+/// onto pm_markets.
+export async function processDistributedPrizePool(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'DistributedPrizePool' }>,
+): Promise<{
+  outcome: 'resolved' | 'replay-noop' | 'orphan-event' | 'state-mismatch';
+}> {
+  const { chainId, contractAddress, chunkTx } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  const txHashLower = normalizeHex(
+    event.log.transactionHash as `0x${string}`,
+    32,
+  );
+  const blockNumber = bigintToNumber(event.log.blockNumber as bigint);
+  const logIndex = event.log.logIndex as number;
+  const blockTimestamp = readBlockTimestamp(
+    ctx,
+    event.log,
+    'DistributedPrizePool',
+  );
+  const feeTakenStr = event.args.feeTaken.toString();
+  const topN = event.args.topN.map((v) => bigintToNumber(v));
+  const winnerWallets = event.args.winnerWallets.map((a) =>
+    normalizeHex(a, 20),
+  );
+  const amountsOwed = event.args.amountsOwed.map((a) => a.toString());
+
+  const insertResult = await chunkTx
+    .insert(pmResolutions)
+    .values({
+      chainId,
+      contractAddress,
+      txHash: txHashLower,
+      logIndex,
+      marketId: marketIdNum,
+      eventName: 'DistributedPrizePool',
+      payload: {
+        topN,
+        winnerWallets,
+        amountsOwed,
+        feeTaken: feeTakenStr,
+      },
+      blockNumber,
+      blockTimestamp,
+    })
+    .onConflictDoNothing({
+      target: [pmResolutions.txHash, pmResolutions.logIndex],
+    })
+    .returning({ txHash: pmResolutions.txHash });
+
+  if (insertResult.length === 0) {
+    return { outcome: 'replay-noop' };
+  }
+
+  const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
+  if (marketRowId === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processDistributedPrizePool: orphan event for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_resolutions recorded, mirror skipped`,
+    );
+    return { outcome: 'orphan-event' };
+  }
+
+  const updated = await chunkTx
+    .update(pmMarkets)
+    .set({
+      currentState: 'resolved',
+      feeTaken: feeTakenStr,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(pmMarkets.id, marketRowId),
+        eq(pmMarkets.currentState, 'created'),
+      ),
+    )
+    .returning({ id: pmMarkets.id });
+
+  if (updated.length === 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processDistributedPrizePool: state-mismatch for ` +
+        `marketId=${marketIdNum} on chainId=${chainId} ` +
+        `contract=${contractAddress}; pm_resolutions recorded, ` +
+        `mirror skipped`,
+    );
+    return { outcome: 'state-mismatch' };
+  }
+  return { outcome: 'resolved' };
+}
+
+/// 2B-4: Canceled handler. Persists pm_resolutions row, maps reason
+/// → state enum, mirrors current_state + fee_taken='0' onto
+/// pm_markets. Precedence (Codex r2 m2): replay-noop > orphan-event
+/// > unknown-reason > state-mismatch > terminal — orphan/replay take
+/// priority over unknown-reason so observability is preserved on the
+/// schema-drift edge case.
+export async function processCanceled(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'Canceled' }>,
+): Promise<{
+  outcome:
+    | 'canceled'
+    | 'timed-out'
+    | 'zero-stake-expired'
+    | 'replay-noop'
+    | 'orphan-event'
+    | 'unknown-reason'
+    | 'state-mismatch';
+}> {
+  const { chainId, contractAddress, chunkTx } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  const txHashLower = normalizeHex(
+    event.log.transactionHash as `0x${string}`,
+    32,
+  );
+  const blockNumber = bigintToNumber(event.log.blockNumber as bigint);
+  const logIndex = event.log.logIndex as number;
+  const blockTimestamp = readBlockTimestamp(ctx, event.log, 'Canceled');
+  const reason = event.args.reason;
+
+  // Step 1: ON CONFLICT first so replays return 'replay-noop' even
+  // for unknown-reason events (Codex r1 m2).
+  const insertResult = await chunkTx
+    .insert(pmResolutions)
+    .values({
+      chainId,
+      contractAddress,
+      txHash: txHashLower,
+      logIndex,
+      marketId: marketIdNum,
+      eventName: 'Canceled',
+      payload: { reason },
+      blockNumber,
+      blockTimestamp,
+    })
+    .onConflictDoNothing({
+      target: [pmResolutions.txHash, pmResolutions.logIndex],
+    })
+    .returning({ txHash: pmResolutions.txHash });
+
+  if (insertResult.length === 0) {
+    return { outcome: 'replay-noop' };
+  }
+
+  // Step 2: orphan check BEFORE reason mapping (Codex r2 m2).
+  const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
+  if (marketRowId === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processCanceled: orphan event for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_resolutions recorded, mirror skipped`,
+    );
+    return { outcome: 'orphan-event' };
+  }
+
+  // Step 3: map reason → state enum.
+  let mappedState:
+    | 'canceled'
+    | 'timed_out'
+    | 'zero_stake_expired'
+    | null = null;
+  let outcomeVariant:
+    | 'canceled'
+    | 'timed-out'
+    | 'zero-stake-expired'
+    | null = null;
+  if (reason === 0) {
+    mappedState = 'canceled';
+    outcomeVariant = 'canceled';
+  } else if (reason === 1) {
+    mappedState = 'timed_out';
+    outcomeVariant = 'timed-out';
+  } else if (reason === 2) {
+    mappedState = 'zero_stake_expired';
+    outcomeVariant = 'zero-stake-expired';
+  }
+
+  if (mappedState === null || outcomeVariant === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processCanceled: unknown reason=${reason} for ` +
+        `marketId=${marketIdNum} on chainId=${chainId} ` +
+        `contract=${contractAddress}; pm_resolutions recorded, ` +
+        `mirror skipped`,
+    );
+    return { outcome: 'unknown-reason' };
+  }
+
+  // Step 4: predicate-guarded mirror UPDATE; explicit fee_taken='0'
+  // (Codex r1 m1) when the guard matches.
+  const updated = await chunkTx
+    .update(pmMarkets)
+    .set({
+      currentState: mappedState,
+      feeTaken: '0',
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(pmMarkets.id, marketRowId),
+        eq(pmMarkets.currentState, 'created'),
+      ),
+    )
+    .returning({ id: pmMarkets.id });
+
+  if (updated.length === 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processCanceled: state-mismatch for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_resolutions recorded, mirror skipped`,
+    );
+    return { outcome: 'state-mismatch' };
+  }
+  return { outcome: outcomeVariant };
+}
+
+/// 2B-4: Claimed handler. Inserts pm_claims row idempotently; no
+/// pm_markets mirror (claims represent value movement, not state
+/// transitions). The pm_markets lookup is kept for orphan
+/// observability.
+export async function processClaimed(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'Claimed' }>,
+): Promise<{ outcome: 'inserted' | 'replay-noop' | 'orphan-event' }> {
+  const { chainId, contractAddress, chunkTx } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  const txHashLower = normalizeHex(
+    event.log.transactionHash as `0x${string}`,
+    32,
+  );
+  const blockNumber = bigintToNumber(event.log.blockNumber as bigint);
+  const logIndex = event.log.logIndex as number;
+  const blockTimestamp = readBlockTimestamp(ctx, event.log, 'Claimed');
+  const recipientLower = normalizeHex(event.args.recipient, 20);
+  const amountStr = event.args.amount.toString();
+
+  const insertResult = await chunkTx
+    .insert(pmClaims)
+    .values({
+      chainId,
+      contractAddress,
+      txHash: txHashLower,
+      logIndex,
+      marketId: marketIdNum,
+      recipient: recipientLower,
+      amount: amountStr,
+      blockNumber,
+      blockTimestamp,
+    })
+    .onConflictDoNothing({
+      target: [pmClaims.txHash, pmClaims.logIndex],
+    })
+    .returning({ txHash: pmClaims.txHash });
+
+  if (insertResult.length === 0) {
+    return { outcome: 'replay-noop' };
+  }
+
+  const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
+  if (marketRowId === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processClaimed: orphan event for marketId=${marketIdNum} ` +
+        `on chainId=${chainId} contract=${contractAddress}; ` +
+        `pm_claims recorded, no mirror needed`,
+    );
+    return { outcome: 'orphan-event' };
+  }
+
+  return { outcome: 'inserted' };
+}
+
 // ---- Orchestrator ----------------------------------------------------------
 
 export async function runIndexerOnce(
@@ -982,6 +1511,47 @@ export async function runIndexerOnce(
         }
       }
 
+      // 2B-4 Phase B addition: collect unique blockHashes for events
+      // whose args don't carry a timestamp (Resolved* / Distributed* /
+      // Canceled / Claimed). Fetch one block per unique hash and
+      // populate ctx.blockTimestamps. Codex r1 m4: missing blockHash
+      // is fail-closed BEFORE Phase C so the surrounding try/finally
+      // releases the mutex cleanly. Codex r2 m1: cache key is
+      // normalized lowercase hex via normalizeHex.
+      const TIMESTAMPED_EVENT_NAMES = new Set<DecodedEvent['eventName']>([
+        'ResolvedFriendly',
+        'ResolvedOpenVote',
+        'DistributedPrizePool',
+        'Canceled',
+        'Claimed',
+      ]);
+      const uniqueBlockHashes = new Set<`0x${string}`>();
+      for (const ev of decoded) {
+        if (!TIMESTAMPED_EVENT_NAMES.has(ev.eventName)) continue;
+        const rawHash = (ev.log as { blockHash?: `0x${string}` | null })
+          .blockHash;
+        if (!rawHash) {
+          throw new Error(
+            `runIndexerOnce: 2B-4 event ${ev.eventName} at ` +
+              `txHash=${ev.log.transactionHash} ` +
+              `logIndex=${ev.log.logIndex} is missing blockHash; ` +
+              `cannot prefetch block timestamp`,
+          );
+        }
+        uniqueBlockHashes.add(normalizeHex(rawHash, 32));
+      }
+      const blockTimestamps = new Map<`0x${string}`, Date>();
+      // Sequential getBlock — chunkSize default 5_000 caps unique-hash
+      // count. Resolution-shaped events are rare in practice. Batch
+      // via multicall in a later phase if RPC budget becomes a concern.
+      for (const blockHash of uniqueBlockHashes) {
+        const block = await publicClient.getBlock({ blockHash });
+        blockTimestamps.set(
+          blockHash,
+          secondsBigIntToDate(block.timestamp),
+        );
+      }
+
       // Phase C: per-chunk transaction. Includes handler dispatch +
       // ownership-gated last_indexed_block advance.
       let chunkMarketsWritten = 0;
@@ -997,6 +1567,7 @@ export async function runIndexerOnce(
           acquiredLockedAt,
           prefetch,
           firstStakeSequence,
+          blockTimestamps,
         };
 
         for (const event of decoded) {
@@ -1012,8 +1583,21 @@ export async function runIndexerOnce(
             await processMarketMetadataFrozen(ctx, event);
           } else if (event.eventName === 'Staked') {
             await processStaked(ctx, event);
+          } else if (event.eventName === 'ResolvedFriendly') {
+            await processResolvedFriendly(ctx, event);
+          } else if (event.eventName === 'ResolvedOpenVote') {
+            await processResolvedOpenVote(ctx, event);
+          } else if (event.eventName === 'DistributedPrizePool') {
+            await processDistributedPrizePool(ctx, event);
+          } else if (event.eventName === 'Canceled') {
+            await processCanceled(ctx, event);
+          } else if (event.eventName === 'Claimed') {
+            await processClaimed(ctx, event);
           }
-          // Other event branches are 2B-4. No-op in 2B-3.
+          // All eight contract events handled. Future events would
+          // require extending DecodedEvent in event-decode.ts and
+          // adding a branch here; the discriminated union surfaces
+          // any drift at TS check time.
         }
 
         await advanceLastIndexedBlockOrThrow(
