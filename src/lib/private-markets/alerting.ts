@@ -22,9 +22,10 @@ export type PmAlertCode =
   | 'unknown-reason';
 
 /// Expected observations — events that are part of normal operation
-/// (cross-chunk ordering during backfill) but worth logging for
-/// post-hoc analysis.
-export type PmObservation = 'orphan-event';
+/// (cross-chunk ordering during backfill, transient RPC failures
+/// during pending-claim queries) but worth logging for post-hoc
+/// analysis.
+export type PmObservation = 'orphan-event' | 'pending-claim-read-failed';
 
 /// Operational metrics — periodic counters from sweep / resnapshot
 /// ticks. Suppressed entirely on no-op ticks so logs stay quiet.

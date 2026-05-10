@@ -48,6 +48,38 @@ describe('alertInvariantViolation', () => {
   });
 });
 
+describe('PmObservation values (Codex r1 M4 + r6 — pending-claim-read-failed)', () => {
+  it('"pending-claim-read-failed" is a valid PmObservation', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logObservation('pending-claim-read-failed', {
+      ...baseCtx,
+      handler: 'getPendingClaimsForWallet',
+    });
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(parsed.kind).toBe('pm.observation');
+    expect(parsed.code).toBe('pending-claim-read-failed');
+    expect(parsed.severity).toBe('warn');
+  });
+  it('round-trips marketId for pending-claim-read-failed', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logObservation('pending-claim-read-failed', {
+      ...baseCtx,
+      handler: 'getPendingClaimsForWallet',
+      marketId: 99,
+    });
+    const parsed = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(parsed.marketId).toBe(99);
+  });
+  it('"orphan-event" remains a valid PmObservation alongside the new code', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logObservation('orphan-event', baseCtx);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const parsed = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(parsed.code).toBe('orphan-event');
+  });
+});
+
 describe('logObservation', () => {
   it('emits to console.warn (NOT console.error) with kind=pm.observation', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

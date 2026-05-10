@@ -25,11 +25,20 @@ vi.mock('@/db/client', () => ({
   },
 }));
 
-import { pmMarkets, pmOptions } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import type { PublicClient } from 'viem';
+
+import { pmClaims, pmMarkets, pmOptions, pmStakes } from '@/db/schema';
 import {
+  __setDbCallCounter,
+  getClaimsForWallet,
   getMarketBySlug,
   getMarketByMarketId,
   getMarketBySlugIncludingHistory,
+  getMarketsCreatedByWallet,
+  getMarketsForWalletByEffectiveState,
+  getPendingClaimsForWallet,
+  getStakesForWallet,
 } from '../queries';
 import { createTestDb, type TestDb } from './test-db';
 
@@ -255,5 +264,611 @@ describe('getMarketBySlugIncludingHistory (2F stub)', () => {
     await expect(getMarketBySlugIncludingHistory('any')).rejects.toThrow(
       /Not implemented in 2B-2/,
     );
+  });
+});
+
+// ============================================================================
+// Phase 2B-6 — pending-claim queries + listing helpers
+// ============================================================================
+
+const STAKER_A = '0x2222222222222222222222222222222222222222' as const;
+const STAKER_B = '0x3333333333333333333333333333333333333333' as const;
+const NOW = new Date('2026-05-15T12:00:00Z');
+const STALE = new Date('2026-05-13T12:00:00Z');
+
+async function seedConfirmedMarket(opts: {
+  marketId: number;
+  shape?: 'friendly' | 'open_vote' | 'prize_pool';
+  creator?: `0x${string}`;
+  currentState?:
+    | 'created'
+    | 'resolved'
+    | 'empty_pool_resolved'
+    | 'canceled'
+    | 'timed_out'
+    | 'zero_stake_expired';
+  stakingOpensAt?: Date;
+  closeAt?: Date;
+  totalStake?: string;
+  confirmedAt?: Date;
+}): Promise<string> {
+  const inserted = await active!.db
+    .insert(pmMarkets)
+    .values({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      slug: `dx-${opts.marketId.toString().padStart(8, '0')}`,
+      clientNonce:
+        ('0x' + opts.marketId.toString(16).padStart(64, '0')) as `0x${string}`,
+      creator: opts.creator ?? CREATOR,
+      marketId: opts.marketId,
+      shape: opts.shape ?? 'friendly',
+      createStatus: 'confirmed',
+      confirmedAt: opts.confirmedAt ?? STALE,
+      pendingAt: STALE,
+      title: `Market ${opts.marketId}`,
+      visibilityView: 0,
+      visibilityParticipation: 0,
+      stakingOpensAt: opts.stakingOpensAt ?? new Date('2026-05-12T00:01:00Z'),
+      closeAt: opts.closeAt ?? new Date('2026-05-12T00:10:00Z'),
+      currentState: opts.currentState ?? 'resolved',
+      totalStake: opts.totalStake ?? '0',
+    })
+    .returning({ id: pmMarkets.id });
+  const id = inserted[0].id;
+  await active!.db.insert(pmOptions).values([
+    {
+      marketDbId: id,
+      optionIndex: 0,
+      label: 'NO',
+      participantWallet: null,
+      poolTotal: '0',
+      firstStakeSequence: null,
+    },
+    {
+      marketDbId: id,
+      optionIndex: 1,
+      label: 'YES',
+      participantWallet: null,
+      poolTotal: '0',
+      firstStakeSequence: null,
+    },
+  ]);
+  return id;
+}
+
+async function seedStake(args: {
+  marketId: number;
+  staker: `0x${string}`;
+  optionIndex: number;
+  amount: string;
+  txHash?: `0x${string}`;
+}): Promise<void> {
+  await active!.db.insert(pmStakes).values({
+    chainId: CHAIN_ID,
+    contractAddress: CONTRACT,
+    txHash:
+      args.txHash ??
+      (('0x' + args.marketId.toString(16).padStart(64, '0')) as `0x${string}`),
+    logIndex: args.optionIndex,
+    marketId: args.marketId,
+    staker: args.staker,
+    optionIndex: args.optionIndex,
+    amount: args.amount,
+    blockNumber: 30699999,
+    blockTimestamp: STALE,
+  });
+}
+
+async function seedClaim(args: {
+  marketId: number;
+  recipient: `0x${string}`;
+  amount: string;
+  txHash?: `0x${string}`;
+}): Promise<void> {
+  await active!.db.insert(pmClaims).values({
+    chainId: CHAIN_ID,
+    contractAddress: CONTRACT,
+    txHash:
+      args.txHash ??
+      (('0x' + args.marketId.toString(16).padStart(64, '0')) as `0x${string}`),
+    logIndex: 0,
+    marketId: args.marketId,
+    recipient: args.recipient,
+    amount: args.amount,
+    blockNumber: 30699999,
+    blockTimestamp: STALE,
+  });
+}
+
+function buildMulticallClient(
+  pendingByMarketId: Map<number, bigint | 'revert'>,
+): PublicClient {
+  return {
+    multicall: vi.fn(
+      async (a: {
+        contracts: Array<{ args: readonly [bigint, `0x${string}`] }>;
+      }) => {
+        return a.contracts.map((c) => {
+          const mid = Number(c.args[0]);
+          const v = pendingByMarketId.get(mid);
+          if (v === 'revert' || v === undefined) {
+            return { status: 'failure' };
+          }
+          return { status: 'success', result: v };
+        });
+      },
+    ),
+  } as unknown as PublicClient;
+}
+
+beforeEach(() => {
+  // Reset DB call counter between tests so cross-test bleed is impossible.
+  __setDbCallCounter(null);
+});
+
+afterEach(() => {
+  __setDbCallCounter(null);
+});
+
+describe('getStakesForWallet', () => {
+  it('returns all pm_stakes for wallet, contract-scoped, ordered by blockTimestamp DESC', async () => {
+    await seedConfirmedMarket({ marketId: 1 });
+    await seedStake({ marketId: 1, staker: STAKER_A, optionIndex: 1, amount: '5000000' });
+    await seedStake({ marketId: 1, staker: STAKER_A, optionIndex: 0, amount: '1000000', txHash: ('0x' + 'b'.repeat(64)) as `0x${string}` });
+    const r = await getStakesForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+    });
+    expect(r).toHaveLength(2);
+    expect(r[0].amount).toBeDefined();
+  });
+  it('returns empty array when wallet has no stakes', async () => {
+    await seedConfirmedMarket({ marketId: 2 });
+    const r = await getStakesForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_B,
+    });
+    expect(r).toEqual([]);
+  });
+});
+
+describe('getClaimsForWallet', () => {
+  it('returns all pm_claims for wallet (lowercase normalised input)', async () => {
+    await seedConfirmedMarket({ marketId: 3 });
+    await seedClaim({ marketId: 3, recipient: STAKER_A, amount: '500' });
+    // Mixed-case keeping the 0x prefix lowercase (only the hex digits
+    // upper). normalizeHex toLowerCases the entire string anyway.
+    const mixed =
+      '0x2222222222222222222222222222222222222222' as `0x${string}`;
+    const r = await getClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: mixed,
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0].marketId).toBe(3);
+    expect(r[0].amount).toBe('500');
+  });
+});
+
+describe('getPendingClaimsForWallet', () => {
+  it('happy path: resolved market, wallet won → row included with pending amount', async () => {
+    await seedConfirmedMarket({ marketId: 10 });
+    await seedStake({ marketId: 10, staker: STAKER_A, optionIndex: 1, amount: '5000000' });
+    const client = buildMulticallClient(new Map([[10, 9_750_000n]]));
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].pendingAmountOnChain).toBe('9750000');
+    expect(r.rows[0].effectiveStateAt).toBe('resolved');
+    expect(r.chainReadStatus).toBe('ok');
+    expect(r.readAttemptCount).toBe(1);
+    expect(r.readFailureCount).toBe(0);
+  });
+
+  it('already-claimed: chain returns 0, audit > 0 → excluded by default; included with includeFullyClaimed=true', async () => {
+    await seedConfirmedMarket({ marketId: 11 });
+    await seedStake({ marketId: 11, staker: STAKER_A, optionIndex: 1, amount: '5000000' });
+    await seedClaim({ marketId: 11, recipient: STAKER_A, amount: '9000000' });
+    const client = buildMulticallClient(new Map([[11, 0n]]));
+    const def = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(def.rows).toHaveLength(0);
+    const inc = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+      includeFullyClaimed: true,
+    });
+    expect(inc.rows).toHaveLength(1);
+    expect(inc.rows[0].alreadyClaimedFromAudit).toBe('9000000');
+  });
+
+  it('includePending=true: open-state market → row included, pending=0', async () => {
+    await seedConfirmedMarket({
+      marketId: 12,
+      currentState: 'created',
+      stakingOpensAt: new Date('2026-05-15T11:00:00Z'),
+      closeAt: new Date('2026-05-15T13:00:00Z'),
+      totalStake: '5000000',
+    });
+    await seedStake({ marketId: 12, staker: STAKER_A, optionIndex: 1, amount: '5000000' });
+    const client = buildMulticallClient(new Map([[12, 0n]]));
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+      includePending: true,
+    });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].effectiveStateAt).toBe('open');
+    expect(r.rows[0].pendingAmountOnChain).toBe('0');
+  });
+
+  it('Codex r1 M3 — read-failed rows are INCLUDED with null pendingAmountOnChain', async () => {
+    await seedConfirmedMarket({ marketId: 13 });
+    await seedStake({ marketId: 13, staker: STAKER_A, optionIndex: 1, amount: '1' });
+    const client = buildMulticallClient(new Map([[13, 'revert']]));
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].pendingAmountOnChain).toBeNull();
+  });
+
+  it('Codex r2 M1 — DB lag, includePending=true includes stale awaiting_creator', async () => {
+    // pm_markets in 'created' but past closeAt + grace not yet → 'awaiting_creator'
+    await seedConfirmedMarket({
+      marketId: 14,
+      currentState: 'created',
+      stakingOpensAt: new Date('2026-05-12T00:01:00Z'),
+      closeAt: new Date('2026-05-12T00:10:00Z'),
+      totalStake: '1000000',
+    });
+    await seedStake({ marketId: 14, staker: STAKER_A, optionIndex: 1, amount: '1000000' });
+    // Chain says 0 (could be either pre-resolution or already-claimed; the
+    // helper can't distinguish without extra RPC; default filter excludes).
+    const client = buildMulticallClient(new Map([[14, 0n]]));
+    const def = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(def.rows).toHaveLength(0); // chain authoritative — 0 means nothing owed
+    const inc = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+      includePending: true,
+    });
+    expect(inc.rows).toHaveLength(1);
+    expect(inc.rows[0].effectiveStateAt).toBe('awaiting_creator');
+  });
+
+  it('Prize Pool participant (NOT a staker) included via pm_options.participantWallet', async () => {
+    const dbId = await seedConfirmedMarket({
+      marketId: 15,
+      shape: 'prize_pool',
+    });
+    await active!.db
+      .update(pmOptions)
+      .set({ participantWallet: STAKER_A })
+      .where(eq(pmOptions.marketDbId, dbId));
+    const client = buildMulticallClient(new Map([[15, 7_000_000n]]));
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].pendingAmountOnChain).toBe('7000000');
+  });
+
+  it('empty result: wallet that never touched any market', async () => {
+    await seedConfirmedMarket({ marketId: 16 });
+    const client = buildMulticallClient(new Map());
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_B,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.rows).toEqual([]);
+    expect(r.readAttemptCount).toBe(0);
+    expect(r.chainReadStatus).toBe('ok');
+  });
+});
+
+describe('chainReadStatus aggregate (Codex r3 M1 + r5 m1)', () => {
+  it('20a — zero candidates → ok', async () => {
+    const client = buildMulticallClient(new Map());
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_B,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.chainReadStatus).toBe('ok');
+    expect(r.readAttemptCount).toBe(0);
+  });
+
+  it('20b — partial fail → degraded; rows.length matches readAttemptCount when all kept', async () => {
+    await seedConfirmedMarket({ marketId: 30 });
+    await seedConfirmedMarket({ marketId: 31 });
+    await seedConfirmedMarket({ marketId: 32 });
+    await seedStake({ marketId: 30, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '3'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 31, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '4'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 32, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '5'.repeat(64)) as `0x${string}` });
+    const client = buildMulticallClient(
+      new Map<number, bigint | 'revert'>([
+        [30, 100n],
+        [31, 200n],
+        [32, 'revert'],
+      ]),
+    );
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.readAttemptCount).toBe(3);
+    expect(r.readFailureCount).toBe(1);
+    expect(r.rows).toHaveLength(3);
+    expect(r.chainReadStatus).toBe('degraded');
+  });
+
+  it('20c — all fail → failed; all rows have null pending', async () => {
+    await seedConfirmedMarket({ marketId: 40 });
+    await seedConfirmedMarket({ marketId: 41 });
+    await seedStake({ marketId: 40, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '6'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 41, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '7'.repeat(64)) as `0x${string}` });
+    const client = buildMulticallClient(
+      new Map<number, bigint | 'revert'>([
+        [40, 'revert'],
+        [41, 'revert'],
+      ]),
+    );
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.chainReadStatus).toBe('failed');
+    expect(r.readFailureCount).toBe(r.readAttemptCount);
+    expect(r.rows.every((row) => row.pendingAmountOnChain === null)).toBe(true);
+  });
+
+  it('20d — readAttemptCount diverges from rows.length (Codex r5 m1)', async () => {
+    await seedConfirmedMarket({ marketId: 50 });
+    await seedConfirmedMarket({ marketId: 51 });
+    await seedConfirmedMarket({ marketId: 52 });
+    await seedStake({ marketId: 50, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '8'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 51, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '9'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 52, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + 'a'.repeat(64)) as `0x${string}` });
+    // 50 returns 0 (no claim); 51 returns 5_000_000; 52 reverts.
+    const client = buildMulticallClient(
+      new Map<number, bigint | 'revert'>([
+        [50, 0n],
+        [51, 5_000_000n],
+        [52, 'revert'],
+      ]),
+    );
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.readAttemptCount).toBe(3);
+    expect(r.rows).toHaveLength(2); // 50 excluded by default filter
+    expect(r.chainReadStatus).toBe('degraded');
+  });
+});
+
+describe('batch-hydration DB call counter (Codex r3 M2 + r5 M1)', () => {
+  it('non-zero candidates: counters=(candidateMarkets:1, options:1, stakes:1, claims:1)', async () => {
+    await seedConfirmedMarket({ marketId: 60 });
+    await seedConfirmedMarket({ marketId: 61 });
+    await seedStake({ marketId: 60, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + 'b'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 61, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + 'c'.repeat(64)) as `0x${string}` });
+    const counter = {
+      candidateMarkets: 0,
+      options: 0,
+      stakes: 0,
+      claims: 0,
+    };
+    __setDbCallCounter(counter);
+    const client = buildMulticallClient(
+      new Map<number, bigint | 'revert'>([
+        [60, 100n],
+        [61, 200n],
+      ]),
+    );
+    await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(counter.candidateMarkets).toBe(1);
+    expect(counter.options).toBe(1);
+    expect(counter.stakes).toBe(1);
+    expect(counter.claims).toBe(1);
+  });
+
+  it('zero candidates (Codex r5 M1): candidateMarkets=1 still ran; others=0', async () => {
+    const counter = {
+      candidateMarkets: 0,
+      options: 0,
+      stakes: 0,
+      claims: 0,
+    };
+    __setDbCallCounter(counter);
+    const client = buildMulticallClient(new Map());
+    await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_B,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(counter.candidateMarkets).toBe(1);
+    expect(counter.options).toBe(0);
+    expect(counter.stakes).toBe(0);
+    expect(counter.claims).toBe(0);
+  });
+});
+
+describe('getMarketsCreatedByWallet / getMarketsForWalletByEffectiveState', () => {
+  it('pagination: limit=2 offset=2 returns rows 3-4', async () => {
+    for (let i = 1; i <= 5; i++) {
+      await seedConfirmedMarket({
+        marketId: 100 + i,
+        creator: CREATOR,
+        confirmedAt: new Date(Date.UTC(2026, 4, 10 + i)),
+      });
+    }
+    const r = await getMarketsCreatedByWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: CREATOR,
+      now: NOW,
+      limit: 2,
+      offset: 2,
+    });
+    expect(r.rows).toHaveLength(2);
+    expect(r.totalCount).toBe(5);
+  });
+
+  it('Codex r5 m2 — deterministic tie-breaker: same confirmed_at, ordered by market_id DESC', async () => {
+    const sameTime = new Date('2026-05-12T01:00:00Z');
+    await seedConfirmedMarket({ marketId: 200, creator: CREATOR, confirmedAt: sameTime });
+    await seedConfirmedMarket({ marketId: 201, creator: CREATOR, confirmedAt: sameTime });
+    await seedConfirmedMarket({ marketId: 202, creator: CREATOR, confirmedAt: sameTime });
+    const r1 = await getMarketsCreatedByWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: CREATOR,
+      now: NOW,
+      limit: 2,
+      offset: 0,
+    });
+    const r2 = await getMarketsCreatedByWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: CREATOR,
+      now: NOW,
+      limit: 2,
+      offset: 0,
+    });
+    // Same call twice → same rows in same order.
+    expect(r1.rows.map((r) => r.market.marketId)).toEqual([202, 201]);
+    expect(r2.rows.map((r) => r.market.marketId)).toEqual([202, 201]);
+  });
+
+  it('effectiveStateFilter: only "open" markets returned', async () => {
+    await seedConfirmedMarket({
+      marketId: 300,
+      creator: CREATOR,
+      currentState: 'created',
+      stakingOpensAt: new Date('2026-05-15T11:00:00Z'),
+      closeAt: new Date('2026-05-15T13:00:00Z'),
+    });
+    await seedConfirmedMarket({ marketId: 301, creator: CREATOR, currentState: 'resolved' });
+    await seedStake({ marketId: 300, staker: STAKER_A, optionIndex: 0, amount: '1', txHash: ('0x' + 'd'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 301, staker: STAKER_A, optionIndex: 0, amount: '1', txHash: ('0x' + 'e'.repeat(64)) as `0x${string}` });
+    const r = await getMarketsForWalletByEffectiveState({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      now: NOW,
+      effectiveStateFilter: ['open'],
+    });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].market.marketId).toBe(300);
+  });
+
+  it('truncation: candidateCap=2 with 3 seeded → truncated:true', async () => {
+    for (let i = 1; i <= 3; i++) {
+      await seedConfirmedMarket({
+        marketId: 400 + i,
+        creator: CREATOR,
+        confirmedAt: new Date(Date.UTC(2026, 4, 10 + i)),
+      });
+    }
+    const r = await getMarketsCreatedByWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: CREATOR,
+      now: NOW,
+      limit: 50,
+      candidateCap: 2,
+    });
+    expect(r.truncated).toBe(true);
+    expect(r.candidateCap).toBe(2);
+  });
+});
+
+describe('PendingClaimsResult includes candidateCap (Codex r2 m2)', () => {
+  it('returned shape has candidateCap field', async () => {
+    const client = buildMulticallClient(new Map());
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_B,
+      publicClient: client,
+      now: NOW,
+      candidateCap: 100,
+    });
+    expect(r.candidateCap).toBe(100);
+  });
+});
+
+describe('__setDbCallCounter test-only guard (Codex r5 m3)', () => {
+  it('throws when called outside test environment', () => {
+    // Stub both env vars to non-test values; vi.stubEnv handles
+    // NODE_ENV's read-only Vitest declaration.
+    vi.stubEnv('MAKO_STAGE', 'production');
+    vi.stubEnv('NODE_ENV', 'production');
+    try {
+      expect(() => __setDbCallCounter(null)).toThrow(/test-only/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
