@@ -31,7 +31,7 @@ import {
 } from 'viem';
 
 import { privateMarketsAbi } from '@/lib/MakoPrivateMarketsV1.abi';
-import { pmIndexerState, pmMarkets, pmOptions } from '@/db/schema';
+import { pmIndexerState, pmMarkets, pmOptions, pmStakes } from '@/db/schema';
 
 import { isBusy, runIndexerOnce } from '../indexer';
 import { createTestDb, type TestDb } from './test-db';
@@ -461,6 +461,141 @@ describe('runIndexerOnce — orchestrator', () => {
         `B-${m.marketId}`,
       ]);
     }
+  });
+
+  it('Phase B prefetches getOptionFirstStakeSequence for Staked events and Phase C wires it (2B-3)', async () => {
+    const t = await setup();
+    // Seed a confirmed market + 2 options so the Staked handler can
+    // hit the existing pm_options row (no orphan).
+    const marketRows = await t.db
+      .insert(pmMarkets)
+      .values({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        slug: 'dx-existing0',
+        clientNonce: NONCE_1,
+        creator: CREATOR,
+        marketId: 5,
+        shape: 'friendly',
+        createStatus: 'confirmed',
+        confirmedAt: new Date(),
+        title: 'Pre-existing',
+        visibilityView: 0,
+        visibilityParticipation: 0,
+        stakingOpensAt: new Date('2026-05-12T00:01:00Z'),
+        closeAt: new Date('2026-05-12T00:10:00Z'),
+      })
+      .returning({ id: pmMarkets.id });
+    await t.db.insert(pmOptions).values([
+      {
+        marketDbId: marketRows[0].id,
+        optionIndex: 0,
+        label: 'NO',
+        participantWallet: null,
+        poolTotal: '0',
+        firstStakeSequence: null,
+      },
+      {
+        marketDbId: marketRows[0].id,
+        optionIndex: 1,
+        label: 'YES',
+        participantWallet: null,
+        poolTotal: '0',
+        firstStakeSequence: null,
+      },
+    ]);
+
+    // Build a Staked log via encode helpers (mirrors event-decode
+    // tests' approach).
+    const stakedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'Staked',
+      args: { marketId: 5n, staker: CREATOR },
+    });
+    const stakedData = encodeAbiParameters(
+      parseAbiParameters('uint256, uint256, uint256'),
+      [1n, 3_000_000n, 1778544100n], // optionIndex, amount, timestamp
+    );
+    const stakedLog = {
+      address: CONTRACT,
+      topics: stakedTopics as unknown as Log['topics'],
+      data: stakedData,
+      blockNumber: DEPLOY_BLOCK + 1n,
+      transactionHash: ('0x' + 'd'.repeat(64)) as `0x${string}`,
+      transactionIndex: 0,
+      logIndex: 0,
+      blockHash: ('0x' + 'e'.repeat(64)) as `0x${string}`,
+      removed: false,
+    } as Log;
+
+    // multicall must respond to BOTH MarketCreated reads (none in
+    // this chunk) AND getOptionFirstStakeSequence reads. We only have
+    // one Staked event, so expect exactly one multicall with one
+    // contract returning the (sequence, isSet) tuple.
+    const multicallSpy = vi.fn(
+      async (args: { contracts: Array<{ functionName: string }> }) => {
+        // The orchestrator runs MarketCreated prefetch first (skipped
+        // here — empty array, so the loop body never runs and
+        // multicall is never called for it). Staked prefetch is
+        // a separate multicall call.
+        if (
+          args.contracts.length === 1 &&
+          args.contracts[0].functionName === 'getOptionFirstStakeSequence'
+        ) {
+          return [[7, true]] as const;
+        }
+        throw new Error(
+          `unexpected multicall: ${JSON.stringify(args.contracts.map((c) => c.functionName))}`,
+        );
+      },
+    );
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: makeClient({
+        logs: [stakedLog],
+        multicallSpy: multicallSpy as unknown as ReturnType<typeof vi.fn>,
+      }),
+    });
+
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+    expect(result.decodedEventCount).toBe(1);
+    // Staked is NOT a MarketCreated → marketsWritten stays 0.
+    expect(result.marketsWritten).toBe(0);
+
+    // multicall called exactly once for the Staked prefetch.
+    expect(multicallSpy).toHaveBeenCalledTimes(1);
+    const mcArgs = (multicallSpy.mock.calls as unknown[][])[0][0] as {
+      contracts: Array<{
+        functionName: string;
+        args: readonly unknown[];
+      }>;
+    };
+    expect(mcArgs.contracts).toHaveLength(1);
+    expect(mcArgs.contracts[0].functionName).toBe(
+      'getOptionFirstStakeSequence',
+    );
+    // Args are [marketId: bigint, optionIndex: bigint] per the ABI.
+    expect(mcArgs.contracts[0].args[0]).toBe(5n);
+    expect(mcArgs.contracts[0].args[1]).toBe(1n);
+
+    // Phase C: pm_stakes row inserted, pm_options.poolTotal +=
+    // 3_000_000, firstStakeSequence = 7 on YES (option 1).
+    const stakes = await t.db.select().from(pmStakes);
+    expect(stakes).toHaveLength(1);
+    expect(stakes[0].amount).toBe('3000000');
+
+    const opts = await t.db
+      .select()
+      .from(pmOptions)
+      .orderBy(pmOptions.optionIndex);
+    expect(opts[0].poolTotal).toBe('0'); // NO untouched
+    expect(opts[1].poolTotal).toBe('3000000'); // YES bumped
+    expect(opts[1].firstStakeSequence).toBe(7);
   });
 
   it('release-failure surfaces releaseWarning on success result (Codex round-2 m1)', async () => {

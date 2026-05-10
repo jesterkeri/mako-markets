@@ -28,7 +28,13 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { PublicClient } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
-import { pmIndexerState, pmMarkets, pmOptions, pmResolutions } from '@/db/schema';
+import {
+  pmIndexerState,
+  pmMarkets,
+  pmOptions,
+  pmResolutions,
+  pmStakes,
+} from '@/db/schema';
 import { privateMarketsAbi } from '@/lib/MakoPrivateMarketsV1.abi';
 
 import { decodePrivateMarketsLogs, type DecodedEvent } from './event-decode';
@@ -141,8 +147,21 @@ export interface HandlerCtx {
   contractAddress: `0x${string}`;
   /// Lock token threaded into the Phase C ownership-gated UPDATE.
   acquiredLockedAt: Date;
-  /// Phase B output, keyed by marketId-as-number.
+  /// Phase B output, keyed by marketId-as-number. Populated for
+  /// every MarketCreated event in the chunk regardless of whether
+  /// the handler ends up consuming it (synthetic-insert path) or
+  /// not (confirmed-flip path).
   prefetch: Map<number, PrefetchedMetadata>;
+  /// 2B-3 addition: per-(marketId, optionIndex)
+  /// `getOptionFirstStakeSequence` reads, populated by Phase B for
+  /// every Staked event in the chunk. Key format
+  /// `${marketId}:${optionIndex}` (both as numbers). Optional so
+  /// 2B-2 callers (and tests that only exercise MarketCreated /
+  /// MarketMetadataFrozen) can omit it without breaking.
+  firstStakeSequence?: Map<
+    string,
+    { sequence: number; isSet: boolean }
+  >;
 }
 
 export class StaleLockLostError extends Error {
@@ -535,6 +554,142 @@ export async function processMarketMetadataFrozen(
   return { outcome: 'frozen' };
 }
 
+/// 2B-3: Staked event handler. Per the parent plan, every event-table
+/// row is keyed by (tx_hash, log_index) and the dependent aggregates
+/// (pool_total, first_stake_sequence) are mutated ONLY on the first
+/// successful insert — replays MUST NOT double-count.
+///
+/// Steps:
+///   1. INSERT pm_stakes row with ON CONFLICT (tx_hash, log_index)
+///      DO NOTHING RETURNING. RETURNING empty → `replay-noop`.
+///   2. Look up the pm_markets row by (chainId, contractAddress,
+///      marketId) to get the uuid for pm_options.market_db_id. If
+///      the row is missing (cross-chunk ordering between
+///      MarketCreated and Staked when starting mid-history), record
+///      the stake for audit and return `inserted` with a soft warn —
+///      pool_total + first_stake_sequence reconcile via 2B-5's
+///      resnapshot sweep.
+///   3. Atomically increment pm_options.pool_total by amount.
+///   4. First-stake-sequence: read the prefetched
+///      `getOptionFirstStakeSequence(marketId, optionIndex)` from
+///      `ctx.firstStakeSequence`. If `isSet=true` AND the local row
+///      is currently NULL, write the sequence. Read-once-and-set —
+///      never overwritten.
+export async function processStaked(
+  ctx: HandlerCtx,
+  event: Extract<DecodedEvent, { eventName: 'Staked' }>,
+): Promise<{ outcome: 'inserted' | 'replay-noop' | 'orphan-event' }> {
+  const { chainId, contractAddress, chunkTx, firstStakeSequence } = ctx;
+  const marketIdNum = bigintToNumber(event.args.marketId);
+  // optionIndex on the Staked event is uint256 in the ABI but bounded
+  // to MAX_OPTIONS (≤10) at the contract level. bigintToNumber's
+  // safe-integer guard catches any drift.
+  const optionIndex = bigintToNumber(event.args.optionIndex);
+  const stakerLower = normalizeHex(event.args.staker, 20);
+  const txHashLower = normalizeHex(
+    event.log.transactionHash as `0x${string}`,
+    32,
+  );
+  const logIndex = event.log.logIndex as number;
+  const blockNumber = bigintToNumber(event.log.blockNumber as bigint);
+  // "event-arg-as-block-timestamp" rule (R3-M2): the contract emits
+  // Staked.timestamp = block.timestamp at emission.
+  const blockTimestamp = secondsBigIntToDate(event.args.timestamp);
+  const amount = event.args.amount.toString();
+
+  // Step 1: ON CONFLICT (tx_hash, log_index) DO NOTHING RETURNING.
+  const insertResult = await chunkTx
+    .insert(pmStakes)
+    .values({
+      chainId,
+      contractAddress,
+      txHash: txHashLower,
+      logIndex,
+      marketId: marketIdNum,
+      staker: stakerLower,
+      optionIndex,
+      amount,
+      blockNumber,
+      blockTimestamp,
+    })
+    .onConflictDoNothing({
+      target: [pmStakes.txHash, pmStakes.logIndex],
+    })
+    .returning({ txHash: pmStakes.txHash });
+
+  if (insertResult.length === 0) {
+    // Replay path — pool_total + first_stake_sequence already
+    // updated on the original insert. No further work.
+    return { outcome: 'replay-noop' };
+  }
+
+  // Step 2: resolve pm_options.market_db_id via pm_markets lookup.
+  const marketRow = await chunkTx
+    .select({ id: pmMarkets.id })
+    .from(pmMarkets)
+    .where(
+      and(
+        eq(pmMarkets.chainId, chainId),
+        eq(pmMarkets.contractAddress, contractAddress),
+        eq(pmMarkets.marketId, marketIdNum),
+      ),
+    )
+    .limit(1);
+
+  if (marketRow.length === 0) {
+    // Cross-chunk ordering can land Staked before MarketCreated when
+    // starting mid-history (e.g. backfill from genesis). pm_stakes
+    // row already inserted for audit; pool_total + sequence mirror
+    // skipped. 2B-5's resnapshot sweep is the authoritative path.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processStaked: orphan stake for marketId=${marketIdNum} ` +
+        `optionIndex=${optionIndex} on chainId=${chainId} ` +
+        `contract=${contractAddress}; pm_stakes recorded, ` +
+        `pool_total / first_stake_sequence mirror skipped`,
+    );
+    return { outcome: 'orphan-event' };
+  }
+
+  const marketDbId = marketRow[0].id;
+
+  // Step 3: atomic pool_total increment. The chunkTx transaction
+  // makes this commit-or-rollback together with the pm_stakes
+  // insert from step 1.
+  await chunkTx
+    .update(pmOptions)
+    .set({ poolTotal: sql`${pmOptions.poolTotal} + ${amount}` })
+    .where(
+      and(
+        eq(pmOptions.marketDbId, marketDbId),
+        eq(pmOptions.optionIndex, optionIndex),
+      ),
+    );
+
+  // Step 4: first-stake-sequence write. Predicate on
+  // `firstStakeSequence IS NULL` makes the update idempotent against
+  // any race that the mutex doesn't already foreclose. Skipped
+  // entirely when prefetch reports `isSet=false` (defensive — the
+  // contract returns `(_, false)` when no stake has ever been
+  // recorded for the (marketId, optionIndex), which would be a
+  // logic bug for a Staked event we just observed).
+  const fssEntry = firstStakeSequence?.get(`${marketIdNum}:${optionIndex}`);
+  if (fssEntry?.isSet) {
+    await chunkTx
+      .update(pmOptions)
+      .set({ firstStakeSequence: fssEntry.sequence })
+      .where(
+        and(
+          eq(pmOptions.marketDbId, marketDbId),
+          eq(pmOptions.optionIndex, optionIndex),
+          sql`${pmOptions.firstStakeSequence} IS NULL`,
+        ),
+      );
+  }
+
+  return { outcome: 'inserted' };
+}
+
 // ---- Orchestrator ----------------------------------------------------------
 
 export async function runIndexerOnce(
@@ -746,6 +901,56 @@ export async function runIndexerOnce(
         }
       }
 
+      // 2B-3 Phase B addition: prefetch
+      // `getOptionFirstStakeSequence(marketId, optionIndex)` for every
+      // Staked event. Returned tuple is `(sequence: uint16,
+      // isSet: bool)`. The handler writes this back into pm_options
+      // only on the FIRST stake for that (market, option) — subsequent
+      // stakes' wasted multicall reads are cheap and bounded.
+      // Same prefetchBatchSize cap so a busy block can't blow up
+      // the multicall payload.
+      const stakedEvents = decoded.filter(
+        (
+          e,
+        ): e is Extract<DecodedEvent, { eventName: 'Staked' }> =>
+          e.eventName === 'Staked',
+      );
+      const firstStakeSequence = new Map<
+        string,
+        { sequence: number; isSet: boolean }
+      >();
+
+      for (
+        let i = 0;
+        i < stakedEvents.length;
+        i += prefetchBatchSize
+      ) {
+        const batch = stakedEvents.slice(i, i + prefetchBatchSize);
+        const contracts = batch.map((ev) => ({
+          address: contractAddressLower as `0x${string}`,
+          abi: privateMarketsAbi,
+          functionName: 'getOptionFirstStakeSequence' as const,
+          args: [ev.args.marketId, ev.args.optionIndex] as const,
+        }));
+
+        const results = (await publicClient.multicall({
+          allowFailure: false,
+          contracts: contracts as never,
+        })) as readonly unknown[];
+
+        for (let j = 0; j < batch.length; j++) {
+          const ev = batch[j];
+          // viem decodes a uint16 + bool tuple as
+          // `readonly [number, boolean]`.
+          const tuple = results[j] as readonly [number, boolean];
+          const sequence = tuple[0];
+          const isSet = tuple[1];
+          const key =
+            `${bigintToNumber(ev.args.marketId)}:${bigintToNumber(ev.args.optionIndex)}`;
+          firstStakeSequence.set(key, { sequence, isSet });
+        }
+      }
+
       // Phase C: per-chunk transaction. Includes handler dispatch +
       // ownership-gated last_indexed_block advance.
       let chunkMarketsWritten = 0;
@@ -760,6 +965,7 @@ export async function runIndexerOnce(
           contractAddress: contractAddressLower,
           acquiredLockedAt,
           prefetch,
+          firstStakeSequence,
         };
 
         for (const event of decoded) {
@@ -773,8 +979,10 @@ export async function runIndexerOnce(
             }
           } else if (event.eventName === 'MarketMetadataFrozen') {
             await processMarketMetadataFrozen(ctx, event);
+          } else if (event.eventName === 'Staked') {
+            await processStaked(ctx, event);
           }
-          // Other event branches are 2B-3 / 2B-4. No-op in 2B-2.
+          // Other event branches are 2B-4. No-op in 2B-3.
         }
 
         await advanceLastIndexedBlockOrThrow(
