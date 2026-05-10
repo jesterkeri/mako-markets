@@ -341,6 +341,128 @@ describe('runIndexerOnce — orchestrator', () => {
     expect(args0.fromBlock).toBe(DEPLOY_BLOCK + 1000n - 11n);
   });
 
+  it('Phase B batches multicall by prefetchBatchSize across multiple MarketCreated events (Codex round-3 m1)', async () => {
+    const t = await setup();
+    // 3 MarketCreated logs in the same chunk, prefetchBatchSize=2 →
+    // expect 2 multicall calls: first with 2 markets (14 contracts),
+    // second with 1 (7 contracts). Each market's metadata must
+    // round-trip through the 7-stride correctly.
+    const logs = [
+      buildMarketCreatedLog(101n, DEPLOY_BLOCK + 1n, 0),
+      buildMarketCreatedLog(102n, DEPLOY_BLOCK + 1n, 1),
+      buildMarketCreatedLog(103n, DEPLOY_BLOCK + 2n, 0),
+    ];
+
+    function metaFor(marketId: bigint, title: string, options: string[]): unknown[] {
+      return [
+        {
+          creator: CREATOR,
+          shape: 0,
+          clientNonce: NONCE_1,
+          createdAt: 30685166n,
+          stakingOpensAt: 30685226n,
+          closeAt: 30685766n,
+          viewMode: 0,
+          participationMode: 0,
+          storedState: 0,
+          effectiveState: 0,
+          perStakeMin: marketId * 1000n, // distinct per market for stride check
+          perStakeMax: 0n,
+          perWalletCumulativeMax: 0n,
+          fixedStake: 0n,
+          winnersCount: 0,
+          totalStake: 0n,
+          friendlyOutcome: 0,
+          friendlyEmptyPoolPath: false,
+          feeTaken: 0n,
+          dust: 0n,
+          metadataFrozenEmitted: false,
+        },
+        encodeBytesUtf8(title),
+        encodeBytesUtf8(`desc-${marketId}`),
+        encodeBytesUtf8(''),
+        options.map(encodeBytesUtf8),
+        [],
+        [],
+      ];
+    }
+
+    // Phase B's contracts array is interleaved by market within a
+    // batch (7 reads × N markets). Mock by inspecting which market's
+    // args[0] was at position 0 in each call and returning the right
+    // metadata in stride.
+    const multicallSpy = vi.fn(async (args: { contracts: Array<{ args: readonly unknown[] }> }) => {
+      const results: unknown[] = [];
+      // Walk the contracts list in stride-7. Position 0 within each
+      // 7-stride carries the marketId (because every entry in the
+      // stride uses the same marketId, we read the first).
+      const batchSize = args.contracts.length / 7;
+      for (let i = 0; i < batchSize; i++) {
+        const marketId = args.contracts[i * 7].args[0] as bigint;
+        const meta = metaFor(
+          marketId,
+          `Title-${marketId}`,
+          [`A-${marketId}`, `B-${marketId}`],
+        );
+        results.push(...meta);
+      }
+      return results;
+    });
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: makeClient({
+        logs,
+        multicallSpy: multicallSpy as unknown as ReturnType<typeof vi.fn>,
+      }),
+      chunkSize: 1000,
+      prefetchBatchSize: 2,
+    });
+
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+    expect(result.marketsWritten).toBe(3);
+
+    // Two multicall invocations: first 14 contracts (2 markets × 7),
+    // second 7 contracts (1 market × 7).
+    expect(multicallSpy).toHaveBeenCalledTimes(2);
+    const call1 = (multicallSpy.mock.calls as unknown[][])[0][0] as {
+      contracts: unknown[];
+    };
+    const call2 = (multicallSpy.mock.calls as unknown[][])[1][0] as {
+      contracts: unknown[];
+    };
+    expect(call1.contracts).toHaveLength(14);
+    expect(call2.contracts).toHaveLength(7);
+
+    // Every market landed in the DB with its own metadata —
+    // stride mapping was correct.
+    const markets = await t.db.select().from(pmMarkets);
+    expect(markets).toHaveLength(3);
+    for (const m of markets) {
+      expect(m.title).toBe(`Title-${m.marketId}`);
+      // `perStakeMin` is numeric(78,0) → string in JS; assert the
+      // distinct-per-market value round-tripped through the 7-stride.
+      expect(m.perStakeMin).toBe((BigInt(m.marketId!) * 1000n).toString());
+    }
+
+    // Each market got its own option labels.
+    for (const m of markets) {
+      const opts = await t.db
+        .select()
+        .from(pmOptions)
+        .where(sql`market_db_id = ${m.id}`)
+        .orderBy(pmOptions.optionIndex);
+      expect(opts.map((o) => o.label)).toEqual([
+        `A-${m.marketId}`,
+        `B-${m.marketId}`,
+      ]);
+    }
+  });
+
   it('release-failure surfaces releaseWarning on success result (Codex round-2 m1)', async () => {
     const t = await setup();
     const log = buildMarketCreatedLog(7n, DEPLOY_BLOCK + 1n, 0);

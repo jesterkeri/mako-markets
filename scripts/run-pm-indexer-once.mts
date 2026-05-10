@@ -10,10 +10,13 @@
 // Codex round-2 M1: this script must NOT import `@/db/client` because
 // that module starts with `import 'server-only'`, which in a plain
 // `tsx` runtime resolves to a package whose default export throws.
-// Next.js + Vitest both alias the package away at bundle time; tsx
-// has no equivalent, so the smoke script builds its own DB handle.
-// `db/client.ts` stays unchanged so the production server runtime
-// keeps the boundary check.
+// Next.js + Vitest both alias the package away at bundle time; plain
+// `tsx` has no equivalent unless launched with
+// `--conditions=react-server` (which the `smoke:pm-indexer` script
+// now does — see package.json), and even then the indexer module
+// chain pulls in db/client. So the smoke script builds its own DB
+// handle here. `db/client.ts` stays unchanged so the production
+// server runtime keeps the boundary check.
 //
 // Usage:
 //   pnpm smoke:pm-indexer
