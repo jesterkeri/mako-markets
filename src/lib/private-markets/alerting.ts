@@ -12,7 +12,7 @@
 // plan.
 // ----------------------------------------------------------------------------
 
-export type PmComponent = 'pm-indexer' | 'pm-maintenance';
+export type PmComponent = 'pm-indexer' | 'pm-maintenance' | 'pm-query';
 
 /// Invariant violations — bugs / schema-drift / chain-DB disagreements
 /// that should ALWAYS produce a loud, actionable alert.

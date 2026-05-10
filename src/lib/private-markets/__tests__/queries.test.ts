@@ -648,15 +648,18 @@ describe('chainReadStatus aggregate (Codex r3 M1 + r5 m1)', () => {
     expect(r.chainReadStatus).toBe('degraded');
   });
 
-  it('20c — all fail → failed; all rows have null pending', async () => {
+  it('20c — all 3 candidates fail → failed; all rows have null pending', async () => {
     await seedConfirmedMarket({ marketId: 40 });
     await seedConfirmedMarket({ marketId: 41 });
+    await seedConfirmedMarket({ marketId: 42 });
     await seedStake({ marketId: 40, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '6'.repeat(64)) as `0x${string}` });
     await seedStake({ marketId: 41, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '7'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 42, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + 'd'.repeat(64)) as `0x${string}` });
     const client = buildMulticallClient(
       new Map<number, bigint | 'revert'>([
         [40, 'revert'],
         [41, 'revert'],
+        [42, 'revert'],
       ]),
     );
     const r = await getPendingClaimsForWallet({
@@ -666,9 +669,66 @@ describe('chainReadStatus aggregate (Codex r3 M1 + r5 m1)', () => {
       publicClient: client,
       now: NOW,
     });
+    expect(r.readAttemptCount).toBe(3);
     expect(r.chainReadStatus).toBe('failed');
     expect(r.readFailureCount).toBe(r.readAttemptCount);
     expect(r.rows.every((row) => row.pendingAmountOnChain === null)).toBe(true);
+  });
+
+  it('20e — Codex 2B-6 r1 M1: multicall throws → batch treated as all failed (no propagation)', async () => {
+    await seedConfirmedMarket({ marketId: 70 });
+    await seedConfirmedMarket({ marketId: 71 });
+    await seedStake({ marketId: 70, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + 'e'.repeat(64)) as `0x${string}` });
+    await seedStake({ marketId: 71, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + 'f'.repeat(64)) as `0x${string}` });
+    const client = {
+      multicall: vi.fn(async () => {
+        throw new Error('rpc 500');
+      }),
+    } as unknown as PublicClient;
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    expect(r.readAttemptCount).toBe(2);
+    expect(r.readFailureCount).toBe(2);
+    expect(r.chainReadStatus).toBe('failed');
+    expect(r.rows).toHaveLength(2);
+    expect(r.rows.every((row) => row.pendingAmountOnChain === null)).toBe(true);
+  });
+
+  it('20f — Codex 2B-6 r1 M1: multicall throws on one batch only → degraded', async () => {
+    await seedConfirmedMarket({ marketId: 80 });
+    await seedConfirmedMarket({ marketId: 81 });
+    await seedStake({ marketId: 80, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '1'.repeat(63) + '2') as `0x${string}` });
+    await seedStake({ marketId: 81, staker: STAKER_A, optionIndex: 1, amount: '1', txHash: ('0x' + '1'.repeat(63) + '3') as `0x${string}` });
+    let calls = 0;
+    const client = {
+      multicall: vi.fn(
+        async (a: { contracts: Array<{ args: readonly [bigint, `0x${string}`] }> }) => {
+          calls++;
+          if (calls === 1) throw new Error('rpc transport drop');
+          return a.contracts.map((c) => ({
+            status: 'success' as const,
+            result: 100n,
+            __mid: Number(c.args[0]),
+          }));
+        },
+      ),
+    } as unknown as PublicClient;
+    const r = await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+      multicallBatchSize: 1, // force two separate batches
+    });
+    expect(r.readAttemptCount).toBe(2);
+    expect(r.readFailureCount).toBe(1);
+    expect(r.chainReadStatus).toBe('degraded');
   });
 
   it('20d — readAttemptCount diverges from rows.length (Codex r5 m1)', async () => {
@@ -870,5 +930,93 @@ describe('__setDbCallCounter test-only guard (Codex r5 m3)', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe('Codex 2B-6 r1 M2 — numeric arg validation', () => {
+  it('multicallBatchSize=0 throws RangeError before any DB call', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        multicallBatchSize: 0,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('multicallBatchSize=-1 throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        multicallBatchSize: -1,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('candidateCap=0 throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        candidateCap: 0,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('multicallBatchSize=1.5 (non-integer) throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        multicallBatchSize: 1.5,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('getMarketsCreatedByWallet limit=0 throws RangeError', async () => {
+    await expect(
+      getMarketsCreatedByWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        now: NOW,
+        limit: 0,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('getMarketsCreatedByWallet offset=-1 throws RangeError', async () => {
+    await expect(
+      getMarketsCreatedByWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        now: NOW,
+        offset: -1,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('getMarketsForWalletByEffectiveState candidateCap=0 throws RangeError', async () => {
+    await expect(
+      getMarketsForWalletByEffectiveState({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        now: NOW,
+        candidateCap: 0,
+      }),
+    ).rejects.toThrow(RangeError);
   });
 });

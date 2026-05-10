@@ -321,6 +321,24 @@ const DEFAULT_CANDIDATE_CAP = 500;
 const DEFAULT_LIMIT = 50;
 const DEFAULT_MULTICALL_BATCH = 50;
 
+/// Codex 2B-6 r1 M2: validate numeric pagination/batch knobs before
+/// they reach the SQL/multicall loop. multicallBatchSize must be a
+/// positive integer (zero or negative would loop forever or skip
+/// reads); candidateCap and limit must be positive integers; offset
+/// must be a non-negative integer.
+function assertPositiveInt(name: string, value: number): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive integer (got ${value})`);
+  }
+}
+function assertNonNegativeInt(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError(
+      `${name} must be a non-negative integer (got ${value})`,
+    );
+  }
+}
+
 // ---- getStakesForWallet ----------------------------------------------------
 
 export async function getStakesForWallet(args: {
@@ -356,7 +374,11 @@ export async function getStakesForWallet(args: {
         eq(pmStakes.staker, walletLower),
       ),
     )
-    .orderBy(desc(pmStakes.blockTimestamp));
+    .orderBy(
+      desc(pmStakes.blockTimestamp),
+      desc(pmStakes.blockNumber),
+      desc(pmStakes.logIndex),
+    );
   return rows.map((r) => ({
     marketId: Number(r.marketId),
     optionIndex: r.optionIndex,
@@ -400,7 +422,11 @@ export async function getClaimsForWallet(args: {
         eq(pmClaims.recipient, walletLower),
       ),
     )
-    .orderBy(desc(pmClaims.blockTimestamp));
+    .orderBy(
+      desc(pmClaims.blockTimestamp),
+      desc(pmClaims.blockNumber),
+      desc(pmClaims.logIndex),
+    );
   return rows.map((r) => ({
     marketId: Number(r.marketId),
     amount: r.amount,
@@ -428,6 +454,8 @@ export async function getPendingClaimsForWallet(args: {
   const multicallBatchSize =
     args.multicallBatchSize ?? DEFAULT_MULTICALL_BATCH;
   const candidateCap = args.candidateCap ?? DEFAULT_CANDIDATE_CAP;
+  assertPositiveInt('multicallBatchSize', multicallBatchSize);
+  assertPositiveInt('candidateCap', candidateCap);
   const contractLower = normalizeHex(args.contractAddress, 20);
   const walletLower = normalizeHex(args.wallet, 20);
 
@@ -544,6 +572,11 @@ export async function getPendingClaimsForWallet(args: {
   }
 
   // Multicall getPendingClaim for every candidate (batched, fail-open).
+  // Codex 2B-6 r1 M1: a transport-level rejection (RPC 500, network
+  // drop, timeout) — distinct from per-call `{status:'failure'}` —
+  // must NOT throw out of this helper. Wrap each batch in try/catch
+  // and treat the whole batch as failed reads. UI still gets rows
+  // (with pendingAmountOnChain=null) instead of a 500.
   const readAttemptCount = candidates.length;
   let readFailureCount = 0;
   const pendingByMarketId = new Map<number, string | null>();
@@ -557,23 +590,32 @@ export async function getPendingClaimsForWallet(args: {
         functionName: 'getPendingClaim' as const,
         args: [BigInt(c.marketId), walletLower as `0x${string}`] as const,
       }));
-    const results = (await args.publicClient.multicall({
-      allowFailure: true,
-      contracts: contracts as never,
-    })) as ReadonlyArray<
-      { status: 'success'; result: bigint } | { status: 'failure' }
-    >;
+    let results:
+      | ReadonlyArray<
+          { status: 'success'; result: bigint } | { status: 'failure' }
+        >
+      | null = null;
+    try {
+      results = (await args.publicClient.multicall({
+        allowFailure: true,
+        contracts: contracts as never,
+      })) as ReadonlyArray<
+        { status: 'success'; result: bigint } | { status: 'failure' }
+      >;
+    } catch {
+      results = null;
+    }
     for (let j = 0; j < contracts.length; j++) {
       const c = batch[j];
       if (c.marketId === null) continue;
-      const r = results[j];
+      const r = results === null ? { status: 'failure' as const } : results[j];
       if (r.status === 'success') {
         pendingByMarketId.set(c.marketId, r.result.toString());
       } else {
         pendingByMarketId.set(c.marketId, null);
         readFailureCount++;
         logObservation('pending-claim-read-failed', {
-          component: 'pm-indexer',
+          component: 'pm-query',
           handler: 'getPendingClaimsForWallet',
           chainId: args.chainId,
           contractAddress: contractLower,
@@ -673,6 +715,9 @@ async function fetchPaginatedMarketRows(args: {
   offset: number;
   candidateCap: number;
 }): Promise<PaginatedMarketRows> {
+  assertPositiveInt('limit', args.limit);
+  assertNonNegativeInt('offset', args.offset);
+  assertPositiveInt('candidateCap', args.candidateCap);
   const contractLower = normalizeHex(args.contractAddress, 20);
   // Fetch up to candidateCap+1 to detect truncation.
   const rawRows = await db
