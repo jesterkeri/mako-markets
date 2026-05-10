@@ -682,6 +682,12 @@ export async function processStaked(
     // events we observe in production — flag it loudly. The
     // pm_stakes row is still recorded for audit; 2B-5's resnapshot
     // sweep is the authoritative reconciliation path.
+    //
+    // Codex 2B-3 r2 m2: `options-row-missing` is intentionally a
+    // soft outcome (not a throw) so a single misaligned row can't
+    // wedge the whole indexer. But it IS an invariant violation —
+    // 2B-5's monitoring/alerting hookup must treat the warn-line
+    // below as alert-worthy and surface it on the admin panel.
     // eslint-disable-next-line no-console
     console.warn(
       `processStaked: pm_options row missing for marketDbId=${marketDbId} ` +

@@ -834,6 +834,89 @@ describe('runIndexerOnce — orchestrator', () => {
     expect(stakes).toHaveLength(1);
   });
 
+  it('out-of-order logs: defensive (blockNumber, transactionIndex, logIndex) sort puts MarketCreated before Staked (Codex 2B-3 r2 m1)', async () => {
+    const t = await setup();
+    // Same chunk, same marketId. MarketCreated has logIndex 0,
+    // Staked has logIndex 1. We feed them to the orchestrator in
+    // REVERSE order to prove the sort kicks in.
+    const created = buildMarketCreatedLog(13n, DEPLOY_BLOCK + 1n, 0);
+    const stakedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'Staked',
+      args: { marketId: 13n, staker: CREATOR },
+    });
+    const stakedData = encodeAbiParameters(
+      parseAbiParameters('uint256, uint256, uint256'),
+      [1n, 9_000_000n, 1778544100n],
+    );
+    const staked = {
+      address: CONTRACT,
+      topics: stakedTopics as unknown as Log['topics'],
+      data: stakedData,
+      blockNumber: DEPLOY_BLOCK + 1n,
+      transactionHash: ('0x' + '6'.repeat(64)) as `0x${string}`,
+      transactionIndex: 1,
+      logIndex: 1,
+      blockHash: ('0x' + '7'.repeat(64)) as `0x${string}`,
+      removed: false,
+    } as Log;
+
+    const multicallSpy = vi.fn(
+      async (args: { contracts: Array<{ functionName: string }> }) => {
+        if (args.contracts[0].functionName === 'getMarket') {
+          return buildFriendlyMulticallResults();
+        }
+        if (
+          args.contracts[0].functionName ===
+          'getOptionFirstStakeSequence'
+        ) {
+          return [[3, true]] as const;
+        }
+        throw new Error(
+          `unexpected multicall: ${args.contracts[0].functionName}`,
+        );
+      },
+    );
+
+    // Reverse order: Staked first, MarketCreated second.
+    // Without canonical sort, Staked would hit orphan-event /
+    // options-row-missing because pm_markets + pm_options don't
+    // exist yet. With sort, MarketCreated runs first and sets
+    // them up.
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: makeClient({
+        logs: [staked, created], // INTENTIONALLY reversed
+        multicallSpy: multicallSpy as unknown as ReturnType<typeof vi.fn>,
+      }),
+    });
+
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+    expect(result.decodedEventCount).toBe(2);
+    expect(result.marketsWritten).toBe(1);
+
+    // Phase C ordering proof: pm_options.poolTotal reflects the
+    // stake (4_000_000? no — 9_000_000 here). If sort had been
+    // skipped, Staked would have run first against an empty DB →
+    // orphan-event → poolTotal stays at 0 after MarketCreated
+    // initialised it.
+    const opts = await t.db
+      .select()
+      .from(pmOptions)
+      .orderBy(pmOptions.optionIndex);
+    expect(opts).toHaveLength(2);
+    expect(opts[0].poolTotal).toBe('0'); // NO untouched
+    expect(opts[1].poolTotal).toBe('9000000'); // YES bumped after MarketCreated
+    expect(opts[1].firstStakeSequence).toBe(3);
+
+    const stakes = await t.db.select().from(pmStakes);
+    expect(stakes).toHaveLength(1);
+  });
+
   it('release-failure surfaces releaseWarning on success result (Codex round-2 m1)', async () => {
     const t = await setup();
     const log = buildMarketCreatedLog(7n, DEPLOY_BLOCK + 1n, 0);

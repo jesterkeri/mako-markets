@@ -104,10 +104,36 @@ export type DecodedEvent =
       log: Log;
     };
 
+/// Sort decoded events by chain canonical order: `(blockNumber,
+/// transactionIndex, logIndex)`. Codex 2B-3 r2 m1: getLogs is
+/// expected to return logs in this order, but the dispatcher
+/// shouldn't rely on that — an out-of-order array would process
+/// dependent events (e.g. Staked) before their parents
+/// (MarketCreated for the same market in the same chunk),
+/// triggering orphan/options-row-missing branches even when both
+/// events are present. Sort defensively.
+export function sortEventsCanonical(
+  events: readonly DecodedEvent[],
+): DecodedEvent[] {
+  return events.slice().sort((a, b) => {
+    const aBlock = a.log.blockNumber ?? 0n;
+    const bBlock = b.log.blockNumber ?? 0n;
+    if (aBlock !== bBlock) return aBlock < bBlock ? -1 : 1;
+    const aTx = a.log.transactionIndex ?? 0;
+    const bTx = b.log.transactionIndex ?? 0;
+    if (aTx !== bTx) return aTx - bTx;
+    const aIdx = a.log.logIndex ?? 0;
+    const bIdx = b.log.logIndex ?? 0;
+    return aIdx - bIdx;
+  });
+}
+
 /// Decode an array of raw viem `Log` objects into a typed
 /// DecodedEvent[]. Logs that don't match any of the 8 known event
 /// signatures are silently dropped — viem's `parseEventLogs` already
-/// filters by ABI by default.
+/// filters by ABI by default. Result is sorted canonically by
+/// `(blockNumber, transactionIndex, logIndex)` so dependent events
+/// always land after their parents within the same chunk.
 export function decodePrivateMarketsLogs(
   logs: readonly Log[],
 ): DecodedEvent[] {
@@ -123,9 +149,10 @@ export function decodePrivateMarketsLogs(
   // .args based on it. We rebuild the discriminated union with the
   // original `log` reference attached so handlers can read tx_hash /
   // log_index / block_number from the same place.
-  return parsed.map((entry) => ({
+  const decoded = parsed.map((entry) => ({
     eventName: entry.eventName,
     args: entry.args,
     log: entry,
   })) as DecodedEvent[];
+  return sortEventsCanonical(decoded);
 }
