@@ -1122,6 +1122,178 @@ describe('runIndexerOnce — orchestrator', () => {
     expect(res).toHaveLength(2);
   });
 
+  it('2B-4 reverse-order regression: [Claimed, ResolvedFriendly, MarketCreated] reversed → canonical sort processes them in order; final pm_markets resolved + pm_claims row (Codex 2B-4 code-review m1)', async () => {
+    const t = await setup();
+    // Three logs with explicit canonical (blockNumber, transactionIndex,
+    // logIndex) ordering: MarketCreated < ResolvedFriendly < Claimed.
+    // Pass them to the orchestrator REVERSED so sortEventsCanonical
+    // (2B-3 r2 m1) MUST kick in for Phase C to see them in dependency
+    // order. Without the sort: ResolvedFriendly + Claimed would land
+    // before MarketCreated → both would hit orphan-event.
+    const created = buildMarketCreatedLog(80n, DEPLOY_BLOCK + 1n, 0);
+
+    const resolvedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'ResolvedFriendly',
+      args: { marketId: 80n },
+    });
+    const resolvedData = encodeAbiParameters(
+      parseAbiParameters('uint8, bool, uint256, uint256'),
+      [1, false, 100_000n, 3_900_000n],
+    );
+    const resolved = {
+      address: CONTRACT,
+      topics: resolvedTopics as unknown as Log['topics'],
+      data: resolvedData,
+      blockNumber: DEPLOY_BLOCK + 2n,
+      transactionHash: ('0x' + 'b'.repeat(64)) as `0x${string}`,
+      transactionIndex: 0,
+      logIndex: 0,
+      blockHash: ('0x' + 'c'.repeat(64)) as `0x${string}`,
+      removed: false,
+    } as Log;
+
+    const claimedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'Claimed',
+      args: { marketId: 80n, recipient: CREATOR },
+    });
+    const claimedData = encodeAbiParameters(
+      parseAbiParameters('uint256'),
+      [3_900_000n],
+    );
+    const claimed = {
+      address: CONTRACT,
+      topics: claimedTopics as unknown as Log['topics'],
+      data: claimedData,
+      blockNumber: DEPLOY_BLOCK + 3n,
+      transactionHash: ('0x' + 'd'.repeat(64)) as `0x${string}`,
+      transactionIndex: 0,
+      logIndex: 0,
+      blockHash: ('0x' + 'e'.repeat(64)) as `0x${string}`,
+      removed: false,
+    } as Log;
+
+    const multicallSpy = vi.fn(
+      async (args: { contracts: Array<{ functionName: string }> }) => {
+        if (args.contracts[0].functionName === 'getMarket') {
+          return buildFriendlyMulticallResults();
+        }
+        throw new Error(
+          `unexpected multicall: ${args.contracts[0].functionName}`,
+        );
+      },
+    );
+
+    const fakeClient = {
+      // Reversed: dependent events first, parent last.
+      getLogs: vi.fn(async () => [claimed, resolved, created]),
+      multicall: multicallSpy,
+      getBlockNumber: vi.fn(async () => CHAIN_HEAD),
+      getBlock: vi.fn(async () => ({ timestamp: 1778544300n })),
+    } as unknown as PublicClient;
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: fakeClient,
+    });
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+    expect(result.decodedEventCount).toBe(3);
+    expect(result.marketsWritten).toBe(1);
+
+    // Phase C ordering proof: pm_markets is at 'resolved' (not 'created'),
+    // pm_resolutions has the ResolvedFriendly row, pm_claims has the
+    // Claimed row. If sort had been skipped, MarketCreated would have
+    // landed last → ResolvedFriendly + Claimed would have hit
+    // orphan-event before pm_markets existed.
+    const m = await t.db.select().from(pmMarkets);
+    expect(m).toHaveLength(1);
+    expect(m[0].marketId).toBe(80);
+    expect(m[0].currentState).toBe('resolved');
+    expect(m[0].friendlyOutcome).toBe(1);
+    expect(m[0].feeTaken).toBe('100000');
+
+    const res = await t.db.select().from(pmResolutions);
+    expect(res).toHaveLength(1);
+    expect(res[0].eventName).toBe('ResolvedFriendly');
+
+    const claims = await t.db.select().from(pmClaims);
+    expect(claims).toHaveLength(1);
+    expect(claims[0].marketId).toBe(80);
+    expect(claims[0].amount).toBe('3900000');
+  });
+
+  it('2B-4 uppercase blockHash through orchestrator: Phase B normalises set, handler normalises get, end-to-end cache hit (Codex 2B-4 code-review m2)', async () => {
+    const t = await setup();
+    // RPC returns the blockHash in UPPERCASE (some providers do this).
+    // Phase B normalises via normalizeHex(_, 32) before set; handler
+    // normalises via the same call before get. End-to-end cache hit
+    // proves both sides share the same key form.
+    const upperBlockHash = ('0x' +
+      'F'.repeat(64)) as `0x${string}`;
+
+    const resolvedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'ResolvedFriendly',
+      args: { marketId: 90n },
+    });
+    const resolvedData = encodeAbiParameters(
+      parseAbiParameters('uint8, bool, uint256, uint256'),
+      [0, true, 0n, 0n],
+    );
+    const resolved = {
+      address: CONTRACT,
+      topics: resolvedTopics as unknown as Log['topics'],
+      data: resolvedData,
+      blockNumber: DEPLOY_BLOCK + 1n,
+      transactionHash: ('0x' + '1'.repeat(64)) as `0x${string}`,
+      transactionIndex: 0,
+      logIndex: 0,
+      blockHash: upperBlockHash,
+      removed: false,
+    } as Log;
+
+    const getBlockSpy = vi.fn(async () => ({
+      timestamp: 1778544400n,
+    }));
+
+    const fakeClient = {
+      getLogs: vi.fn(async () => [resolved]),
+      multicall: vi.fn(async () => {
+        throw new Error('multicall should not be invoked');
+      }),
+      getBlockNumber: vi.fn(async () => CHAIN_HEAD),
+      getBlock: getBlockSpy,
+    } as unknown as PublicClient;
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: fakeClient,
+    });
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+
+    // Phase B prefetched exactly once for the unique block.
+    expect(getBlockSpy).toHaveBeenCalledTimes(1);
+    // Handler successfully read the cache (else it would have thrown
+    // — programmer-error guard fires when cache lookup misses).
+    // pm_resolutions row landed (orphan-event since no pm_markets,
+    // but row IS persisted with the prefetched timestamp).
+    const res = await t.db.select().from(pmResolutions);
+    expect(res).toHaveLength(1);
+    expect(res[0].blockTimestamp).toBeInstanceOf(Date);
+    expect(res[0].blockTimestamp.getTime()).toBe(
+      new Date(Number(1778544400n) * 1000).getTime(),
+    );
+  });
+
   it('2B-4 missing-blockHash fail-closed: throws BEFORE Phase C; mutex released; last_indexed_block unchanged (Codex r1 m4)', async () => {
     const t = await setup();
     // Build a Claimed log with blockHash undefined.

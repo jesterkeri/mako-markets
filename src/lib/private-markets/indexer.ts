@@ -3,16 +3,19 @@ import 'server-only';
 // ----------------------------------------------------------------------------
 // src/lib/private-markets/indexer.ts
 //
-// Phase 2B-2: event-driven indexer for MakoPrivateMarketsV1's
-// MarketCreated and MarketMetadataFrozen events. The other six events
-// (Staked, ResolvedFriendly, ResolvedOpenVote, DistributedPrizePool,
-// Canceled, Claimed) are no-op in 2B-2 — 2B-3 and 2B-4 extend the
-// dispatcher in place.
+// Event-driven indexer for MakoPrivateMarketsV1. As of Phase 2B-4 the
+// dispatcher handles ALL eight contract events:
+//   - MarketCreated, MarketMetadataFrozen          (2B-2)
+//   - Staked                                       (2B-3)
+//   - ResolvedFriendly, ResolvedOpenVote,
+//     DistributedPrizePool, Canceled, Claimed      (2B-4)
 //
 // runIndexerOnce orchestrates a single tick:
 //   - Phase A: getLogs over a block-range chunk
-//   - Phase B: multicall prefetch for synthetic-row metadata, batched
-//     by prefetchBatchSize
+//   - Phase B: multicall prefetch for synthetic-row metadata
+//     (MarketCreated) + getOptionFirstStakeSequence (Staked) +
+//     per-blockHash getBlock for events without timestamp args
+//     (Resolved* / Distributed* / Canceled / Claimed)
 //   - Phase C: per-chunk Postgres transaction with handler dispatch
 //     plus an ownership-gated advance of pm_indexer_state.last_indexed_block
 //
@@ -20,8 +23,9 @@ import 'server-only';
 // (locked_at value), so a stale-recovered slow worker cannot clear or
 // commit progress against a new owner's lock.
 //
-// See `%TEMP%/mako-private-markets-2B-2-plan.md` for the full design
-// and the binding invariants. 9 rounds of Codex review converged here.
+// Plans archived at `%TEMP%/mako-private-markets-2B-{2,3,4}-plan.md`;
+// each sub-phase locked in via multi-round Codex CLI plan review then
+// adversarial code review.
 // ----------------------------------------------------------------------------
 
 import { and, eq, sql } from 'drizzle-orm';
@@ -729,6 +733,22 @@ export async function processStaked(
   }
 
   return { outcome: 'inserted' };
+}
+
+// ---- Exhaustiveness check --------------------------------------------------
+
+/// Codex 2B-4 code-review m3: surface contract-event drift at TypeScript
+/// check time. The dispatcher's if/else chain falls through to this final
+/// branch; if a future contract revision adds a new event variant to
+/// `DecodedEvent` without a corresponding handler branch above, the call
+/// site here will fail to type-check (parameter is typed `never` but
+/// receives the missing variant).
+function exhaustivenessCheck(_: never): never {
+  throw new Error(
+    `runIndexerOnce dispatcher hit unreachable branch — DecodedEvent ` +
+      `union has a variant without a handler. Update the dispatcher ` +
+      `in indexer.ts and the test fixtures in indexer-orchestrator.test.ts.`,
+  );
 }
 
 // ---- 2B-4 helpers ----------------------------------------------------------
@@ -1593,11 +1613,12 @@ export async function runIndexerOnce(
             await processCanceled(ctx, event);
           } else if (event.eventName === 'Claimed') {
             await processClaimed(ctx, event);
+          } else {
+            // Codex 2B-4 code-review m3: TS-enforced exhaustiveness.
+            // If a new event variant is added to DecodedEvent without
+            // a handler branch above, this call fails to type-check.
+            exhaustivenessCheck(event);
           }
-          // All eight contract events handled. Future events would
-          // require extending DecodedEvent in event-decode.ts and
-          // adding a branch here; the discriminated union surfaces
-          // any drift at TS check time.
         }
 
         await advanceLastIndexedBlockOrThrow(
