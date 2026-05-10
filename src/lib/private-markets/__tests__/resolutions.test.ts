@@ -377,7 +377,9 @@ describe('processResolvedFriendly', () => {
       currentState: 'canceled',
     });
     const ctx = await makeCtx(t);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 2B-5: state-mismatch is now an alert (pm.alert / console.error),
+    // not a console.warn observation.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const event = buildResolvedFriendlyEvent({
       marketId: 10n,
       outcome: 1,
@@ -397,7 +399,7 @@ describe('processResolvedFriendly', () => {
       .where(eq(pmMarkets.marketId, 10));
     expect(m[0].currentState).toBe('canceled'); // unchanged
     expect(m[0].friendlyOutcome).toBeNull();
-    expect(warn).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledOnce();
   });
 });
 
@@ -598,7 +600,8 @@ describe('processCanceled', () => {
     const t = await setup();
     await seedConfirmedFriendly({ marketId: 23 });
     const ctx = await makeCtx(t);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 2B-5: unknown-reason is now an alert (pm.alert / console.error).
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const event = buildCanceledEvent({ marketId: 23n, reason: 99 });
     const r = await processCanceled(ctx, event);
     expect(r.outcome).toBe('unknown-reason');
@@ -614,14 +617,16 @@ describe('processCanceled', () => {
       .from(pmMarkets)
       .where(eq(pmMarkets.marketId, 23));
     expect(m[0].currentState).toBe('created'); // unchanged
-    expect(warn).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledOnce();
   });
 
   it('reason 99 replay → replay-noop, NOT unknown-reason (Codex r1 m2)', async () => {
     const t = await setup();
     await seedConfirmedFriendly({ marketId: 24 });
     const ctx = await makeCtx(t);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 2B-5: unknown-reason emits via alertInvariantViolation
+    // (console.error). Replay short-circuits BEFORE any alert.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const event = buildCanceledEvent({ marketId: 24n, reason: 99 });
     const r1 = await processCanceled(ctx, event);
     expect(r1.outcome).toBe('unknown-reason');
@@ -630,8 +635,8 @@ describe('processCanceled', () => {
 
     const res = await t.db.select().from(pmResolutions);
     expect(res).toHaveLength(1);
-    // Warn fires exactly once (first call), not twice.
-    expect(warn).toHaveBeenCalledOnce();
+    // Alert fires exactly once (first call), not twice.
+    expect(errorSpy).toHaveBeenCalledOnce();
   });
 
   it('reason 99 + orphan precedence (Codex r2 m2): orphan-event > unknown-reason', async () => {

@@ -42,6 +42,7 @@ import {
 } from '@/db/schema';
 import { privateMarketsAbi } from '@/lib/MakoPrivateMarketsV1.abi';
 
+import { alertInvariantViolation, logObservation } from './alerting';
 import { decodePrivateMarketsLogs, type DecodedEvent } from './event-decode';
 import {
   bigintToNumber,
@@ -546,12 +547,15 @@ export async function processMarketMetadataFrozen(
     // pm_resolutions row already inserted for audit; the pm_markets
     // row will be picked up by 2B-5's resnapshot sweep when it lands
     // (or never, for genuine direct-contract orphans).
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processMarketMetadataFrozen: orphan event for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_resolutions recorded, mirror skipped`,
-    );
+    logObservation('orphan-event', {
+      component: 'pm-indexer',
+      handler: 'processMarketMetadataFrozen',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'orphan-event' };
   }
 
@@ -661,13 +665,16 @@ export async function processStaked(
     // starting mid-history (e.g. backfill from genesis). pm_stakes
     // row already inserted for audit; pool_total + sequence mirror
     // skipped. 2B-5's resnapshot sweep is the authoritative path.
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processStaked: orphan stake for marketId=${marketIdNum} ` +
-        `optionIndex=${optionIndex} on chainId=${chainId} ` +
-        `contract=${contractAddress}; pm_stakes recorded, ` +
-        `pool_total / first_stake_sequence mirror skipped`,
-    );
+    logObservation('orphan-event', {
+      component: 'pm-indexer',
+      handler: 'processStaked',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      optionIndex,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'orphan-event' };
   }
 
@@ -700,14 +707,19 @@ export async function processStaked(
     // Codex 2B-3 r2 m2: `options-row-missing` is intentionally a
     // soft outcome (not a throw) so a single misaligned row can't
     // wedge the whole indexer. But it IS an invariant violation —
-    // 2B-5's monitoring/alerting hookup must treat the warn-line
-    // below as alert-worthy and surface it on the admin panel.
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processStaked: pm_options row missing for marketDbId=${marketDbId} ` +
-        `optionIndex=${optionIndex} (chainId=${chainId} marketId=${marketIdNum}); ` +
-        `pm_stakes recorded, pool_total / first_stake_sequence mirror skipped`,
-    );
+    // 2B-5 alerting (alertInvariantViolation, kind=pm.alert) carries
+    // the structured payload to log aggregators.
+    alertInvariantViolation('options-row-missing', {
+      component: 'pm-indexer',
+      handler: 'processStaked',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      optionIndex,
+      marketDbId,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'options-row-missing' };
   }
 
@@ -866,12 +878,15 @@ export async function processResolvedFriendly(
 
   const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
   if (marketRowId === null) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processResolvedFriendly: orphan event for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_resolutions recorded, mirror skipped`,
-    );
+    logObservation('orphan-event', {
+      component: 'pm-indexer',
+      handler: 'processResolvedFriendly',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'orphan-event' };
   }
 
@@ -895,13 +910,15 @@ export async function processResolvedFriendly(
     .returning({ id: pmMarkets.id });
 
   if (updated.length === 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processResolvedFriendly: state-mismatch for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `row exists but current_state != 'created'; pm_resolutions ` +
-        `recorded, mirror skipped`,
-    );
+    alertInvariantViolation('state-mismatch', {
+      component: 'pm-indexer',
+      handler: 'processResolvedFriendly',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'state-mismatch' };
   }
 
@@ -955,12 +972,15 @@ export async function processResolvedOpenVote(
 
   const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
   if (marketRowId === null) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processResolvedOpenVote: orphan event for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_resolutions recorded, mirror skipped`,
-    );
+    logObservation('orphan-event', {
+      component: 'pm-indexer',
+      handler: 'processResolvedOpenVote',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'orphan-event' };
   }
 
@@ -980,12 +1000,15 @@ export async function processResolvedOpenVote(
     .returning({ id: pmMarkets.id });
 
   if (updated.length === 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processResolvedOpenVote: state-mismatch for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_resolutions recorded, mirror skipped`,
-    );
+    alertInvariantViolation('state-mismatch', {
+      component: 'pm-indexer',
+      handler: 'processResolvedOpenVote',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'state-mismatch' };
   }
   return { outcome: 'resolved' };
@@ -1049,12 +1072,15 @@ export async function processDistributedPrizePool(
 
   const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
   if (marketRowId === null) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processDistributedPrizePool: orphan event for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_resolutions recorded, mirror skipped`,
-    );
+    logObservation('orphan-event', {
+      component: 'pm-indexer',
+      handler: 'processDistributedPrizePool',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'orphan-event' };
   }
 
@@ -1074,13 +1100,15 @@ export async function processDistributedPrizePool(
     .returning({ id: pmMarkets.id });
 
   if (updated.length === 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processDistributedPrizePool: state-mismatch for ` +
-        `marketId=${marketIdNum} on chainId=${chainId} ` +
-        `contract=${contractAddress}; pm_resolutions recorded, ` +
-        `mirror skipped`,
-    );
+    alertInvariantViolation('state-mismatch', {
+      component: 'pm-indexer',
+      handler: 'processDistributedPrizePool',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'state-mismatch' };
   }
   return { outcome: 'resolved' };
@@ -1143,12 +1171,16 @@ export async function processCanceled(
   // Step 2: orphan check BEFORE reason mapping (Codex r2 m2).
   const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
   if (marketRowId === null) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processCanceled: orphan event for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_resolutions recorded, mirror skipped`,
-    );
+    logObservation('orphan-event', {
+      component: 'pm-indexer',
+      handler: 'processCanceled',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      reason,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'orphan-event' };
   }
 
@@ -1175,13 +1207,16 @@ export async function processCanceled(
   }
 
   if (mappedState === null || outcomeVariant === null) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processCanceled: unknown reason=${reason} for ` +
-        `marketId=${marketIdNum} on chainId=${chainId} ` +
-        `contract=${contractAddress}; pm_resolutions recorded, ` +
-        `mirror skipped`,
-    );
+    alertInvariantViolation('unknown-reason', {
+      component: 'pm-indexer',
+      handler: 'processCanceled',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      reason,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'unknown-reason' };
   }
 
@@ -1203,12 +1238,16 @@ export async function processCanceled(
     .returning({ id: pmMarkets.id });
 
   if (updated.length === 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processCanceled: state-mismatch for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_resolutions recorded, mirror skipped`,
-    );
+    alertInvariantViolation('state-mismatch', {
+      component: 'pm-indexer',
+      handler: 'processCanceled',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      reason,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'state-mismatch' };
   }
   return { outcome: outcomeVariant };
@@ -1258,12 +1297,15 @@ export async function processClaimed(
 
   const marketRowId = await findPmMarketRowId(ctx, marketIdNum);
   if (marketRowId === null) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `processClaimed: orphan event for marketId=${marketIdNum} ` +
-        `on chainId=${chainId} contract=${contractAddress}; ` +
-        `pm_claims recorded, no mirror needed`,
-    );
+    logObservation('orphan-event', {
+      component: 'pm-indexer',
+      handler: 'processClaimed',
+      chainId,
+      contractAddress,
+      marketId: marketIdNum,
+      txHash: txHashLower,
+      logIndex,
+    });
     return { outcome: 'orphan-event' };
   }
 
