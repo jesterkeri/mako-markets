@@ -106,7 +106,7 @@ export async function allocateSlug(
   }
 
   throw new Error(
-    `allocateSlug: failed to find a free slug after ${maxRetries} retries ` +
+    `allocateSlug: failed to find a free slug after ${maxRetries} attempts ` +
       `(synthetic=${synthetic}). This should be statistically impossible ` +
       `at any realistic active-row count; investigate.`,
   );

@@ -2,9 +2,18 @@
 // scripts/run-pm-indexer-once.mts
 //
 // Manual smoke runner for the Phase 2B-2 indexer. Loads .env.local,
-// instantiates db + publicClient, calls runIndexerOnce, prints the
-// summary JSON. The cron route in 2B-5 will be a thin Bearer-auth
+// instantiates a postgres-js + Drizzle handle inline, builds a viem
+// PublicClient against Monad testnet, calls runIndexerOnce, prints
+// the summary JSON. The cron route in 2B-5 will be a thin Bearer-auth
 // wrapper over the same call.
+//
+// Codex round-2 M1: this script must NOT import `@/db/client` because
+// that module starts with `import 'server-only'`, which in a plain
+// `tsx` runtime resolves to a package whose default export throws.
+// Next.js + Vitest both alias the package away at bundle time; tsx
+// has no equivalent, so the smoke script builds its own DB handle.
+// `db/client.ts` stays unchanged so the production server runtime
+// keeps the boundary check.
 //
 // Usage:
 //   pnpm smoke:pm-indexer
@@ -22,9 +31,11 @@ loadEnv({ path: '.env.local' });
 loadEnv({ path: '.env' });
 
 import { createPublicClient, http } from 'viem';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 
 import { monadTestnet, MONAD_TESTNET_ID } from '../src/lib/chain.js';
-import { db } from '../src/db/client.js';
+import * as schema from '../src/db/schema.js';
 import { runIndexerOnce, isBusy } from '../src/lib/private-markets/indexer.js';
 
 async function main() {
@@ -37,6 +48,18 @@ async function main() {
     process.exit(1);
   }
   const deployBlock = BigInt(deployBlockStr);
+
+  const connectionString =
+    process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+  if (!connectionString) {
+    console.error('Missing DATABASE_URL or POSTGRES_URL in .env.local');
+    process.exit(1);
+  }
+  // Inline Drizzle handle — see header comment for why this script
+  // bypasses src/db/client.ts. Same postgres-js options the singleton
+  // uses (`prepare: false`).
+  const sql = postgres(connectionString, { prepare: false });
+  const db = drizzle(sql, { schema });
 
   const rpcUrl = process.env.MONAD_RPC_URL || monadTestnet.rpcUrls.default.http[0];
   const publicClient = createPublicClient({
@@ -54,19 +77,27 @@ async function main() {
   console.log('------------------------------------------------');
 
   const t0 = Date.now();
-  const result = await runIndexerOnce({
-    chainId: MONAD_TESTNET_ID,
-    contractAddress: address as `0x${string}`,
-    deployBlock,
-    db,
-    publicClient,
-    chunkSize: process.env.MAKO_PM_INDEXER_CHUNK_SIZE
-      ? Number(process.env.MAKO_PM_INDEXER_CHUNK_SIZE)
-      : undefined,
-    prefetchBatchSize: process.env.MAKO_PM_INDEXER_PREFETCH_BATCH
-      ? Number(process.env.MAKO_PM_INDEXER_PREFETCH_BATCH)
-      : undefined,
-  });
+  let result;
+  try {
+    result = await runIndexerOnce({
+      chainId: MONAD_TESTNET_ID,
+      contractAddress: address as `0x${string}`,
+      deployBlock,
+      // postgres-js Drizzle handle; runIndexerOnce only uses the
+      // public Drizzle surface (no driver-specific calls), so the
+      // structural typing matches the DbOrTx parameter at runtime.
+      db: db as never,
+      publicClient,
+      chunkSize: process.env.MAKO_PM_INDEXER_CHUNK_SIZE
+        ? Number(process.env.MAKO_PM_INDEXER_CHUNK_SIZE)
+        : undefined,
+      prefetchBatchSize: process.env.MAKO_PM_INDEXER_PREFETCH_BATCH
+        ? Number(process.env.MAKO_PM_INDEXER_PREFETCH_BATCH)
+        : undefined,
+    });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
   const elapsedMs = Date.now() - t0;
 
   if (isBusy(result)) {
@@ -79,6 +110,13 @@ async function main() {
     console.log(' decodedEvents:', result.decodedEventCount);
     console.log(' marketsWritten:', result.marketsWritten);
     console.log(' elapsedMs    :', elapsedMs);
+    if (result.releaseWarning) {
+      console.warn(
+        ' releaseWarning:',
+        result.releaseWarning,
+        '\n   Lock may remain held until stale-recovery (5 min default).',
+      );
+    }
   }
   console.log('================================================');
 }

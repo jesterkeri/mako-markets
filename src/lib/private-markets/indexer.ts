@@ -76,6 +76,12 @@ export interface RunIndexerResultProcessed {
   toBlock: number;
   decodedEventCount: number;
   marketsWritten: number;
+  /// Codex round-2 m1: a release failure on the success path leaves
+  /// the lock held until stale-recovery (5 min default). Surfacing
+  /// the warning here lets ops alert on stuck locks rather than
+  /// treating the run as cleanly successful. Empty/undefined ⇒
+  /// release succeeded.
+  releaseWarning?: string;
 }
 
 export interface RunIndexerResultBusy {
@@ -588,6 +594,9 @@ export async function runIndexerOnce(
   let totalMarketsWritten = 0;
   let actualFromBlock = 0;
   let actualToBlock = 0;
+  let releaseWarning: string | undefined;
+
+  let processedResult: RunIndexerResultProcessed | undefined;
 
   try {
     // Contract-address mismatch guard: redeploying the contract to the
@@ -619,7 +628,7 @@ export async function runIndexerOnce(
 
     if (fromBlock > chainHead) {
       // Already at or past head; nothing to do this tick.
-      return {
+      processedResult = {
         chainId,
         mutex: mutexOutcome,
         fromBlock,
@@ -627,7 +636,7 @@ export async function runIndexerOnce(
         decodedEventCount: 0,
         marketsWritten: 0,
       };
-    }
+    } else {
 
     let cursor = fromBlock;
     while (cursor <= chainHead) {
@@ -781,7 +790,7 @@ export async function runIndexerOnce(
       actualToBlock = chunkEnd;
     }
 
-    return {
+    processedResult = {
       chainId,
       mutex: mutexOutcome,
       fromBlock: actualFromBlock,
@@ -789,6 +798,7 @@ export async function runIndexerOnce(
       decodedEventCount: totalDecodedEvents,
       marketsWritten: totalMarketsWritten,
     };
+    } // close `else` (chainHead-not-reached branch)
   } finally {
     // R6-M3: release does ONE thing — clear the lock IFF this worker
     // still owns it. last_indexed_block advancement lives entirely in
@@ -798,15 +808,32 @@ export async function runIndexerOnce(
     // error. If the try-block already threw, the in-flight error is
     // the one the caller needs to see; release errors get logged but
     // don't propagate.
+    //
+    // Codex round-2 m1: on the success path, surface release failures
+    // via processedResult.releaseWarning so ops can alert on stuck
+    // locks instead of treating the run as cleanly successful.
     try {
       await releaseMutex(coordinationDb, chainId, acquiredLockedAt);
     } catch (releaseErr) {
+      const message =
+        releaseErr instanceof Error
+          ? releaseErr.message
+          : String(releaseErr);
       // eslint-disable-next-line no-console
       console.error(
         `runIndexerOnce: releaseMutex failed for chainId=${chainId}; ` +
           `original error (if any) takes precedence`,
         releaseErr,
       );
+      releaseWarning = `releaseMutex failed: ${message}`;
     }
   }
+
+  // Only reachable on success (try/finally bubbled no error). If
+  // release also failed, attach the warning so callers/monitoring
+  // can detect stuck locks before stale-recovery clears them.
+  if (releaseWarning && processedResult) {
+    processedResult.releaseWarning = releaseWarning;
+  }
+  return processedResult!;
 }
