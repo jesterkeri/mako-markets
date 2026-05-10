@@ -598,6 +598,242 @@ describe('runIndexerOnce — orchestrator', () => {
     expect(opts[1].firstStakeSequence).toBe(7);
   });
 
+  it('Phase B batches Staked prefetch by prefetchBatchSize and Phase C handles a replayed (txHash, logIndex) (Codex 2B-3 m1)', async () => {
+    const t = await setup();
+    // Seed pm_markets + pm_options for marketId 5.
+    const marketRows = await t.db
+      .insert(pmMarkets)
+      .values({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        slug: 'dx-multibch1',
+        clientNonce: NONCE_1,
+        creator: CREATOR,
+        marketId: 5,
+        shape: 'friendly',
+        createStatus: 'confirmed',
+        confirmedAt: new Date(),
+        title: 'Multi',
+        visibilityView: 0,
+        visibilityParticipation: 0,
+        stakingOpensAt: new Date('2026-05-12T00:01:00Z'),
+        closeAt: new Date('2026-05-12T00:10:00Z'),
+      })
+      .returning({ id: pmMarkets.id });
+    await t.db.insert(pmOptions).values([
+      {
+        marketDbId: marketRows[0].id,
+        optionIndex: 0,
+        label: 'NO',
+        participantWallet: null,
+        poolTotal: '0',
+        firstStakeSequence: null,
+      },
+      {
+        marketDbId: marketRows[0].id,
+        optionIndex: 1,
+        label: 'YES',
+        participantWallet: null,
+        poolTotal: '0',
+        firstStakeSequence: null,
+      },
+    ]);
+
+    // Pre-seed a pm_stakes row for the (txHash, logIndex) of staked3
+    // so the orchestrator's run sees it as a replay.
+    const REPLAY_TX = ('0x' + 'f'.repeat(64)) as `0x${string}`;
+    await t.db.insert(pmStakes).values({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      txHash: REPLAY_TX,
+      logIndex: 9,
+      marketId: 5,
+      staker: CREATOR,
+      optionIndex: 1,
+      amount: '5000000', // pre-existing 5 USDC
+      blockNumber: Number(DEPLOY_BLOCK + 1n),
+      blockTimestamp: new Date('2026-05-12T00:02:00Z'),
+    });
+    // Pre-set the YES poolTotal to match — this is what the replay
+    // SHOULD leave alone.
+    await t.db
+      .update(pmOptions)
+      .set({ poolTotal: '5000000' })
+      .where(
+        sql`market_db_id = ${marketRows[0].id} AND option_index = 1`,
+      );
+
+    function buildStakedLog(
+      txHash: `0x${string}`,
+      logIndex: number,
+      optionIndex: bigint,
+      amount: bigint,
+    ): Log {
+      const topics = encodeEventTopics({
+        abi: privateMarketsAbi,
+        eventName: 'Staked',
+        args: { marketId: 5n, staker: CREATOR },
+      });
+      const data = encodeAbiParameters(
+        parseAbiParameters('uint256, uint256, uint256'),
+        [optionIndex, amount, 1778544100n],
+      );
+      return {
+        address: CONTRACT,
+        topics: topics as unknown as Log['topics'],
+        data,
+        blockNumber: DEPLOY_BLOCK + 1n,
+        transactionHash: txHash,
+        transactionIndex: 0,
+        logIndex,
+        blockHash: ('0x' + '5'.repeat(64)) as `0x${string}`,
+        removed: false,
+      } as Log;
+    }
+
+    const logs = [
+      buildStakedLog(('0x' + 'a'.repeat(64)) as `0x${string}`, 0, 0n, 1_000_000n),
+      buildStakedLog(('0x' + 'b'.repeat(64)) as `0x${string}`, 1, 1n, 2_000_000n),
+      buildStakedLog(REPLAY_TX, 9, 1n, 99_999_999n), // replay: ignored
+    ];
+
+    const multicallSpy = vi.fn(
+      async (args: { contracts: Array<{ functionName: string }> }) => {
+        // 3 Staked → 3 contracts → with prefetchBatchSize=2 should be
+        // 2 multicall calls: first 2 contracts, then 1 contract.
+        expect(
+          args.contracts.every(
+            (c) => c.functionName === 'getOptionFirstStakeSequence',
+          ),
+        ).toBe(true);
+        return args.contracts.map((_, i) => [i + 1, true] as const);
+      },
+    );
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: makeClient({
+        logs,
+        multicallSpy: multicallSpy as unknown as ReturnType<typeof vi.fn>,
+      }),
+      chunkSize: 1000,
+      prefetchBatchSize: 2,
+    });
+
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+    expect(result.decodedEventCount).toBe(3);
+
+    // Two multicall calls: first 2 contracts (batch=2), second 1.
+    expect(multicallSpy).toHaveBeenCalledTimes(2);
+    const call1 = (multicallSpy.mock.calls as unknown[][])[0][0] as {
+      contracts: unknown[];
+    };
+    const call2 = (multicallSpy.mock.calls as unknown[][])[1][0] as {
+      contracts: unknown[];
+    };
+    expect(call1.contracts).toHaveLength(2);
+    expect(call2.contracts).toHaveLength(1);
+
+    // pm_stakes: pre-existing replay row + 2 new rows = 3 total.
+    const stakes = await t.db.select().from(pmStakes);
+    expect(stakes).toHaveLength(3);
+
+    // pool_total: NO = 1_000_000, YES = 5_000_000 (replay) + 2_000_000 = 7_000_000.
+    // Critically, the replay (REPLAY_TX, 9) → 99_999_999 is NOT added.
+    const opts = await t.db
+      .select()
+      .from(pmOptions)
+      .orderBy(pmOptions.optionIndex);
+    expect(opts[0].poolTotal).toBe('1000000');
+    expect(opts[1].poolTotal).toBe('7000000');
+  });
+
+  it('mixed MarketCreated + Staked in same chunk: pm_options created before mirror update (Codex 2B-3 m1)', async () => {
+    const t = await setup();
+    // No pre-seeding — MarketCreated must create both pm_markets +
+    // pm_options before Staked tries to bump pool_total.
+
+    const createdLog = buildMarketCreatedLog(11n, DEPLOY_BLOCK + 1n, 0);
+    // Same block, later logIndex: ensures the natural decoded order
+    // puts MarketCreated first.
+    const stakedTopics = encodeEventTopics({
+      abi: privateMarketsAbi,
+      eventName: 'Staked',
+      args: { marketId: 11n, staker: CREATOR },
+    });
+    const stakedData = encodeAbiParameters(
+      parseAbiParameters('uint256, uint256, uint256'),
+      [1n, 4_000_000n, 1778544100n],
+    );
+    const stakedLog = {
+      address: CONTRACT,
+      topics: stakedTopics as unknown as Log['topics'],
+      data: stakedData,
+      blockNumber: DEPLOY_BLOCK + 1n,
+      transactionHash: ('0x' + '7'.repeat(64)) as `0x${string}`,
+      transactionIndex: 1,
+      logIndex: 1,
+      blockHash: ('0x' + '8'.repeat(64)) as `0x${string}`,
+      removed: false,
+    } as Log;
+
+    // multicall: MarketCreated needs 7 reads; Staked needs 1.
+    // The orchestrator runs the MarketCreated batch first, then Staked.
+    const multicallSpy = vi.fn(
+      async (args: { contracts: Array<{ functionName: string }> }) => {
+        if (args.contracts[0].functionName === 'getMarket') {
+          // MarketCreated batch — return the realistic 7-tuple.
+          return buildFriendlyMulticallResults();
+        }
+        if (
+          args.contracts[0].functionName ===
+          'getOptionFirstStakeSequence'
+        ) {
+          return [[42, true]] as const;
+        }
+        throw new Error(
+          `unexpected: ${args.contracts[0].functionName}`,
+        );
+      },
+    );
+
+    const result = await runIndexerOnce({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      deployBlock: DEPLOY_BLOCK,
+      db: t.db as never,
+      publicClient: makeClient({
+        logs: [createdLog, stakedLog],
+        multicallSpy: multicallSpy as unknown as ReturnType<typeof vi.fn>,
+      }),
+    });
+
+    expect(isBusy(result)).toBe(false);
+    if (isBusy(result)) return;
+    expect(result.decodedEventCount).toBe(2);
+    expect(result.marketsWritten).toBe(1);
+
+    // Phase C ordering proof: pm_markets + pm_options exist AND
+    // pool_total reflects the stake. If MarketCreated had run AFTER
+    // Staked, the Staked handler would have hit options-row-missing
+    // (or orphan-event), pool_total would still be 0.
+    const opts = await t.db
+      .select()
+      .from(pmOptions)
+      .orderBy(pmOptions.optionIndex);
+    expect(opts).toHaveLength(2);
+    expect(opts[0].poolTotal).toBe('0'); // NO untouched
+    expect(opts[1].poolTotal).toBe('4000000'); // YES bumped
+    expect(opts[1].firstStakeSequence).toBe(42);
+
+    const stakes = await t.db.select().from(pmStakes);
+    expect(stakes).toHaveLength(1);
+  });
+
   it('release-failure surfaces releaseWarning on success result (Codex round-2 m1)', async () => {
     const t = await setup();
     const log = buildMarketCreatedLog(7n, DEPLOY_BLOCK + 1n, 0);

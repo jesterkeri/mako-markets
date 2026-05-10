@@ -578,11 +578,17 @@ export async function processMarketMetadataFrozen(
 export async function processStaked(
   ctx: HandlerCtx,
   event: Extract<DecodedEvent, { eventName: 'Staked' }>,
-): Promise<{ outcome: 'inserted' | 'replay-noop' | 'orphan-event' }> {
+): Promise<{
+  outcome:
+    | 'inserted'
+    | 'replay-noop'
+    | 'orphan-event'
+    | 'options-row-missing';
+}> {
   const { chainId, contractAddress, chunkTx, firstStakeSequence } = ctx;
   const marketIdNum = bigintToNumber(event.args.marketId);
   // optionIndex on the Staked event is uint256 in the ABI but bounded
-  // to MAX_OPTIONS (≤10) at the contract level. bigintToNumber's
+  // to the contract's MAX_OPTIONS at validation time. bigintToNumber's
   // safe-integer guard catches any drift.
   const optionIndex = bigintToNumber(event.args.optionIndex);
   const stakerLower = normalizeHex(event.args.staker, 20);
@@ -655,8 +661,10 @@ export async function processStaked(
 
   // Step 3: atomic pool_total increment. The chunkTx transaction
   // makes this commit-or-rollback together with the pm_stakes
-  // insert from step 1.
-  await chunkTx
+  // insert from step 1. Codex round-1 m2: surface zero-row updates
+  // as a distinct outcome so misaligned (market exists, option_index
+  // does not) state is loud rather than silent.
+  const poolUpdated = await chunkTx
     .update(pmOptions)
     .set({ poolTotal: sql`${pmOptions.poolTotal} + ${amount}` })
     .where(
@@ -664,7 +672,24 @@ export async function processStaked(
         eq(pmOptions.marketDbId, marketDbId),
         eq(pmOptions.optionIndex, optionIndex),
       ),
+    )
+    .returning({ optionIndex: pmOptions.optionIndex });
+
+  if (poolUpdated.length === 0) {
+    // pm_markets exists but the matching pm_options row for this
+    // option_index does not. The contract validates option_index <
+    // optionsCount at stake time, so this should never happen for
+    // events we observe in production — flag it loudly. The
+    // pm_stakes row is still recorded for audit; 2B-5's resnapshot
+    // sweep is the authoritative reconciliation path.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `processStaked: pm_options row missing for marketDbId=${marketDbId} ` +
+        `optionIndex=${optionIndex} (chainId=${chainId} marketId=${marketIdNum}); ` +
+        `pm_stakes recorded, pool_total / first_stake_sequence mirror skipped`,
     );
+    return { outcome: 'options-row-missing' };
+  }
 
   // Step 4: first-stake-sequence write. Predicate on
   // `firstStakeSequence IS NULL` makes the update idempotent against

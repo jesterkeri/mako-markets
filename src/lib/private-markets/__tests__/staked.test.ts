@@ -218,6 +218,41 @@ describe('processStaked — pm_stakes insert + pool_total', () => {
     expect(opts[0].poolTotal).toBe('3000000');
   });
 
+  it('options-row-missing: pm_markets exists but option_index has no pm_options row → distinct outcome (Codex round-1 m2)', async () => {
+    const t = await setup();
+    // Seed the pm_markets row but DELETE the pm_options[1] row to
+    // simulate a misaligned state.
+    const marketDbId = await seedConfirmedFriendly({ marketId: 7 });
+    await t.db
+      .delete(pmOptions)
+      .where(
+        and(
+          eq(pmOptions.marketDbId, marketDbId),
+          eq(pmOptions.optionIndex, 1),
+        ),
+      );
+
+    const ctx = await makeCtx(t);
+    const result = await processStaked(
+      ctx,
+      buildStakedEvent({
+        marketId: 7n,
+        staker: STAKER_A,
+        optionIndex: 1n,
+        amount: 1_000_000n,
+      }),
+    );
+    expect(result.outcome).toBe('options-row-missing');
+
+    const stakes = await t.db.select().from(pmStakes);
+    expect(stakes).toHaveLength(1); // Audit trail recorded.
+
+    const opts = await t.db.select().from(pmOptions);
+    expect(opts).toHaveLength(1); // Only NO; YES was deleted.
+    expect(opts[0].optionIndex).toBe(0);
+    expect(opts[0].poolTotal).toBe('0'); // NO untouched.
+  });
+
   it('orphan event (no pm_markets row) returns orphan-event with pm_stakes recorded for audit', async () => {
     const t = await setup();
     // No seeding — no pm_markets row exists.
