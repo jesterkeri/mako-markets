@@ -379,6 +379,7 @@ export async function resnapshotConfirmed(
     try {
       const handled = await reconcileOneRow({
         db,
+        publicClient,
         chainId,
         contractAddress: contractAddressLower,
         contractAddressOriginal: contractAddress,
@@ -415,6 +416,7 @@ export async function resnapshotConfirmed(
 
 interface ReconcileOneRowArgs {
   db: DbOrTx;
+  publicClient: PublicClient;
   chainId: number;
   contractAddress: `0x${string}`;
   /// The original-cased address as passed by the caller. Used in log
@@ -433,6 +435,7 @@ async function reconcileOneRow(
 ): Promise<boolean> {
   const {
     db,
+    publicClient,
     chainId,
     contractAddress,
     marketDbId,
@@ -514,25 +517,44 @@ async function reconcileOneRow(
       // Codex r4 m2: count===1 even when there are additional
       // mismatching audit rows (older reorg artefacts). The single
       // match is authoritative.
+      // Codex 2B-5 r1 M2: predicate-guarded UPDATE inside
+      // applyOrphanRecovery; if a concurrent pm-indexer tick
+      // terminalised the row between our SELECT and the UPDATE,
+      // applied:false → treat as state-mismatch.
       const m = matches[0];
-      await applyOrphanRecovery({
+      const recovery = await applyOrphanRecovery({
         db,
         marketDbId,
         derivedState: m.derivedState,
         payload: m.payload,
         now,
       });
-      logMetric('resnapshot-orphan-recovery', {
-        component: 'pm-maintenance',
-        handler: 'resnapshotConfirmed',
-        chainId,
-        contractAddress,
-        marketId,
-        eventName: m.eventName,
-        derivedState: m.derivedState,
-        auditRowCount: audits.length,
-      });
-      didOrphanRecovery = true;
+      if (recovery.applied) {
+        logMetric('resnapshot-orphan-recovery', {
+          component: 'pm-maintenance',
+          handler: 'resnapshotConfirmed',
+          chainId,
+          contractAddress,
+          marketId,
+          eventName: m.eventName,
+          derivedState: m.derivedState,
+          auditRowCount: audits.length,
+        });
+        didOrphanRecovery = true;
+      } else {
+        // The row's current_state changed under us between SELECT
+        // and the predicate-guarded UPDATE. Surface as state-mismatch.
+        alertInvariantViolation('state-mismatch', {
+          component: 'pm-maintenance',
+          handler: 'resnapshotConfirmed',
+          chainId,
+          contractAddress,
+          marketId,
+          reason: 'concurrent-state-change',
+          eventName: m.eventName,
+          derivedState: m.derivedState,
+        });
+      }
     } else if (matches.length === 0) {
       // Audit row(s) present but none match chain — chain reorg or
       // contract/operator drift. Alert; do NOT mutate.
@@ -627,13 +649,29 @@ async function reconcileOneRow(
   });
 
   // -- firstStakeSequence recovery for NULL pool entries -----------------
-  // (Out of 2B-5 scope to multicall; deferred to a future maintenance
-  // pass. Documented intentionally so the test surface knows resnapshot
-  // doesn't write firstStakeSequence yet.)
+  // Codex 2B-5 r1 M1: when an orphan Staked event landed before its
+  // parent MarketCreated, processStaked observed `firstStakeSequence`
+  // skip-write (no pm_options row). After MarketCreated arrives the
+  // pm_options row exists with `firstStakeSequence = NULL`, but the
+  // event-handler path doesn't get a second bite. Resnapshot reads
+  // `getOptionFirstStakeSequence(marketId, optionIndex)` for any
+  // pm_options row where `firstStakeSequence IS NULL` AND a
+  // corresponding pm_stakes row exists, then writes-once-and-set
+  // (predicated on `firstStakeSequence IS NULL` so a concurrent
+  // event-handler write isn't overwritten).
+  await reconcileFirstStakeSequence({
+    db,
+    publicClient,
+    chainId,
+    contractAddress,
+    marketDbId,
+    marketId,
+  });
 
   return true;
   // Suppress unused-var warning — `didOrphanRecovery` is the metric
-  // hook; kept as a local for future Sentry-tag promotion.
+  // hook; kept as a local for future log-aggregation promotion
+  // (Codex 2B-5 r1 n1 — Sentry comment removed).
   void didOrphanRecovery;
 }
 
@@ -645,12 +683,26 @@ interface ApplyOrphanRecoveryArgs {
   now: Date;
 }
 
+interface ApplyOrphanRecoveryResult {
+  /// True iff the predicate-guarded UPDATE actually wrote a row. False
+  /// indicates a concurrent pm-indexer tick terminalised the row
+  /// between our SELECT and this UPDATE — caller should treat as a
+  /// state-mismatch (no-op on this resnapshot pass).
+  applied: boolean;
+}
+
 async function applyOrphanRecovery(
   args: ApplyOrphanRecoveryArgs,
-): Promise<void> {
+): Promise<ApplyOrphanRecoveryResult> {
   const { db, marketDbId, derivedState, payload, now } = args;
-  // Mirror UPDATE — narrow exception to the "never mutate
-  // current_state" rule (Codex r2 M2 / r3 M1+M2).
+  // Codex 2B-5 r1 M2: predicate-guard the mirror UPDATE on
+  // current_state='created'. The earlier flow read current_state from
+  // the prefetch SELECT; without the WHERE-clause guard, a concurrent
+  // pm-indexer tick that terminalised the row between selection and
+  // recovery would be silently overwritten. The .returning() length
+  // tells us whether the UPDATE matched — zero rows means the row
+  // was already terminal-or-different, and the caller must treat
+  // this as state-mismatch.
   const friendlyOutcomeRaw = payload.outcome;
   const friendlyOutcome =
     derivedState === 'resolved' || derivedState === 'empty_pool_resolved'
@@ -677,7 +729,7 @@ async function applyOrphanRecovery(
         ? payload.feeTaken
         : '0';
 
-  await db
+  const updated = await db
     .update(pmMarkets)
     .set({
       currentState: derivedState,
@@ -686,7 +738,15 @@ async function applyOrphanRecovery(
       feeTaken: feeTakenStr,
       updatedAt: now,
     })
-    .where(eq(pmMarkets.id, marketDbId));
+    .where(
+      and(
+        eq(pmMarkets.id, marketDbId),
+        eq(pmMarkets.currentState, 'created'),
+      ),
+    )
+    .returning({ id: pmMarkets.id });
+
+  return { applied: updated.length > 0 };
 }
 
 interface ReconcilePoolTotalArgs {
@@ -751,8 +811,90 @@ async function reconcilePoolTotal(
     }
   });
 
-  // suppress unused imports for future use
-  void isNull;
-  void bigintToNumber;
   void pmStakes;
+}
+
+// ---- firstStakeSequence recovery (Codex 2B-5 r1 M1) -----------------------
+
+interface ReconcileFirstStakeSequenceArgs {
+  db: DbOrTx;
+  publicClient: PublicClient;
+  chainId: number;
+  contractAddress: `0x${string}`;
+  marketDbId: string;
+  marketId: number;
+}
+
+async function reconcileFirstStakeSequence(
+  args: ReconcileFirstStakeSequenceArgs,
+): Promise<void> {
+  const { db, publicClient, chainId, contractAddress, marketDbId, marketId } =
+    args;
+
+  // Find pm_options rows where firstStakeSequence is NULL AND there's
+  // at least one pm_stakes row for the same option_index (proves a
+  // stake actually landed; without this guard we'd hammer the chain
+  // with reads for never-staked options).
+  const candidates = await db
+    .select({ optionIndex: pmOptions.optionIndex })
+    .from(pmOptions)
+    .where(
+      and(
+        eq(pmOptions.marketDbId, marketDbId),
+        isNull(pmOptions.firstStakeSequence),
+      ),
+    );
+  if (candidates.length === 0) return;
+
+  // Filter to only options that have at least one stake.
+  const optionsWithStakes: number[] = [];
+  for (const opt of candidates) {
+    const stakeProbe = await db
+      .select({ optionIndex: pmStakes.optionIndex })
+      .from(pmStakes)
+      .where(
+        and(
+          eq(pmStakes.chainId, chainId),
+          eq(pmStakes.contractAddress, contractAddress),
+          eq(pmStakes.marketId, marketId),
+          eq(pmStakes.optionIndex, opt.optionIndex),
+        ),
+      )
+      .limit(1);
+    if (stakeProbe.length > 0) {
+      optionsWithStakes.push(opt.optionIndex);
+    }
+  }
+  if (optionsWithStakes.length === 0) return;
+
+  // Multicall getOptionFirstStakeSequence for all eligible options.
+  const contracts = optionsWithStakes.map((optionIndex) => ({
+    address: contractAddress,
+    abi: privateMarketsAbi,
+    functionName: 'getOptionFirstStakeSequence' as const,
+    args: [BigInt(marketId), BigInt(optionIndex)] as const,
+  }));
+  const results = (await publicClient.multicall({
+    allowFailure: false,
+    contracts: contracts as never,
+  })) as readonly unknown[];
+
+  // Per-option write-once-and-set under `firstStakeSequence IS NULL`
+  // predicate so a concurrent processStaked write isn't overwritten.
+  for (let i = 0; i < optionsWithStakes.length; i++) {
+    const tuple = results[i] as readonly [number, boolean];
+    const sequence = bigintToNumber(BigInt(tuple[0]));
+    const isSet = tuple[1];
+    if (!isSet) continue; // Chain says no first-stake recorded yet.
+    await db
+      .update(pmOptions)
+      .set({ firstStakeSequence: sequence })
+      .where(
+        and(
+          eq(pmOptions.marketDbId, marketDbId),
+          eq(pmOptions.optionIndex, optionsWithStakes[i]),
+          isNull(pmOptions.firstStakeSequence),
+        ),
+      );
+  }
 }

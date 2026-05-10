@@ -285,6 +285,35 @@ describe('sweepStalePending', () => {
     expect(parsed.component).toBe('pm-maintenance');
   });
 
+  it('Codex 2B-5 r1 M3: normalises checksum-cased contract address before SQL comparison', async () => {
+    const t = await setup();
+    const now = new Date('2026-05-10T12:00:00Z');
+    const pendingAt = new Date('2026-05-10T10:00:00Z');
+    // Seed with the lowercase form (production normalises at insert).
+    await seedPendingMarket({
+      clientNonce: nonceOf(11),
+      pendingAt,
+      contractAddress: CONTRACT,
+    });
+
+    // Caller passes the CHECKSUM-cased form (e.g. from an env var that
+    // wasn't pre-normalised). Pre-fix this would have matched 0 rows;
+    // the normalizeHex inside sweepStalePending now coerces both sides.
+    const checksumCased =
+      '0xC9c6575a14D0e84afd5AB21C506916Fd2864bb8f' as `0x${string}`;
+    const r = await sweepStalePending(t.db as never, {
+      chainId: CHAIN_ID,
+      contractAddress: checksumCased,
+      now,
+      ttlMs: 60 * 60 * 1000,
+      limit: 100,
+    });
+    expect(r.swept).toBe(1);
+
+    const rows = await t.db.select().from(pmMarkets);
+    expect(rows[0].createStatus).toBe('failed');
+  });
+
   it('quiet on swept = 0 (no info line)', async () => {
     const t = await setup();
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});

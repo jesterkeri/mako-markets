@@ -22,6 +22,7 @@ import type { DbOrTx } from '@/db/client';
 import { pmMarkets } from '@/db/schema';
 
 import { logMetric } from './alerting';
+import { normalizeHex } from './normalize';
 
 export interface SweepStalePendingArgs {
   chainId: number;
@@ -55,6 +56,14 @@ export async function sweepStalePending(
     );
   }
 
+  // Codex 2B-5 r1 M3: normalise the contract address before the SQL
+  // comparison. The indexer's processMarketCreated stores
+  // contract_address lowercased (via normalizeHex), so a checksum-cased
+  // env var here would silently match zero rows and leak stale rows
+  // forever. Normalising at the helper boundary is symmetric with
+  // every other write site.
+  const contractAddressLower = normalizeHex(contractAddress, 20);
+
   const cutoff = new Date(now.getTime() - ttlMs);
   const cutoffIso = cutoff.toISOString();
 
@@ -71,7 +80,7 @@ export async function sweepStalePending(
      WHERE id IN (
        SELECT id FROM pm_markets
         WHERE chain_id = ${chainId}
-          AND contract_address = ${contractAddress}
+          AND contract_address = ${contractAddressLower}
           AND create_status = 'pending'
           AND pending_at < ${cutoffIso}
         ORDER BY pending_at ASC
@@ -91,7 +100,7 @@ export async function sweepStalePending(
       component: 'pm-maintenance',
       handler: 'sweepStalePending',
       chainId,
-      contractAddress,
+      contractAddress: contractAddressLower,
       swept,
       ttlMs,
       limit,
