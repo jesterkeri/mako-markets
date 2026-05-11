@@ -104,8 +104,17 @@ export async function allocatePmDraft(
     RETURNING id
   `);
 
-  // postgres-js + pglite both expose RETURNING rows via .rows
-  const rows = (inserted as unknown as { rows: Array<{ id: string }> }).rows;
+  // postgres-js returns row arrays directly; pglite wraps in
+  // `{ rows }`. The earlier .rows-only form silently worked in pglite
+  // tests but 500'd in production — same class of bug Codex 2C-1
+  // step-9 r1 CRIT-1 flagged in sponsor-gate.ts. Pattern mirrors
+  // cleanup.ts:92-95.
+  const rawInserted =
+    (inserted as unknown as { rows?: unknown[] }).rows ??
+    (inserted as unknown as unknown[]);
+  const rows = (Array.isArray(rawInserted) ? rawInserted : []) as Array<{
+    id: string;
+  }>;
   if (rows.length === 0) {
     return { ok: false, error: { kind: 'duplicate' } };
   }

@@ -205,6 +205,85 @@ describe('assertPmSponsorDraft — wrong creator', () => {
   });
 });
 
+// Codex 2C-1 step-9 r1 CRIT-1: regression for postgres-js's
+// direct-array result shape. pglite wraps results in `{ rows }`; the
+// production postgres-js driver returns the array DIRECTLY. The
+// helper must handle both. The pglite tests above prove the wrapped
+// shape; this stand-alone block proves the direct-array shape via a
+// hand-rolled tx mock that mimics postgres-js.
+describe('assertPmSponsorDraft — postgres-js direct-array result shape (Codex r1 CRIT-1)', () => {
+  it('handles a result that IS the row array (no .rows wrapper) — happy path', async () => {
+    // Build a minimal mock db that exposes `.transaction(cb)` and
+    // calls cb with a tx whose `.execute(...)` returns a raw array
+    // (mimics postgres-js, NOT pglite). The helper module's `db`
+    // import is the Proxy from above; we resolve it to a hand-rolled
+    // object for THIS test by swapping `active.db` after import.
+    const fakeRowsDirectArray = [
+      {
+        id: '00000000-0000-0000-0000-00000000beef',
+        creator: SESSION_A.toLowerCase(),
+        shape: 'friendly',
+      },
+    ];
+    const fakeDb = {
+      // The Proxy above forwards `transaction` calls to active.db.
+      // We swap active to a stub for this test.
+      transaction: async <T,>(cb: (tx: unknown) => Promise<T>): Promise<T> => {
+        const fakeTx = {
+          execute: async () => fakeRowsDirectArray, // raw array, NO .rows
+        };
+        return cb(fakeTx);
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const prev = active;
+    active = { db: fakeDb as unknown as TestDb['db'], client: prev!.client, close: prev!.close };
+
+    try {
+      const r = await assertPmSponsorDraft({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT_A,
+        clientNonce: NONCE_1,
+        sessionWallet: SESSION_A,
+        shapeFromCall: 'friendly',
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.pendingDbId).toBe('00000000-0000-0000-0000-00000000beef');
+    } finally {
+      active = prev;
+    }
+  });
+
+  it('handles a result that IS an empty array (no .rows wrapper) — pm_draft_missing', async () => {
+    const fakeDb = {
+      transaction: async <T,>(cb: (tx: unknown) => Promise<T>): Promise<T> => {
+        const fakeTx = {
+          execute: async () => [] as unknown[], // empty raw array
+        };
+        return cb(fakeTx);
+      },
+    };
+    const prev = active;
+    active = { db: fakeDb as unknown as TestDb['db'], client: prev!.client, close: prev!.close };
+
+    try {
+      const r = await assertPmSponsorDraft({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT_A,
+        clientNonce: NONCE_1,
+        sessionWallet: SESSION_A,
+        shapeFromCall: 'friendly',
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.reason).toBe('pm_draft_missing');
+    } finally {
+      active = prev;
+    }
+  });
+});
+
 describe('assertPmSponsorDraft — shape mismatch', () => {
   it('returns pm_draft_shape_mismatch when row.shape differs from shapeFromCall', async () => {
     await seedPending({

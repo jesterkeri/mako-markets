@@ -85,11 +85,19 @@ export async function assertPmSponsorDraft(
          FOR UPDATE
     `);
 
-    const rows = (
-      result as unknown as {
-        rows: Array<{ id: string; creator: string; shape: string }>;
-      }
-    ).rows;
+    // postgres-js returns row arrays directly; pglite wraps in
+    // `{ rows }`. Same dual-shape extraction pattern used elsewhere
+    // in pm_* modules (see cleanup.ts:92-95). The earlier .rows-only
+    // form silently worked in pglite tests but 500'd in production
+    // (Codex 2C-1 step-9 r1 CRIT-1).
+    const raw =
+      (result as unknown as { rows?: unknown[] }).rows ??
+      (result as unknown as unknown[]);
+    const rows = (Array.isArray(raw) ? raw : []) as Array<{
+      id: string;
+      creator: string;
+      shape: string;
+    }>;
 
     if (rows.length === 0) {
       return { ok: false, reason: 'pm_draft_missing' } as const;
