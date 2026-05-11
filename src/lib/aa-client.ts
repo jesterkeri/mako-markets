@@ -1131,9 +1131,15 @@ export async function runCreatePrivateMarket(
     };
   }
 
-  // (7) 5-case status switch — identical shape to runCreateMarket.
+  // (7) Status switch — identical shape to runCreateMarket plus a
+  // defensive default (Codex 2C-1 step-11 r2 MIN-1).
   const sendBody = send.body as {
-    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
+    status?:
+      | 'sent'
+      | 'reverted'
+      | 'submitted'
+      | 'failed_pre_submit'
+      | 'expired';
     txHash?: Hex;
     userOpHash?: Hex;
     failureReason?: string;
@@ -1169,5 +1175,20 @@ export async function runCreatePrivateMarket(
       };
     case 'expired':
       return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    default:
+      // Codex r2 MIN-1: any 2xx response with an unrecognised
+      // `status` field (or missing body / 204 no-content) must NOT
+      // fall off the switch and resolve to undefined. Surface as
+      // send_failed so the UI renders an explicit error instead of
+      // hanging.
+      return {
+        kind: 'send_failed',
+        status: send.status,
+        error: 'unexpected_send_status',
+        detail:
+          typeof sendBody.status === 'string'
+            ? `unknown status: ${sendBody.status}`
+            : 'missing status field',
+      };
   }
 }

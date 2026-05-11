@@ -17,7 +17,13 @@
 // ----------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { encodeFunctionData, toHex, type Address, type Hex } from 'viem';
+import {
+  decodeFunctionData,
+  encodeFunctionData,
+  toHex,
+  type Address,
+  type Hex,
+} from 'viem';
 
 // Server-side treasury accessor is not used by the helpers under test,
 // but importing aa-call-allowlist transitively loads it. Mock to a
@@ -225,9 +231,10 @@ describe('runCreatePrivateMarket — cross-module ABI pin', () => {
 // send pipeline can be exercised. Caught the r1 MAJ-1 202-fallthrough
 // bug before it would have surfaced as a UI hang.
 
+// Codex r2 NIT-1: `ok` is derived from `status`, not declared on the
+// fixture — kept the type minimal.
 type FetchResponse = {
   status: number;
-  ok: boolean;
   body: unknown;
 };
 
@@ -323,11 +330,10 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   };
 
   it('happy path: draft + sponsor + sign + send → sent', async () => {
-    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234', pendingDbId: 'd1', clientNonce: '0x...' } });
-    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
+    enqueue({ status: 200, body: { slug: 'ABCD1234', pendingDbId: 'd1', clientNonce: '0x...' } });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({
       status: 200,
-      ok: true,
       body: {
         status: 'sent',
         txHash: '0x' + 'cc'.repeat(32),
@@ -365,6 +371,19 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     expect(call.to).toBe(PM_CONTRACT_ADDRESS);
     expect(call.value).toBe('0x0');
 
+    // Codex r2 MIN-2: prove the clientNonce sent to /api/pm/markets/
+    // draft is the SAME nonce encoded into the createMarket call.
+    // A regression that generated nonce A for /draft and encoded
+    // nonce B in createMarket would still pass with the mocked
+    // sponsor endpoint here, but would fail the draft gate in
+    // production (creator/shape lookup keyed on client_nonce).
+    const decoded = decodeFunctionData({
+      abi: PM_CREATE_MARKET_ABI,
+      data: call.data as Hex,
+    });
+    const decodedParams = (decoded.args as readonly [PmCreateParamsTuple])[0];
+    expect(decodedParams.clientNonce).toBe(draftBody.clientNonce);
+
     // signSafeOpHash invoked once with the sponsor's safeOpHash.
     expect(mocks.signSafeOpHash).toHaveBeenCalledTimes(1);
   });
@@ -372,7 +391,6 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   it('draft failure → sponsor_failed with step="draft" (no sponsor / sign / send calls)', async () => {
     enqueue({
       status: 409,
-      ok: false,
       body: { error: 'pm_draft_duplicate' },
     });
 
@@ -390,10 +408,9 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   });
 
   it('sponsor failure → sponsor_failed with step="sponsor" (no sign / send calls)', async () => {
-    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
     enqueue({
       status: 403,
-      ok: false,
       body: { error: 'NOT_ALLOWED', reason: 'pm_draft_wrong_creator' },
     });
 
@@ -414,11 +431,10 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   // was unreachable for 2xx, so 202 hit the success-switch which
   // has no 'send_in_progress' case.
   it('send 202 → kind="in_progress" (Codex r1 MAJ-1 regression pin)', async () => {
-    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
-    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
+    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({
       status: 202,
-      ok: true,
       body: { status: 'send_in_progress', retryAfterSeconds: 3 },
     });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
@@ -431,9 +447,9 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   });
 
   it('send 410 → kind="expired"', async () => {
-    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
-    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
-    enqueue({ status: 410, ok: false, body: { error: 'expired' } });
+    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 410, body: { error: 'expired' } });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
 
     const result = await runCreatePrivateMarket(ARGS);
@@ -441,19 +457,47 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   });
 
   it('send 423 → kind="manual_review"', async () => {
-    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
-    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
-    enqueue({ status: 423, ok: false, body: { error: 'manual_review' } });
+    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 423, body: { error: 'manual_review' } });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
 
     const result = await runCreatePrivateMarket(ARGS);
     expect(result.kind).toBe('manual_review');
   });
 
+  // Codex r2 MIN-1: regression for the defensive default in the
+  // success switch. A 200 response with an unrecognised status (or
+  // missing status) must NOT fall through to undefined.
+  it('send 200 with unexpected status → kind="send_failed" (Codex r2 MIN-1)', async () => {
+    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 200, body: { status: 'wat' } });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.error).toBe('unexpected_send_status');
+    expect(result.detail).toContain('wat');
+  });
+
+  it('send 200 with NO status field → kind="send_failed"', async () => {
+    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 200, body: {} });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.error).toBe('unexpected_send_status');
+  });
+
   it('send 5xx → kind="send_failed"', async () => {
-    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
-    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
-    enqueue({ status: 502, ok: false, body: { error: 'bundler_unreachable' } });
+    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 502, body: { error: 'bundler_unreachable' } });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
 
     const result = await runCreatePrivateMarket(ARGS);
