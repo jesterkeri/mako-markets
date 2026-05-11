@@ -16,22 +16,29 @@
 // the cross-module pin doesn't already catch.
 // ----------------------------------------------------------------------------
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeFunctionData, toHex, type Address, type Hex } from 'viem';
 
 // Server-side treasury accessor is not used by the helpers under test,
 // but importing aa-call-allowlist transitively loads it. Mock to a
-// noop so the test doesn't need treasury env vars.
+// noop so the test doesn't need treasury env vars. Mock magic-browser
+// too — runCreatePrivateMarket calls signSafeOpHash; we want a stub.
 const mocks = vi.hoisted(() => ({
   getPmTreasuryAddress: vi.fn(),
+  signSafeOpHash: vi.fn(),
 }));
 vi.mock('@/lib/private-markets/treasury', () => ({
   getPmTreasuryAddress: () => mocks.getPmTreasuryAddress(),
 }));
+vi.mock('../magic-browser', () => ({
+  signSafeOpHash: (args: unknown) => mocks.signSafeOpHash(args),
+}));
 
 import {
   generateClientNonce,
+  runCreatePrivateMarket,
   shapeEnumToString,
+  type RunOutcome,
 } from '../aa-client';
 import { assertPmCreateMarketShape } from '../aa-call-allowlist';
 import { PM_CONTRACT_ADDRESS } from '../contract';
@@ -179,5 +186,280 @@ describe('runCreatePrivateMarket — cross-module ABI pin', () => {
         treasury: TREASURY,
       }),
     ).toBeUndefined();
+  });
+
+  // Codex 2C-1 step-11 r1 MIN-1: OpenVote round-trip. OpenVote is the
+  // only shape where fixedStake is non-zero, so this catches a
+  // tuple-order drift around fixedStake that Friendly/PrizePool
+  // wouldn't surface (both have fixedStake=0).
+  it('OpenVote variant round-trips (non-zero fixedStake)', () => {
+    const params: PmCreateParamsTuple = {
+      ...fixtureParamsWithNonce(),
+      shape: 1, // OpenVote
+      optionLabels: [toHex('A'), toHex('B'), toHex('C')],
+      fixedStake: 50_000n, // non-zero — only OpenVote uses it
+      winnersCount: 1,
+      title: toHex('Pick a winner'),
+    };
+
+    const callData = encodeFunctionData({
+      abi: PM_CREATE_MARKET_ABI,
+      functionName: 'createMarket',
+      args: [params],
+    });
+
+    expect(
+      assertPmCreateMarketShape({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        call: { to: PM_CONTRACT_ADDRESS, value: 0n, data: callData },
+        treasury: TREASURY,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+// ── runCreatePrivateMarket orchestrator (Codex r1 MAJ-2) ────────────────────
+//
+// Mocks fetch and signSafeOpHash so the full draft → sponsor → sign →
+// send pipeline can be exercised. Caught the r1 MAJ-1 202-fallthrough
+// bug before it would have surfaced as a UI hang.
+
+type FetchResponse = {
+  status: number;
+  ok: boolean;
+  body: unknown;
+};
+
+function mkResponse(status: number, body: unknown): Response {
+  const ok = status >= 200 && status < 300;
+  return {
+    ok,
+    status,
+    json: async () => body,
+  } as unknown as Response;
+}
+
+interface QueuedFetch {
+  url: string;
+  body: unknown;
+  response: FetchResponse;
+}
+
+describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', () => {
+  const fetchCalls: Array<{ url: string; body: unknown }> = [];
+  const fetchQueue: FetchResponse[] = [];
+
+  beforeEach(() => {
+    fetchCalls.length = 0;
+    fetchQueue.length = 0;
+    mocks.signSafeOpHash.mockReset();
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(init.body as string) : null;
+      fetchCalls.push({ url, body });
+      const next = fetchQueue.shift();
+      if (!next) {
+        throw new Error(`unexpected fetch: ${url}`);
+      }
+      return mkResponse(next.status, next.body);
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function enqueue(response: FetchResponse): void {
+    fetchQueue.push(response);
+  }
+
+  function sponsoredBodyStub(): Record<string, unknown> {
+    return {
+      pendingUserOpId: '00000000-0000-0000-0000-00000000aaaa',
+      userOp: {
+        sender: SAFE,
+        nonce: '0x0',
+        initCode: '0x',
+        callData: '0xabcd',
+        callGasLimit: '0x186a0',
+        verificationGasLimit: '0x186a0',
+        preVerificationGas: '0x186a0',
+        maxFeePerGas: '0x1',
+        maxPriorityFeePerGas: '0x1',
+        paymaster: '0x3333333333333333333333333333333333333333',
+        paymasterVerificationGasLimit: '0x186a0',
+        paymasterPostOpGasLimit: '0x186a0',
+        paymasterData: '0x',
+      },
+      safeOpHash: '0x' + 'aa'.repeat(32),
+      userOpHash: '0x' + 'bb'.repeat(32),
+      validAfter: '0x0',
+      validUntil: '0xffffffffffff',
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    };
+  }
+
+  const ARGS = {
+    chainId: MONAD_TESTNET_ID,
+    magicEoa: '0x2222222222222222222222222222222222222222' as Address,
+    createParams: {
+      shape: 0 as const,
+      stakingOpensAt: 1_800_000_060n,
+      closeAt: 1_800_003_600n,
+      title: toHex('Will it rain?'),
+      description: toHex(''),
+      streamUrl: toHex(''),
+      optionLabels: [toHex('NO'), toHex('YES')],
+      participantWallets: [] as Address[],
+      allowlist: [] as Address[],
+      viewMode: 1 as const,
+      participationMode: 0 as const,
+      perStakeMin: 0n,
+      perStakeMax: 0n,
+      perWalletCumulativeMax: 0n,
+      fixedStake: 0n,
+      winnersCount: 0,
+    },
+  };
+
+  it('happy path: draft + sponsor + sign + send → sent', async () => {
+    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234', pendingDbId: 'd1', clientNonce: '0x...' } });
+    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
+    enqueue({
+      status: 200,
+      ok: true,
+      body: {
+        status: 'sent',
+        txHash: '0x' + 'cc'.repeat(32),
+        userOpHash: '0x' + 'bb'.repeat(32),
+      },
+    });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+
+    expect(result.kind).toBe('sent');
+    if (result.kind !== 'sent') return;
+    expect(result.txHash).toBe(('0x' + 'cc'.repeat(32)) as Hex);
+
+    // Verify call sequence: draft, sponsor, send.
+    expect(fetchCalls).toHaveLength(3);
+    expect(fetchCalls[0].url).toBe('/api/pm/markets/draft');
+    expect(fetchCalls[1].url).toBe('/api/aa/sponsor');
+    expect(fetchCalls[2].url).toBe('/api/aa/send');
+
+    // Verify draft body shape — chainId, contractAddress, shape (mapped),
+    // clientNonce (generated, 32-byte hex).
+    const draftBody = fetchCalls[0].body as Record<string, unknown>;
+    expect(draftBody.chainId).toBe(MONAD_TESTNET_ID);
+    expect(draftBody.contractAddress).toBe(PM_CONTRACT_ADDRESS);
+    expect(draftBody.shape).toBe('friendly'); // mapped from shape=0
+    expect(typeof draftBody.clientNonce).toBe('string');
+    expect(/^0x[0-9a-f]{64}$/.test(draftBody.clientNonce as string)).toBe(true);
+
+    // Verify sponsor body shape — kind=pm_create_market.
+    const sponsorBody = fetchCalls[1].body as Record<string, unknown>;
+    expect(sponsorBody.kind).toBe('pm_create_market');
+    expect(sponsorBody.chainId).toBe(MONAD_TESTNET_ID);
+    const call = sponsorBody.call as Record<string, unknown>;
+    expect(call.to).toBe(PM_CONTRACT_ADDRESS);
+    expect(call.value).toBe('0x0');
+
+    // signSafeOpHash invoked once with the sponsor's safeOpHash.
+    expect(mocks.signSafeOpHash).toHaveBeenCalledTimes(1);
+  });
+
+  it('draft failure → sponsor_failed with step="draft" (no sponsor / sign / send calls)', async () => {
+    enqueue({
+      status: 409,
+      ok: false,
+      body: { error: 'pm_draft_duplicate' },
+    });
+
+    const result = await runCreatePrivateMarket(ARGS);
+
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.step).toBe('draft');
+    expect(result.status).toBe(409);
+    expect(result.error).toBe('pm_draft_duplicate');
+
+    // Only 1 fetch — draft. No sponsor / send.
+    expect(fetchCalls).toHaveLength(1);
+    expect(mocks.signSafeOpHash).not.toHaveBeenCalled();
+  });
+
+  it('sponsor failure → sponsor_failed with step="sponsor" (no sign / send calls)', async () => {
+    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
+    enqueue({
+      status: 403,
+      ok: false,
+      body: { error: 'NOT_ALLOWED', reason: 'pm_draft_wrong_creator' },
+    });
+
+    const result = await runCreatePrivateMarket(ARGS);
+
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.step).toBe('sponsor');
+    expect(result.status).toBe(403);
+    expect(result.reason).toBe('pm_draft_wrong_creator');
+
+    expect(fetchCalls).toHaveLength(2); // draft + sponsor, no send
+    expect(mocks.signSafeOpHash).not.toHaveBeenCalled();
+  });
+
+  // Codex r1 MAJ-1 regression: 202 send_in_progress must NOT fall
+  // through to undefined. The pre-fix code's `if (!send.ok)` block
+  // was unreachable for 2xx, so 202 hit the success-switch which
+  // has no 'send_in_progress' case.
+  it('send 202 → kind="in_progress" (Codex r1 MAJ-1 regression pin)', async () => {
+    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
+    enqueue({
+      status: 202,
+      ok: true,
+      body: { status: 'send_in_progress', retryAfterSeconds: 3 },
+    });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result: RunOutcome = await runCreatePrivateMarket(ARGS);
+
+    expect(result.kind).toBe('in_progress');
+    if (result.kind !== 'in_progress') return;
+    expect(result.retryAfterSeconds).toBe(3);
+  });
+
+  it('send 410 → kind="expired"', async () => {
+    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
+    enqueue({ status: 410, ok: false, body: { error: 'expired' } });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('expired');
+  });
+
+  it('send 423 → kind="manual_review"', async () => {
+    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
+    enqueue({ status: 423, ok: false, body: { error: 'manual_review' } });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('manual_review');
+  });
+
+  it('send 5xx → kind="send_failed"', async () => {
+    enqueue({ status: 200, ok: true, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, ok: true, body: sponsoredBodyStub() });
+    enqueue({ status: 502, ok: false, body: { error: 'bundler_unreachable' } });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.status).toBe(502);
+    expect(result.error).toBe('bundler_unreachable');
   });
 });

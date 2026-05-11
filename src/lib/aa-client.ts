@@ -1079,29 +1079,50 @@ export async function runCreatePrivateMarket(
     signature,
   });
 
-  if (!send.ok) {
+  // Status-based branching BEFORE the ok check (Codex 2C-1 step-11 r1
+  // MAJ-1): fetch's `res.ok` is true for all 2xx, including 202.
+  // The send route returns 202 for `send_in_progress` (async send
+  // started, poll later). Without explicit status routing here, a
+  // 202 response would skip the !send.ok block, fall through to the
+  // success switch which has no `send_in_progress` case, and the
+  // helper would resolve to undefined. Same pre-existing latent
+  // bug exists in runCreateMarket / runPlaceBet / runSendUsdc —
+  // out of scope for this commit; tracked as a follow-up.
+  if (send.status === 202) {
     const sendBody = send.body as {
-      error?: string;
-      message?: string;
       status?: string;
       retryAfterSeconds?: number;
     };
-    if (send.status === 202 && sendBody.status === 'send_in_progress') {
+    if (sendBody.status === 'send_in_progress') {
       return {
         kind: 'in_progress',
         pendingUserOpId: sponsored.pendingUserOpId,
         retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
       };
     }
-    if (send.status === 410) {
-      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
-    }
-    if (send.status === 423) {
-      return {
-        kind: 'manual_review',
-        pendingUserOpId: sponsored.pendingUserOpId,
-      };
-    }
+    // 202 with an unexpected body shape — surface as send_failed
+    // rather than fall through to undefined.
+    return {
+      kind: 'send_failed',
+      status: 202,
+      error: 'unexpected_202_body',
+    };
+  }
+  if (send.status === 410) {
+    return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
+  if (send.status === 423) {
+    return {
+      kind: 'manual_review',
+      pendingUserOpId: sponsored.pendingUserOpId,
+    };
+  }
+
+  if (!send.ok) {
+    const sendBody = send.body as {
+      error?: string;
+      message?: string;
+    };
     return {
       kind: 'send_failed',
       status: send.status,
