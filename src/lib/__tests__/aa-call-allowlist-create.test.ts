@@ -590,8 +590,8 @@ describe('assertSponsoredCallData (extended for create_market)', () => {
     });
   }
 
-  it('accepts a valid op=0 createMarket wrapper', () => {
-    expect(() =>
+  it('accepts a valid op=0 createMarket wrapper', async () => {
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
@@ -601,16 +601,16 @@ describe('assertSponsoredCallData (extended for create_market)', () => {
           data: validInner(),
         }),
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('accepts createMarket without rechecking clock (drift-tolerant)', () => {
+  it('accepts createMarket without rechecking clock (drift-tolerant)', async () => {
     // Inner timestamps reference NOW_SEC, but send-time validator does
     // NOT take nowSec — clock drift between sponsor and send is caught
     // by Guard A (SafeOp hash recomputation), not by re-validating
     // values here. This test pins that policy: a row that was valid
     // at sponsor time stays valid at send time even if "now" advances.
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
@@ -628,12 +628,12 @@ describe('assertSponsoredCallData (extended for create_market)', () => {
           }),
         }),
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects bettingCloseTime > closeTime at send-time (immutable shape)', () => {
+  it('rejects bettingCloseTime > closeTime at send-time (immutable shape)', async () => {
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapOpZero({
@@ -654,9 +654,9 @@ describe('assertSponsoredCallData (extended for create_market)', () => {
     }
   });
 
-  it('rejects bad mType at send-time', () => {
+  it('rejects bad mType at send-time', async () => {
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapOpZero({
@@ -677,9 +677,9 @@ describe('assertSponsoredCallData (extended for create_market)', () => {
     }
   });
 
-  it('rejects oversize question at send-time', () => {
+  it('rejects oversize question at send-time', async () => {
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapOpZero({
@@ -702,13 +702,13 @@ describe('assertSponsoredCallData (extended for create_market)', () => {
 });
 
 describe('selector dispatch regression (round-3 MAJOR 3)', () => {
-  it('selector-only placeBet calldata still surfaces bad_placebet_args, not bad_create_args', () => {
+  it('selector-only placeBet calldata still surfaces bad_placebet_args, not bad_create_args', async () => {
     // 4-byte selector with no args appended. Send-side dispatch routes
     // by selector, so this MUST land in decodeAndAssertPlaceBet (which
     // surfaces bad_placebet_args on decode failure), not in the
     // createMarket validator.
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapOpZero({
@@ -723,13 +723,13 @@ describe('selector dispatch regression (round-3 MAJOR 3)', () => {
     }
   });
 
-  it('valid placeBet still routes to placeBet validator', () => {
+  it('valid placeBet still routes to placeBet validator', async () => {
     const placeBetData = encodeFunctionData({
       abi: PLACEBET_ABI,
       functionName: 'placeBet',
       args: [42n, true, 1_000_000n],
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
@@ -739,12 +739,12 @@ describe('selector dispatch regression (round-3 MAJOR 3)', () => {
           data: placeBetData,
         }),
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('unknown selector against MAKO surfaces bad_selector', () => {
+  it('unknown selector against MAKO surfaces bad_selector', async () => {
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapOpZero({
@@ -759,7 +759,7 @@ describe('selector dispatch regression (round-3 MAJOR 3)', () => {
     }
   });
 
-  it('selectors are exported as the literal constants asserted by selector test', () => {
+  it('selectors are exported as the literal constants asserted by selector test', async () => {
     // Belt-and-suspenders: this file imports them; assert the selector
     // strings are the well-known 4-byte values. Round-trips with the
     // selector-pinning test file.

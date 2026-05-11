@@ -481,7 +481,7 @@ describe('assertBetBatchedCalls', () => {
 
 describe('assertSponsoredCallData (extended for batched)', () => {
   // ── single-call wrappers ──
-  it('accepts op=0 wrapper around USDC.transfer(self, 1n) — smoke flow', () => {
+  it('accepts op=0 wrapper around USDC.transfer(self, 1n) — smoke flow', async () => {
     const transferAbi = [
       {
         type: 'function',
@@ -504,38 +504,38 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       functionName: 'executeUserOp',
       args: [USDC_ADDRESS, 0n, transferData, 0],
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('accepts op=0 wrapper around MakoMarketsV4.placeBet(...) — bet_single flow', () => {
+  it('accepts op=0 wrapper around MakoMarketsV4.placeBet(...) — bet_single flow', async () => {
     const wrapped = encodeFunctionData({
       abi: SAFE_WRAPPER_ABI,
       functionName: 'executeUserOp',
       args: [MAKO_ADDRESS, 0n, encodePlaceBet(1n, true, 100n), 0],
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects op=0 wrapper with unknown to (bad_to)', () => {
+  it('rejects op=0 wrapper with unknown to (bad_to)', async () => {
     const wrapped = encodeFunctionData({
       abi: SAFE_WRAPPER_ABI,
       functionName: 'executeUserOp',
       args: [NON_MAKO, 0n, encodePlaceBet(1n, true, 100n), 0],
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -547,21 +547,21 @@ describe('assertSponsoredCallData (extended for batched)', () => {
   });
 
   // ── batched MultiSend wrappers ──
-  it('accepts op=1 wrapper to canonical MultiSendCallOnly with valid [approve, placeBet]', () => {
+  it('accepts op=1 wrapper to canonical MultiSendCallOnly with valid [approve, placeBet]', async () => {
     const wrapped = encodeBatchedWrapperCallData({
       approveCalldata: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
       placeBetCalldata: encodePlaceBet(1n, true, 100n),
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects op=1 wrapper to ≠ canonical MultiSendCallOnly with bad_multisend_target', () => {
+  it('rejects op=1 wrapper to ≠ canonical MultiSendCallOnly with bad_multisend_target', async () => {
     const wrapped = buildBadOuterArgsWrapper({
       to: NON_MAKO, // bad outer target
       value: 0n,
@@ -579,7 +579,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       ],
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -590,7 +590,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=1 wrapper with dataLen > Number.MAX_SAFE_INTEGER (bad_multisend_format)', () => {
+  it('rejects op=1 wrapper with dataLen > Number.MAX_SAFE_INTEGER (bad_multisend_format)', async () => {
     // Round-2 MINOR 2 lock-in: explicit bigint-overflow boundary case.
     // Encode a header with dataLen = 2^53 (one above MAX_SAFE_INTEGER).
     // The parser MUST reject this BEFORE Number() coercion, otherwise
@@ -608,7 +608,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     // bytes reach parseMultiSendBytes.
     const wrapped = buildWrappedMultiSendWrapper(malicious);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -619,7 +619,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=1 wrapper with valid tuple bytes followed by trailing junk (bad_multisend_format)', () => {
+  it('rejects op=1 wrapper with valid tuple bytes followed by trailing junk (bad_multisend_format)', async () => {
     // Round-2 MINOR 2 lock-in: valid 2-tuple bytes + extra trailing
     // garbage that doesn't form a well-formed third tuple. The end-of-
     // parse `cursor === total` assertion must fire.
@@ -640,7 +640,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     const withJunk = (validTuples + 'aabbccdd') as Hex;
     const wrapped = buildWrappedMultiSendWrapper(withJunk);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -651,7 +651,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=1 wrapper with truncated multisend bytes (bad_multisend_format)', () => {
+  it('rejects op=1 wrapper with truncated multisend bytes (bad_multisend_format)', async () => {
     // Header claims dataLen but data is short.
     const truncated = ('0x' +
       '00' + // op
@@ -661,7 +661,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       'aa') as Hex; // only 1 byte of data
     const wrapped = buildWrappedMultiSendWrapper(truncated);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -672,10 +672,10 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=1 wrapper with empty multisend bytes (bad_subcall_count)', () => {
+  it('rejects op=1 wrapper with empty multisend bytes (bad_subcall_count)', async () => {
     const wrapped = buildWrappedMultiSendWrapper('0x' as Hex);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -686,7 +686,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=1 wrapper with one sub-call (bad_subcall_count)', () => {
+  it('rejects op=1 wrapper with one sub-call (bad_subcall_count)', async () => {
     const multiSendBytes = encodeMultiSendBytes([
       {
         op: 0,
@@ -697,7 +697,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     ]);
     const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -708,7 +708,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=1 wrapper with three sub-calls (bad_subcall_count)', () => {
+  it('rejects op=1 wrapper with three sub-calls (bad_subcall_count)', async () => {
     const multiSendBytes = encodeMultiSendBytes([
       {
         op: 0,
@@ -731,7 +731,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     ]);
     const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -742,7 +742,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects sub-call op=1 inside MultiSend (bad_subcall_op)', () => {
+  it('rejects sub-call op=1 inside MultiSend (bad_subcall_op)', async () => {
     // Negative test: simulate a malicious payload where the FIRST
     // sub-call has op=1 (delegatecall). The lib's production
     // `encodeMultiSendBytes` hardcodes op=0, so we use the test-only
@@ -764,7 +764,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     ]) as Hex;
     const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -775,13 +775,13 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects inner approve amount ≠ MaxUint256 (bad_approval_amount)', () => {
+  it('rejects inner approve amount ≠ MaxUint256 (bad_approval_amount)', async () => {
     const wrapped = encodeBatchedWrapperCallData({
       approveCalldata: encodeApprove(MAKO_ADDRESS, MAX_UINT_256 - 1n),
       placeBetCalldata: encodePlaceBet(1n, true, 100n),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -792,13 +792,13 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects inner approve spender ≠ MAKO (bad_approval_target)', () => {
+  it('rejects inner approve spender ≠ MAKO (bad_approval_target)', async () => {
     const wrapped = encodeBatchedWrapperCallData({
       approveCalldata: encodeApprove(NON_MAKO, MAX_UINT_256),
       placeBetCalldata: encodePlaceBet(1n, true, 100n),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -809,7 +809,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects inner placeBet target ≠ MAKO (bad_placebet_args)', () => {
+  it('rejects inner placeBet target ≠ MAKO (bad_placebet_args)', async () => {
     const multiSendBytes = encodeMultiSendBytes([
       {
         op: 0,
@@ -826,7 +826,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     ]);
     const wrapped = buildWrappedMultiSendWrapper(multiSendBytes);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -837,13 +837,13 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects inner placeBet amount === 0n (bad_placebet_args)', () => {
+  it('rejects inner placeBet amount === 0n (bad_placebet_args)', async () => {
     const wrapped = encodeBatchedWrapperCallData({
       approveCalldata: encodeApprove(MAKO_ADDRESS, MAX_UINT_256),
       placeBetCalldata: encodePlaceBet(1n, true, 0n),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -854,7 +854,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=1 wrapper with nonzero outer value (bad_value)', () => {
+  it('rejects op=1 wrapper with nonzero outer value (bad_value)', async () => {
     const wrapped = buildBadOuterArgsWrapper({
       to: SAFE_CONFIG.multiSendCallOnly,
       value: 1n, // bad outer value
@@ -872,7 +872,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       ],
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -883,14 +883,14 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects op=2 (CREATE) outer wrapper (bad_operation)', () => {
+  it('rejects op=2 (CREATE) outer wrapper (bad_operation)', async () => {
     const wrapped = encodeFunctionData({
       abi: SAFE_WRAPPER_ABI,
       functionName: 'executeUserOp',
       args: [MAKO_ADDRESS, 0n, encodePlaceBet(1n, true, 100n), 2],
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -903,7 +903,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
 
   // ── Phase 1D hotfix regression coverage ──────────────────────────────────
 
-  it('production builder produces validator-acceptable wrapper (cross-module pin)', () => {
+  it('production builder produces validator-acceptable wrapper (cross-module pin)', async () => {
     // Build the wrapper via the SAME function buildSponsoredUserOp uses
     // in production. Decode it and assert every outer field, then run
     // the validator and confirm acceptance. This is the cross-module
@@ -944,16 +944,16 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     // 0x8d80ff0a — this is exactly what the pre-fix bug got wrong.
     expect(innerData.slice(0, 10).toLowerCase()).toBe('0x8d80ff0a');
     // And the validator accepts the whole shape.
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapper,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects pre-fix raw-packed-bytes wrapper shape with bad_multisend_calldata', () => {
+  it('rejects pre-fix raw-packed-bytes wrapper shape with bad_multisend_calldata', async () => {
     // Pin the regression: pre-fix buildSponsoredUserOp passed the
     // packed multisend bytes STRAIGHT as the third arg, with no
     // multiSend(bytes) ABI wrap. On chain that hit no function on
@@ -977,7 +977,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     ]);
     const wrapped = buildPreFixRawWrapper(rawPacked);
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,

@@ -75,6 +75,7 @@ import {
   PM_CREATE_MARKET_SELECTOR,
   type PmCreateParamsTuple,
 } from './private-markets/abi-fragments';
+import { getPmTreasuryAddress } from './private-markets/treasury';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -1235,11 +1236,17 @@ function bytesToHexLower(bytes: Uint8Array): string {
 ///             enforces internally too).
 ///
 /// Anything else throws `NotAllowedError(reason)`.
-export function assertSponsoredCallData(args: {
+///
+/// Async since Phase 2C-1 step 10: the PM dispatch path needs to
+/// await getPmTreasuryAddress() (chain read, cached after first call)
+/// to run Stage 2's treasury-exclusion check. The PM dispatcher itself
+/// is the only async work — all other branches resolve synchronously,
+/// just wrapped in a Promise.
+export async function assertSponsoredCallData(args: {
   chainId: number;
   safeAddress: Address;
   callData: Hex;
-}): void {
+}): Promise<void> {
   let decoded: {
     functionName: 'executeUserOp' | 'executeUserOpWithErrorString';
     args: readonly [Address, bigint, Hex, number];
@@ -1341,6 +1348,35 @@ export function assertSponsoredCallData(args: {
         // caught by Guard A (SafeOp hash recomputation) before the
         // bundler is reached.
         decodeAndAssertCreateMarketShape({ to, value, data });
+        return;
+      }
+      throw new NotAllowedError('bad_selector');
+    }
+    if (to.toLowerCase() === PM_CONTRACT_ADDRESS.toLowerCase()) {
+      // Phase 2C-1 PM send-time dispatch. Mirrors the MAKO branch's
+      // chainId guard + selector dispatch shape. Only one PM method
+      // (createMarket) is currently sponsored.
+      if (args.chainId !== MONAD_TESTNET_ID) {
+        throw new NotAllowedError('pm_bad_create_args', 'wrong_chain');
+      }
+      if (data.length < 10) {
+        throw new NotAllowedError('bad_selector');
+      }
+      const innerSelector = data.slice(0, 10).toLowerCase();
+      if (innerSelector === PM_CREATE_MARKET_SELECTOR) {
+        // Send-time uses Stage 1+2 (no clock check). Drift in
+        // clock-relative timestamps is caught by Guard A (SafeOp
+        // hash recomputation) BEFORE the bundler is reached. The
+        // treasury read is awaited from the cached accessor — first
+        // call on a fresh process reads chain, subsequent calls
+        // return the cached value immediately.
+        const treasury = await getPmTreasuryAddress();
+        assertPmCreateMarketShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: { to, value, data },
+          treasury,
+        });
         return;
       }
       throw new NotAllowedError('bad_selector');

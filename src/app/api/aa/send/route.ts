@@ -290,7 +290,7 @@ export async function POST(req: Request) {
   // rest in Postgres since then; this catches any tampering or schema
   // bug that might mutate the persisted callData.
   try {
-    assertSponsoredCallData({
+    await assertSponsoredCallData({
       chainId: row.chainId,
       safeAddress: row.safeAddress as Address,
       callData: row.userOp.callData as Hex,

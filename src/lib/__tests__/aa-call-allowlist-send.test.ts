@@ -289,29 +289,29 @@ describe('assertSendUsdcCall', () => {
 });
 
 describe('assertSponsoredCallData (extended for send_usdc)', () => {
-  it('accepts op=0 wrapper with USDC.transfer to non-self recipient', () => {
+  it('accepts op=0 wrapper with USDC.transfer to non-self recipient', async () => {
     const wrapped = wrapOpZero({
       to: USDC_ADDRESS,
       value: 0n,
       data: encodeTransfer(RECIPIENT, 5_000_000n), // 5 USDC
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects op=0 wrapper with send to USDC contract (bad_send_recipient)', () => {
+  it('rejects op=0 wrapper with send to USDC contract (bad_send_recipient)', async () => {
     const wrapped = wrapOpZero({
       to: USDC_ADDRESS,
       value: 0n,
       data: encodeTransfer(USDC_ADDRESS, 1_000_000n),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -322,14 +322,14 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
     }
   });
 
-  it('rejects op=0 wrapper with send to MAKO contract (bad_send_recipient)', () => {
+  it('rejects op=0 wrapper with send to MAKO contract (bad_send_recipient)', async () => {
     const wrapped = wrapOpZero({
       to: USDC_ADDRESS,
       value: 0n,
       data: encodeTransfer(MAKO_ADDRESS, 1_000_000n),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -340,7 +340,7 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
     }
   });
 
-  it('rejects op=0 wrapper with send above per-op cap (bad_send_amount)', () => {
+  it('rejects op=0 wrapper with send above per-op cap (bad_send_amount)', async () => {
     const wrapped = wrapOpZero({
       to: USDC_ADDRESS,
       value: 0n,
@@ -350,7 +350,7 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
       ),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -361,7 +361,7 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
     }
   });
 
-  it('dispatches USDC.transfer-to-self to the smoke validator (covered separately)', () => {
+  it('dispatches USDC.transfer-to-self to the smoke validator (covered separately)', async () => {
     // Send-side dispatch: when the inner transfer recipient === safeAddress,
     // the validator routes to assertSponsorableCall (smoke flow). This test
     // uses amount=2n which the smoke validator REJECTS (smoke allows only
@@ -373,7 +373,7 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
       data: encodeTransfer(SAFE, 2n),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -384,7 +384,7 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
     }
   });
 
-  it('dispatches USDC.transfer-to-self with amount=1n to the smoke validator (accepted)', () => {
+  it('dispatches USDC.transfer-to-self with amount=1n to the smoke validator (accepted)', async () => {
     // Symmetric of the above: smoke flow's allowed amount (1n) to self
     // must still be accepted after the send_usdc extension. Pins the
     // dispatch logic so a future refactor can't break smoke flow.
@@ -393,12 +393,12 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
       value: 0n,
       data: encodeTransfer(SAFE, 1n),
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 });

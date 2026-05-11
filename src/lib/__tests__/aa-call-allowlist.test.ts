@@ -212,44 +212,44 @@ describe('assertSponsorableCall', () => {
 });
 
 describe('assertSponsoredCallData (wrapper-decoded path)', () => {
-  it('accepts executeUserOp wrapper around USDC.transfer(safe, 1n)', () => {
+  it('accepts executeUserOp wrapper around USDC.transfer(safe, 1n)', async () => {
     const wrapped = encodeWrapper({
       selector: 'executeUserOp',
       to: USDC_ADDRESS,
       value: 0n,
       data: encodeTransfer(SAFE, 1n),
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('accepts executeUserOpWithErrorString wrapper (alternate Safe selector)', () => {
+  it('accepts executeUserOpWithErrorString wrapper (alternate Safe selector)', async () => {
     const wrapped = encodeWrapper({
       selector: 'executeUserOpWithErrorString',
       to: USDC_ADDRESS,
       value: 0n,
       data: encodeTransfer(SAFE, 0n),
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects an unrecognised wrapper selector', () => {
+  it('rejects an unrecognised wrapper selector', async () => {
     // Hand-craft callData with a bogus selector + valid args.
     const bogus = ('0xdeadbeef' +
       '0'.repeat(64 * 4)) as Hex;
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: bogus,
@@ -260,7 +260,7 @@ describe('assertSponsoredCallData (wrapper-decoded path)', () => {
     }
   });
 
-  it('rejects a wrapper that points at a non-USDC target', () => {
+  it('rejects a wrapper that points at a non-USDC target', async () => {
     const wrapped = encodeWrapper({
       selector: 'executeUserOp',
       to: NON_USDC,
@@ -268,7 +268,7 @@ describe('assertSponsoredCallData (wrapper-decoded path)', () => {
       data: encodeTransfer(SAFE, 1n),
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
@@ -279,7 +279,7 @@ describe('assertSponsoredCallData (wrapper-decoded path)', () => {
     }
   });
 
-  it('rejects op=1 wrapper to non-MultiSendCallOnly target with bad_multisend_target', () => {
+  it('rejects op=1 wrapper to non-MultiSendCallOnly target with bad_multisend_target', async () => {
     // Sub-phase D's strict rule was "op=0 only" (any op=1 → bad_operation).
     // Phase 1D Group 2 relaxed this: op=1 is allowed but ONLY when
     // wrapper.to is the canonical MultiSendCallOnly. A delegatecall to
@@ -302,7 +302,7 @@ describe('assertSponsoredCallData (wrapper-decoded path)', () => {
       ],
     });
     try {
-      assertSponsoredCallData({
+      await assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapped,
