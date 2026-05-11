@@ -13,6 +13,8 @@ import {
   assertBetSingleCall,
   assertCreateMarketCall,
   assertCreateMarketShape,
+  assertPmCreateMarketCall,
+  assertPmCreateMarketShapeNoTreasury,
   assertSendUsdcCall,
   assertSponsorableCall,
   NotAllowedError,
@@ -35,6 +37,15 @@ import { getUserSession } from '@/lib/user-session';
 import { buildSponsoredUserOp } from '@/lib/user-op';
 import { computeUserOpHash } from '@/lib/user-op-hash';
 import { storedToPacked } from '@/lib/user-op-types';
+import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
+import { decodeFunctionData } from 'viem';
+import {
+  PM_CREATE_MARKET_ABI,
+  type PmCreateParamsTuple,
+} from '@/lib/private-markets/abi-fragments';
+import { getPmTreasuryAddress } from '@/lib/private-markets/treasury';
+import { assertPmSponsorDraft } from '@/lib/private-markets/sponsor-gate';
+import { mapShapeEnum } from '@/lib/private-markets/normalize';
 
 // ----------------------------------------------------------------------------
 // POST /api/aa/sponsor
@@ -218,7 +229,15 @@ export async function POST(req: Request) {
   // shared below.
   type Call = { to: Address; value: bigint; data: Hex };
   let buildArgs:
-    | { kind: 'smoke' | 'bet_single' | 'send_usdc' | 'create_market'; call: Call }
+    | {
+        kind:
+          | 'smoke'
+          | 'bet_single'
+          | 'send_usdc'
+          | 'create_market'
+          | 'pm_create_market';
+        call: Call;
+      }
     | { kind: 'bet_batched'; calls: readonly [Call, Call] };
   try {
     switch (parsed.data.kind) {
@@ -306,15 +325,85 @@ export async function POST(req: Request) {
         break;
       }
       case 'pm_create_market': {
-        // Phase 2C-1 step 8 placeholder. Step 9 wires the full PM
-        // branch (3-stage validator + draft-row SELECT FOR UPDATE +
-        // sponsor call). Returning 501 here keeps the route exhaustive
-        // for tsc + prevents an authed caller from sponsoring an
-        // unvalidated PM op against testnet while step 9 is in flight.
-        return Response.json(
-          { error: 'NOT_IMPLEMENTED', reason: 'pm_create_market_not_wired_yet' },
-          { status: 501 },
-        );
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+
+        // Stage 1: cheap shape-only checks BEFORE any RPC. Wrong
+        // target / value / selector / shape enum / metadata size /
+        // immutable closeAt > stakingOpensAt all reject without
+        // paying for getBlock OR getPmTreasuryAddress. An authed
+        // caller spamming malformed bodies cannot force RPC reads.
+        assertPmCreateMarketShapeNoTreasury({ chainId, safeAddress, call });
+
+        // Parallel RPC reads — independent. getBlock is one roundtrip;
+        // getPmTreasuryAddress is cached after first call (env fallback
+        // on RPC failure per treasury.ts contract).
+        const [treasury, block] = await Promise.all([
+          getPmTreasuryAddress(),
+          getAaPublicClient(chainId).getBlock({ blockTag: 'latest' }),
+        ]);
+
+        // Stage 1+2+3: full validator. Re-runs Stage 1 (cheap) plus
+        // treasury exclusion + clock check. Keeps invariants
+        // self-contained — each entry point validates everything it
+        // claims to validate.
+        assertPmCreateMarketCall({
+          chainId,
+          safeAddress,
+          call,
+          treasury,
+          nowSec: block.timestamp,
+        });
+
+        // ABI-decode the call params to extract clientNonce + shape
+        // for the draft-row gate. The validator already proved the
+        // calldata decodes cleanly, so this can't realistically throw
+        // here, but the try/catch keeps a malformed-decoded edge case
+        // from escaping as a 500.
+        let params: PmCreateParamsTuple;
+        try {
+          const decoded = decodeFunctionData({
+            abi: PM_CREATE_MARKET_ABI,
+            data: call.data,
+          });
+          params = (decoded.args as readonly [PmCreateParamsTuple])[0];
+        } catch {
+          throw new NotAllowedError('pm_bad_create_args', 'decode_failed');
+        }
+
+        // Draft-row gate (SELECT FOR UPDATE). Reasons map 1:1 to the
+        // plan's 3 rejection paths; surfaced as 403 NOT_ALLOWED with
+        // the helper's stable reason string in the response body.
+        const gate = await assertPmSponsorDraft({
+          chainId,
+          contractAddress: PM_CONTRACT_ADDRESS,
+          clientNonce: params.clientNonce,
+          sessionWallet: safeAddress,
+          shapeFromCall: mapShapeEnum(params.shape),
+        });
+        if (!gate.ok) {
+          console.warn('[aa.sponsor.pm_gate_rejected]', {
+            reason: gate.reason,
+            userId: session.userId,
+            chainId,
+          });
+          return Response.json(
+            { error: 'NOT_ALLOWED', reason: gate.reason },
+            { status: 403 },
+          );
+        }
+
+        // ⚠️ Sweep race window opens here per v6 plan. Recovery is via
+        // the indexer's dx-row path (processMarketCreated synthetic
+        // insert) when MarketCreated arrives for a since-swept pending
+        // row. No funds at risk; user just gets a synthetic-slug
+        // market instead of their chosen one.
+        buildArgs = { kind: 'pm_create_market', call };
+        break;
       }
     }
   } catch (e) {

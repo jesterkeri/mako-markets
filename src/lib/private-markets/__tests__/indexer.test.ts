@@ -361,6 +361,87 @@ describe('processMarketCreated — confirmed-flip path', () => {
     expect(otherContract!.marketId).toBeNull();
   });
 
+  // Phase 2C-1 step-9 / Codex r4 MAJ-4: dx-row recovery after sweep
+  // mid-sponsor. The sponsor route's FOR UPDATE lock only spans the
+  // SELECT; sweep can flip pending → failed AFTER COMMIT. When
+  // MarketCreated arrives for the now-failed nonce, processMarketCreated
+  // must NOT find the row via the pending-only UPDATE filter and MUST
+  // fall through to synthetic-insert. The user gets a dx-row market
+  // instead of their originally-chosen slug — no funds lost.
+  it('sweep mid-sponsor → dx-row recovery on indexer confirm (exact event-to-row binding)', async () => {
+    const t = await setup();
+    // Step 1: seed pending row P with slug='ABC123XY', nonce=N,
+    // creator=W, shape=friendly.
+    const seededIds = await t.db
+      .insert(pmMarkets)
+      .values({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        slug: 'ABC123XY',
+        clientNonce: NONCE_1,
+        creator: CREATOR_A,
+        shape: 'friendly',
+        createStatus: 'pending',
+        title: 'About to be swept',
+        visibilityView: 0,
+        visibilityParticipation: 0,
+        stakingOpensAt: new Date('2026-05-12T00:01:00Z'),
+        closeAt: new Date('2026-05-12T00:10:00Z'),
+      })
+      .returning({ id: pmMarkets.id });
+    const originalId = seededIds[0].id;
+
+    // Step 2: simulate sweep flipping P to 'failed' AFTER the sponsor
+    // route's transaction has committed (i.e., the race window opens).
+    await t.db
+      .update(pmMarkets)
+      .set({
+        createStatus: 'failed',
+        failureReason: 'stale-pending-swept',
+      })
+      .where(sql`id = ${originalId}`);
+
+    // Step 3: simulate MarketCreated event arriving for the same
+    // (chainId, contract, clientNonce, creator) tuple. Indexer must
+    // fail the UPDATE-by-pending filter and fall through to the
+    // synthetic-insert path.
+    const prefetch = new Map([[55, buildPrefetch(55)]]);
+    const ctx = await makeCtx(t, prefetch);
+    const event = buildMarketCreatedEvent({
+      marketId: 55n,
+      creator: CREATOR_A,
+      clientNonce: NONCE_1,
+    });
+
+    const result = await processMarketCreated(ctx, event);
+    expect(result.outcome).toBe('synthetic-inserted');
+
+    // Step 4: verify EXACT event-to-row binding.
+    const rows = await t.db.select().from(pmMarkets);
+    expect(rows).toHaveLength(2);
+
+    // Original row untouched: still 'failed', still original slug,
+    // still marketId=null.
+    const failedRow = rows.find((r) => r.id === originalId);
+    expect(failedRow).toBeDefined();
+    expect(failedRow!.createStatus).toBe('failed');
+    expect(failedRow!.slug).toBe('ABC123XY');
+    expect(failedRow!.marketId).toBeNull();
+
+    // New dx- row: confirmed, exact event values bound, new id,
+    // synthetic dx- slug pattern.
+    const dxRow = rows.find((r) => r.id !== originalId);
+    expect(dxRow).toBeDefined();
+    expect(dxRow!.createStatus).toBe('confirmed');
+    expect(dxRow!.marketId).toBe(55);
+    expect(dxRow!.clientNonce).toBe(NONCE_1.toLowerCase());
+    expect(dxRow!.creator).toBe(CREATOR_A.toLowerCase());
+    expect(dxRow!.contractAddress).toBe(CONTRACT);
+    expect(dxRow!.chainId).toBe(CHAIN_ID);
+    expect(dxRow!.slug).toMatch(/^dx-[A-Za-z0-9]{8}$/);
+    expect(dxRow!.slug).not.toBe('ABC123XY');
+  });
+
   it('same-nonce hijack defense: different creator → synthetic, original pending stays pending', async () => {
     const t = await setup();
     await t.db.insert(pmMarkets).values({
