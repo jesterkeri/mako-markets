@@ -30,6 +30,11 @@
 import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
 
 import { signSafeOpHash } from './magic-browser';
+import { PM_CONTRACT_ADDRESS } from './contract';
+import {
+  PM_CREATE_MARKET_ABI,
+  type PmCreateParamsTuple,
+} from './private-markets/abi-fragments';
 
 /// Wire shape for POST /api/aa/sponsor. Mirrors the zod
 /// `SponsorRequest` discriminated union in `aa-route-schemas.ts` —
@@ -43,7 +48,8 @@ export type SponsorRequestBody =
   | { kind: 'bet_single'; chainId: number; call: Call }
   | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'send_usdc'; chainId: number; call: Call }
-  | { kind: 'create_market'; chainId: number; call: Call };
+  | { kind: 'create_market'; chainId: number; call: Call }
+  | { kind: 'pm_create_market'; chainId: number; call: Call };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
 export type SponsorResponse = {
@@ -76,6 +82,13 @@ export type SponsorResponse = {
 export type RunOutcome =
   | {
       kind: 'sponsor_failed';
+      /// Phase 2C-1 (Codex r4 MIN-2): which step failed.
+      ///   - 'draft':   POST /api/pm/markets/draft returned non-200
+      ///                (PM helper only — 1H/1E/1D never set this)
+      ///   - 'sponsor': POST /api/aa/sponsor returned non-200
+      /// Optional — pre-2C-1 callers omit it. UI defaults missing to
+      /// 'sponsor' semantics.
+      step?: 'draft' | 'sponsor';
       status: number;
       error: string;
       reason?: string;
@@ -902,4 +915,238 @@ async function postJson(
     /* response had no JSON body — leave parsed = null */
   }
   return { ok: res.ok, status: res.status, body: parsed };
+}
+
+// ── Phase 2C-1: Private Markets ─────────────────────────────────────────────
+
+/// Browser-safe 32-byte clientNonce generator. Uses Web Crypto's
+/// `getRandomValues`, which is available in every modern browser AND
+/// in Node ≥ 19 via globalThis.crypto (so vitest in node env works
+/// without polyfill). NEVER use node:crypto here — this file is
+/// `'use client'`, and importing node:crypto would break the SSR /
+/// browser bundle.
+///
+/// Defensive guard against older runtimes that don't expose Web
+/// Crypto: throws a clear error instead of `Cannot read property
+/// 'getRandomValues' of undefined`.
+export function generateClientNonce(): Hex {
+  if (
+    typeof globalThis.crypto === 'undefined' ||
+    typeof globalThis.crypto.getRandomValues !== 'function'
+  ) {
+    throw new Error(
+      'generateClientNonce: Web Crypto API unavailable. ' +
+        'Mako requires a modern browser or Node ≥ 19.',
+    );
+  }
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  let hex = '0x';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex as Hex;
+}
+
+/// Map the PM contract's shape uint8 enum to the DB enum string. Used
+/// to pass `shape` to the draft endpoint, which validates against the
+/// pg-enum literal set ('friendly' | 'open_vote' | 'prize_pool').
+///
+/// Defensive default: a bad cast at a call site fails locally with a
+/// clear error instead of returning `undefined`.
+export function shapeEnumToString(
+  shape: 0 | 1 | 2,
+): 'friendly' | 'open_vote' | 'prize_pool' {
+  switch (shape) {
+    case 0:
+      return 'friendly';
+    case 1:
+      return 'open_vote';
+    case 2:
+      return 'prize_pool';
+    default:
+      throw new Error(
+        `shapeEnumToString: unknown PM shape ${shape as number}`,
+      );
+  }
+}
+
+export interface RunCreatePrivateMarketArgs {
+  chainId: number;
+  magicEoa: Address;
+  /// All 17 CreateParams fields EXCEPT `clientNonce` — the helper
+  /// generates that internally via `generateClientNonce()` and stitches
+  /// it into the params before encoding. This way callers can't
+  /// accidentally collide nonces by reusing a constant.
+  createParams: Omit<PmCreateParamsTuple, 'clientNonce'>;
+}
+
+/// Phase 2C-1: full PM create-market browser flow.
+///
+///   1. Generate clientNonce (Web Crypto).
+///   2. POST /api/pm/markets/draft to reserve a slug + insert a
+///      pending pm_markets row (creator + shape lock).
+///   3. Encode createMarket(CreateParams) callData via
+///      PM_CREATE_MARKET_ABI.
+///   4. POST /api/aa/sponsor with kind='pm_create_market'.
+///   5. signSafeOpHash via Magic personal_sign.
+///   6. POST /api/aa/send.
+///   7. 5-case status switch identical to runCreateMarket
+///      (sent / reverted / submitted / failed_pre_submit / expired).
+///
+/// `sponsor_failed` carries `step: 'draft' | 'sponsor'` so UI can
+/// distinguish whether the draft endpoint or the sponsor endpoint
+/// failed (the two surface different error reasons —
+/// pm_draft_duplicate vs pm_draft_missing / pm_bad_create_args).
+export async function runCreatePrivateMarket(
+  args: RunCreatePrivateMarketArgs,
+): Promise<RunOutcome> {
+  // (1) Generate clientNonce + assemble full params tuple.
+  const clientNonce = generateClientNonce();
+  const paramsWithNonce: PmCreateParamsTuple = {
+    ...args.createParams,
+    clientNonce,
+  };
+
+  // (2) Draft endpoint — reserves slug + inserts pending row.
+  const draft = await postJson('/api/pm/markets/draft', {
+    chainId: args.chainId,
+    contractAddress: PM_CONTRACT_ADDRESS,
+    shape: shapeEnumToString(paramsWithNonce.shape),
+    clientNonce,
+  });
+  if (!draft.ok) {
+    const draftBody = draft.body as { error?: string; detail?: unknown };
+    return {
+      kind: 'sponsor_failed',
+      step: 'draft',
+      status: draft.status,
+      error: draftBody.error ?? 'draft_failed',
+      detail:
+        typeof draftBody.detail === 'string' ? draftBody.detail : undefined,
+    };
+  }
+  // The draft response carries { slug, clientNonce, pendingDbId }.
+  // The 2C-1 dev smoke ignores them — the on-chain tx doesn't
+  // reference slug, and pendingDbId is server-internal. Phase 2D
+  // form UIs that want to render "your market URL will be /m/<slug>"
+  // can either fetch by-nonce or extend RunOutcome with a PM
+  // submitted variant. Decision deferred to 2D.
+
+  // (3) Encode createMarket callData.
+  const callData = encodeFunctionData({
+    abi: PM_CREATE_MARKET_ABI,
+    functionName: 'createMarket',
+    args: [paramsWithNonce],
+  });
+
+  // (4) Sponsor.
+  const body: SponsorRequestBody = {
+    kind: 'pm_create_market',
+    chainId: args.chainId,
+    call: {
+      to: PM_CONTRACT_ADDRESS,
+      value: '0x0' as Hex,
+      data: callData,
+    },
+  };
+  const sponsor = await postJson('/api/aa/sponsor', body);
+  if (!sponsor.ok) {
+    return {
+      kind: 'sponsor_failed',
+      step: 'sponsor',
+      status: sponsor.status,
+      error: (sponsor.body as { error?: string }).error ?? 'unknown',
+      reason: (sponsor.body as { reason?: string }).reason,
+      detail: (sponsor.body as { message?: string }).message,
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
+
+  // (5) Magic signing — over the SafeOp hash + validity window.
+  const validAfter = BigInt(sponsored.validAfter);
+  const validUntil = BigInt(sponsored.validUntil);
+  const signature = await signSafeOpHash({
+    hash: sponsored.safeOpHash,
+    magicEoa: args.magicEoa,
+    validAfter,
+    validUntil,
+  });
+
+  // (6) Send.
+  const send = await postJson('/api/aa/send', {
+    pendingUserOpId: sponsored.pendingUserOpId,
+    signature,
+  });
+
+  if (!send.ok) {
+    const sendBody = send.body as {
+      error?: string;
+      message?: string;
+      status?: string;
+      retryAfterSeconds?: number;
+    };
+    if (send.status === 202 && sendBody.status === 'send_in_progress') {
+      return {
+        kind: 'in_progress',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
+      };
+    }
+    if (send.status === 410) {
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    }
+    if (send.status === 423) {
+      return {
+        kind: 'manual_review',
+        pendingUserOpId: sponsored.pendingUserOpId,
+      };
+    }
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: sendBody.error ?? 'unknown',
+      detail: sendBody.message,
+    };
+  }
+
+  // (7) 5-case status switch — identical shape to runCreateMarket.
+  const sendBody = send.body as {
+    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
+    txHash?: Hex;
+    userOpHash?: Hex;
+    failureReason?: string;
+  };
+  switch (sendBody.status) {
+    case 'sent':
+      return {
+        kind: 'sent',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        recovered: sponsored.recovered,
+      };
+    case 'reverted':
+      return {
+        kind: 'reverted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        failureReason: sendBody.failureReason ?? 'on-chain revert',
+      };
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        userOpHash: sendBody.userOpHash as Hex,
+      };
+    case 'failed_pre_submit':
+      return {
+        kind: 'failed_pre_submit',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        failureReason: sendBody.failureReason ?? 'bundler reject',
+      };
+    case 'expired':
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
 }
