@@ -18,9 +18,11 @@ MAKO_APP_URL = "https://mako-markets.vercel.app"
 
 # Cron: every minute. CF cron is reliable to the minute (unlike GitHub
 # Actions cron which drifts to 1-2 hours under load). Markets with
-# closeTime ≥ 60s will resolve within ~1 tick of close. The same tick
-# also fires /api/cron/aa-fast every minute and /api/cron/aa-slow once
-# per 5 minutes (gated inside the scheduled handler).
+# closeTime ≥ 60s will resolve within ~1 tick of close. Each tick also
+# fires Vercel cron routes:
+#   every minute  → /api/cron/aa-fast + /api/cron/pm-indexer
+#   every 5 min   → /api/cron/aa-slow + /api/cron/pm-maintenance
+# Routes are gated by Bearer CRON_SECRET on the Vercel side.
 [triggers]
 crons = ["*/1 * * * *"]
 

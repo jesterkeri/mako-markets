@@ -1092,20 +1092,26 @@ export async function runResolver(env: Env): Promise<void> {
   );
 }
 
+/// Cron paths the Worker is allowed to ping on the Vercel side.
+/// Keeping the type union narrow gives compile-time protection against
+/// typos that would silently 404.
+type VercelCronPath =
+  | '/api/cron/aa-fast'
+  | '/api/cron/aa-slow'
+  | '/api/cron/pm-indexer'
+  | '/api/cron/pm-maintenance';
+
 /// Fire one HTTP cron tick against the Vercel app. Runs as a
 /// "fire and forget" inside ctx.waitUntil so a slow Vercel response
 /// doesn't block the market resolver. We don't await the body; the
 /// status code alone tells us whether the bearer auth + handler ran.
-async function pingAaCron(
-  env: Env,
-  path: '/api/cron/aa-fast' | '/api/cron/aa-slow',
-): Promise<void> {
-  if (!env.MAKO_APP_URL) return; // AA scheduling not configured.
+async function pingVercelCron(env: Env, path: VercelCronPath): Promise<void> {
+  if (!env.MAKO_APP_URL) return; // Vercel scheduling not configured.
   if (!env.CRON_SECRET) {
     // Loud, but only once per missing tick — better than silently
     // falling back to no-auth, which would expose the cron routes to
     // anyone who finds the URL.
-    console.warn(`[aa-cron] ${path}: CRON_SECRET unset — skipping`);
+    console.warn(`[cron] ${path}: CRON_SECRET unset — skipping`);
     return;
   }
   const url = `${env.MAKO_APP_URL.replace(/\/$/, '')}${path}`;
@@ -1121,10 +1127,10 @@ async function pingAaCron(
       },
     });
     if (!res.ok) {
-      console.warn(`[aa-cron] ${path} → ${res.status}`);
+      console.warn(`[cron] ${path} → ${res.status}`);
     }
   } catch (e) {
-    console.warn(`[aa-cron] ${path} fetch failed:`, shortErrorMessage(e));
+    console.warn(`[cron] ${path} fetch failed:`, shortErrorMessage(e));
   }
 }
 
@@ -1133,17 +1139,27 @@ export default {
   // ctx.waitUntil keeps the Worker alive until runResolver finishes
   // (otherwise the event ends when scheduled() returns synchronously).
   //
-  // Three jobs share this single per-minute tick:
+  // Five jobs share this single per-minute tick:
   //   1. Market resolver (always — sports/crypto market lifecycle).
   //   2. AA fast cron (every minute — drains aa_pending_user_ops rows
   //      whose receipt poll died on the request path).
   //   3. AA slow cron (every 5 minutes — sweeps stale rows + emits
   //      ambiguous-row alerts).
+  //   4. Private-markets indexer (every minute — runIndexerOnce
+  //      against MakoPrivateMarketsV1: pulls new logs, applies
+  //      create/stake/resolution handlers under mutex).
+  //   5. Private-markets maintenance (every 5 minutes — stale-pending
+  //      sweep + resnapshot reconciliation for the PM indexer).
   //
-  // The AA pings live HERE (not in vercel.json) because Vercel Hobby
-  // plan rejects sub-daily crons. The Worker fires them via
-  // pingAaCron with Bearer CRON_SECRET; the routes themselves still
-  // gate via cron-auth.ts.
+  // The Vercel pings live HERE (not in vercel.json) because Vercel
+  // Hobby plan rejects sub-daily crons. The Worker fires them via
+  // pingVercelCron with Bearer CRON_SECRET; the routes themselves
+  // still gate via cron-auth.ts.
+  //
+  // Five-minute jobs are gated by minute % 5 === 0 against the CF
+  // scheduledTime (epoch ms), not the Worker's wall clock at handler
+  // entry, so behaviour is deterministic against CF's scheduled time
+  // even under handler-entry skew.
   async scheduled(
     event: ScheduledController,
     env: Env,
@@ -1155,15 +1171,15 @@ export default {
       }),
     );
 
-    ctx.waitUntil(pingAaCron(env, '/api/cron/aa-fast'));
+    // Per-minute Vercel pings.
+    ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-fast'));
+    ctx.waitUntil(pingVercelCron(env, '/api/cron/pm-indexer'));
 
-    // Slow cron: every 5 minutes. CF Worker fires every minute, so we
-    // gate by minute % 5 === 0. Use scheduledTime (epoch ms) rather
-    // than `new Date()` so behaviour is deterministic against CF's
-    // scheduled time and not the Worker's wall clock at handler entry.
+    // Five-minute Vercel pings.
     const minute = new Date(event.scheduledTime).getUTCMinutes();
     if (minute % 5 === 0) {
-      ctx.waitUntil(pingAaCron(env, '/api/cron/aa-slow'));
+      ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-slow'));
+      ctx.waitUntil(pingVercelCron(env, '/api/cron/pm-maintenance'));
     }
   },
 
