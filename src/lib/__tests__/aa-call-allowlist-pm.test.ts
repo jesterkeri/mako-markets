@@ -25,16 +25,27 @@
 // Plan: %TEMP%/mako-private-markets-2C-1-plan.md.
 // ----------------------------------------------------------------------------
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeFunctionData, toHex, type Address, type Hex } from 'viem';
+
+// Mock the treasury accessor BEFORE importing aa-call-allowlist so the
+// PM send-time dispatch in assertSponsoredCallData uses the mock.
+// Sponsor-time validators take treasury as an arg directly, so they
+// don't hit this module — only assertSponsoredCallData's PM branch
+// awaits the cached treasury accessor (Codex 2C-1 step-10 r1 MAJ-1).
+const mockGetPmTreasuryAddress = vi.fn();
+vi.mock('@/lib/private-markets/treasury', () => ({
+  getPmTreasuryAddress: () => mockGetPmTreasuryAddress(),
+}));
 
 import {
   assertPmCreateMarketCall,
   assertPmCreateMarketShape,
   assertPmCreateMarketShapeNoTreasury,
+  assertSponsoredCallData,
   NotAllowedError,
 } from '../aa-call-allowlist';
-import { PM_CONTRACT_ADDRESS } from '../contract';
+import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS } from '../contract';
 import { MONAD_TESTNET_ID } from '../chain';
 import { PM_MIN_STAKE_USDC_BASE_UNITS } from '../aa-constants';
 import {
@@ -1062,5 +1073,193 @@ describe('PM validators — sync-return contract + treasury-arg respect', () => 
         ),
       }),
     ).toBeUndefined();
+  });
+});
+
+// ── Codex 2C-1 step-10 r1 MAJ-1 + MIN-1: send-time wrapper coverage ─────────
+//
+// assertSponsoredCallData's PM dispatch was untested before this block.
+// Wraps PM createMarket callData in a Safe4337Module executeUserOp
+// envelope (op=0) and runs the send-time validator. Treasury is mocked
+// via the top-of-file vi.mock so the branch is deterministic.
+
+const SAFE_WRAPPER_ABI = [
+  {
+    type: 'function',
+    name: 'executeUserOp',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'data', type: 'bytes' },
+      { name: 'operation', type: 'uint8' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+function wrapOpZero(args: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): Hex {
+  return encodeFunctionData({
+    abi: SAFE_WRAPPER_ABI,
+    functionName: 'executeUserOp',
+    args: [args.to, args.value, args.data, 0],
+  });
+}
+
+async function expectWrapperReject(
+  callData: Hex,
+  expected: { reason: string; detail?: string },
+  chainId: number = MONAD_TESTNET_ID,
+): Promise<void> {
+  try {
+    await assertSponsoredCallData({
+      chainId,
+      safeAddress: SAFE,
+      callData,
+    });
+    throw new Error(
+      `expected NotAllowedError(${expected.reason}${expected.detail ? `/${expected.detail}` : ''}) but no throw`,
+    );
+  } catch (e) {
+    expect(e).toBeInstanceOf(NotAllowedError);
+    const err = e as NotAllowedError;
+    expect(err.reason).toBe(expected.reason);
+    if (expected.detail !== undefined) {
+      expect(err.detail).toBe(expected.detail);
+    }
+  }
+}
+
+describe('assertSponsoredCallData — PM send-time dispatch', () => {
+  afterEach(() => {
+    mockGetPmTreasuryAddress.mockReset();
+  });
+
+  it('happy: PM wrapper + valid Friendly call + treasury awaited (Stage 1+2)', async () => {
+    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
+    const wrapped = wrapOpZero({
+      to: PM_CONTRACT_ADDRESS,
+      value: 0n,
+      data: encode(makeFriendly()),
+    });
+
+    await expect(
+      assertSponsoredCallData({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        callData: wrapped,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(mockGetPmTreasuryAddress).toHaveBeenCalledTimes(1);
+  });
+
+  it('treasury exclusion fires at send-time (PrizePool with treasury in participants)', async () => {
+    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
+    const wrapped = wrapOpZero({
+      to: PM_CONTRACT_ADDRESS,
+      value: 0n,
+      data: encode(
+        makePrizePool({
+          participantWallets: [WALLET_A, TREASURY, WALLET_C],
+        }),
+      ),
+    });
+
+    await expectWrapperReject(wrapped, {
+      reason: 'pm_treasury_not_allowed',
+      detail: 'participant_is_treasury',
+    });
+    expect(mockGetPmTreasuryAddress).toHaveBeenCalledTimes(1);
+  });
+
+  it('wrong chain rejects BEFORE treasury read', async () => {
+    const wrapped = wrapOpZero({
+      to: PM_CONTRACT_ADDRESS,
+      value: 0n,
+      data: encode(makeFriendly()),
+    });
+
+    await expectWrapperReject(
+      wrapped,
+      { reason: 'pm_bad_create_args', detail: 'wrong_chain' },
+      1,
+    );
+    // Critical short-circuit: chain guard fires BEFORE the await on
+    // the treasury accessor. A misconfigured request must not force
+    // an RPC roundtrip.
+    expect(mockGetPmTreasuryAddress).not.toHaveBeenCalled();
+  });
+
+  it('unknown PM selector → bad_selector', async () => {
+    // Valid 4-byte selector that isn't PM_CREATE_MARKET_SELECTOR,
+    // wrapped against PM_CONTRACT_ADDRESS.
+    const bogusInner = ('0xdeadbeef' + '0'.repeat(64 * 4)) as Hex;
+    const wrapped = wrapOpZero({
+      to: PM_CONTRACT_ADDRESS,
+      value: 0n,
+      data: bogusInner,
+    });
+
+    await expectWrapperReject(wrapped, { reason: 'bad_selector' });
+    // Selector mismatch detected BEFORE the treasury await.
+    expect(mockGetPmTreasuryAddress).not.toHaveBeenCalled();
+  });
+
+  it('short PM calldata (< 4-byte selector) → bad_selector', async () => {
+    const wrapped = wrapOpZero({
+      to: PM_CONTRACT_ADDRESS,
+      value: 0n,
+      data: '0x12' as Hex,
+    });
+
+    await expectWrapperReject(wrapped, { reason: 'bad_selector' });
+    expect(mockGetPmTreasuryAddress).not.toHaveBeenCalled();
+  });
+
+  it('different treasury value → different reject (proves treasury IS awaited and passed through)', async () => {
+    // Same wrapped call. With treasury=TREASURY (in participants) →
+    // rejects. With treasury=TREASURY_ALT (not in participants) →
+    // accepts. Pins that the mocked accessor's return value is
+    // actually wired into Stage 2.
+    const wrapped = wrapOpZero({
+      to: PM_CONTRACT_ADDRESS,
+      value: 0n,
+      data: encode(
+        makePrizePool({
+          participantWallets: [WALLET_A, TREASURY, WALLET_C],
+        }),
+      ),
+    });
+
+    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
+    await expectWrapperReject(wrapped, { reason: 'pm_treasury_not_allowed' });
+
+    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY_ALT);
+    await expect(
+      assertSponsoredCallData({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        callData: wrapped,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(mockGetPmTreasuryAddress).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Codex 2C-1 step-10 r1 MIN-1: pin PM_CONTRACT_ADDRESS != MAKO_ADDRESS.
+// If env misconfiguration ever collapses these, the MAKO branch in
+// assertSponsoredCallData would shadow PM and every PM send fails
+// with bad_selector. Cheap static guard.
+describe('PM / MAKO address distinctness (Codex r1 MIN-1)', () => {
+  it('PM_CONTRACT_ADDRESS !== MAKO_ADDRESS (case-insensitive)', () => {
+    expect(PM_CONTRACT_ADDRESS.toLowerCase()).not.toBe(
+      MAKO_ADDRESS.toLowerCase(),
+    );
   });
 });
