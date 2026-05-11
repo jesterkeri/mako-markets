@@ -33,9 +33,19 @@ import { encodeFunctionData, toHex, type Address, type Hex } from 'viem';
 // Sponsor-time validators take treasury as an arg directly, so they
 // don't hit this module — only assertSponsoredCallData's PM branch
 // awaits the cached treasury accessor (Codex 2C-1 step-10 r1 MAJ-1).
-const mockGetPmTreasuryAddress = vi.fn();
+//
+// Codex 2C-1 step-10 r2 MAJ-1: `vi.mock` factories are hoisted ABOVE
+// const declarations, so referencing a bare top-level `const mock =
+// vi.fn()` from the factory is brittle (works in current Vitest but
+// can fail when hoist ordering changes). Use `vi.hoisted` so the
+// vi.fn() is created in the same hoist phase as the mock factory.
+// Mirrors the existing route-test pattern in
+// api-aa-sponsor-route-pm.test.ts.
+const mocks = vi.hoisted(() => ({
+  getPmTreasuryAddress: vi.fn(),
+}));
 vi.mock('@/lib/private-markets/treasury', () => ({
-  getPmTreasuryAddress: () => mockGetPmTreasuryAddress(),
+  getPmTreasuryAddress: () => mocks.getPmTreasuryAddress(),
 }));
 
 import {
@@ -1136,11 +1146,11 @@ async function expectWrapperReject(
 
 describe('assertSponsoredCallData — PM send-time dispatch', () => {
   afterEach(() => {
-    mockGetPmTreasuryAddress.mockReset();
+    mocks.getPmTreasuryAddress.mockReset();
   });
 
   it('happy: PM wrapper + valid Friendly call + treasury awaited (Stage 1+2)', async () => {
-    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
+    mocks.getPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
     const wrapped = wrapOpZero({
       to: PM_CONTRACT_ADDRESS,
       value: 0n,
@@ -1155,11 +1165,11 @@ describe('assertSponsoredCallData — PM send-time dispatch', () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(mockGetPmTreasuryAddress).toHaveBeenCalledTimes(1);
+    expect(mocks.getPmTreasuryAddress).toHaveBeenCalledTimes(1);
   });
 
   it('treasury exclusion fires at send-time (PrizePool with treasury in participants)', async () => {
-    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
+    mocks.getPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
     const wrapped = wrapOpZero({
       to: PM_CONTRACT_ADDRESS,
       value: 0n,
@@ -1174,7 +1184,7 @@ describe('assertSponsoredCallData — PM send-time dispatch', () => {
       reason: 'pm_treasury_not_allowed',
       detail: 'participant_is_treasury',
     });
-    expect(mockGetPmTreasuryAddress).toHaveBeenCalledTimes(1);
+    expect(mocks.getPmTreasuryAddress).toHaveBeenCalledTimes(1);
   });
 
   it('wrong chain rejects BEFORE treasury read', async () => {
@@ -1192,7 +1202,7 @@ describe('assertSponsoredCallData — PM send-time dispatch', () => {
     // Critical short-circuit: chain guard fires BEFORE the await on
     // the treasury accessor. A misconfigured request must not force
     // an RPC roundtrip.
-    expect(mockGetPmTreasuryAddress).not.toHaveBeenCalled();
+    expect(mocks.getPmTreasuryAddress).not.toHaveBeenCalled();
   });
 
   it('unknown PM selector → bad_selector', async () => {
@@ -1207,7 +1217,7 @@ describe('assertSponsoredCallData — PM send-time dispatch', () => {
 
     await expectWrapperReject(wrapped, { reason: 'bad_selector' });
     // Selector mismatch detected BEFORE the treasury await.
-    expect(mockGetPmTreasuryAddress).not.toHaveBeenCalled();
+    expect(mocks.getPmTreasuryAddress).not.toHaveBeenCalled();
   });
 
   it('short PM calldata (< 4-byte selector) → bad_selector', async () => {
@@ -1218,7 +1228,7 @@ describe('assertSponsoredCallData — PM send-time dispatch', () => {
     });
 
     await expectWrapperReject(wrapped, { reason: 'bad_selector' });
-    expect(mockGetPmTreasuryAddress).not.toHaveBeenCalled();
+    expect(mocks.getPmTreasuryAddress).not.toHaveBeenCalled();
   });
 
   it('different treasury value → different reject (proves treasury IS awaited and passed through)', async () => {
@@ -1236,10 +1246,10 @@ describe('assertSponsoredCallData — PM send-time dispatch', () => {
       ),
     });
 
-    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
+    mocks.getPmTreasuryAddress.mockResolvedValueOnce(TREASURY);
     await expectWrapperReject(wrapped, { reason: 'pm_treasury_not_allowed' });
 
-    mockGetPmTreasuryAddress.mockResolvedValueOnce(TREASURY_ALT);
+    mocks.getPmTreasuryAddress.mockResolvedValueOnce(TREASURY_ALT);
     await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
@@ -1248,7 +1258,7 @@ describe('assertSponsoredCallData — PM send-time dispatch', () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(mockGetPmTreasuryAddress).toHaveBeenCalledTimes(2);
+    expect(mocks.getPmTreasuryAddress).toHaveBeenCalledTimes(2);
   });
 });
 
