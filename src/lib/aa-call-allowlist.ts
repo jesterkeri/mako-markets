@@ -51,7 +51,7 @@ import {
   type Hex,
 } from 'viem';
 
-import { MAKO_ADDRESS } from './contract';
+import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS } from './contract';
 import { MONAD_TESTNET_ID } from './chain';
 import { SAFE_CONFIG } from './safe-config';
 import { USDC_ADDRESS } from './usdc';
@@ -60,8 +60,21 @@ import {
   CREATE_MARKET_MIN_SERVER_BUFFER_SEC,
   MAKO_V4_MAX_DURATION_SEC,
   MAKO_V4_MIN_DURATION_SEC,
+  PM_MAX_ALLOWLIST,
+  PM_MAX_DESCRIPTION_BYTES,
+  PM_MAX_OPTION_LABEL_BYTES,
+  PM_MAX_OPTIONS,
+  PM_MAX_STREAM_URL_BYTES,
+  PM_MAX_TITLE_BYTES,
+  PM_MAX_WINNERS,
+  PM_MIN_STAKE_USDC_BASE_UNITS,
   SEND_USDC_MAX_PER_OP_BASE_UNITS,
 } from './aa-constants';
+import {
+  PM_CREATE_MARKET_ABI,
+  PM_CREATE_MARKET_SELECTOR,
+  type PmCreateParamsTuple,
+} from './private-markets/abi-fragments';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -91,7 +104,12 @@ export type NotAllowedReason =
   // Phase 1H create-market flow:
   | 'bad_create_args'
   | 'bad_create_question'
-  | 'bad_create_timestamps';
+  | 'bad_create_timestamps'
+  // Phase 2C-1 PM create-market flow:
+  | 'pm_bad_create_args'
+  | 'pm_bad_create_metadata'
+  | 'pm_bad_create_timestamps'
+  | 'pm_treasury_not_allowed';
 
 export class NotAllowedError extends Error {
   constructor(
@@ -675,6 +693,437 @@ export function assertCreateMarketShape(args: {
     throw new NotAllowedError('bad_create_args', 'wrong_chain');
   }
   decodeAndAssertCreateMarketShape(args.call);
+}
+
+// ── Private-markets create-market validators (Phase 2C-1) ──────────────────
+//
+// Three-stage sync validator split so the sponsor route can pre-flight a
+// cheap shape check BEFORE doing RPC roundtrips for treasury / nowSec
+// (Codex r3 MIN-1 deferral pattern, mirrored from the v4 create flow):
+//
+//   Stage 1 — assertPmCreateMarketShapeNoTreasury
+//     Pure decode + structural / numeric / byte bounds.
+//     Includes the IMMUTABLE clock-independent invariant
+//     `closeAt > stakingOpensAt`. NO RPC, NO DB, NO treasury, NO nowSec.
+//     Used as the pre-flight gate so a malformed caller can't force the
+//     route into a treasury read + getBlock roundtrip.
+//
+//   Stage 2 — assertPmCreateMarketShape (= Stage 1 + treasury exclusion)
+//     Adds participant.treasury + allowlist.treasury exclusion.
+//     Used at SEND-TIME (after the sponsor route's clock check has
+//     already cleared the bundler-accept path; clock drift is caught by
+//     Guard A in /api/aa/send via SafeOp hash recomputation).
+//
+//   Stage 3 — assertPmCreateMarketCall (= Stage 1 + 2 + clock)
+//     Adds the CLOCK-RELATIVE invariant `stakingOpensAt >= nowSec`.
+//     Sponsor-time only. `nowSec` MUST be the latest Monad block
+//     timestamp (read by the sponsor route from getAaPublicClient
+//     .getBlock, not Date.now()).
+//
+// All three return `void` (sync). Throws `NotAllowedError` on any failure.
+// Reason codes: pm_bad_create_args (target/value/decode/enum/winners/stake
+// bounds/options/participants/allowlist), pm_bad_create_metadata (title /
+// description / streamUrl / option-label byte sizes), pm_bad_create_timestamps
+// (immutable shape + clock), pm_treasury_not_allowed (Stage 2 only).
+//
+// Mirror of MakoPrivateMarketsV1.sol::_validateCreate (lines 475-554).
+// Every check in the contract appears here. The contract is the source of
+// truth — drift caught by `aa-call-allowlist-pm.test.ts` boundary cases.
+// ----------------------------------------------------------------------------
+
+const PM_ZERO_BYTES32 =
+  '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
+const PM_ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+
+/// Internal helper. Validates Stage 1 invariants on the decoded params.
+/// No treasury, no clock. Throws NotAllowedError on any failure.
+function _assertPmCreateMarketSemanticsNoTreasury(p: PmCreateParamsTuple): void {
+  // Shape enum (uint8): contract has MarketShape { Friendly=0, OpenVote=1,
+  // PrizePool=2 }. The TS literal type already constrains to {0,1,2} but
+  // we re-check defensively in case a malicious caller bypasses the
+  // typescript-level guard.
+  if (p.shape !== 0 && p.shape !== 1 && p.shape !== 2) {
+    throw new NotAllowedError('pm_bad_create_args', 'bad_shape_enum');
+  }
+
+  // Visibility enums (uint8). VisibilityView { LinkOnly=0, Public=1 } and
+  // VisibilityParticipation { Open=0, Allowlisted=1 }.
+  if (p.viewMode !== 0 && p.viewMode !== 1) {
+    throw new NotAllowedError('pm_bad_create_args', 'bad_view_enum');
+  }
+  if (p.participationMode !== 0 && p.participationMode !== 1) {
+    throw new NotAllowedError('pm_bad_create_args', 'bad_participation_enum');
+  }
+
+  // Defensive clientNonce non-zero check. The contract doesn't reject
+  // a zero nonce explicitly — clientNonce is metadata, not a uniqueness
+  // primitive on chain — but our DB DOES require uniqueness on the
+  // pending row's client_nonce, and 0x00..0 is a likely fingerprint for
+  // a misconfigured caller (uninitialized buffer / forgotten
+  // `generateClientNonce()` call). Reject early so the operator sees a
+  // clear reason instead of a generic decode/decode-args mismatch.
+  if (p.clientNonce.toLowerCase() === PM_ZERO_BYTES32) {
+    throw new NotAllowedError('pm_bad_create_args', 'zero_client_nonce');
+  }
+
+  // Immutable timestamp shape: closeAt > stakingOpensAt. NOT clock-
+  // relative — true at any point in time. Lives in Stage 1 so BOTH
+  // sponsor-time AND send-time enforce it (Codex r4 MAJ-3 fix; the
+  // clock-relative `stakingOpensAt >= nowSec` is Stage 3 only).
+  if (p.closeAt <= p.stakingOpensAt) {
+    throw new NotAllowedError(
+      'pm_bad_create_timestamps',
+      'close_at_le_staking',
+    );
+  }
+
+  // ── Metadata byte sizes (mirror MakoPrivateMarketsV1.sol:481-483) ────
+  // title.length: bytes is a hex string `0x...`, so byte count is
+  // (length - 2) / 2. Same for description and streamUrl.
+  const titleBytes = hexByteLength(p.title);
+  if (titleBytes === 0 || titleBytes > PM_MAX_TITLE_BYTES) {
+    throw new NotAllowedError(
+      'pm_bad_create_metadata',
+      titleBytes === 0 ? 'title_empty' : 'title_too_long',
+    );
+  }
+
+  const descriptionBytes = hexByteLength(p.description);
+  if (descriptionBytes > PM_MAX_DESCRIPTION_BYTES) {
+    throw new NotAllowedError(
+      'pm_bad_create_metadata',
+      'description_too_long',
+    );
+  }
+
+  const streamUrlBytes = hexByteLength(p.streamUrl);
+  if (streamUrlBytes > PM_MAX_STREAM_URL_BYTES) {
+    throw new NotAllowedError(
+      'pm_bad_create_metadata',
+      'stream_url_too_long',
+    );
+  }
+
+  // ── Options (mirror :486-496) ────────────────────────────────────────
+  if (p.shape === 0) {
+    // Friendly: binary, exactly 2 option labels.
+    if (p.optionLabels.length !== 2) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'friendly_options_must_be_2',
+      );
+    }
+  } else {
+    if (p.optionLabels.length < 2) {
+      throw new NotAllowedError('pm_bad_create_args', 'options_too_few');
+    }
+    if (p.optionLabels.length > PM_MAX_OPTIONS) {
+      throw new NotAllowedError('pm_bad_create_args', 'options_too_many');
+    }
+  }
+  for (let i = 0; i < p.optionLabels.length; i++) {
+    const labelBytes = hexByteLength(p.optionLabels[i]);
+    if (labelBytes === 0 || labelBytes > PM_MAX_OPTION_LABEL_BYTES) {
+      throw new NotAllowedError(
+        'pm_bad_create_metadata',
+        labelBytes === 0 ? 'option_label_empty' : 'option_label_too_long',
+      );
+    }
+  }
+
+  // ── Stake bounds (mirror :499-516) ───────────────────────────────────
+  if (p.perStakeMin !== 0n && p.perStakeMin < PM_MIN_STAKE_USDC_BASE_UNITS) {
+    throw new NotAllowedError(
+      'pm_bad_create_args',
+      'per_stake_min_below_floor',
+    );
+  }
+  const effectiveMin =
+    p.perStakeMin === 0n ? PM_MIN_STAKE_USDC_BASE_UNITS : p.perStakeMin;
+  if (p.perStakeMax !== 0n && p.perStakeMax < effectiveMin) {
+    throw new NotAllowedError(
+      'pm_bad_create_args',
+      'per_stake_max_below_min',
+    );
+  }
+
+  if (p.shape === 1) {
+    // OpenVote
+    if (p.fixedStake < PM_MIN_STAKE_USDC_BASE_UNITS) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'open_vote_fixed_stake_below_floor',
+      );
+    }
+    if (
+      p.perStakeMin !== 0n ||
+      p.perStakeMax !== 0n ||
+      p.perWalletCumulativeMax !== 0n
+    ) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'open_vote_per_stake_must_be_zero',
+      );
+    }
+  } else if (p.shape === 0) {
+    // Friendly
+    if (p.fixedStake !== 0n) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'friendly_fixed_stake_must_be_zero',
+      );
+    }
+    if (p.perWalletCumulativeMax !== 0n) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'friendly_per_wallet_cum_must_be_zero',
+      );
+    }
+  } else {
+    // PrizePool
+    if (p.fixedStake !== 0n) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'prize_pool_fixed_stake_must_be_zero',
+      );
+    }
+  }
+
+  // ── Winners (mirror :518-523) ────────────────────────────────────────
+  if (p.shape === 0) {
+    if (p.winnersCount !== 0) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'friendly_winners_must_be_zero',
+      );
+    }
+  } else {
+    if (p.winnersCount === 0) {
+      throw new NotAllowedError('pm_bad_create_args', 'winners_zero');
+    }
+    if (p.winnersCount > PM_MAX_WINNERS) {
+      throw new NotAllowedError('pm_bad_create_args', 'winners_too_many');
+    }
+    if (p.winnersCount > p.optionLabels.length) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'winners_exceeds_options',
+      );
+    }
+  }
+
+  // ── Participants (mirror :526-538) ───────────────────────────────────
+  if (p.shape === 2) {
+    // PrizePool: participantWallets.length == optionLabels.length, no
+    // zero address, no duplicates. Treasury check is Stage 2.
+    if (p.participantWallets.length !== p.optionLabels.length) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'participants_count_mismatch',
+      );
+    }
+    const seen = new Set<string>();
+    for (let i = 0; i < p.participantWallets.length; i++) {
+      const w = p.participantWallets[i].toLowerCase();
+      if (w === PM_ZERO_ADDRESS) {
+        throw new NotAllowedError(
+          'pm_bad_create_args',
+          'participants_zero_address',
+        );
+      }
+      if (seen.has(w)) {
+        throw new NotAllowedError(
+          'pm_bad_create_args',
+          'participants_duplicate',
+        );
+      }
+      seen.add(w);
+    }
+  } else {
+    if (p.participantWallets.length !== 0) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'participants_must_be_empty',
+      );
+    }
+  }
+
+  // ── Allowlist (mirror :541-553) ──────────────────────────────────────
+  if (p.participationMode === 1) {
+    // Allowlisted
+    if (p.allowlist.length === 0) {
+      throw new NotAllowedError('pm_bad_create_args', 'allowlist_empty');
+    }
+    if (p.allowlist.length > PM_MAX_ALLOWLIST) {
+      throw new NotAllowedError('pm_bad_create_args', 'allowlist_too_many');
+    }
+    const seen = new Set<string>();
+    for (let i = 0; i < p.allowlist.length; i++) {
+      const a = p.allowlist[i].toLowerCase();
+      if (a === PM_ZERO_ADDRESS) {
+        throw new NotAllowedError(
+          'pm_bad_create_args',
+          'allowlist_zero_address',
+        );
+      }
+      if (seen.has(a)) {
+        throw new NotAllowedError(
+          'pm_bad_create_args',
+          'allowlist_duplicate',
+        );
+      }
+      seen.add(a);
+    }
+  } else {
+    if (p.allowlist.length !== 0) {
+      throw new NotAllowedError(
+        'pm_bad_create_args',
+        'allowlist_must_be_empty',
+      );
+    }
+  }
+}
+
+/// Internal helper. Validates Stage 2 — treasury exclusion in participants
+/// + allowlist. Pure sync. Treasury comparison case-insensitive.
+function _assertPmCreateMarketTreasuryExclusion(
+  p: PmCreateParamsTuple,
+  treasury: Address,
+): void {
+  const t = treasury.toLowerCase();
+  if (p.shape === 2) {
+    for (let i = 0; i < p.participantWallets.length; i++) {
+      if (p.participantWallets[i].toLowerCase() === t) {
+        throw new NotAllowedError(
+          'pm_treasury_not_allowed',
+          'participant_is_treasury',
+        );
+      }
+    }
+  }
+  if (p.participationMode === 1) {
+    for (let i = 0; i < p.allowlist.length; i++) {
+      if (p.allowlist[i].toLowerCase() === t) {
+        throw new NotAllowedError(
+          'pm_treasury_not_allowed',
+          'allowlist_is_treasury',
+        );
+      }
+    }
+  }
+}
+
+/// Internal helper. Validates Stage 3 — clock-relative timestamp check.
+/// `stakingOpensAt >= nowSec`. The contract uses strict `<` so the
+/// equal-second boundary is ACCEPTED (Codex r3 boundary case).
+function _assertPmCreateMarketTimestamps(
+  p: PmCreateParamsTuple,
+  nowSec: bigint,
+): void {
+  if (p.stakingOpensAt < nowSec) {
+    throw new NotAllowedError(
+      'pm_bad_create_timestamps',
+      'staking_opens_in_past',
+    );
+  }
+}
+
+/// Decode the wrapped call and run the chainId + target + value + selector
+/// gates that precede the shape semantics. Shared by all three entry
+/// points. Returns the typed params tuple.
+function _decodePmCreateMarketCall(
+  chainId: number,
+  call: { to: Address; value: bigint; data: Hex },
+): PmCreateParamsTuple {
+  if (chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_create_args', 'wrong_chain');
+  }
+  if (call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_create_args', 'wrong_target');
+  }
+  if (call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_create_args', 'bad_value');
+  }
+  if (call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_create_args', 'short_calldata');
+  }
+  if (call.data.slice(0, 10).toLowerCase() !== PM_CREATE_MARKET_SELECTOR) {
+    throw new NotAllowedError('pm_bad_create_args', 'wrong_selector');
+  }
+
+  let decoded: {
+    functionName: 'createMarket';
+    args: readonly [PmCreateParamsTuple];
+  };
+  try {
+    const result = decodeFunctionData({
+      abi: PM_CREATE_MARKET_ABI,
+      data: call.data,
+    });
+    if (result.functionName !== 'createMarket') {
+      throw new NotAllowedError('pm_bad_create_args', 'wrong_selector');
+    }
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_create_args', 'decode_failed');
+  }
+
+  return decoded.args[0];
+}
+
+/// Byte length of a `bytes`/`bytes[]` hex string. `0x` prefix stripped;
+/// the remaining chars are 2 per byte. Defensive against odd-length
+/// strings (which a malformed ABI decode would never produce, but
+/// kept for completeness).
+function hexByteLength(hex: Hex): number {
+  if (!hex.startsWith('0x')) return 0;
+  const hexChars = hex.length - 2;
+  if (hexChars % 2 !== 0) return -1; // odd length -> always invalid
+  return hexChars / 2;
+}
+
+/// Stage 1 entry point — cheap shape check. NO treasury, NO clock, NO
+/// RPC. Suitable for pre-flight gating in the sponsor route before
+/// roundtripping to getBlock + getPmTreasuryAddress.
+export function assertPmCreateMarketShapeNoTreasury(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+}): void {
+  const params = _decodePmCreateMarketCall(args.chainId, args.call);
+  _assertPmCreateMarketSemanticsNoTreasury(params);
+}
+
+/// Stage 1 + 2 entry point — shape + treasury exclusion. NO clock.
+/// Used at SEND-TIME for defense-in-depth after the sponsor route has
+/// already validated the call shape. Treasury must be passed in by the
+/// caller (await getPmTreasuryAddress at the caller).
+export function assertPmCreateMarketShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+  treasury: Address;
+}): void {
+  const params = _decodePmCreateMarketCall(args.chainId, args.call);
+  _assertPmCreateMarketSemanticsNoTreasury(params);
+  _assertPmCreateMarketTreasuryExclusion(params, args.treasury);
+}
+
+/// Stage 1 + 2 + 3 entry point — full validator with clock. Sponsor-time
+/// only. `nowSec` must be the latest Monad block timestamp, NOT
+/// Date.now(). Treasury must be passed in by the caller.
+export function assertPmCreateMarketCall(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+  treasury: Address;
+  nowSec: bigint;
+}): void {
+  const params = _decodePmCreateMarketCall(args.chainId, args.call);
+  _assertPmCreateMarketSemanticsNoTreasury(params);
+  _assertPmCreateMarketTreasuryExclusion(params, args.treasury);
+  _assertPmCreateMarketTimestamps(params, args.nowSec);
 }
 
 // ── MultiSend bytes parser (send-time only) ─────────────────────────────────
