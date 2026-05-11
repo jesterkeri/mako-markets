@@ -731,8 +731,6 @@ export function assertCreateMarketShape(args: {
 // truth — drift caught by `aa-call-allowlist-pm.test.ts` boundary cases.
 // ----------------------------------------------------------------------------
 
-const PM_ZERO_BYTES32 =
-  '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
 const PM_ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
 /// Internal helper. Validates Stage 1 invariants on the decoded params.
@@ -753,17 +751,6 @@ function _assertPmCreateMarketSemanticsNoTreasury(p: PmCreateParamsTuple): void 
   }
   if (p.participationMode !== 0 && p.participationMode !== 1) {
     throw new NotAllowedError('pm_bad_create_args', 'bad_participation_enum');
-  }
-
-  // Defensive clientNonce non-zero check. The contract doesn't reject
-  // a zero nonce explicitly — clientNonce is metadata, not a uniqueness
-  // primitive on chain — but our DB DOES require uniqueness on the
-  // pending row's client_nonce, and 0x00..0 is a likely fingerprint for
-  // a misconfigured caller (uninitialized buffer / forgotten
-  // `generateClientNonce()` call). Reject early so the operator sees a
-  // clear reason instead of a generic decode/decode-args mismatch.
-  if (p.clientNonce.toLowerCase() === PM_ZERO_BYTES32) {
-    throw new NotAllowedError('pm_bad_create_args', 'zero_client_nonce');
   }
 
   // Immutable timestamp shape: closeAt > stakingOpensAt. NOT clock-
@@ -1073,13 +1060,19 @@ function _decodePmCreateMarketCall(
 }
 
 /// Byte length of a `bytes`/`bytes[]` hex string. `0x` prefix stripped;
-/// the remaining chars are 2 per byte. Defensive against odd-length
-/// strings (which a malformed ABI decode would never produce, but
-/// kept for completeness).
+/// the remaining chars are 2 per byte. ABI decode never produces an
+/// odd-length payload for `bytes`; if one shows up it indicates a
+/// corrupted / bug-decoded value, so panic via a typed error rather
+/// than return a sentinel that downstream `<= max` callers would
+/// silently let through (Codex 2C-1 step-7 r1 MIN-2).
 function hexByteLength(hex: Hex): number {
-  if (!hex.startsWith('0x')) return 0;
+  if (!hex.startsWith('0x')) {
+    throw new NotAllowedError('pm_bad_create_metadata', 'malformed_bytes_hex');
+  }
   const hexChars = hex.length - 2;
-  if (hexChars % 2 !== 0) return -1; // odd length -> always invalid
+  if (hexChars % 2 !== 0) {
+    throw new NotAllowedError('pm_bad_create_metadata', 'malformed_bytes_hex');
+  }
   return hexChars / 2;
 }
 

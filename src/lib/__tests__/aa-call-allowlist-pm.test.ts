@@ -51,8 +51,6 @@ const WALLET_C: Address = '0x0000000000000000000000000000000000000003';
 
 const NONCE: Hex =
   '0x1111111111111111111111111111111111111111111111111111111111111111';
-const ZERO_NONCE: Hex =
-  '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 const NOW: bigint = 1_800_000_000n;
 
@@ -334,18 +332,6 @@ describe('assertPmCreateMarketShapeNoTreasury — wrapper guards', () => {
 // ── Stage 1 (semantics) reject paths ────────────────────────────────────────
 
 describe('assertPmCreateMarketShapeNoTreasury — semantics rejects', () => {
-  it('rejects zero clientNonce', () => {
-    expectReject(
-      () =>
-        assertPmCreateMarketShapeNoTreasury({
-          chainId: MONAD_TESTNET_ID,
-          safeAddress: SAFE,
-          call: call(makeFriendly({ clientNonce: ZERO_NONCE })),
-        }),
-      { reason: 'pm_bad_create_args', detail: 'zero_client_nonce' },
-    );
-  });
-
   it('rejects closeAt <= stakingOpensAt (immutable shape)', () => {
     expectReject(
       () =>
@@ -704,6 +690,138 @@ describe('assertPmCreateMarketShapeNoTreasury — semantics rejects', () => {
           ),
         }),
       { reason: 'pm_bad_create_args', detail: 'allowlist_must_be_empty' },
+    );
+  });
+
+  // Codex 2C-1 step-7 r1 MIN-1: previously-uncovered reject branches.
+
+  it('rejects winnersCount > MAX_WINNERS', () => {
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(makeOpenVote({ winnersCount: 11 })),
+        }),
+      { reason: 'pm_bad_create_args', detail: 'winners_too_many' },
+    );
+  });
+
+  it('rejects Friendly with non-zero perWalletCumulativeMax', () => {
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(makeFriendly({ perWalletCumulativeMax: 1n })),
+        }),
+      {
+        reason: 'pm_bad_create_args',
+        detail: 'friendly_per_wallet_cum_must_be_zero',
+      },
+    );
+  });
+
+  it('rejects PrizePool with non-zero fixedStake', () => {
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(makePrizePool({ fixedStake: 1n })),
+        }),
+      {
+        reason: 'pm_bad_create_args',
+        detail: 'prize_pool_fixed_stake_must_be_zero',
+      },
+    );
+  });
+
+  it('rejects Allowlisted with > PM_MAX_ALLOWLIST entries', () => {
+    // PM_MAX_ALLOWLIST = 100. 101 distinct addresses → reject.
+    const allowlist: Address[] = Array.from(
+      { length: 101 },
+      (_, i) =>
+        `0x${(i + 1).toString(16).padStart(40, '0')}` as Address,
+    );
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(
+            makeFriendly({ participationMode: 1, allowlist }),
+          ),
+        }),
+      { reason: 'pm_bad_create_args', detail: 'allowlist_too_many' },
+    );
+  });
+
+  it('rejects Allowlisted zero-address entry', () => {
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(
+            makeFriendly({
+              participationMode: 1,
+              allowlist: [
+                WALLET_A,
+                '0x0000000000000000000000000000000000000000' as Address,
+              ],
+            }),
+          ),
+        }),
+      { reason: 'pm_bad_create_args', detail: 'allowlist_zero_address' },
+    );
+  });
+
+  // Codex r1 MIN-1 (defensive branches): the TS literal types pin shape
+  // to {0,1,2}, viewMode to {0,1}, participationMode to {0,1}, but the
+  // calldata wire format is uint8 — so a malicious caller can encode
+  // out-of-range values that bypass the TS layer. Test those via a
+  // type-cast escape hatch on the params builder.
+
+  it('defensive: rejects shape enum out of range', () => {
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(
+            makeFriendly({ shape: 3 as unknown as 0 | 1 | 2 }),
+          ),
+        }),
+      { reason: 'pm_bad_create_args', detail: 'bad_shape_enum' },
+    );
+  });
+
+  it('defensive: rejects viewMode enum out of range', () => {
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(
+            makeFriendly({ viewMode: 2 as unknown as 0 | 1 }),
+          ),
+        }),
+      { reason: 'pm_bad_create_args', detail: 'bad_view_enum' },
+    );
+  });
+
+  it('defensive: rejects participationMode enum out of range', () => {
+    expectReject(
+      () =>
+        assertPmCreateMarketShapeNoTreasury({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: call(
+            makeFriendly({ participationMode: 2 as unknown as 0 | 1 }),
+          ),
+        }),
+      { reason: 'pm_bad_create_args', detail: 'bad_participation_enum' },
     );
   });
 });

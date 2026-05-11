@@ -80,7 +80,7 @@ export interface PmCreateParamsTuple {
   optionLabels: readonly Hex[]; // bytes[] (len 2..MAX_OPTIONS)
   participantWallets: readonly Address[]; // address[] (PrizePool only)
   allowlist: readonly Address[]; // address[] (Allowlisted only)
-  viewMode: 0 | 1; // Public / Private
+  viewMode: 0 | 1; // LinkOnly / Public (contract enum order)
   participationMode: 0 | 1; // Open / Allowlisted
   perStakeMin: bigint; // uint256 (0 = defaults to MIN_STAKE)
   perStakeMax: bigint; // uint256 (0 = no cap)
