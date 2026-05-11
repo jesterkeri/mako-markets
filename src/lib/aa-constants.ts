@@ -99,3 +99,18 @@ export const MAKO_V4_MIN_DURATION_SEC = 300n;
 export const MAKO_V4_MAX_DURATION_SEC = 7n * 24n * 60n * 60n;
 export const CREATE_MARKET_QUESTION_MAX_BYTES = 200;
 export const CREATE_MARKET_MIN_SERVER_BUFFER_SEC = 30n;
+
+/// Phase 2C-1 — MakoPrivateMarketsV1 createMarket bounds. Pulled
+/// directly from the contract's public constants at
+/// MakoPrivateMarketsV1.sol lines 84-94. No duration constraints —
+/// the contract enforces only `stakingOpensAt >= block.timestamp`
+/// and `closeAt > stakingOpensAt`. The PM validator must NOT add
+/// duration rules that the contract doesn't enforce (Codex r1 CRIT-1).
+export const PM_MIN_STAKE_USDC_BASE_UNITS = 10_000n; // 0.01 USDC
+export const PM_MAX_OPTIONS = 50;
+export const PM_MAX_WINNERS = 10;
+export const PM_MAX_ALLOWLIST = 100;
+export const PM_MAX_TITLE_BYTES = 100;
+export const PM_MAX_DESCRIPTION_BYTES = 2_000;
+export const PM_MAX_OPTION_LABEL_BYTES = 80;
+export const PM_MAX_STREAM_URL_BYTES = 256;

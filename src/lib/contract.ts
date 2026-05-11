@@ -15,6 +15,20 @@ export const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS
   || '0xf9853d7ad6601deF4367524A5802B41227ea5c43') as `0x${string}`;
 
 /**
+ * Deployed address of MakoPrivateMarketsV1 on Monad testnet.
+ *
+ * Set `NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS` in `.env.local` (and in
+ * Vercel envs). Defaults to the live 2A deploy so the app still
+ * compiles and renders if the env var is unset. Same fallback pattern
+ * as MAKO_ADDRESS.
+ *
+ * Used by Phase 2C-1 (createMarket sponsor + send dispatch) and by
+ * the existing 2B-2 indexer routes.
+ */
+export const PM_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS
+  || '0xc9c6575a14d0e84afd5ab21c506916fd2864bb8f') as `0x${string}`;
+
+/**
  * Pre-composed contract object for wagmi's useReadContract / useWriteContract.
  * Spread it with `...makoContract` and add `functionName` + `args`.
  *
