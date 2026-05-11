@@ -247,6 +247,64 @@ describe('allocatePmDraft — slug_exhausted', () => {
   });
 });
 
+// Codex 2C-1 step-9 r2 MIN-1: parity regression for the direct-array
+// result shape. pglite wraps results in `{ rows }`; postgres-js
+// returns the row array DIRECTLY. The matching r1 fix in draft.ts
+// (lines 107-115) uses the dual-shape extraction pattern from
+// cleanup.ts:92-95, but every test above exercises only the
+// pglite-wrapped path. This block pins the bug class for the second
+// fixed call site (sponsor-gate already has parity tests).
+describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MIN-1)', () => {
+  it('handles a result that IS the row array (no .rows wrapper) — happy path', async () => {
+    // Mock allocateSlug to return a fixed slug — the tx mock only
+    // needs .execute() because the slug-collision SELECT is bypassed.
+    const slugModule = await import('../slug');
+    vi.spyOn(slugModule, 'allocateSlug').mockResolvedValueOnce('AB12CD34');
+
+    const fakeTx = {
+      execute: async () =>
+        // postgres-js shape: raw array, NO `.rows` wrapper.
+        [{ id: '00000000-0000-0000-0000-00000000feed' }],
+    };
+
+    const r = await allocatePmDraft({
+      tx: fakeTx as never,
+      sessionWallet: SESSION_A,
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT_A,
+      shape: 'friendly',
+      clientNonce: NONCE_1,
+    });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.slug).toBe('AB12CD34');
+    expect(r.value.pendingDbId).toBe('00000000-0000-0000-0000-00000000feed');
+  });
+
+  it('handles a result that IS an empty array (no .rows wrapper) — duplicate', async () => {
+    const slugModule = await import('../slug');
+    vi.spyOn(slugModule, 'allocateSlug').mockResolvedValueOnce('EF56GH78');
+
+    const fakeTx = {
+      execute: async () => [] as unknown[], // empty raw array — ON CONFLICT DO NOTHING fired
+    };
+
+    const r = await allocatePmDraft({
+      tx: fakeTx as never,
+      sessionWallet: SESSION_A,
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT_A,
+      shape: 'friendly',
+      clientNonce: NONCE_1,
+    });
+
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.kind).toBe('duplicate');
+  });
+});
+
 describe('allocatePmDraft — concurrent duplicate (TOCTOU)', () => {
   it('two parallel calls with same nonce → exactly one succeeds', async () => {
     // pglite is single-threaded, but Promise.all interleaves the
