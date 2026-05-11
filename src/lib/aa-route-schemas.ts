@@ -13,10 +13,10 @@ import { z } from 'zod';
 // `HexBigint` is `0x` + 1+ hex digits (no length cap) so we can carry
 // uint256 values over the wire without lossy `Number` round-tripping.
 //
-// Phase 1D + 1E + 1H shape: `SponsorRequest` is a zod
-// `discriminatedUnion('kind', ...)` over five variants — the `kind`
+// Phase 1D + 1E + 1H + 2C-1 shape: `SponsorRequest` is a zod
+// `discriminatedUnion('kind', ...)` over six variants — the `kind`
 // field is REQUIRED and the only discriminator. No env-aware default,
-// no fallback. The five variants are:
+// no fallback. The six variants are:
 //   - `SmokeRequest` (kind='smoke')          single-call USDC.transfer self
 //   - `BetSingleRequest` (kind='bet_single') single-call placeBet
 //   - `BetBatchedRequest` (kind='bet_batched') tuple [approve, placeBet]
@@ -24,6 +24,9 @@ import { z } from 'zod';
 //                                            arbitrary recipient (Phase 1E)
 //   - `CreateMarketRequest` (kind='create_market') single-call MakoMarketsV4
 //                                            createMarket (Phase 1H)
+//   - `PmCreateMarketRequest` (kind='pm_create_market') single-call
+//                                            MakoPrivateMarketsV1.createMarket
+//                                            (Phase 2C-1)
 // `.strict()` on each rejects unknown keys so a malicious body can't carry
 // both `call` and `calls` to confuse the route's branching.
 // ----------------------------------------------------------------------------
@@ -125,12 +128,35 @@ const CreateMarketRequest = z
   })
   .strict();
 
+const PmCreateMarketRequest = z
+  .object({
+    kind: z.literal('pm_create_market'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Phase 2C-1 Magic PM create-market flow: single-call
+    /// `MakoPrivateMarketsV1.createMarket((shape, stakingOpensAt, ...))`
+    /// from the Safe. The route validates the call via the 3-stage
+    /// sync validator surface in `aa-call-allowlist.ts`:
+    ///   Stage 1 — assertPmCreateMarketShapeNoTreasury (pre-flight; no RPC)
+    ///   Stage 2 — assertPmCreateMarketShape (adds treasury exclusion)
+    ///   Stage 3 — assertPmCreateMarketCall (adds clock; sponsor-time)
+    /// The clientNonce is extracted from the ABI-decoded params (NOT
+    /// taken from the request body) so the route can SELECT the
+    /// matching pending pm_markets row by (chain_id, contract_address,
+    /// client_nonce, create_status='pending') FOR UPDATE and assert
+    /// creator + shape match before sponsoring.
+    /// Send-time re-validation uses Stage 1+2 only — clock drift is
+    /// caught by SafeOp hash recomputation (Guard A in /api/aa/send).
+    call: CallShape,
+  })
+  .strict();
+
 export const SponsorRequest = z.discriminatedUnion('kind', [
   SmokeRequest,
   BetSingleRequest,
   BetBatchedRequest,
   SendUsdcRequest,
   CreateMarketRequest,
+  PmCreateMarketRequest,
 ]);
 
 export type SponsorRequest = z.infer<typeof SponsorRequest>;
@@ -139,6 +165,7 @@ export type BetSingleRequest = z.infer<typeof BetSingleRequest>;
 export type BetBatchedRequest = z.infer<typeof BetBatchedRequest>;
 export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
 export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
+export type PmCreateMarketRequest = z.infer<typeof PmCreateMarketRequest>;
 
 export const SendRequest = z.object({
   pendingUserOpId: z.string().uuid(),

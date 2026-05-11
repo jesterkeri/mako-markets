@@ -305,6 +305,17 @@ export async function POST(req: Request) {
         buildArgs = { kind: 'create_market', call };
         break;
       }
+      case 'pm_create_market': {
+        // Phase 2C-1 step 8 placeholder. Step 9 wires the full PM
+        // branch (3-stage validator + draft-row SELECT FOR UPDATE +
+        // sponsor call). Returning 501 here keeps the route exhaustive
+        // for tsc + prevents an authed caller from sponsoring an
+        // unvalidated PM op against testnet while step 9 is in flight.
+        return Response.json(
+          { error: 'NOT_IMPLEMENTED', reason: 'pm_create_market_not_wired_yet' },
+          { status: 501 },
+        );
+      }
     }
   } catch (e) {
     if (e instanceof NotAllowedError) {
