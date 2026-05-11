@@ -933,6 +933,272 @@ describe('__setDbCallCounter test-only guard (Codex r5 m3)', () => {
   });
 });
 
+describe('Codex 2B-6 r2 M1 — Number.isSafeInteger rejection', () => {
+  it('multicallBatchSize=NaN throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        multicallBatchSize: NaN,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('multicallBatchSize=Infinity throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        multicallBatchSize: Infinity,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('multicallBatchSize=-Infinity throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        multicallBatchSize: -Infinity,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('candidateCap=Number.MAX_SAFE_INTEGER+1 throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        candidateCap: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('candidateCap=2**53 throws RangeError', async () => {
+    const client = buildMulticallClient(new Map());
+    await expect(
+      getPendingClaimsForWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        publicClient: client,
+        now: NOW,
+        candidateCap: 2 ** 53,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+  it('getMarketsCreatedByWallet offset=Number.MAX_SAFE_INTEGER+1 throws RangeError', async () => {
+    await expect(
+      getMarketsCreatedByWallet({
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        wallet: STAKER_A,
+        now: NOW,
+        offset: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    ).rejects.toThrow(RangeError);
+  });
+});
+
+describe('Codex 2B-6 r2 m1 — sanitized transport error in observation', () => {
+  it('multicall throws Error → observation context carries errorName/errorMessage/failureMode=transport', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await seedConfirmedMarket({ marketId: 200 });
+    await seedStake({
+      marketId: 200,
+      staker: STAKER_A,
+      optionIndex: 1,
+      amount: '1',
+      txHash: ('0x' + '2'.repeat(64)) as `0x${string}`,
+    });
+    const client = {
+      multicall: vi.fn(async () => {
+        const e = new Error('rpc timeout exceeded');
+        e.name = 'TimeoutError';
+        throw e;
+      }),
+    } as unknown as PublicClient;
+    await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    const parsed = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(parsed.code).toBe('pending-claim-read-failed');
+    expect(parsed.failureMode).toBe('transport');
+    expect(parsed.errorName).toBe('TimeoutError');
+    expect(parsed.errorMessage).toBe('rpc timeout exceeded');
+    warnSpy.mockRestore();
+  });
+
+  it('multicall throws non-Error → observation context carries errorName=NonError', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await seedConfirmedMarket({ marketId: 201 });
+    await seedStake({
+      marketId: 201,
+      staker: STAKER_A,
+      optionIndex: 1,
+      amount: '1',
+      txHash: ('0x' + '3'.repeat(64)) as `0x${string}`,
+    });
+    const client = {
+      multicall: vi.fn(async () => {
+        throw 'plain-string-error';
+      }),
+    } as unknown as PublicClient;
+    await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    const parsed = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(parsed.failureMode).toBe('transport');
+    expect(parsed.errorName).toBe('NonError');
+    expect(parsed.errorMessage).toBe('plain-string-error');
+    warnSpy.mockRestore();
+  });
+
+  it('per-call revert (allowFailure) → observation carries failureMode=per-call (no transport error fields)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await seedConfirmedMarket({ marketId: 202 });
+    await seedStake({
+      marketId: 202,
+      staker: STAKER_A,
+      optionIndex: 1,
+      amount: '1',
+      txHash: ('0x' + '4'.repeat(64)) as `0x${string}`,
+    });
+    const client = buildMulticallClient(
+      new Map<number, bigint | 'revert'>([[202, 'revert']]),
+    );
+    await getPendingClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+      publicClient: client,
+      now: NOW,
+    });
+    const parsed = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(parsed.failureMode).toBe('per-call');
+    expect(parsed.errorName).toBeUndefined();
+    expect(parsed.errorMessage).toBeUndefined();
+    warnSpy.mockRestore();
+  });
+});
+
+describe('Codex 2B-6 r2 m2 — stake/claim secondary ordering regression', () => {
+  it('getStakesForWallet — same blockTimestamp, ordered by blockNumber DESC then logIndex DESC', async () => {
+    await seedConfirmedMarket({ marketId: 300 });
+    const sameTs = new Date('2026-05-12T00:05:00Z');
+    await active!.db.insert(pmStakes).values([
+      {
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        txHash: ('0x' + 'a1'.padEnd(64, '0')) as `0x${string}`,
+        logIndex: 0,
+        marketId: 300,
+        staker: STAKER_A,
+        optionIndex: 0,
+        amount: '111',
+        blockNumber: 100,
+        blockTimestamp: sameTs,
+      },
+      {
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        txHash: ('0x' + 'a2'.padEnd(64, '0')) as `0x${string}`,
+        logIndex: 5,
+        marketId: 300,
+        staker: STAKER_A,
+        optionIndex: 0,
+        amount: '222',
+        blockNumber: 100,
+        blockTimestamp: sameTs,
+      },
+      {
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        txHash: ('0x' + 'a3'.padEnd(64, '0')) as `0x${string}`,
+        logIndex: 2,
+        marketId: 300,
+        staker: STAKER_A,
+        optionIndex: 0,
+        amount: '333',
+        blockNumber: 200,
+        blockTimestamp: sameTs,
+      },
+    ]);
+    const r = await getStakesForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+    });
+    expect(r.map((x) => x.amount)).toEqual(['333', '222', '111']);
+  });
+
+  it('getClaimsForWallet — same blockTimestamp, ordered by blockNumber DESC then logIndex DESC', async () => {
+    await seedConfirmedMarket({ marketId: 301 });
+    const sameTs = new Date('2026-05-12T00:05:00Z');
+    await active!.db.insert(pmClaims).values([
+      {
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        txHash: ('0x' + 'b1'.padEnd(64, '0')) as `0x${string}`,
+        logIndex: 0,
+        marketId: 301,
+        recipient: STAKER_A,
+        amount: '111',
+        blockNumber: 100,
+        blockTimestamp: sameTs,
+      },
+      {
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        txHash: ('0x' + 'b2'.padEnd(64, '0')) as `0x${string}`,
+        logIndex: 7,
+        marketId: 301,
+        recipient: STAKER_A,
+        amount: '222',
+        blockNumber: 100,
+        blockTimestamp: sameTs,
+      },
+      {
+        chainId: CHAIN_ID,
+        contractAddress: CONTRACT,
+        txHash: ('0x' + 'b3'.padEnd(64, '0')) as `0x${string}`,
+        logIndex: 3,
+        marketId: 301,
+        recipient: STAKER_A,
+        amount: '333',
+        blockNumber: 200,
+        blockTimestamp: sameTs,
+      },
+    ]);
+    const r = await getClaimsForWallet({
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT,
+      wallet: STAKER_A,
+    });
+    expect(r.map((x) => x.amount)).toEqual(['333', '222', '111']);
+  });
+});
+
 describe('Codex 2B-6 r1 M2 — numeric arg validation', () => {
   it('multicallBatchSize=0 throws RangeError before any DB call', async () => {
     const client = buildMulticallClient(new Map());

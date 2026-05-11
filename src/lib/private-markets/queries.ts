@@ -241,12 +241,15 @@ export async function getMarketBySlugIncludingHistory(
 // Phase 2B-6 — pending-claim queries + listing helpers
 // ============================================================================
 
-// ---- DB call counter (test scaffolding, Codex r5 m3) -----------------------
+// ---- DB call counter (test scaffolding, Codex r5 m3 + r2 n1) ---------------
 //
 // Tests assign a counter via __setDbCallCounter to assert that
-// getPendingClaimsForWallet hydrates via exactly 4 SQL round-trips
-// (1 candidateMarkets + 1 options + 1 stakes + 1 claims) regardless
-// of candidate count. Production overhead = ONE null-check per call.
+// getPendingClaimsForWallet hydrates via at most 4 SQL round-trips
+// regardless of candidate count: 1 candidateMarkets always runs;
+// when the candidate set is empty the helper short-circuits and
+// options/stakes/claims are skipped (each remains 0). With ≥1
+// candidate, all four are incremented exactly once.
+// Production overhead = ONE null-check per call.
 
 type DbCallCategory =
   | 'candidateMarkets'
@@ -321,20 +324,25 @@ const DEFAULT_CANDIDATE_CAP = 500;
 const DEFAULT_LIMIT = 50;
 const DEFAULT_MULTICALL_BATCH = 50;
 
-/// Codex 2B-6 r1 M2: validate numeric pagination/batch knobs before
-/// they reach the SQL/multicall loop. multicallBatchSize must be a
-/// positive integer (zero or negative would loop forever or skip
-/// reads); candidateCap and limit must be positive integers; offset
-/// must be a non-negative integer.
+/// Codex 2B-6 r1 M2 + r2 M1: validate numeric pagination/batch knobs
+/// before they reach the SQL/multicall loop. multicallBatchSize must
+/// be a positive SAFE integer (zero or negative would loop forever or
+/// skip reads; values above 2^53 silently lose precision in BigInt
+/// conversions). candidateCap and limit must be positive safe integers;
+/// offset must be a non-negative safe integer. Number.isSafeInteger
+/// rejects NaN, Infinity, -Infinity, fractional values, and integers
+/// outside [-(2^53 - 1), 2^53 - 1].
 function assertPositiveInt(name: string, value: number): void {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new RangeError(`${name} must be a positive integer (got ${value})`);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(
+      `${name} must be a positive safe integer (got ${value})`,
+    );
   }
 }
 function assertNonNegativeInt(name: string, value: number): void {
-  if (!Number.isInteger(value) || value < 0) {
+  if (!Number.isSafeInteger(value) || value < 0) {
     throw new RangeError(
-      `${name} must be a non-negative integer (got ${value})`,
+      `${name} must be a non-negative safe integer (got ${value})`,
     );
   }
 }
@@ -595,6 +603,8 @@ export async function getPendingClaimsForWallet(args: {
           { status: 'success'; result: bigint } | { status: 'failure' }
         >
       | null = null;
+    let batchErrorName: string | null = null;
+    let batchErrorMessage: string | null = null;
     try {
       results = (await args.publicClient.multicall({
         allowFailure: true,
@@ -602,8 +612,22 @@ export async function getPendingClaimsForWallet(args: {
       })) as ReadonlyArray<
         { status: 'success'; result: bigint } | { status: 'failure' }
       >;
-    } catch {
+    } catch (err: unknown) {
+      // Codex 2B-6 r2 m1: keep the root-cause string in the
+      // observation so production can distinguish "RPC timeout"
+      // from "ABI encoding bug". Truncate to bound log lines.
       results = null;
+      if (err instanceof Error) {
+        batchErrorName = err.name;
+        batchErrorMessage = (err.message ?? '').slice(0, 500);
+      } else {
+        batchErrorName = 'NonError';
+        try {
+          batchErrorMessage = String(err).slice(0, 500);
+        } catch {
+          batchErrorMessage = '<unstringifiable>';
+        }
+      }
     }
     for (let j = 0; j < contracts.length; j++) {
       const c = batch[j];
@@ -620,6 +644,13 @@ export async function getPendingClaimsForWallet(args: {
           chainId: args.chainId,
           contractAddress: contractLower,
           marketId: c.marketId,
+          ...(batchErrorName !== null
+            ? {
+                errorName: batchErrorName,
+                errorMessage: batchErrorMessage,
+                failureMode: 'transport',
+              }
+            : { failureMode: 'per-call' }),
         });
       }
     }
