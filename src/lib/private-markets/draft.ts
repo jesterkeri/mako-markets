@@ -57,10 +57,26 @@ export interface AllocatePmDraftResult {
 
 export type AllocatePmDraftError =
   | { kind: 'duplicate' }
-  | { kind: 'slug_exhausted' };
+  | { kind: 'slug_exhausted' }
+  | { kind: 'pending_cap'; count: number };
+
+/// Cap on simultaneously-`pending` pm_markets rows per
+/// (chain, contract, creator). Mirrors the per-Safe ceiling on
+/// aa_pending_user_ops in spirit: one Safe should not be able to
+/// accumulate dozens of orphan draft rows by double-submitting and
+/// abandoning before sponsor. Set high enough that a careful user
+/// can't trip it (drafts are sub-second to allocate), low enough
+/// that a runaway client can't flood the table before the sweep
+/// catches up. The 11th simultaneously-pending row for one Safe
+/// is rejected with 429 at the route.
+export const PM_DRAFT_PENDING_CAP_PER_SAFE = 10;
 
 export async function allocatePmDraft(
-  args: AllocatePmDraftArgs,
+  args: AllocatePmDraftArgs & {
+    /// Override for tests. Production callers should rely on the
+    /// PM_DRAFT_PENDING_CAP_PER_SAFE default.
+    maxPendingPerSafe?: number;
+  },
 ): Promise<
   | { ok: true; value: AllocatePmDraftResult }
   | { ok: false; error: AllocatePmDraftError }
@@ -68,6 +84,39 @@ export async function allocatePmDraft(
   const contractLower = normalizeHex(args.contractAddress, 20);
   const sessionLower = normalizeHex(args.sessionWallet, 20);
   const clientNonceLower = normalizeHex(args.clientNonce, 32);
+  const cap = args.maxPendingPerSafe ?? PM_DRAFT_PENDING_CAP_PER_SAFE;
+
+  // Codex 2C-1 r3 MAJ-2: enforce per-Safe pending cap inside the
+  // same transaction the route opens. A pure SELECT-then-INSERT
+  // without locking permits a small race at the cap boundary (two
+  // concurrent requests at count=cap-1 can both pass and reach
+  // cap+1). Acceptable here because (a) the route is human-paced,
+  // (b) the worst case is cap+N stray rows that the stale-pending
+  // sweep recycles, and (c) the in-flight gate at the route blocks
+  // the more common "double-click" path BEFORE allocate runs. The
+  // hard concurrency primitive remains the partial unique index on
+  // client_nonce.
+  const countRows = await args.tx.execute(sql`
+    SELECT COUNT(*)::int AS c
+      FROM pm_markets
+     WHERE chain_id = ${args.chainId}
+       AND contract_address = ${contractLower}
+       AND creator = ${sessionLower}
+       AND create_status = 'pending'
+  `);
+  const rawCount =
+    (countRows as unknown as { rows?: unknown[] }).rows ??
+    (countRows as unknown as unknown[]);
+  const countList = (Array.isArray(rawCount) ? rawCount : []) as Array<{
+    c: number | string;
+  }>;
+  const pendingCount = countList.length > 0 ? Number(countList[0].c) : 0;
+  if (pendingCount >= cap) {
+    return {
+      ok: false,
+      error: { kind: 'pending_cap', count: pendingCount },
+    };
+  }
 
   let slug: string;
   try {
