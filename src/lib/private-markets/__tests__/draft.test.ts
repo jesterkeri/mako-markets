@@ -255,14 +255,17 @@ describe('allocatePmDraft — slug_exhausted', () => {
 // pglite-wrapped path. This block pins the bug class for the second
 // fixed call site (sponsor-gate already has parity tests).
 describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MIN-1)', () => {
-  // Codex 2C-1 r3 MAJ-2: allocatePmDraft now issues TWO .execute()
-  // calls per invocation — the per-Safe pending-cap SELECT, then the
-  // INSERT ... RETURNING. Both must be exercised via the direct-
-  // array (postgres-js) shape to pin the dual-shape extraction
-  // pattern across both call sites. Helper builds a fakeTx whose
-  // .execute() returns successive raw-array responses without the
-  // `.rows` wrapper.
-  function buildFakeTx(responses: unknown[]): { execute: () => Promise<unknown> } {
+  // Codex 2C-1 r3 MAJ-2 + r4 MAJ-1: allocatePmDraft now issues
+  // THREE .execute() calls per invocation —
+  //   1. pg_advisory_xact_lock (per-Safe serialization)
+  //   2. pending-cap SELECT COUNT(*)
+  //   3. INSERT ... RETURNING (or skipped if cap is exceeded)
+  // The fakeTx returns one response per call from `responses[]`.
+  // The lock returns an empty row set on real PG; here we just hand
+  // back any sentinel since the helper does not inspect the value.
+  function buildFakeTx(responses: unknown[]): {
+    execute: () => Promise<unknown>;
+  } {
     let call = 0;
     return {
       execute: async () => {
@@ -273,6 +276,8 @@ describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MI
     };
   }
 
+  const LOCK_OK = [] as unknown[];
+
   it('handles a result that IS the row array (no .rows wrapper) — happy path', async () => {
     // Mock allocateSlug to return a fixed slug — the tx mock only
     // needs .execute() because the slug-collision SELECT is bypassed.
@@ -280,9 +285,11 @@ describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MI
     vi.spyOn(slugModule, 'allocateSlug').mockResolvedValueOnce('AB12CD34');
 
     const fakeTx = buildFakeTx([
-      // 1st: pending-cap SELECT, direct-array shape.
+      // 1st: pg_advisory_xact_lock — return value unused.
+      LOCK_OK,
+      // 2nd: pending-cap SELECT, direct-array shape.
       [{ c: 0 }],
-      // 2nd: INSERT ... RETURNING id, direct-array shape.
+      // 3rd: INSERT ... RETURNING id, direct-array shape.
       [{ id: '00000000-0000-0000-0000-00000000feed' }],
     ]);
 
@@ -306,6 +313,7 @@ describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MI
     vi.spyOn(slugModule, 'allocateSlug').mockResolvedValueOnce('EF56GH78');
 
     const fakeTx = buildFakeTx([
+      LOCK_OK,
       [{ c: 0 }],
       [] as unknown[], // empty raw array — ON CONFLICT DO NOTHING fired
     ]);
@@ -331,6 +339,7 @@ describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MI
     const slugSpy = vi.spyOn(slugModule, 'allocateSlug');
 
     const fakeTx = buildFakeTx([
+      LOCK_OK,
       [{ c: 2 }], // postgres-js direct-array shape, count == cap
     ]);
 
@@ -464,6 +473,74 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
       maxPendingPerSafe: 3,
     });
     expect(r.ok).toBe(true);
+  });
+
+  // Codex 2C-1 r4 MAJ-1: the cap must hold under concurrent
+  // draft requests, not just sequentially. The production guarantee
+  // comes from pg_advisory_xact_lock(hashtext(...)) keyed by
+  // (chainId, contractAddress, sessionWallet) — issued as the FIRST
+  // statement of the transaction, BEFORE the count SELECT.
+  //
+  // pglite is a single in-process connection and cannot meaningfully
+  // simulate cross-connection lock contention; advisory locks
+  // acquired on the same connection always succeed immediately, so
+  // a Promise.all integration test against pglite would falsely show
+  // 0 capping. The structural assertion below captures every SQL
+  // statement issued in order and proves the lock is the first
+  // statement — which is what gives postgres-js connections in
+  // production the serialization they need.
+  it('issues pg_advisory_xact_lock as the FIRST statement before the count SELECT', async () => {
+    const slugModule = await import('../slug');
+    vi.spyOn(slugModule, 'allocateSlug').mockResolvedValueOnce('ZZZ12345');
+
+    const seen: string[] = [];
+    const fakeTx = {
+      execute: async (queryObj: unknown) => {
+        // drizzle-orm's `sql` template builds an object with a
+        // .queryChunks / .toQuery / .getSQL surface. Stringify it
+        // best-effort; the lock keyword + the COUNT(*) keyword are
+        // distinctive enough that loose matching is safe.
+        const repr =
+          typeof queryObj === 'string'
+            ? queryObj
+            : (queryObj as { sql?: string }).sql ??
+              (queryObj as { queryChunks?: unknown[] }).queryChunks
+                ?.map((c) =>
+                  typeof c === 'object' && c !== null && 'value' in (c as Record<string, unknown>)
+                    ? String((c as { value: unknown }).value)
+                    : String(c),
+                )
+                ?.join(' ') ??
+              JSON.stringify(queryObj);
+        seen.push(repr);
+        // Return shape per call position so the helper proceeds
+        // happily past lock (any), count (low), insert (1 row).
+        const pos = seen.length;
+        if (pos === 1) return [] as unknown[]; // lock
+        if (pos === 2) return [{ c: 0 }]; // count under cap
+        return [{ id: '00000000-0000-0000-0000-000000000001' }];
+      },
+    };
+
+    const r = await allocatePmDraft({
+      tx: fakeTx as never,
+      sessionWallet: SESSION_A,
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT_A,
+      shape: 'friendly',
+      clientNonce: NONCE_1,
+      maxPendingPerSafe: 3,
+    });
+
+    expect(r.ok).toBe(true);
+    // 3 statements total: lock, count, insert.
+    expect(seen).toHaveLength(3);
+    // 1st must contain the lock function name.
+    expect(seen[0]).toMatch(/pg_advisory_xact_lock/i);
+    // 2nd is the count SELECT.
+    expect(seen[1]).toMatch(/count\(\*\)/i);
+    // 3rd is the INSERT.
+    expect(seen[2]).toMatch(/insert\s+into\s+pm_markets/i);
   });
 });
 

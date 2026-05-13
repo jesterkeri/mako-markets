@@ -86,16 +86,27 @@ export async function allocatePmDraft(
   const clientNonceLower = normalizeHex(args.clientNonce, 32);
   const cap = args.maxPendingPerSafe ?? PM_DRAFT_PENDING_CAP_PER_SAFE;
 
-  // Codex 2C-1 r3 MAJ-2: enforce per-Safe pending cap inside the
-  // same transaction the route opens. A pure SELECT-then-INSERT
-  // without locking permits a small race at the cap boundary (two
-  // concurrent requests at count=cap-1 can both pass and reach
-  // cap+1). Acceptable here because (a) the route is human-paced,
-  // (b) the worst case is cap+N stray rows that the stale-pending
-  // sweep recycles, and (c) the in-flight gate at the route blocks
-  // the more common "double-click" path BEFORE allocate runs. The
-  // hard concurrency primitive remains the partial unique index on
-  // client_nonce.
+  // Codex 2C-1 r4 MAJ-1: serialize the count+insert under a
+  // transaction-scoped advisory lock keyed by
+  // (chain, contract, creator). Without this, two concurrent
+  // requests at count=cap-1 could both pass the SELECT and both
+  // INSERT, ending up at cap+1. With the lock, the second waiter
+  // blocks until the first commits, then reads the post-commit
+  // count and rejects.
+  //
+  // Key derivation: a single text key per Safe is hashed with
+  // hashtext (int4); PG implicitly widens to int8 for the single-
+  // argument pg_advisory_xact_lock(bigint) signature. Collisions
+  // across different Safes are acceptable — a hash collision means
+  // two unrelated Safes serialize on a single lock, which costs
+  // throughput (~µs) but never lets the cap break.
+  //
+  // The lock is automatically released at transaction commit /
+  // rollback; no manual cleanup needed.
+  const lockKey =
+    `pm-draft:${args.chainId}:${contractLower}:${sessionLower}`;
+  await args.tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+
   const countRows = await args.tx.execute(sql`
     SELECT COUNT(*)::int AS c
       FROM pm_markets
