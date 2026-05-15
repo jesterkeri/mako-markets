@@ -36,6 +36,7 @@ import {
   type RunOutcome,
 } from './aa-client';
 import { useUser } from './use-user';
+import { SPONSOR_CAP_PER_USER_PER_DAY } from './aa-constants';
 
 /**
  * Pre-write chain guard.
@@ -442,7 +443,7 @@ export function usePlaceBet() {
             setError(
               new Error(
                 outcome.error === 'CAP_EXCEEDED'
-                  ? "You've reached today's sponsored-op limit (5/day). Try again tomorrow, or use a connected wallet."
+                  ? `You've reached today's sponsored-op limit (${SPONSOR_CAP_PER_USER_PER_DAY}/day). Try again tomorrow, or use a connected wallet.`
                   : outcome.error === 'SPONSOR_UNAVAILABLE'
                     ? 'Sponsorship temporarily unavailable. Try again shortly, or use a connected wallet.'
                     : outcome.error === 'NOT_ALLOWED'
@@ -713,7 +714,7 @@ export function useClaim() {
             setError(
               new Error(
                 outcome.error === 'CAP_EXCEEDED'
-                  ? "You've reached today's sponsored-op limit (5/day). Try again tomorrow, or use a connected wallet."
+                  ? `You've reached today's sponsored-op limit (${SPONSOR_CAP_PER_USER_PER_DAY}/day). Try again tomorrow, or use a connected wallet.`
                   : outcome.error === 'SPONSOR_UNAVAILABLE'
                     ? 'Sponsorship temporarily unavailable. Try again shortly, or use a connected wallet.'
                     : outcome.error === 'NOT_ALLOWED'
@@ -895,7 +896,14 @@ export function useCreateMarket() {
       inFlightRef.current = true;
 
       // ── Magic-authed branch (Phase 1H) ─────────────────────────────
-      if (user) {
+      // Gate on the discriminant, NOT just truthy `user`. Wallet-authed
+      // users have a truthy `user` object with `authType === 'wallet'`
+      // (Phase 1F+); they must fall through to the wagmi branch below.
+      // The original `if (user)` guard sent every signed-in user — Magic
+      // and wallet — into this branch, then threw "magic-flow guard fell
+      // through for non-magic user" on the magicEoa fallthrough. The
+      // wallet user never got to the wagmi `writeContractAsync` path.
+      if (user?.authType === 'magic') {
         try {
           setMagicError(null);
           setMagicTxHash(undefined);
@@ -910,14 +918,7 @@ export function useCreateMarket() {
             bettingCloseTime: args.bettingCloseTime,
             closeTime: args.closeTime,
             question: args.question,
-            magicEoa:
-              user?.authType === 'magic'
-                ? (user.magicEoa as `0x${string}`)
-                : (() => {
-                    throw new Error(
-                      'createMarket magic-flow guard fell through for non-magic user',
-                    );
-                  })(),
+            magicEoa: user.magicEoa as `0x${string}`,
           });
 
           setMagicPhase('awaiting');
