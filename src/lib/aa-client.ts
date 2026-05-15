@@ -926,8 +926,19 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
     },
   };
 
-  // 1. Sponsor.
-  const sponsor = await postJson('/api/aa/sponsor', body);
+  // 1. Sponsor. Codex r1 MAJ-1: catch transport throws (network / DNS /
+  // aborted fetch) so the helper always resolves a typed RunOutcome.
+  let sponsor;
+  try {
+    sponsor = await postJson('/api/aa/sponsor', body);
+  } catch (err) {
+    return {
+      kind: 'sponsor_failed',
+      status: 0,
+      error: 'sponsor_transport_failed',
+      detail: (err as Error)?.message,
+    };
+  }
   if (!sponsor.ok) {
     return {
       kind: 'sponsor_failed',
@@ -939,45 +950,108 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
   }
   const sponsored = sponsor.body as SponsorResponse;
 
+  // Codex r1 MAJ-1: shape-validate the sponsor 200 body BEFORE touching
+  // it. BigInt(undefined) / BigInt(null) / BigInt('garbage') all throw
+  // and previously did so outside any try/catch. Same fix that landed
+  // on PM Phase 2C-2 r3.
+  if (
+    !sponsored ||
+    typeof sponsored !== 'object' ||
+    !sponsored.safeOpHash ||
+    !sponsored.pendingUserOpId ||
+    sponsored.validAfter == null ||
+    sponsored.validUntil == null
+  ) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: 'sponsor_bad_response',
+      detail: 'sponsor 200 missing required fields',
+    };
+  }
+
   // 2. Magic personal_sign over the SafeOp hash.
-  const validAfter = BigInt(sponsored.validAfter);
-  const validUntil = BigInt(sponsored.validUntil);
-  const signature = await signSafeOpHash({
-    hash: sponsored.safeOpHash,
-    magicEoa: args.magicEoa,
-    validAfter,
-    validUntil,
-  });
+  // Codex r1 MAJ-1: BigInt() coercions live INSIDE the try so a non-
+  // numeric validity field (string that bypassed the shape check, e.g.
+  // 'not-a-number') is caught and produces a typed RunOutcome rather
+  // than propagating a SyntaxError.
+  let signature;
+  try {
+    const validAfter = BigInt(sponsored.validAfter);
+    const validUntil = BigInt(sponsored.validUntil);
+    signature = await signSafeOpHash({
+      hash: sponsored.safeOpHash,
+      magicEoa: args.magicEoa,
+      validAfter,
+      validUntil,
+    });
+  } catch (err) {
+    const msg = ((err as Error)?.message ?? '').toLowerCase();
+    const isReject =
+      msg.includes('user rejected') || msg.includes('user denied');
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: isReject ? 'sign_rejected' : 'sign_failed',
+      detail: (err as Error)?.message,
+    };
+  }
 
-  // 3. Send.
-  const send = await postJson('/api/aa/send', {
-    pendingUserOpId: sponsored.pendingUserOpId,
-    signature,
-  });
+  // 3. Send. Codex r1 MAJ-1: catch transport throws same as the sponsor.
+  let send;
+  try {
+    send = await postJson('/api/aa/send', {
+      pendingUserOpId: sponsored.pendingUserOpId,
+      signature,
+    });
+  } catch (err) {
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: 'send_transport_failed',
+      detail: (err as Error)?.message,
+    };
+  }
 
-  if (!send.ok) {
+  // Codex r1 MAJ-2: branch on status BEFORE the !send.ok check. fetch's
+  // `res.ok` is true for ALL 2xx including 202, so a 202
+  // `send_in_progress` would previously fall through to the success
+  // switch, match no case, and resolve to undefined — useClaim would
+  // then crash on `outcome.kind`. Same fix that already landed in
+  // runCreatePrivateMarket.
+  if (send.status === 202) {
     const sendBody = send.body as {
-      error?: string;
-      message?: string;
       status?: string;
       retryAfterSeconds?: number;
     };
-    if (send.status === 202 && sendBody.status === 'send_in_progress') {
+    if (sendBody.status === 'send_in_progress') {
       return {
         kind: 'in_progress',
         pendingUserOpId: sponsored.pendingUserOpId,
         retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
       };
     }
-    if (send.status === 410) {
-      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
-    }
-    if (send.status === 423) {
-      return {
-        kind: 'manual_review',
-        pendingUserOpId: sponsored.pendingUserOpId,
-      };
-    }
+    return {
+      kind: 'send_failed',
+      status: 202,
+      error: 'unexpected_202_body',
+    };
+  }
+  if (send.status === 410) {
+    return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
+  if (send.status === 423) {
+    return {
+      kind: 'manual_review',
+      pendingUserOpId: sponsored.pendingUserOpId,
+    };
+  }
+
+  if (!send.ok) {
+    const sendBody = send.body as {
+      error?: string;
+      message?: string;
+    };
     return {
       kind: 'send_failed',
       status: send.status,
@@ -987,7 +1061,12 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
   }
 
   const sendBody = send.body as {
-    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
+    status?:
+      | 'sent'
+      | 'reverted'
+      | 'submitted'
+      | 'failed_pre_submit'
+      | 'expired';
     txHash?: Hex;
     userOpHash?: Hex;
     failureReason?: string;
@@ -1023,6 +1102,18 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
       };
     case 'expired':
       return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    default:
+      // Codex r1 MAJ-2 defensive default: a 2xx with an unrecognised
+      // status field (or missing) must NOT resolve to undefined.
+      return {
+        kind: 'send_failed',
+        status: send.status,
+        error: 'unexpected_send_status',
+        detail:
+          typeof sendBody.status === 'string'
+            ? `unknown status: ${sendBody.status}`
+            : 'missing status field',
+      };
   }
 }
 

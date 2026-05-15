@@ -41,15 +41,23 @@ export function ClaimButton({
   onSuccess?: () => void;
 }) {
   const { address: connectedWallet } = useAccount();
-  const { user } = useUser();
+  const { user, isLoading: userLoading } = useUser();
 
   // claim-magic-parity #1: resolve the betting account the same way
   // /me/page.tsx + BetSheet already do. Magic users have a Safe but
   // no wagmi account; wallet-only users live under connectedWallet.
   // Wallet-session users (no Safe) ALSO fall through to connectedWallet
   // because their bets are owned by the connected wallet.
-  const bettingAccount: `0x${string}` | undefined =
-    user?.authType === 'magic'
+  //
+  // Codex r1 MAJ-3: gate on userLoading. While /api/user/me is in
+  // flight, `user === null` — a Magic user with a residual wagmi
+  // connection from a prior session would otherwise read the wallet's
+  // position instead of the Safe's. Treat the unresolved-auth window
+  // as "no betting account" so the read stays disabled until we know
+  // which account to use.
+  const bettingAccount: `0x${string}` | undefined = userLoading
+    ? undefined
+    : user?.authType === 'magic'
       ? (user.safeAddress as `0x${string}`)
       : connectedWallet;
 
@@ -185,7 +193,7 @@ export function ClaimButton({
                   : null;
 
   return (
-    <div className="bg-paper border-2 border-ink lg:rounded-[24px] shadow-[0_-12px_40px_rgba(0,0,0,0.12)] lg:shadow-[8px_8px_0_0_var(--mako-ink)] overflow-hidden w-full mx-auto max-w-md lg:max-w-none flex flex-col">
+    <div className="bg-paper border-2 border-ink lg:rounded-[24px] shadow-mobile-lift lg:shadow-brutal-lg overflow-hidden w-full mx-auto max-w-md lg:max-w-none flex flex-col">
       <div className="px-5 py-5 border-b-2 border-ink bg-surface-elevated">
         <PersonalOutcomeBanner
           kind={bannerKind}
@@ -230,7 +238,10 @@ export function ClaimButton({
           where their stake went. Keeps the banner itself tight. */}
       {bannerKind === 'lost' && (
         <div className="px-5 py-3 mako-label text-[10px] text-muted text-center border-t-2 border-ink/10">
-          THE WINNING SIDE SPLITS THE TOTAL POOL.
+          {/* Codex r1 MIN-2: v4 deducts protocol + creator fees before
+              distributing to the winning side, so the prior copy
+              ("WINNING SIDE SPLITS THE TOTAL POOL") was inaccurate. */}
+          THE WINNING SIDE RECEIVES THE LOSING POOL AFTER MARKET FEES.
         </div>
       )}
     </div>

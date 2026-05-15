@@ -33,14 +33,19 @@ export function MarketClaimAction({
   onClaimed: () => void;
 }) {
   const { address: connectedWallet } = useAccount();
-  const { user } = useUser();
+  const { user, isLoading: userLoading } = useUser();
 
   // claim-magic-parity #1: resolve betting account from auth state
   // instead of wagmi's useAccount alone. Mirrors /me/page.tsx and
   // ClaimButton.tsx — single shape so a future shared helper is a
   // clean factoring rather than three different inlines.
-  const bettingAccount: `0x${string}` | undefined =
-    user?.authType === 'magic'
+  //
+  // Codex r1 MAJ-3: gate on userLoading so a Magic user with a stale
+  // wagmi connection doesn't briefly read the wallet's position during
+  // the /api/user/me roundtrip.
+  const bettingAccount: `0x${string}` | undefined = userLoading
+    ? undefined
+    : user?.authType === 'magic'
       ? (user.safeAddress as `0x${string}`)
       : connectedWallet;
 

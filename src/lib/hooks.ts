@@ -642,8 +642,18 @@ export function useClaim() {
     setPhase('preparing');
 
     try {
+      // Codex r1 MAJ-3: while /api/user/me is in flight, `user` is
+      // null. Falling through to the wallet branch would let a Magic
+      // user accidentally route through a stale wagmi connection
+      // (the wrong identity). Surface a clean retry error instead.
+      if (userLoading) {
+        setPhase('error');
+        setError(new Error('Still loading your account. Please retry in a moment.'));
+        return;
+      }
+
       // ── Magic-authed branch ────────────────────────────────────────
-      if (user?.authType === 'magic' && !userLoading) {
+      if (user?.authType === 'magic') {
         const magicEoa = user.magicEoa as `0x${string}`;
         setPhase('awaitingSign');
         const outcome: RunOutcome = await runClaim({
