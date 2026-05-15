@@ -91,7 +91,9 @@ export type NotAllowedReason =
   // Phase 1H create-market flow:
   | 'bad_create_args'
   | 'bad_create_question'
-  | 'bad_create_timestamps';
+  | 'bad_create_timestamps'
+  // claim-magic-parity claim flow:
+  | 'bad_claim_args';
 
 export class NotAllowedError extends Error {
   constructor(
@@ -177,6 +179,24 @@ const CREATEMARKET_ABI = [
 /// fails on drift.
 export const PLACEBET_SELECTOR = '0x1a38cac6' as const;
 export const CREATEMARKET_SELECTOR = '0xda6a7338' as const;
+/// `claim(uint256)` selector. Phase 2 claim-magic-parity. Confirmed
+/// via `keccak256(toBytes('claim(uint256)')).slice(0, 10)` at module
+/// dev time — pinned as a hex literal so a drift in the ABI fragment
+/// can't silently align with the runtime computation.
+export const CLAIM_SELECTOR = '0x379607f5' as const;
+
+/// ABI fragment for `claim(uint256)`. Minimal — used only to
+/// decode the inner call at sponsor- + send-time. Source of truth
+/// is `MakoMarketsV4.sol`'s `function claim(uint256 id) external`.
+const CLAIM_ABI = [
+  {
+    type: 'function',
+    name: 'claim',
+    inputs: [{ name: 'id', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const;
 
 /// Safe4337Module wrapper selectors. Both round-trip — the SDK chooses
 /// either depending on whether it wants the error-string variant.
@@ -506,6 +526,77 @@ export function assertSendUsdcCall(args: {
     throw new NotAllowedError('bad_send_args');
   }
   decodeAndAssertSendUsdc({ call: args.call, safeAddress: args.safeAddress });
+}
+
+// ── Claim validators (claim-magic-parity) ───────────────────────────────────
+
+/// Decode + structural assertions for `claim(uint256)`. Shared by
+/// sponsor-time and send-time. Validates:
+///   - call.to === MAKO_ADDRESS
+///   - call.value === 0n
+///   - call.data ABI-decodes as `claim(uint256)`
+///   - decoded `id` is a non-negative uint256 (viem already gates the
+///     range; the assertion is explicit defense-in-depth)
+///
+/// No clock-relative checks: a claim is valid any time after the
+/// market is resolved, and the contract enforces the "must be
+/// resolved" + "must have a position" + "must not have claimed" rules
+/// on-chain. The allowlist's job is to reject anything that isn't
+/// shape-correct `claim(uint256)` — defense-in-depth against a
+/// malicious caller forging a different inner call inside an
+/// allowlisted wrapper.
+function decodeAndAssertClaim(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): void {
+  if (call.to.toLowerCase() !== MAKO_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('bad_claim_args', 'wrong_target');
+  }
+  if (call.value !== 0n) {
+    throw new NotAllowedError('bad_value');
+  }
+  let decoded: { functionName: 'claim'; args: readonly [bigint] };
+  try {
+    const result = decodeFunctionData({ abi: CLAIM_ABI, data: call.data });
+    if (result.functionName !== 'claim') {
+      throw new NotAllowedError('bad_claim_args', 'wrong_selector');
+    }
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('bad_claim_args', 'decode_failed');
+  }
+  const [id] = decoded.args;
+  if (id < 0n) {
+    throw new NotAllowedError('bad_claim_args', 'bad_market_id');
+  }
+}
+
+/// Validate a single `MakoMarketsV4.claim(id)` call from the Safe
+/// (sponsor-time, kind='claim'). Used by /api/aa/sponsor for the
+/// Magic-flow claim path. No clock-relative checks — the contract
+/// enforces resolution + position + has-not-claimed.
+export function assertClaimCall(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('bad_claim_args', 'wrong_chain');
+  }
+  decodeAndAssertClaim(args.call);
+}
+
+/// Send-time shape-only check for `claim(uint256)`. Mirrors
+/// `decodeAndAssertCreateMarketShape` — re-validates the persisted
+/// callData independently of the sponsor route. No state, no clock.
+export function decodeAndAssertClaimShape(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): void {
+  decodeAndAssertClaim(call);
 }
 
 // ── Create-market validators (Phase 1H) ─────────────────────────────────────
@@ -899,6 +990,13 @@ export function assertSponsoredCallData(args: {
         // caught by Guard A (SafeOp hash recomputation) before the
         // bundler is reached.
         decodeAndAssertCreateMarketShape({ to, value, data });
+        return;
+      }
+      if (innerSelector === CLAIM_SELECTOR) {
+        // claim-magic-parity: shape-only at send-time. No clock-
+        // relative checks (claim has none); contract enforces
+        // resolution + position + has-not-claimed.
+        decodeAndAssertClaimShape({ to, value, data });
         return;
       }
       throw new NotAllowedError('bad_selector');

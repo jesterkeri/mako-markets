@@ -43,7 +43,8 @@ export type SponsorRequestBody =
   | { kind: 'bet_single'; chainId: number; call: Call }
   | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'send_usdc'; chainId: number; call: Call }
-  | { kind: 'create_market'; chainId: number; call: Call };
+  | { kind: 'create_market'; chainId: number; call: Call }
+  | { kind: 'claim'; chainId: number; call: Call };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
 export type SponsorResponse = {
@@ -876,6 +877,155 @@ export async function runCreateMarket(
 
 /// Flip the first byte of ECDSA `r` in a 77-byte SafeOp envelope. XOR
 /// with 0xff so the mutation is deterministic regardless of the original
+// ── runClaim (claim-magic-parity Magic claim flow) ─────────────────────────
+
+/// Args for the Magic-flow claim helper. Mirrors `runSendUsdc` /
+/// `runCreateMarket` shape so the UI state machine in `useClaim` can
+/// share the `RunOutcome` discriminated union without per-orchestrator
+/// branching.
+export type RunClaimArgs = {
+  chainId: number;
+  /// MakoMarketsV4 contract address. Caller passes via env so tests
+  /// can swap.
+  makoAddress: Address;
+  /// Resolved market id whose payout the Safe is claiming.
+  marketId: bigint;
+  /// Magic-derived EOA — passed to signSafeOpHash so the personal_sign
+  /// call goes through Magic's RPC provider against the Safe's owner.
+  magicEoa: Address;
+};
+
+const CLAIM_ABI = [
+  {
+    type: 'function',
+    name: 'claim',
+    inputs: [{ name: 'id', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// Browser-side end-to-end claim: build callData → /api/aa/sponsor
+/// (kind='claim') → Magic personal_sign → /api/aa/send.
+/// Outcome shape matches `runSendUsdc` so the UI hook can dispatch
+/// status without per-orchestrator branching.
+export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
+  const callData = encodeFunctionData({
+    abi: CLAIM_ABI,
+    functionName: 'claim',
+    args: [args.marketId],
+  });
+
+  const body: SponsorRequestBody = {
+    kind: 'claim',
+    chainId: args.chainId,
+    call: {
+      to: args.makoAddress,
+      value: '0x0' as Hex,
+      data: callData,
+    },
+  };
+
+  // 1. Sponsor.
+  const sponsor = await postJson('/api/aa/sponsor', body);
+  if (!sponsor.ok) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: (sponsor.body as { error?: string }).error ?? 'unknown',
+      reason: (sponsor.body as { reason?: string }).reason,
+      detail: (sponsor.body as { message?: string }).message,
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
+
+  // 2. Magic personal_sign over the SafeOp hash.
+  const validAfter = BigInt(sponsored.validAfter);
+  const validUntil = BigInt(sponsored.validUntil);
+  const signature = await signSafeOpHash({
+    hash: sponsored.safeOpHash,
+    magicEoa: args.magicEoa,
+    validAfter,
+    validUntil,
+  });
+
+  // 3. Send.
+  const send = await postJson('/api/aa/send', {
+    pendingUserOpId: sponsored.pendingUserOpId,
+    signature,
+  });
+
+  if (!send.ok) {
+    const sendBody = send.body as {
+      error?: string;
+      message?: string;
+      status?: string;
+      retryAfterSeconds?: number;
+    };
+    if (send.status === 202 && sendBody.status === 'send_in_progress') {
+      return {
+        kind: 'in_progress',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
+      };
+    }
+    if (send.status === 410) {
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    }
+    if (send.status === 423) {
+      return {
+        kind: 'manual_review',
+        pendingUserOpId: sponsored.pendingUserOpId,
+      };
+    }
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: sendBody.error ?? 'unknown',
+      detail: sendBody.message,
+    };
+  }
+
+  const sendBody = send.body as {
+    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
+    txHash?: Hex;
+    userOpHash?: Hex;
+    failureReason?: string;
+  };
+  switch (sendBody.status) {
+    case 'sent':
+      return {
+        kind: 'sent',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        recovered: sponsored.recovered,
+      };
+    case 'reverted':
+      return {
+        kind: 'reverted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        failureReason: sendBody.failureReason ?? 'on-chain revert',
+      };
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        userOpHash: sendBody.userOpHash as Hex,
+      };
+    case 'failed_pre_submit':
+      return {
+        kind: 'failed_pre_submit',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        failureReason: sendBody.failureReason ?? 'bundler reject',
+      };
+    case 'expired':
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
+}
+
 /// byte value. Used by tamper mode to deterministically trigger drift
 /// Guard B. Length-preserving — output is always the same Hex77 the
 /// route's zod schema expects.

@@ -11,6 +11,7 @@ import { isSupportedAaChainId } from '@/lib/aa-config';
 import {
   assertBetBatchedCalls,
   assertBetSingleCall,
+  assertClaimCall,
   assertCreateMarketCall,
   assertCreateMarketShape,
   assertSendUsdcCall,
@@ -218,7 +219,7 @@ export async function POST(req: Request) {
   // shared below.
   type Call = { to: Address; value: bigint; data: Hex };
   let buildArgs:
-    | { kind: 'smoke' | 'bet_single' | 'send_usdc' | 'create_market'; call: Call }
+    | { kind: 'smoke' | 'bet_single' | 'send_usdc' | 'create_market' | 'claim'; call: Call }
     | { kind: 'bet_batched'; calls: readonly [Call, Call] };
   try {
     switch (parsed.data.kind) {
@@ -303,6 +304,20 @@ export async function POST(req: Request) {
           nowSec: block.timestamp,
         });
         buildArgs = { kind: 'create_market', call };
+        break;
+      }
+      case 'claim': {
+        // claim-magic-parity: single-call MakoMarketsV4.claim(id) from
+        // the Safe. No clock-relative checks — contract enforces
+        // resolution + position + has-not-claimed.
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertClaimCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'claim', call };
         break;
       }
     }
