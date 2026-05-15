@@ -7,12 +7,10 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMarkets } from '@/lib/hooks';
 import { makoContract, type MarketWithId } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
-import { MarketResolveActions } from '@/components/MarketResolveActions';
 import { MarketClaimAction } from '@/components/MarketClaimAction';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { AvatarCircle } from '@/components/AvatarCircle';
-import { useIsAdmin } from '@/lib/admin';
 import { useUser } from '@/lib/use-user';
 import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 
@@ -45,7 +43,6 @@ export default function MyMarketsPage() {
       ? (user.safeAddress as `0x${string}`)
       : connectedWallet;
   const { markets, isLoading, refetch } = useMarkets();
-  const isAdmin = useIsAdmin();
   const [tab, setTab] = useState<PositionsTab>('active');
 
   const {
@@ -256,7 +253,13 @@ export default function MyMarketsPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {shown.map(({ market }) => {
-              const showAdminResolve = isAdmin && tab === 'closed' && !market.resolved;
+              // claim-magic-parity follow-up: /me is the user's portfolio
+              // surface, not admin tooling. Admin resolve actions used to
+              // render inline here when the connected wallet matched
+              // ADMIN_ADDRESS; that conflated "my markets" with admin work
+              // and surfaced resolve buttons against markets the admin
+              // had no personal position in. Admin resolution moved
+              // entirely to /admin/resolve.
               const showInlineClaim = tab === 'closed' && market.resolved;
 
               return (
@@ -264,9 +267,6 @@ export default function MyMarketsPage() {
                   <Link href={`/market/${market.id.toString()}`} className="block">
                     <MarketCard market={market} />
                   </Link>
-                  {showAdminResolve && (
-                    <MarketResolveActions market={market} onResolved={refetch} />
-                  )}
                   {showInlineClaim && (
                     <MarketClaimAction market={market} onClaimed={refetch} />
                   )}
