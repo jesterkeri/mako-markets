@@ -21,6 +21,7 @@ import {
   NotAllowedError,
 } from '@/lib/aa-call-allowlist';
 import {
+  assertPmBetBatchedCalls,
   assertPmBetCall,
   assertPmCancelCall,
   assertPmClaimCall,
@@ -30,6 +31,7 @@ import {
   assertPmFinalizeCall,
   assertPmFinalizeMetadataCall,
   assertPmResolveCall,
+  assertPmStakeBatchedCalls,
   assertPmStakeCall,
 } from '@/lib/private-markets/pm-call-allowlist';
 import { createSponsorMarketStateCache } from '@/lib/private-markets/sponsor-chain-state';
@@ -263,7 +265,10 @@ export async function POST(req: Request) {
           | 'pm_edit_metadata';
         call: Call;
       }
-    | { kind: 'bet_batched'; calls: readonly [Call, Call] };
+    | {
+        kind: 'bet_batched' | 'pm_bet_batched' | 'pm_stake_batched';
+        calls: readonly [Call, Call];
+      };
   try {
     switch (parsed.data.kind) {
       case 'smoke': {
@@ -485,6 +490,36 @@ export async function POST(req: Request) {
         buildArgs = { kind: 'pm_bet', call };
         break;
       }
+      case 'pm_bet_batched': {
+        // Codex r1 MAJ-1: Magic first-bet path. tuple[0] is
+        // approve(USDC, PM, MaxUint256); tuple[1] is bet(...).
+        const [a, b] = parsed.data.calls;
+        const calls: readonly [Call, Call] = [
+          {
+            to: a.to as Address,
+            value: hexToBigInt(a.value as Hex),
+            data: a.data as Hex,
+          },
+          {
+            to: b.to as Address,
+            value: hexToBigInt(b.value as Hex),
+            data: b.data as Hex,
+          },
+        ];
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmBetBatchedCalls({
+          chainId,
+          safeAddress,
+          calls,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_bet_batched', calls };
+        break;
+      }
       case 'pm_stake': {
         const c = parsed.data.call;
         const call: Call = {
@@ -504,6 +539,36 @@ export async function POST(req: Request) {
           cache,
         });
         buildArgs = { kind: 'pm_stake', call };
+        break;
+      }
+      case 'pm_stake_batched': {
+        // Codex r1 MAJ-1: Magic first-stake path. Same as pm_bet_batched
+        // but tuple[1] is stake(marketId, optionIndex, amount).
+        const [a, b] = parsed.data.calls;
+        const calls: readonly [Call, Call] = [
+          {
+            to: a.to as Address,
+            value: hexToBigInt(a.value as Hex),
+            data: a.data as Hex,
+          },
+          {
+            to: b.to as Address,
+            value: hexToBigInt(b.value as Hex),
+            data: b.data as Hex,
+          },
+        ];
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmStakeBatchedCalls({
+          chainId,
+          safeAddress,
+          calls,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_stake_batched', calls };
         break;
       }
       case 'pm_claim': {
@@ -696,7 +761,7 @@ export async function POST(req: Request) {
   // so TypeScript's discriminated-union arg type narrows correctly.
   let built: Awaited<ReturnType<typeof buildSponsoredUserOp>>;
   try {
-    if (buildArgs.kind === 'bet_batched') {
+    if ('calls' in buildArgs) {
       built = await buildSponsoredUserOp({
         chainId,
         safeAddress,

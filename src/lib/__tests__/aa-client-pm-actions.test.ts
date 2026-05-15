@@ -53,9 +53,15 @@ import {
 } from '../aa-client';
 
 const PM_ADDRESS: Address = '0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1';
+const USDC_ADDR: Address = '0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3';
 const MAGIC_EOA: Address = '0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2';
 const CHAIN_ID = 10143;
 const MARKET_ID = 17n;
+/// High allowance (max-uint256) so runPmBet / runPmStake takes the
+/// single-call branch in the default tests — they were written before
+/// Codex r1 MAJ-1 surfaced the batched path requirement. Dedicated
+/// batched-path tests live below.
+const ALLOWANCE_HIGH = (1n << 255n);
 
 interface CapturedRequest {
   kind: string;
@@ -116,10 +122,12 @@ describe('PM action orchestrators — request body shape (slice 1D-4)', () => {
     await runPmBet({
       chainId: CHAIN_ID,
       pmAddress: PM_ADDRESS,
+      usdcAddress: USDC_ADDR,
       magicEoa: MAGIC_EOA,
       marketId: MARKET_ID,
       side: 1,
       amount: 50_000n,
+      currentAllowance: ALLOWANCE_HIGH,
     });
     expect(captured).not.toBeNull();
     expect(captured!.kind).toBe('pm_bet');
@@ -138,10 +146,12 @@ describe('PM action orchestrators — request body shape (slice 1D-4)', () => {
     await runPmStake({
       chainId: CHAIN_ID,
       pmAddress: PM_ADDRESS,
+      usdcAddress: USDC_ADDR,
       magicEoa: MAGIC_EOA,
       marketId: MARKET_ID,
       optionIndex: 3n,
       amount: 100_000n,
+      currentAllowance: ALLOWANCE_HIGH,
     });
     expect(captured!.kind).toBe('pm_stake');
     const [id, optionIndex, amount] = decodeCallData<
@@ -298,5 +308,101 @@ describe('PM action orchestrators — request body shape (slice 1D-4)', () => {
     expect(decodedParams.shape).toBe(0);
     expect(decodedParams.stakingOpensAt).toBe(1_700_000_400n);
     expect(decodedParams.closeAt).toBe(1_700_000_600n);
+  });
+});
+
+// ── Codex r1 MAJ-1: allowance-branching orchestrator paths ─────────────────
+
+interface CapturedBatched {
+  kind: string;
+  chainId: number;
+  calls: readonly [
+    { to: Address; value: Hex; data: Hex },
+    { to: Address; value: Hex; data: Hex },
+  ];
+}
+
+describe('PM bet/stake orchestrators — allowance branching', () => {
+  it('runPmBet with currentAllowance >= amount sends kind=pm_bet (single-call)', async () => {
+    await runPmBet({
+      chainId: CHAIN_ID,
+      pmAddress: PM_ADDRESS,
+      usdcAddress: USDC_ADDR,
+      magicEoa: MAGIC_EOA,
+      marketId: MARKET_ID,
+      side: 1,
+      amount: 50_000n,
+      currentAllowance: 50_000n, // exact match — must NOT batch
+    });
+    expect(captured!.kind).toBe('pm_bet');
+  });
+
+  it('runPmBet with currentAllowance < amount sends kind=pm_bet_batched', async () => {
+    await runPmBet({
+      chainId: CHAIN_ID,
+      pmAddress: PM_ADDRESS,
+      usdcAddress: USDC_ADDR,
+      magicEoa: MAGIC_EOA,
+      marketId: MARKET_ID,
+      side: 1,
+      amount: 50_000n,
+      currentAllowance: 49_999n, // 1 base unit short — must batch
+    });
+    const batched = captured as unknown as CapturedBatched;
+    expect(batched.kind).toBe('pm_bet_batched');
+    // tuple[0] = approve(USDC → PM, MaxUint256)
+    expect(batched.calls[0].to.toLowerCase()).toBe(USDC_ADDR.toLowerCase());
+    // tuple[1] = bet(...)
+    expect(batched.calls[1].to.toLowerCase()).toBe(PM_ADDRESS.toLowerCase());
+    const [id, side, amount] = decodeCallData<
+      readonly [bigint, number, bigint]
+    >(
+      // re-decode tuple[1] data with PM_BET_ABI
+      [
+        {
+          type: 'function',
+          name: 'bet',
+          inputs: [
+            { name: 'marketId', type: 'uint256' },
+            { name: 'side', type: 'uint8' },
+            { name: 'amount', type: 'uint256' },
+          ],
+          outputs: [],
+          stateMutability: 'nonpayable',
+        },
+      ],
+      batched.calls[1].data,
+    );
+    expect(id).toBe(MARKET_ID);
+    expect(side).toBe(1);
+    expect(amount).toBe(50_000n);
+  });
+
+  it('runPmStake with currentAllowance >= amount sends kind=pm_stake', async () => {
+    await runPmStake({
+      chainId: CHAIN_ID,
+      pmAddress: PM_ADDRESS,
+      usdcAddress: USDC_ADDR,
+      magicEoa: MAGIC_EOA,
+      marketId: MARKET_ID,
+      optionIndex: 0n,
+      amount: 50_000n,
+      currentAllowance: 100_000n,
+    });
+    expect(captured!.kind).toBe('pm_stake');
+  });
+
+  it('runPmStake with currentAllowance=0n sends kind=pm_stake_batched', async () => {
+    await runPmStake({
+      chainId: CHAIN_ID,
+      pmAddress: PM_ADDRESS,
+      usdcAddress: USDC_ADDR,
+      magicEoa: MAGIC_EOA,
+      marketId: MARKET_ID,
+      optionIndex: 0n,
+      amount: 50_000n,
+      currentAllowance: 0n,
+    });
+    expect(captured!.kind).toBe('pm_stake_batched');
   });
 });

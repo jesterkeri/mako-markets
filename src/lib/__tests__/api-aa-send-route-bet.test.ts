@@ -298,8 +298,10 @@ describe('/api/aa/send — batched MultiSend wrapper (Phase 1D Group 4)', () => 
       sessionId: 'session-1',
     });
     // Wrapper shape is valid (canonical target + valid multiSend bytes).
-    // The inner placeBet's `to` is wrong — NOT MAKO. Validator's
-    // per-subcall check fires after the wrapper-shape check.
+    // The inner placeBet's `to` is wrong — NOT MAKO and NOT PM. The
+    // dispatcher rejects unknown sub[1].to with `bad_multisend_target`
+    // BEFORE running the per-target validator (Codex r1 MAJ-1: PM
+    // batched bet/stake added to the MultiSend dispatch surface).
     const callData = encodeBatchedExecuteUserOpCallData([
       {
         to: USDC_ADDRESS,
@@ -314,7 +316,7 @@ describe('/api/aa/send — batched MultiSend wrapper (Phase 1D Group 4)', () => 
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error?: string; reason?: string };
     expect(body.error).toBe('NOT_ALLOWED');
-    expect(body.reason).toBe('bad_placebet_args');
+    expect(body.reason).toBe('bad_multisend_target');
     expect(mocks.sendSignedUserOp).not.toHaveBeenCalled();
   });
 });

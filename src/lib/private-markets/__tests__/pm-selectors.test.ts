@@ -75,12 +75,13 @@ describe('PM action selector pins', () => {
     expect(PM_EDIT_METADATA_SELECTOR).toBe('0x10520539');
   });
 
-  // Sanity pin for the existing 2C-1 selector — kept here so a future
-  // ABI rewrite that touches createMarket's tuple shape can't escape
-  // the regression net. The hex was already implicitly verified by
-  // 2C-1's deployment + smoke; this re-asserts at the module level.
-  it('createMarket(CreateParams) pins to the 2C-1 selector', () => {
-    expect(PM_CREATE_MARKET_SELECTOR.length).toBe(10);
-    expect(PM_CREATE_MARKET_SELECTOR.startsWith('0x')).toBe(true);
+  // Pin for the existing 2C-1 selector — Codex r1 NIT-1: the prior
+  // sanity check (length+prefix only) couldn't catch an ABI re-order
+  // that produced a different but still-formatted selector. Hardcoded
+  // hex literal matches the verified Monad testnet deploy of
+  // MakoPrivateMarketsV1.sol on 2026-05-15 (computed once via viem's
+  // toFunctionSelector against the contract's CreateParams tuple).
+  it('createMarket(CreateParams) pins to 0x68f17458', () => {
+    expect(PM_CREATE_MARKET_SELECTOR).toBe('0x68f17458');
   });
 });

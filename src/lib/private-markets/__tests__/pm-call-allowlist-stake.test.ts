@@ -64,10 +64,14 @@ vi.mock('../treasury', () => ({
 // Import the validators AFTER setting up the mocks so the module-load
 // references the mocked side modules.
 import {
+  assertPmBetBatchedCalls,
   assertPmBetCall,
+  assertPmStakeBatchedCalls,
   assertPmStakeCall,
 } from '../pm-call-allowlist';
 import { createSponsorMarketStateCache } from '../sponsor-chain-state';
+import { USDC_ADDRESS } from '@/lib/usdc';
+import { maxUint256 } from 'viem';
 
 const SAFE: Address = '0xcafe000000000000000000000000000000000001';
 const SAFE_LOWER = SAFE.toLowerCase() as `0x${string}`;
@@ -691,5 +695,248 @@ describe('assertPmBetCall — treasury normalization (plan v8 MAJ-1)', () => {
       cache: createSponsorMarketStateCache(),
     }).catch((e) => e);
     expect((err as NotAllowedError).reason).toBe('pm_bad_stake_treasury');
+  });
+});
+
+// ── Codex r1 MAJ-1: batched approve + bet/stake validators ─────────────────
+
+const APPROVE_ABI_TEST = [
+  {
+    type: 'function',
+    name: 'approve',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+function encodeApprove(spender: Address, amount: bigint): Hex {
+  return encodeFunctionData({
+    abi: APPROVE_ABI_TEST,
+    functionName: 'approve',
+    args: [spender, amount],
+  });
+}
+
+function goodApproveCall() {
+  return {
+    to: USDC_ADDRESS,
+    value: 0n,
+    data: encodeApprove(PM_CONTRACT_ADDRESS, maxUint256),
+  };
+}
+
+describe('assertPmBetBatchedCalls (Codex r1 MAJ-1)', () => {
+  it('accepts [approve(USDC→PM, MaxUint256), bet(...)] tuple', async () => {
+    mockReadSponsorMarketState.mockResolvedValueOnce(okResult(makeState()));
+    await expect(
+      assertPmBetBatchedCalls({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        calls: [
+          goodApproveCall(),
+          {
+            to: PM_CONTRACT_ADDRESS,
+            value: 0n,
+            data: encodeBet(MARKET_ID, 1, 50_000n),
+          },
+        ],
+        nowSec: NOW,
+        cache: createSponsorMarketStateCache(),
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects approve target ≠ USDC', async () => {
+    const err = await assertPmBetBatchedCalls({
+      chainId: MONAD_TESTNET_ID,
+      safeAddress: SAFE,
+      calls: [
+        {
+          to: '0xc0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff', // not USDC
+          value: 0n,
+          data: encodeApprove(PM_CONTRACT_ADDRESS, maxUint256),
+        },
+        {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeBet(MARKET_ID, 1, 50_000n),
+        },
+      ],
+      nowSec: NOW,
+      cache: createSponsorMarketStateCache(),
+    }).catch((e) => e);
+    expect((err as NotAllowedError).reason).toBe('pm_bad_bet_args');
+    expect((err as NotAllowedError).detail).toBe('approval_wrong_target');
+  });
+
+  it('rejects approve spender ≠ PM_CONTRACT_ADDRESS', async () => {
+    const err = await assertPmBetBatchedCalls({
+      chainId: MONAD_TESTNET_ID,
+      safeAddress: SAFE,
+      calls: [
+        {
+          to: USDC_ADDRESS,
+          value: 0n,
+          // wrong spender — could let a malicious caller approve USDC
+          // for an arbitrary contract instead of PM.
+          data: encodeApprove(
+            '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+            maxUint256,
+          ),
+        },
+        {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeBet(MARKET_ID, 1, 50_000n),
+        },
+      ],
+      nowSec: NOW,
+      cache: createSponsorMarketStateCache(),
+    }).catch((e) => e);
+    expect((err as NotAllowedError).reason).toBe('pm_bad_bet_args');
+    expect((err as NotAllowedError).detail).toBe('approval_wrong_spender');
+  });
+
+  it('rejects approve amount ≠ MaxUint256', async () => {
+    const err = await assertPmBetBatchedCalls({
+      chainId: MONAD_TESTNET_ID,
+      safeAddress: SAFE,
+      calls: [
+        {
+          to: USDC_ADDRESS,
+          value: 0n,
+          data: encodeApprove(PM_CONTRACT_ADDRESS, 1_000_000n),
+        },
+        {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeBet(MARKET_ID, 1, 50_000n),
+        },
+      ],
+      nowSec: NOW,
+      cache: createSponsorMarketStateCache(),
+    }).catch((e) => e);
+    expect((err as NotAllowedError).reason).toBe('pm_bad_bet_args');
+    expect((err as NotAllowedError).detail).toBe('approval_amount_not_max');
+  });
+
+  it('runs the FULL bet validator on tuple[1] (rejects wrong shape)', async () => {
+    mockReadSponsorMarketState.mockResolvedValueOnce(
+      okResult(makeState({ shape: 1 })), // OpenVote — bet must reject
+    );
+    const err = await assertPmBetBatchedCalls({
+      chainId: MONAD_TESTNET_ID,
+      safeAddress: SAFE,
+      calls: [
+        goodApproveCall(),
+        {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeBet(MARKET_ID, 1, 50_000n),
+        },
+      ],
+      nowSec: NOW,
+      cache: createSponsorMarketStateCache(),
+    }).catch((e) => e);
+    expect((err as NotAllowedError).reason).toBe('pm_bad_bet_args');
+    expect((err as NotAllowedError).detail).toBe('wrong_shape');
+  });
+});
+
+describe('assertPmStakeBatchedCalls (Codex r1 MAJ-1)', () => {
+  it('accepts [approve(USDC→PM, MaxUint256), stake(...)] tuple', async () => {
+    mockReadSponsorMarketState.mockResolvedValueOnce(
+      okResult(
+        makeState({
+          shape: 2, // PrizePool
+          options: ['0xaa', '0xbb'],
+          participants: [SAFE_LOWER, OTHER_LOWER],
+        }),
+      ),
+    );
+    await expect(
+      assertPmStakeBatchedCalls({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        calls: [
+          goodApproveCall(),
+          {
+            to: PM_CONTRACT_ADDRESS,
+            value: 0n,
+            data: encodeStake(MARKET_ID, 0n, 50_000n),
+          },
+        ],
+        nowSec: NOW,
+        cache: createSponsorMarketStateCache(),
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('runs the FULL stake validator on tuple[1] (rejects Friendly shape)', async () => {
+    mockReadSponsorMarketState.mockResolvedValueOnce(
+      okResult(makeState({ shape: 0 })), // Friendly — stake must reject
+    );
+    const err = await assertPmStakeBatchedCalls({
+      chainId: MONAD_TESTNET_ID,
+      safeAddress: SAFE,
+      calls: [
+        goodApproveCall(),
+        {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeStake(MARKET_ID, 0n, 50_000n),
+        },
+      ],
+      nowSec: NOW,
+      cache: createSponsorMarketStateCache(),
+    }).catch((e) => e);
+    expect((err as NotAllowedError).reason).toBe('pm_bad_stake_args');
+    expect((err as NotAllowedError).detail).toBe('wrong_shape');
+  });
+
+  it('rejects approve in tuple[0] with stake reason namespace', async () => {
+    const err = await assertPmStakeBatchedCalls({
+      chainId: MONAD_TESTNET_ID,
+      safeAddress: SAFE,
+      calls: [
+        {
+          to: USDC_ADDRESS,
+          value: 0n,
+          data: encodeApprove(PM_CONTRACT_ADDRESS, 1_000_000n), // not MaxUint256
+        },
+        {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeStake(MARKET_ID, 0n, 50_000n),
+        },
+      ],
+      nowSec: NOW,
+      cache: createSponsorMarketStateCache(),
+    }).catch((e) => e);
+    expect((err as NotAllowedError).reason).toBe('pm_bad_stake_args');
+    expect((err as NotAllowedError).detail).toBe('approval_amount_not_max');
+  });
+
+  it('rejects wrong chain BEFORE the approve decode', async () => {
+    const err = await assertPmStakeBatchedCalls({
+      chainId: 1 as unknown as typeof MONAD_TESTNET_ID,
+      safeAddress: SAFE,
+      calls: [
+        goodApproveCall(),
+        {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeStake(MARKET_ID, 0n, 50_000n),
+        },
+      ],
+      nowSec: NOW,
+      cache: createSponsorMarketStateCache(),
+    }).catch((e) => e);
+    expect((err as NotAllowedError).reason).toBe('pm_bad_stake_args');
+    expect((err as NotAllowedError).detail).toBe('wrong_chain');
   });
 });

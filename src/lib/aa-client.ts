@@ -63,7 +63,10 @@ export type SponsorRequestBody =
   | { kind: 'pm_create_market'; chainId: number; call: Call }
   // Phase 2E-1 slice 1D-1: 10 PM action kinds.
   | { kind: 'pm_bet'; chainId: number; call: Call }
+  // Codex r1 MAJ-1: PM batched flows (allowance < amount path).
+  | { kind: 'pm_bet_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'pm_stake'; chainId: number; call: Call }
+  | { kind: 'pm_stake_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'pm_claim'; chainId: number; call: Call }
   | { kind: 'pm_resolve'; chainId: number; call: Call }
   | { kind: 'pm_confirm'; chainId: number; call: Call }
@@ -1897,44 +1900,138 @@ export interface RunPmBetArgs extends RunPmActionArgsBase {
   /// 0 = NO, 1 = YES (matches contract FRIENDLY_NO / FRIENDLY_YES).
   side: 0 | 1;
   amount: bigint;
+  /// USDC contract address (where `approve` is sent in the batched path).
+  /// Caller passes via env so tests can swap.
+  usdcAddress: Address;
+  /// Pre-fetched allowance(safe, PM_CONTRACT_ADDRESS). Hook reads via
+  /// wagmi useReadContract and passes here. Determines whether we run
+  /// the batched [approve, bet] flow (allowance < amount) or the
+  /// single-call bet flow (allowance >= amount).
+  ///
+  /// Codex r1 MAJ-1: without this branching, first-time PM Magic users
+  /// would sponsor a userOp that reverts on USDC.safeTransferFrom
+  /// inside the contract's `_stakeCommon`.
+  currentAllowance: bigint;
 }
 
-export async function runPmBet(args: RunPmBetArgs): Promise<RunOutcome> {
-  const data = encodeFunctionData({
+/// Pure builder that returns the SponsorRequestBody for a PM bet —
+/// either `pm_bet` (single-call) or `pm_bet_batched` (approve+bet).
+/// Exported so the unit tests can drive it without mocking fetch.
+export function buildPmBetSponsorRequest(args: {
+  chainId: number;
+  pmAddress: Address;
+  usdcAddress: Address;
+  marketId: bigint;
+  side: 0 | 1;
+  amount: bigint;
+  currentAllowance: bigint;
+}): SponsorRequestBody {
+  const betData = encodeFunctionData({
     abi: PM_BET_ABI,
     functionName: 'bet',
     args: [args.marketId, args.side, args.amount],
   });
-  return runSponsoredCallOp({
-    body: {
+  if (args.currentAllowance >= args.amount) {
+    return {
       kind: 'pm_bet',
       chainId: args.chainId,
-      call: { to: args.pmAddress, value: '0x0' as Hex, data },
-    },
-    magicEoa: args.magicEoa,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data: betData },
+    };
+  }
+  return {
+    kind: 'pm_bet_batched',
+    chainId: args.chainId,
+    calls: [
+      {
+        to: args.usdcAddress,
+        value: '0x0' as Hex,
+        data: encodeFunctionData({
+          abi: APPROVE_ABI,
+          functionName: 'approve',
+          args: [args.pmAddress, maxUint256],
+        }),
+      },
+      { to: args.pmAddress, value: '0x0' as Hex, data: betData },
+    ],
+  };
+}
+
+export async function runPmBet(args: RunPmBetArgs): Promise<RunOutcome> {
+  const body = buildPmBetSponsorRequest({
+    chainId: args.chainId,
+    pmAddress: args.pmAddress,
+    usdcAddress: args.usdcAddress,
+    marketId: args.marketId,
+    side: args.side,
+    amount: args.amount,
+    currentAllowance: args.currentAllowance,
   });
+  return runSponsoredCallOp({ body, magicEoa: args.magicEoa });
 }
 
 export interface RunPmStakeArgs extends RunPmActionArgsBase {
   marketId: bigint;
   optionIndex: bigint;
   amount: bigint;
+  /// USDC address — see RunPmBetArgs.
+  usdcAddress: Address;
+  /// allowance(safe, PM_CONTRACT_ADDRESS). See RunPmBetArgs.
+  /// Codex r1 MAJ-1.
+  currentAllowance: bigint;
 }
 
-export async function runPmStake(args: RunPmStakeArgs): Promise<RunOutcome> {
-  const data = encodeFunctionData({
+/// Pure builder for a PM stake — single-call vs batched. See
+/// `buildPmBetSponsorRequest` rationale.
+export function buildPmStakeSponsorRequest(args: {
+  chainId: number;
+  pmAddress: Address;
+  usdcAddress: Address;
+  marketId: bigint;
+  optionIndex: bigint;
+  amount: bigint;
+  currentAllowance: bigint;
+}): SponsorRequestBody {
+  const stakeData = encodeFunctionData({
     abi: PM_STAKE_ABI,
     functionName: 'stake',
     args: [args.marketId, args.optionIndex, args.amount],
   });
-  return runSponsoredCallOp({
-    body: {
+  if (args.currentAllowance >= args.amount) {
+    return {
       kind: 'pm_stake',
       chainId: args.chainId,
-      call: { to: args.pmAddress, value: '0x0' as Hex, data },
-    },
-    magicEoa: args.magicEoa,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data: stakeData },
+    };
+  }
+  return {
+    kind: 'pm_stake_batched',
+    chainId: args.chainId,
+    calls: [
+      {
+        to: args.usdcAddress,
+        value: '0x0' as Hex,
+        data: encodeFunctionData({
+          abi: APPROVE_ABI,
+          functionName: 'approve',
+          args: [args.pmAddress, maxUint256],
+        }),
+      },
+      { to: args.pmAddress, value: '0x0' as Hex, data: stakeData },
+    ],
+  };
+}
+
+export async function runPmStake(args: RunPmStakeArgs): Promise<RunOutcome> {
+  const body = buildPmStakeSponsorRequest({
+    chainId: args.chainId,
+    pmAddress: args.pmAddress,
+    usdcAddress: args.usdcAddress,
+    marketId: args.marketId,
+    optionIndex: args.optionIndex,
+    amount: args.amount,
+    currentAllowance: args.currentAllowance,
   });
+  return runSponsoredCallOp({ body, magicEoa: args.magicEoa });
 }
 
 export interface RunPmClaimArgs extends RunPmActionArgsBase {

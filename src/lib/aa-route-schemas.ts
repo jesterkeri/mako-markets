@@ -183,8 +183,24 @@ const PmBetRequest = z
     /// Friendly-only `bet(marketId, side, amount)` against
     /// MakoPrivateMarketsV1. Full sponsor-time validator runs
     /// Stage A-G (outer / decode / chain-state / treasury / state /
-    /// time / allowlist / bounds).
+    /// time / allowlist / bounds). Use the *_batched variant when the
+    /// Safe's USDC allowance against PM is below `amount`.
     call: CallShape,
+  })
+  .strict();
+
+const PmBetBatchedRequest = z
+  .object({
+    kind: z.literal('pm_bet_batched'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Codex r1 MAJ-1: first-bet path for Magic users whose Safe
+    /// has insufficient USDC allowance against MakoPrivateMarketsV1.
+    /// Exactly two calls: `approve(PM_CONTRACT_ADDRESS, MaxUint256)`
+    /// then `bet(marketId, side, amount)`. Route validates the tuple;
+    /// lib's buildSponsoredUserOp emits the MultiSend wrapper. Without
+    /// this path the contract's `safeTransferFrom` would revert on
+    /// every first-time PM Magic bet.
+    calls: z.tuple([CallShape, CallShape]),
   })
   .strict();
 
@@ -195,7 +211,21 @@ const PmStakeRequest = z
     /// OpenVote / PrizePool `stake(marketId, optionIndex, amount)`.
     /// Friendly markets reject (must use `pm_bet`). Sponsor-time
     /// validator covers Stage A-G plus OpenVote `amount === fixedStake`.
+    /// Use the *_batched variant when the Safe's USDC allowance against
+    /// PM is below `amount`.
     call: CallShape,
+  })
+  .strict();
+
+const PmStakeBatchedRequest = z
+  .object({
+    kind: z.literal('pm_stake_batched'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Codex r1 MAJ-1: first-stake path for Magic users whose Safe
+    /// has insufficient USDC allowance against MakoPrivateMarketsV1.
+    /// Exactly two calls: `approve(PM_CONTRACT_ADDRESS, MaxUint256)`
+    /// then `stake(marketId, optionIndex, amount)`.
+    calls: z.tuple([CallShape, CallShape]),
   })
   .strict();
 
@@ -299,7 +329,9 @@ export const SponsorRequest = z.discriminatedUnion('kind', [
   ClaimRequest,
   PmCreateMarketRequest,
   PmBetRequest,
+  PmBetBatchedRequest,
   PmStakeRequest,
+  PmStakeBatchedRequest,
   PmClaimRequest,
   PmResolveRequest,
   PmConfirmRequest,
@@ -319,7 +351,9 @@ export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
 export type ClaimRequest = z.infer<typeof ClaimRequest>;
 export type PmCreateMarketRequest = z.infer<typeof PmCreateMarketRequest>;
 export type PmBetRequest = z.infer<typeof PmBetRequest>;
+export type PmBetBatchedRequest = z.infer<typeof PmBetBatchedRequest>;
 export type PmStakeRequest = z.infer<typeof PmStakeRequest>;
+export type PmStakeBatchedRequest = z.infer<typeof PmStakeBatchedRequest>;
 export type PmClaimRequest = z.infer<typeof PmClaimRequest>;
 export type PmResolveRequest = z.infer<typeof PmResolveRequest>;
 export type PmConfirmRequest = z.infer<typeof PmConfirmRequest>;

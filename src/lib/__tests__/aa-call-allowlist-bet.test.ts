@@ -809,7 +809,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
     }
   });
 
-  it('rejects inner placeBet target ≠ MAKO (bad_placebet_args)', async () => {
+  it('rejects inner placeBet target ≠ MAKO with bad_multisend_target (Codex r1 MAJ-1: dispatcher now discriminates on sub[1].to)', async () => {
     const multiSendBytes = encodeMultiSendBytes([
       {
         op: 0,
@@ -819,7 +819,7 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       },
       {
         op: 0,
-        to: NON_MAKO, // wrong
+        to: NON_MAKO, // wrong — neither MAKO nor PM
         value: 0n,
         data: encodePlaceBet(1n, true, 100n),
       },
@@ -833,7 +833,13 @@ describe('assertSponsoredCallData (extended for batched)', () => {
       });
       throw new Error('expected throw');
     } catch (e) {
-      expect((e as NotAllowedError).reason).toBe('bad_placebet_args');
+      // Pre-r1: validator naively assumed sub[1] was placeBet → MAKO,
+      // so wrong target surfaced as `bad_placebet_args`. Post-r1 the
+      // dispatcher rejects unknown sub[1].to BEFORE running the placeBet
+      // validator (with PM batched bet/stake now also valid). The
+      // surfaced reason is `bad_multisend_target`, which is strictly
+      // more accurate (the target IS what's wrong).
+      expect((e as NotAllowedError).reason).toBe('bad_multisend_target');
     }
   });
 

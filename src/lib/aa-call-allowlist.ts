@@ -87,6 +87,7 @@ import {
 } from './private-markets/abi-fragments';
 import { getPmTreasuryAddress } from './private-markets/treasury';
 import {
+  assertPmBetBatchedCallsShape,
   assertPmBetCallShape,
   assertPmCancelCallShape,
   assertPmClaimCall,
@@ -96,6 +97,7 @@ import {
   assertPmFinalizeCall,
   assertPmFinalizeMetadataCall,
   assertPmResolveCallShape,
+  assertPmStakeBatchedCallsShape,
   assertPmStakeCallShape,
 } from './private-markets/pm-call-allowlist';
 
@@ -1709,17 +1711,55 @@ export async function assertSponsoredCallData(args: {
     if (sub.length !== 2) {
       throw new NotAllowedError('bad_subcall_count');
     }
-    decodeAndAssertApprove({
-      to: sub[0].to,
-      value: sub[0].value,
-      data: sub[0].data,
-    });
-    decodeAndAssertPlaceBet({
-      to: sub[1].to,
-      value: sub[1].value,
-      data: sub[1].data,
-    });
-    return;
+
+    // Codex r1 MAJ-1: dispatch by sub[1].to. The MultiSend wrapper
+    // shape is [approve(USDC → spender, MaxUint256), action(...)].
+    // The action target tells us which validator to run:
+    //   - MAKO_ADDRESS → v4 batched bet (existing 1D flow)
+    //   - PM_CONTRACT_ADDRESS → PM batched bet OR stake (selector
+    //     discriminates inside the PM batched shape validator)
+    //
+    // The approve sub-call gets validated INSIDE the chosen branch
+    // (each branch knows the spender it expects). Keeping the
+    // dispatch on sub[1].to mirrors the op=0 branch's dispatch-by-
+    // target pattern.
+    const sub0 = { to: sub[0].to, value: sub[0].value, data: sub[0].data };
+    const sub1 = { to: sub[1].to, value: sub[1].value, data: sub[1].data };
+
+    if (sub1.to.toLowerCase() === MAKO_ADDRESS.toLowerCase()) {
+      decodeAndAssertApprove(sub0);
+      decodeAndAssertPlaceBet(sub1);
+      return;
+    }
+    if (sub1.to.toLowerCase() === PM_CONTRACT_ADDRESS.toLowerCase()) {
+      // PM batched: discriminate bet vs stake by inner selector. The
+      // approve sub-call is validated inside the batched shape
+      // validator (spender must be PM_CONTRACT_ADDRESS).
+      if (sub1.data.length < 10) {
+        throw new NotAllowedError('bad_selector');
+      }
+      const sub1Selector = sub1.data.slice(0, 10).toLowerCase();
+      if (sub1Selector === PM_BET_SELECTOR) {
+        assertPmBetBatchedCallsShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          calls: [sub0, sub1] as const,
+        });
+        return;
+      }
+      if (sub1Selector === PM_STAKE_SELECTOR) {
+        assertPmStakeBatchedCallsShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          calls: [sub0, sub1] as const,
+        });
+        return;
+      }
+      throw new NotAllowedError('bad_selector');
+    }
+    // Unknown sub[1] target. Reject defensively — neither v4 batched
+    // bet nor PM batched bet/stake.
+    throw new NotAllowedError('bad_multisend_target');
   }
 
   // Any other operation value — Safe defines op=0 (CALL) and op=1

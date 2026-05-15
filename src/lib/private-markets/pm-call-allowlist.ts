@@ -40,10 +40,11 @@ import 'server-only';
 // validator surface and for future expansion.
 // ----------------------------------------------------------------------------
 
-import { decodeFunctionData, type Address, type Hex } from 'viem';
+import { decodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
 
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
+import { USDC_ADDRESS } from '@/lib/usdc';
 import {
   NotAllowedError,
   assertPmCreateParamsShapeNoTreasury,
@@ -93,6 +94,25 @@ interface CallTuple {
   readonly data: Hex;
 }
 
+/// Canonical lowercase form of the PM contract address. Computed once at
+/// module load via the shared normalize helper so every comparison in this
+/// file goes through one source of truth (Codex r1 MIN-2). Hand-written
+/// `.toLowerCase()` comparisons are still valid because viem returns
+/// fixed-case Addresses, but routing through the helper makes the v8
+/// MAJ-1 normalization invariant grep-visible at every call site.
+const PM_TARGET_LOWER: `0x${string}` = normalizeAddressLower(
+  PM_CONTRACT_ADDRESS,
+);
+const USDC_TARGET_LOWER: `0x${string}` = normalizeAddressLower(USDC_ADDRESS);
+
+function isPmTarget(addr: Address): boolean {
+  return normalizeAddressLower(addr) === PM_TARGET_LOWER;
+}
+
+function isUsdcTarget(addr: Address): boolean {
+  return normalizeAddressLower(addr) === USDC_TARGET_LOWER;
+}
+
 /// Centralized target + value + chainId + selector gating shared by
 /// every action's outer decode. The `expectedSelector` is compared
 /// case-insensitively because viem returns lowercase but the SDK's
@@ -109,7 +129,7 @@ function assertOuterShape(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError(args.reasonOnFailure, 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError(args.reasonOnFailure, 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -383,7 +403,7 @@ export async function assertPmBetCall(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_bet_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_bet_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -456,7 +476,7 @@ export async function assertPmStakeCall(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_stake_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_stake_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -612,7 +632,7 @@ export async function assertPmResolveCall(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -739,7 +759,7 @@ async function assertSingleArgCreatorAction(params: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -825,7 +845,7 @@ export async function assertPmEditMetadataCall(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_edit_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_edit_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -925,7 +945,7 @@ export function assertPmBetCallShape(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_bet_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_bet_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -962,7 +982,7 @@ export function assertPmStakeCallShape(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_stake_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_stake_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
@@ -1010,7 +1030,7 @@ function assertCreatorActionCallShape(params: {
   if (params.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_chain');
   }
-  if (params.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(params.call.to)) {
     throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_target');
   }
   if (params.call.value !== 0n) {
@@ -1099,6 +1119,148 @@ export function assertPmCancelCallShape(args: {
   });
 }
 
+// ── Batched approve + bet/stake validators (Codex r1 MAJ-1) ─────────────────
+//
+// Magic users whose Safe has insufficient USDC allowance against the PM
+// contract must run an [approve(PM, MaxUint256), bet|stake(...)] tuple
+// in one user op. Without this path the contract's `safeTransferFrom`
+// in `_stakeCommon` reverts.
+//
+// Both validators run two layers:
+//   1. Structural: tuple[0] decodes as approve(USDC, PM, MaxUint256);
+//      tuple[1] is shape-valid bet (Friendly) or stake (Vote shapes).
+//   2. Chain-state: tuple[1] passes the FULL bet/stake validator
+//      (Stage A-G — same gates as the non-batched variants).
+//
+// Send-time uses the shape-only batched variants (`*BatchedCallsShape`)
+// in the assertSponsoredCallData op=1 dispatch.
+//
+// PM approve must be EXACTLY `approve(PM_CONTRACT_ADDRESS, MaxUint256)`.
+// MaxUint256-only mirrors the v4 bet flow's design rationale: smaller
+// allowances would force a fresh approve per stake, doubling sponsor
+// budget burn for power users. The contract is audited so unbounded
+// allowance is a deliberate trade-off.
+
+/// Decode + structural assertions for an approve targeting PM. Used by
+/// both sponsor-time and send-time PM batched validators. Throws
+/// NotAllowedError on any failure — caller picks the reason namespace.
+function decodeAndAssertPmApprove(
+  call: CallTuple,
+  reasonOnFailure: 'pm_bad_bet_args' | 'pm_bad_stake_args',
+): void {
+  if (!isUsdcTarget(call.to)) {
+    throw new NotAllowedError(reasonOnFailure, 'approval_wrong_target');
+  }
+  if (call.value !== 0n) {
+    throw new NotAllowedError(reasonOnFailure, 'approval_bad_value');
+  }
+  let decoded: { functionName: 'approve'; args: readonly [Address, bigint] };
+  try {
+    // Lightweight approve ABI — re-declared locally (and intentionally
+    // not shared with aa-call-allowlist's APPROVE_ABI) so this module's
+    // ABI surface is self-contained.
+    const result = decodeFunctionData({
+      abi: [
+        {
+          type: 'function',
+          name: 'approve',
+          inputs: [
+            { name: 'spender', type: 'address' },
+            { name: 'amount', type: 'uint256' },
+          ],
+          outputs: [{ name: '', type: 'bool' }],
+          stateMutability: 'nonpayable',
+        },
+      ] as const,
+      data: call.data,
+    });
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError(reasonOnFailure, 'approval_decode_failed');
+  }
+  const [spender, amount] = decoded.args;
+  if (!isPmTarget(spender)) {
+    throw new NotAllowedError(reasonOnFailure, 'approval_wrong_spender');
+  }
+  if (amount !== maxUint256) {
+    throw new NotAllowedError(reasonOnFailure, 'approval_amount_not_max');
+  }
+}
+
+/// Sponsor-time validator for pm_bet_batched. Validates the [approve, bet]
+/// tuple AND runs the full bet validator (chain-state + treasury + state
+/// + time + allowlist + bounds) on tuple[1].
+export async function assertPmBetBatchedCalls(args: {
+  chainId: SupportedAaChainId;
+  safeAddress: Address;
+  calls: readonly [CallTuple, CallTuple];
+  nowSec: bigint;
+  cache: SponsorMarketStateCache;
+}): Promise<void> {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_bet_args', 'wrong_chain');
+  }
+  decodeAndAssertPmApprove(args.calls[0], 'pm_bad_bet_args');
+  await assertPmBetCall({
+    chainId: args.chainId,
+    safeAddress: args.safeAddress,
+    call: args.calls[1],
+    nowSec: args.nowSec,
+    cache: args.cache,
+  });
+}
+
+/// Sponsor-time validator for pm_stake_batched. Same structure as bet.
+export async function assertPmStakeBatchedCalls(args: {
+  chainId: SupportedAaChainId;
+  safeAddress: Address;
+  calls: readonly [CallTuple, CallTuple];
+  nowSec: bigint;
+  cache: SponsorMarketStateCache;
+}): Promise<void> {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_stake_args', 'wrong_chain');
+  }
+  decodeAndAssertPmApprove(args.calls[0], 'pm_bad_stake_args');
+  await assertPmStakeCall({
+    chainId: args.chainId,
+    safeAddress: args.safeAddress,
+    call: args.calls[1],
+    nowSec: args.nowSec,
+    cache: args.cache,
+  });
+}
+
+/// Send-time shape-only variant for pm_bet_batched. Used by the op=1
+/// MultiSend dispatcher in assertSponsoredCallData.
+export function assertPmBetBatchedCallsShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  calls: readonly [CallTuple, CallTuple];
+}): void {
+  decodeAndAssertPmApprove(args.calls[0], 'pm_bad_bet_args');
+  assertPmBetCallShape({
+    chainId: args.chainId,
+    safeAddress: args.safeAddress,
+    call: args.calls[1],
+  });
+}
+
+/// Send-time shape-only variant for pm_stake_batched.
+export function assertPmStakeBatchedCallsShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  calls: readonly [CallTuple, CallTuple];
+}): void {
+  decodeAndAssertPmApprove(args.calls[0], 'pm_bad_stake_args');
+  assertPmStakeCallShape({
+    chainId: args.chainId,
+    safeAddress: args.safeAddress,
+    call: args.calls[1],
+  });
+}
+
 /// editMetadata shape includes the full createMarket body validation
 /// on the new params PLUS treasury exclusion. Treasury accessor is
 /// process-cached after first call; the helper takes it as an arg so
@@ -1113,7 +1275,7 @@ export function assertPmEditMetadataCallShape(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_edit_args', 'wrong_chain');
   }
-  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(args.call.to)) {
     throw new NotAllowedError('pm_bad_edit_args', 'wrong_target');
   }
   if (args.call.value !== 0n) {
