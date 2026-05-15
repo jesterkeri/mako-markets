@@ -310,4 +310,67 @@ describe('runClaim — orchestrator with mocked fetch + Magic', () => {
     const result = await runClaim(ARGS);
     expect(result.kind).toBe('failed_pre_submit');
   });
+
+  // ── Codex r2 MAJ-1: null-body regressions ─────────────────────────
+  //
+  // postJson resolves with body=null when the response has no JSON
+  // body. Previously every body access (`(body as { ... }).field`)
+  // would throw on `null.field`. r2 introduced isRecord +
+  // readStringField + readNumberField helpers; these pin that the
+  // four read sites no longer crash.
+
+  it('MAJ-1 r2: sponsor non-2xx with NULL body → sponsor_failed unknown', async () => {
+    enqueue({ status: 500, body: null });
+    const result = await runClaim(ARGS);
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.status).toBe(500);
+    expect(result.error).toBe('unknown');
+    expect(result.reason).toBeUndefined();
+    expect(result.detail).toBeUndefined();
+  });
+
+  it('MAJ-1 r2: sponsor 2xx with NULL body → sponsor_failed sponsor_bad_response', async () => {
+    enqueue({ status: 200, body: null });
+    const result = await runClaim(ARGS);
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.error).toBe('sponsor_bad_response');
+  });
+
+  it('MAJ-1 r2: send 202 with NULL body → send_failed unexpected_202_body', async () => {
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 202, body: null });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runClaim(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.status).toBe(202);
+    expect(result.error).toBe('unexpected_202_body');
+  });
+
+  it('MAJ-1 r2: send non-2xx with NULL body → send_failed unknown', async () => {
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 502, body: null });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runClaim(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.status).toBe(502);
+    expect(result.error).toBe('unknown');
+    expect(result.detail).toBeUndefined();
+  });
+
+  it('MAJ-1 r2: send 200 with NULL body → send_failed unexpected_send_status', async () => {
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 200, body: null });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runClaim(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.error).toBe('unexpected_send_status');
+  });
 });

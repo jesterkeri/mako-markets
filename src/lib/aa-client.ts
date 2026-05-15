@@ -940,23 +940,34 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
     };
   }
   if (!sponsor.ok) {
+    // Codex r2 MAJ-1: postJson returns body: null when the route
+    // produces a non-JSON 500 (or any response without a JSON body).
+    // Casting null to `{ error?: string }` would throw on property
+    // access. Use the helpers to read fields defensively.
     return {
       kind: 'sponsor_failed',
       status: sponsor.status,
-      error: (sponsor.body as { error?: string }).error ?? 'unknown',
-      reason: (sponsor.body as { reason?: string }).reason,
-      detail: (sponsor.body as { message?: string }).message,
+      error: readStringField(sponsor.body, 'error') ?? 'unknown',
+      reason: readStringField(sponsor.body, 'reason'),
+      detail: readStringField(sponsor.body, 'message'),
     };
   }
-  const sponsored = sponsor.body as SponsorResponse;
 
   // Codex r1 MAJ-1: shape-validate the sponsor 200 body BEFORE touching
   // it. BigInt(undefined) / BigInt(null) / BigInt('garbage') all throw
   // and previously did so outside any try/catch. Same fix that landed
-  // on PM Phase 2C-2 r3.
+  // on PM Phase 2C-2 r3. Codex r2 MAJ-1: isRecord guard now covers
+  // null bodies up front so subsequent SponsorResponse cast is safe.
+  if (!isRecord(sponsor.body)) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: 'sponsor_bad_response',
+      detail: 'sponsor 2xx body was not an object',
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
   if (
-    !sponsored ||
-    typeof sponsored !== 'object' ||
     !sponsored.safeOpHash ||
     !sponsored.pendingUserOpId ||
     sponsored.validAfter == null ||
@@ -1019,16 +1030,17 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
   // switch, match no case, and resolve to undefined — useClaim would
   // then crash on `outcome.kind`. Same fix that already landed in
   // runCreatePrivateMarket.
+  // Codex r2 MAJ-1: send.body can be null when the route produces a
+  // non-JSON response. Every read site below uses readStringField /
+  // readNumberField so a null body cannot crash on property access.
   if (send.status === 202) {
-    const sendBody = send.body as {
-      status?: string;
-      retryAfterSeconds?: number;
-    };
-    if (sendBody.status === 'send_in_progress') {
+    const status = readStringField(send.body, 'status');
+    const retryAfterSeconds = readNumberField(send.body, 'retryAfterSeconds');
+    if (status === 'send_in_progress') {
       return {
         kind: 'in_progress',
         pendingUserOpId: sponsored.pendingUserOpId,
-        retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
+        retryAfterSeconds: retryAfterSeconds ?? 1,
       };
     }
     return {
@@ -1048,18 +1060,24 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
   }
 
   if (!send.ok) {
-    const sendBody = send.body as {
-      error?: string;
-      message?: string;
-    };
     return {
       kind: 'send_failed',
       status: send.status,
-      error: sendBody.error ?? 'unknown',
-      detail: sendBody.message,
+      error: readStringField(send.body, 'error') ?? 'unknown',
+      detail: readStringField(send.body, 'message'),
     };
   }
 
+  // 2xx happy-switch — also guard against a null body before the
+  // status read. An empty 2xx body surfaces as unexpected_send_status.
+  if (!isRecord(send.body)) {
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: 'unexpected_send_status',
+      detail: 'send 2xx body was not an object',
+    };
+  }
   const sendBody = send.body as {
     status?:
       | 'sent'
@@ -1124,6 +1142,34 @@ function tamperFirstRByte(signature: Hex): Hex {
   const original = parseInt(signature.slice(26, 28), 16);
   const flipped = (original ^ 0xff).toString(16).padStart(2, '0');
   return `0x${signature.slice(2, 26)}${flipped}${signature.slice(28)}` as Hex;
+}
+
+/// Codex r2 MAJ-1 helpers: postJson() may return `body: null` when the
+/// route emits a non-JSON 500 / 502 / empty 2xx. Every body-field read
+/// in runClaim (and other orchestrators that adopt this pattern) must
+/// guard before accessing properties — `(null as { error?: string }).error`
+/// throws. These three helpers centralise that guarding so the call
+/// sites stay tight.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readStringField(
+  body: unknown,
+  key: string,
+): string | undefined {
+  if (!isRecord(body)) return undefined;
+  const v = body[key];
+  return typeof v === 'string' ? v : undefined;
+}
+
+function readNumberField(
+  body: unknown,
+  key: string,
+): number | undefined {
+  if (!isRecord(body)) return undefined;
+  const v = body[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 async function postJson(
