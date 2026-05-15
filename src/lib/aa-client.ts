@@ -32,7 +32,17 @@ import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
 import { signSafeOpHash } from './magic-browser';
 import { PM_CONTRACT_ADDRESS } from './contract';
 import {
+  PM_BET_ABI,
+  PM_CANCEL_ABI,
+  PM_CLAIM_ABI,
+  PM_CONFIRM_ABI,
   PM_CREATE_MARKET_ABI,
+  PM_DISTRIBUTE_ABI,
+  PM_EDIT_METADATA_ABI,
+  PM_FINALIZE_ABI,
+  PM_FINALIZE_METADATA_ABI,
+  PM_RESOLVE_ABI,
+  PM_STAKE_ABI,
   type PmCreateParamsTuple,
 } from './private-markets/abi-fragments';
 
@@ -50,7 +60,18 @@ export type SponsorRequestBody =
   | { kind: 'send_usdc'; chainId: number; call: Call }
   | { kind: 'create_market'; chainId: number; call: Call }
   | { kind: 'claim'; chainId: number; call: Call }
-  | { kind: 'pm_create_market'; chainId: number; call: Call };
+  | { kind: 'pm_create_market'; chainId: number; call: Call }
+  // Phase 2E-1 slice 1D-1: 10 PM action kinds.
+  | { kind: 'pm_bet'; chainId: number; call: Call }
+  | { kind: 'pm_stake'; chainId: number; call: Call }
+  | { kind: 'pm_claim'; chainId: number; call: Call }
+  | { kind: 'pm_resolve'; chainId: number; call: Call }
+  | { kind: 'pm_confirm'; chainId: number; call: Call }
+  | { kind: 'pm_distribute'; chainId: number; call: Call }
+  | { kind: 'pm_cancel'; chainId: number; call: Call }
+  | { kind: 'pm_finalize'; chainId: number; call: Call }
+  | { kind: 'pm_finalize_metadata'; chainId: number; call: Call }
+  | { kind: 'pm_edit_metadata'; chainId: number; call: Call };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
 export type SponsorResponse = {
@@ -1647,4 +1668,448 @@ export async function runCreatePrivateMarket(
         pmDraft,
       };
   }
+}
+
+// ── Shared orchestrator for PM action ops (slice 1D-4) ──────────────────────
+//
+// The 10 PM action orchestrators below all run identical sponsor → sign →
+// send mechanics; only the inner `call` differs. `runSponsoredCallOp`
+// centralises the boilerplate — every defensive branch from `runClaim`
+// (transport errors, bad sponsor body, sign rejection, 202 / 410 / 423,
+// 2xx status switch) is implemented exactly once.
+//
+// `RunSponsoredCallOpArgs` is shaped so callers just plug in the
+// pre-built SponsorRequestBody and magicEoa. No PM-specific types leak
+// into the helper.
+
+interface RunSponsoredCallOpArgs {
+  body: SponsorRequestBody;
+  magicEoa: Address;
+}
+
+async function runSponsoredCallOp(
+  args: RunSponsoredCallOpArgs,
+): Promise<RunOutcome> {
+  // 1. Sponsor.
+  let sponsor;
+  try {
+    sponsor = await postJson('/api/aa/sponsor', args.body);
+  } catch (err) {
+    return {
+      kind: 'sponsor_failed',
+      status: 0,
+      error: 'sponsor_transport_failed',
+      detail: (err as Error)?.message,
+    };
+  }
+  if (!sponsor.ok) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: readStringField(sponsor.body, 'error') ?? 'unknown',
+      reason: readStringField(sponsor.body, 'reason'),
+      detail: readStringField(sponsor.body, 'message'),
+    };
+  }
+  if (!isRecord(sponsor.body)) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: 'sponsor_bad_response',
+      detail: 'sponsor 2xx body was not an object',
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
+  if (
+    !sponsored.safeOpHash ||
+    !sponsored.pendingUserOpId ||
+    sponsored.validAfter == null ||
+    sponsored.validUntil == null
+  ) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: 'sponsor_bad_response',
+      detail: 'sponsor 200 missing required fields',
+    };
+  }
+
+  // 2. Magic personal_sign.
+  let signature;
+  try {
+    const validAfter = BigInt(sponsored.validAfter);
+    const validUntil = BigInt(sponsored.validUntil);
+    signature = await signSafeOpHash({
+      hash: sponsored.safeOpHash,
+      magicEoa: args.magicEoa,
+      validAfter,
+      validUntil,
+    });
+  } catch (err) {
+    const msg = ((err as Error)?.message ?? '').toLowerCase();
+    const isReject =
+      msg.includes('user rejected') || msg.includes('user denied');
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: isReject ? 'sign_rejected' : 'sign_failed',
+      detail: (err as Error)?.message,
+    };
+  }
+
+  // 3. Send.
+  let send;
+  try {
+    send = await postJson('/api/aa/send', {
+      pendingUserOpId: sponsored.pendingUserOpId,
+      signature,
+    });
+  } catch (err) {
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: 'send_transport_failed',
+      detail: (err as Error)?.message,
+    };
+  }
+
+  if (send.status === 202) {
+    const status = readStringField(send.body, 'status');
+    const retryAfterSeconds = readNumberField(send.body, 'retryAfterSeconds');
+    if (status === 'send_in_progress') {
+      return {
+        kind: 'in_progress',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        retryAfterSeconds: retryAfterSeconds ?? 1,
+      };
+    }
+    return {
+      kind: 'send_failed',
+      status: 202,
+      error: 'unexpected_202_body',
+    };
+  }
+  if (send.status === 410) {
+    return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
+  if (send.status === 423) {
+    return {
+      kind: 'manual_review',
+      pendingUserOpId: sponsored.pendingUserOpId,
+    };
+  }
+  if (!send.ok) {
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: readStringField(send.body, 'error') ?? 'unknown',
+      detail: readStringField(send.body, 'message'),
+    };
+  }
+  if (!isRecord(send.body)) {
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: 'unexpected_send_status',
+      detail: 'send 2xx body was not an object',
+    };
+  }
+  const sendBody = send.body as {
+    status?:
+      | 'sent'
+      | 'reverted'
+      | 'submitted'
+      | 'failed_pre_submit'
+      | 'expired';
+    txHash?: Hex;
+    userOpHash?: Hex;
+    failureReason?: string;
+  };
+  switch (sendBody.status) {
+    case 'sent':
+      return {
+        kind: 'sent',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        recovered: sponsored.recovered,
+      };
+    case 'reverted':
+      return {
+        kind: 'reverted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        failureReason: sendBody.failureReason ?? 'on-chain revert',
+      };
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        userOpHash: sendBody.userOpHash as Hex,
+      };
+    case 'failed_pre_submit':
+      return {
+        kind: 'failed_pre_submit',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        failureReason: sendBody.failureReason ?? 'bundler reject',
+      };
+    case 'expired':
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    default:
+      return {
+        kind: 'send_failed',
+        status: send.status,
+        error: 'unexpected_send_status',
+        detail:
+          typeof sendBody.status === 'string'
+            ? `unknown status: ${sendBody.status}`
+            : 'missing status field',
+      };
+  }
+}
+
+// ── PM action orchestrators (slice 1D-4) ────────────────────────────────────
+//
+// Ten thin wrappers around `runSponsoredCallOp`. Each:
+//   1. Encodes the inner call via viem.encodeFunctionData + the
+//      corresponding PM_*_ABI fragment (source of truth for selector +
+//      arg order).
+//   2. Wraps in a SponsorRequestBody with the corresponding `kind`
+//      literal.
+//   3. Delegates to runSponsoredCallOp.
+//
+// Caller passes the PM contract address via env so tests can swap. The
+// helper does NOT generate a clientNonce or hit the draft route —
+// those are PM-create-only concerns (already in
+// `runCreatePrivateMarket`).
+
+export interface RunPmActionArgsBase {
+  chainId: number;
+  /// MakoPrivateMarketsV1 contract address. Resolves to
+  /// `PM_CONTRACT_ADDRESS` for production; tests pass a fixture.
+  pmAddress: Address;
+  magicEoa: Address;
+}
+
+export interface RunPmBetArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+  /// 0 = NO, 1 = YES (matches contract FRIENDLY_NO / FRIENDLY_YES).
+  side: 0 | 1;
+  amount: bigint;
+}
+
+export async function runPmBet(args: RunPmBetArgs): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_BET_ABI,
+    functionName: 'bet',
+    args: [args.marketId, args.side, args.amount],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_bet',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmStakeArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+  optionIndex: bigint;
+  amount: bigint;
+}
+
+export async function runPmStake(args: RunPmStakeArgs): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_STAKE_ABI,
+    functionName: 'stake',
+    args: [args.marketId, args.optionIndex, args.amount],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_stake',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmClaimArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+}
+
+export async function runPmClaim(args: RunPmClaimArgs): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_CLAIM_ABI,
+    functionName: 'claim',
+    args: [args.marketId],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_claim',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmResolveArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+  /// 0 = NO, 1 = YES — matches contract FRIENDLY_NO / FRIENDLY_YES.
+  /// No REFUND outcome on resolve (contract doesn't accept it).
+  outcome: 0 | 1;
+}
+
+export async function runPmResolve(args: RunPmResolveArgs): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_RESOLVE_ABI,
+    functionName: 'resolve',
+    args: [args.marketId, args.outcome],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_resolve',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmConfirmArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+}
+
+export async function runPmConfirm(
+  args: RunPmConfirmArgs,
+): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_CONFIRM_ABI,
+    functionName: 'confirm',
+    args: [args.marketId],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_confirm',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmDistributeArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+}
+
+export async function runPmDistribute(
+  args: RunPmDistributeArgs,
+): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_DISTRIBUTE_ABI,
+    functionName: 'distribute',
+    args: [args.marketId],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_distribute',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmCancelArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+}
+
+export async function runPmCancel(args: RunPmCancelArgs): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_CANCEL_ABI,
+    functionName: 'cancel',
+    args: [args.marketId],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_cancel',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmFinalizeArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+}
+
+export async function runPmFinalize(
+  args: RunPmFinalizeArgs,
+): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_FINALIZE_ABI,
+    functionName: 'finalize',
+    args: [args.marketId],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_finalize',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmFinalizeMetadataArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+}
+
+export async function runPmFinalizeMetadata(
+  args: RunPmFinalizeMetadataArgs,
+): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_FINALIZE_METADATA_ABI,
+    functionName: 'finalizeMetadata',
+    args: [args.marketId],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_finalize_metadata',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
+}
+
+export interface RunPmEditMetadataArgs extends RunPmActionArgsBase {
+  marketId: bigint;
+  /// New CreateParams to overwrite the market's metadata with. Same
+  /// shape as createMarket; the contract enforces shape immutability
+  /// (state.shape === p.shape) at edit time.
+  params: PmCreateParamsTuple;
+}
+
+export async function runPmEditMetadata(
+  args: RunPmEditMetadataArgs,
+): Promise<RunOutcome> {
+  const data = encodeFunctionData({
+    abi: PM_EDIT_METADATA_ABI,
+    functionName: 'editMetadata',
+    args: [args.marketId, args.params],
+  });
+  return runSponsoredCallOp({
+    body: {
+      kind: 'pm_edit_metadata',
+      chainId: args.chainId,
+      call: { to: args.pmAddress, value: '0x0' as Hex, data },
+    },
+    magicEoa: args.magicEoa,
+  });
 }
