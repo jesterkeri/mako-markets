@@ -128,6 +128,12 @@ main()
   .then(() => process.exit(0))
   .catch((err) => {
     console.error('run-pm-indexer-once failed:', err?.message ?? err);
+    // Drizzle wraps the postgres-js error; the real PG error (with
+    // code, severity, hint) lives on .cause.
+    if (err?.cause) {
+      console.error('--- caused by ---');
+      console.error(err.cause);
+    }
     if (err?.stack) console.error(err.stack);
     process.exit(1);
   });

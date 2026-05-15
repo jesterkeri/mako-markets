@@ -103,6 +103,22 @@
   --color-ink: #000000;
   --color-signal: #FACC15;
   --color-mako-red: #D94A3D;
+  /* Neobrutalist parent-card accents */
+  --color-mako-orange: #C2410C;
+  --color-mako-blue: #1D4ED8;
+
+  /* Combo A: Teal + Gold */
+  --color-mako-teal: #14B8A6;
+  --color-mako-gold: #F59E0B;
+
+  /* Combo B: Violet + Coral */
+  --color-mako-violet: #8B5CF6;
+  --color-mako-coral: #FB7185;
+
+  /* Combo C: Cyan + Fuchsia */
+  --color-mako-cyan: #06B6D4;
+  --color-mako-fuchsia: #D946EF;
+
 
   --color-primary: #000000;
   --color-primary-hover: #111111;

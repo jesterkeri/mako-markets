@@ -191,12 +191,8 @@ export function Sidebar() {
       <nav className="p-4 flex flex-col gap-1 flex-1">
         {items.map((item) => {
           const isActive = pathname === item.path;
-          // Red inset stripe is an expanded-only accent — it looks awkward on
-          // a square icon tile. When collapsed, active just gets the ink fill.
           const activeClass = isActive
-            ? hovering
-              ? 'border-chrome-fg bg-chrome-fg text-chrome shadow-[inset_4px_0_0_0_#D94A3D]'
-              : 'border-chrome-fg bg-chrome-fg text-chrome'
+            ? 'border-chrome-fg bg-chrome-fg text-chrome'
             : 'border-transparent text-chrome-fg hover:border-chrome-divider hover:bg-chrome-fg/10';
           return (
             <Link

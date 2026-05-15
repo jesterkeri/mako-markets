@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { NewsFeed } from '@/components/NewsFeed';
 
 /**
@@ -24,6 +24,8 @@ import { NewsFeed } from '@/components/NewsFeed';
  */
 export function MarketIntelAside() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  
   // /market/[id] reserves a 400px right column for the BetSheet at
   // lg+. Adding the aside in the same band would force a four-column
   // squeeze (sidebar 80 + content + BetSheet 400 + aside 256 ≈ 736
@@ -33,6 +35,19 @@ export function MarketIntelAside() {
   // at xl+ where the viewport (1280+) has the room for all four
   // columns.
   const isMarketDetail = pathname?.startsWith('/market/') ?? false;
+  
+  const isPrivateCreateForm = pathname === '/create/private' && searchParams?.has('shape');
+  const isPublicCreateForm = pathname === '/create' && searchParams?.has('tab');
+  const isFormActive = isPrivateCreateForm || isPublicCreateForm;
+
+  // The user wants to hide the market intel sidebar completely on the active create
+  // form pages to give the wide neo-brutalist side-by-side layout enough space.
+  // HOWEVER, on the picker screens (where no shape/tab is selected), the sidebar 
+  // should remain visible to fill the right-hand column.
+  if (isFormActive) {
+    return null;
+  }
+
   const visibilityClasses = isMarketDetail
     ? 'hidden xl:flex'
     : 'hidden min-[960px]:flex';

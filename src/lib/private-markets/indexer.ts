@@ -68,7 +68,10 @@ export interface RunIndexerArgs {
   /// outside the transaction.
   db: DbOrTx;
   publicClient: PublicClient;
-  /// Block-range chunk size for getLogs. Default 5_000.
+  /// Block-range chunk size for getLogs. Default 1_000 — matches
+  /// Alchemy's hard cap on Monad testnet (and most other paid tiers).
+  /// Public Monad RPC can take more; override via env or args if you
+  /// know your provider allows it.
   chunkSize?: number;
   /// Cap on MarketCreated events per Phase B multicall request.
   /// Default 50. Independent of chunkSize.
@@ -361,6 +364,15 @@ export async function processMarketCreated(
   // or contract, so without these clauses a redeploy or future
   // multi-contract context could bind a pending row from the wrong
   // chain/contract.
+  // The MarketCreated event carries the canonical staking/close timestamps
+  // + visibility flags. The pending draft row was inserted with placeholder
+  // values (epoch 0 + 0/0), so set them here on the flip. Without this the
+  // /m/[slug] view shows 1970 timestamps until resnapshot eventually fills
+  // them — and resnapshot's scope of mutation excludes timestamps too, so
+  // historically these rows stayed at epoch forever.
+  const flipStakingOpensAt = secondsBigIntToDate(event.args.stakingOpensAt);
+  const flipCloseAt = secondsBigIntToDate(event.args.closeAt);
+
   const flipResult = await chunkTx
     .update(pmMarkets)
     .set({
@@ -368,6 +380,10 @@ export async function processMarketCreated(
       createStatus: 'confirmed',
       confirmedAt: new Date(),
       updatedAt: new Date(),
+      stakingOpensAt: flipStakingOpensAt,
+      closeAt: flipCloseAt,
+      visibilityView: event.args.visibilityView,
+      visibilityParticipation: event.args.visibilityParticipation,
     })
     .where(
       and(
@@ -1318,7 +1334,7 @@ export async function runIndexerOnce(
   args: RunIndexerArgs,
 ): Promise<RunIndexerResult> {
   // R9-m3: validate numeric args BEFORE acquiring the mutex.
-  const chunkSize = args.chunkSize ?? 5_000;
+  const chunkSize = args.chunkSize ?? 1_000;
   const prefetchBatchSize = args.prefetchBatchSize ?? 50;
   const mutexStaleAfterMs = args.mutexStaleAfterMs ?? 5 * 60 * 1000;
   for (const [name, val] of [

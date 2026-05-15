@@ -118,6 +118,7 @@ describe('POST /api/pm/markets/draft — in-flight gate (Codex 2C-1 r3 MAJ-2)', 
   it('rejects with 423 when loadInFlightForSafe returns a row, BEFORE allocatePmDraft runs', async () => {
     mocks.checkSameOrigin.mockReturnValue({ ok: true });
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: 'user-1',
       magicEoa: '0x1111111111111111111111111111111111111111',
     });
@@ -140,6 +141,7 @@ describe('POST /api/pm/markets/draft — in-flight gate (Codex 2C-1 r3 MAJ-2)', 
   it('passes through to allocatePmDraft when no in-flight op exists', async () => {
     mocks.checkSameOrigin.mockReturnValue({ ok: true });
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: 'user-1',
       magicEoa: '0x1111111111111111111111111111111111111111',
     });
@@ -174,6 +176,7 @@ describe('POST /api/pm/markets/draft — pending-cap surface (Codex 2C-1 r3 MAJ-
   it('maps allocatePmDraft pending_cap to 429 with count echoed', async () => {
     mocks.checkSameOrigin.mockReturnValue({ ok: true });
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: 'user-1',
       magicEoa: '0x1111111111111111111111111111111111111111',
     });
@@ -197,6 +200,7 @@ describe('POST /api/pm/markets/draft — pending-cap surface (Codex 2C-1 r3 MAJ-
   it('still maps duplicate -> 409 and slug_exhausted -> 500', async () => {
     mocks.checkSameOrigin.mockReturnValue({ ok: true });
     mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
       userId: 'user-1',
       magicEoa: '0x1111111111111111111111111111111111111111',
     });

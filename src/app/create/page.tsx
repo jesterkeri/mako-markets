@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAccount, useWaitForTransactionReceipt } from 'wagmi';
 import { type Hex } from 'viem';
 import { decodeMarketCreatedId, MarketType } from '@/lib/contract';
@@ -11,6 +12,7 @@ import { isWalletDrifted } from '@/lib/wallet-drift';
 import { WalletDriftBanner } from '@/components/WalletDriftBanner';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
+import { HoverRevealPicker } from '@/components/HoverRevealPicker';
 import { toBytes32 } from '@/lib/oracle';
 import { humanizeUntil } from '@/lib/time';
 import {
@@ -138,9 +140,21 @@ const DURATIONS: Array<{ label: string; short: string; seconds: number }> = [
   { label: '7 days', short: '7D', seconds: 604800 },
 ];
 
+function isTab(s: string | null): s is Tab {
+  return s === 'crypto' || s === 'football' || s === 'basketball';
+}
+
 export default function CreateMarketPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>('crypto');
+  // Tab is URL-driven so the HoverRevealPicker deep-links land on the
+  // correct form. ?tab=crypto|football|basketball. NULL when no tab is
+  // selected yet — in that case the form below the picker is not
+  // rendered; the user sees only the parent cards + hover-reveal
+  // children. The search-param read is reactive: clicking a child Link
+  // updates the URL and re-renders with the new tab.
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: Tab | null = isTab(tabParam) ? tabParam : null;
 
   // Shared tx lifecycle across both tabs. Submitting from either tab fires
   // the same `create()` hook, so the parent state drives the disable logic
@@ -286,52 +300,33 @@ export default function CreateMarketPage() {
         <ThemeToggle />
       </header>
 
-      <div className="px-4 sm:px-6 lg:px-8 py-6 md:py-10 max-w-3xl mx-auto w-full">
-        {/* Mobile-only title — desktop title lives in the sticky header above */}
-        <div className="md:hidden mb-6">
-          <h1 className="mako-display text-[clamp(1.875rem,3vw,2.25rem)] mb-2 text-canvas-fg">NEW MARKET</h1>
-          <p className="mako-body text-muted text-sm">
-            Pick a source, build a question, launch.
-          </p>
+      {/* Picker + hero — only render BEFORE a tab is selected. Once a
+          child is clicked the URL gains ?tab=..., the picker disappears,
+          and the form below takes the full viewport. Picking another
+          type means navigating back to /create (sidebar +, or browser
+          back). This mirrors the "new page per selection" feel Joshua
+          asked for without spawning real new routes. */}
+      {tab === null && (
+        <div className="px-4 sm:px-6 lg:px-8 pt-6 md:pt-10 max-w-7xl mx-auto w-full">
+          <div className="mb-12 text-center flex flex-col items-center">
+            <h1 className="font-display font-black text-6xl md:text-[7rem] mb-6 text-canvas-fg tracking-tighter max-w-5xl mx-auto leading-none">
+              Monetize your hot takes.
+            </h1>
+            <p className="font-sans text-canvas-fg text-lg md:text-2xl max-w-3xl mx-auto font-medium leading-snug">
+              Finally, a place to weaponize your unsolicited opinions. Create a market, invite your friends, and get paid to be right. Or lose it all trying.
+            </p>
+          </div>
+          <HoverRevealPicker className="mb-6" />
         </div>
+      )}
 
-        {/* Tab bar -- matches the home feed's colorful category pills */}
-        <div className="flex gap-3 mb-6 flex-wrap">
-          {(
-            [
-              { key: 'crypto' as const, label: 'CRYPTO', bg: 'bg-mako-red', text: 'text-paper', activeShadow: 'shadow-brutal' },
-              { key: 'football' as const, label: 'FOOTBALL', bg: 'bg-signal', text: 'text-ink', activeShadow: 'shadow-brutal' },
-              { key: 'basketball' as const, label: 'NBA', bg: 'bg-ink', text: 'text-paper', activeShadow: 'shadow-[4px_4px_0_0_#FACC15]' },
-            ]
-          ).map(({ key, label, bg, text, activeShadow }) => {
-            const isActive = tab === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setTab(key)}
-                disabled={isBusy}
-                aria-current={isActive ? 'page' : undefined}
-                className={`
-                  mako-label px-4 py-2 rounded-full border-2 border-ink transition-all
-                  whitespace-nowrap disabled:opacity-50 ${bg} ${text}
-                  ${isActive
-                    ? `${activeShadow} -translate-y-[2px] -translate-x-[2px]`
-                    : 'shadow-brutal-sm hover:shadow-brutal hover:-translate-y-[1px] hover:-translate-x-[1px]'}
-                `}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-
+      <div className="px-4 sm:px-6 lg:px-8 pt-6 md:pt-10 pb-6 md:pb-10 max-w-[1400px] mx-auto w-full flex flex-col items-center">
         {/* Page-level wallet-drift banner (plan step 23). Renders ONLY
             when a wallet-authed session no longer matches the connected
             wallet — see `isWalletDrifted`. One banner, regardless of
             which tab is active. */}
         {drifted && user?.authType === 'wallet' && connectedWallet && (
-          <div className="mb-6">
+          <div className="mb-6 w-full max-w-2xl">
             <WalletDriftBanner
               sessionWallet={user.walletAddress}
               connectedWallet={connectedWallet}
@@ -339,22 +334,88 @@ export default function CreateMarketPage() {
           </div>
         )}
 
-        <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
-          {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
-          {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
-          {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
-        </div>
+        {tab !== null && (
+          <div className="w-full flex flex-col lg:flex-row gap-8 lg:gap-12 mb-12 items-start justify-center">
+            
+            {/* EDITORIAL INFO BLOCK - NO BOXES */}
+            <div className="w-full lg:w-[380px] shrink-0 flex flex-col order-1 lg:order-2 lg:sticky lg:top-24 mt-2 lg:mt-0">
+              <div className="mb-12">
+                <Link
+                  href="/create"
+                  className="inline-flex items-center gap-1 mako-label text-canvas-fg/70 hover:text-link-hover transition-colors mb-6"
+                >
+                  ← CHANGE MARKET TYPE
+                </Link>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-3 h-3 bg-mako-red rounded-full animate-pulse shadow-[0_0_8px_rgba(217,74,61,0.6)]"></div>
+                  <span className="font-mono text-xs tracking-[0.2em] uppercase opacity-60 text-canvas-fg">Market Spec</span>
+                </div>
+                <h2 className="font-display font-black text-6xl xl:text-7xl uppercase tracking-tighter leading-[0.85] mb-6 text-canvas-fg">
+                  {tab === 'crypto' && <>CRYPTO<br/>MARKET</>}
+                  {tab === 'football' && <>FOOTBALL<br/>MARKET</>}
+                  {tab === 'basketball' && <>NBA<br/>MARKET</>}
+                </h2>
+                <p className="font-sans font-medium text-lg text-canvas-fg/70 leading-relaxed border-l-4 border-mako-red pl-5 py-1">
+                  {tab === 'crypto' && 'Live token prices. Pick a strike, a direction, and a duration. Lives as short as 5 minutes.'}
+                  {tab === 'football' && 'EPL fixtures. Pick home, draw, away, or a total-goals over/under.'}
+                  {tab === 'basketball' && 'NBA games. Pick home or away win, or a total-points over/under.'}
+                </p>
+              </div>
 
-        {/* Non-busy status line below the submit button */}
-        {statusText && !isBusy && (
-          <div
-            className={`mt-4 px-4 py-3 mako-label text-center rounded-xl border-2 break-words ${
-              isSuccess && !decodeError
-                ? 'bg-signal/30 text-ink border-ink'
-                : 'bg-mako-red/15 text-mako-red border-mako-red'
-            }`}
-          >
-            {statusText}
+              {/* Steps - No Boxes */}
+              <div className="flex flex-col gap-10">
+                {(tab === 'crypto' ? [
+                  { title: "ASSET", desc: "Select a live crypto feed." },
+                  { title: "STRIKE", desc: "Set the target price." },
+                  { title: "DIRECTION", desc: "Will it settle above or below?" }
+                ] : tab === 'football' ? [
+                  { title: "FIXTURE", desc: "Select an upcoming EPL match." },
+                  { title: "OUTCOME", desc: "Pick the winning side or total goals." },
+                  { title: "TIMING", desc: "Automatically settles after the match." }
+                ] : [
+                  { title: "GAME", desc: "Select an upcoming NBA game." },
+                  { title: "OUTCOME", desc: "Pick the winning side or total points." },
+                  { title: "TIMING", desc: "Automatically settles after the game." }
+                ]).map((step, i) => (
+                  <div key={i} className="flex items-start gap-6 group">
+                    <div className="text-6xl font-display font-black text-canvas-fg/10 group-hover:text-mako-red transition-colors select-none -mt-3">
+                      0{i + 1}
+                    </div>
+                    <div className="pt-1">
+                      <div className="font-display font-black text-2xl uppercase tracking-tight mb-2 text-canvas-fg group-hover:text-mako-red transition-colors">
+                        {step.title}
+                      </div>
+                      <div className="font-sans text-base font-medium text-canvas-fg/60">
+                        {step.desc}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* FORM CONTAINER */}
+            <div className="w-full lg:max-w-2xl flex-1 flex flex-col order-2 lg:order-1">
+              <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
+                {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
+                {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
+                {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
+              </div>
+
+              {/* Non-busy status line below the submit button */}
+              {statusText && !isBusy && (
+                <div
+                  className={`mt-4 px-4 py-3 mako-label text-center rounded-xl border-2 break-words ${
+                    isSuccess && !decodeError
+                      ? 'bg-signal/30 text-ink border-ink'
+                      : 'bg-mako-red/15 text-mako-red border-mako-red'
+                  }`}
+                >
+                  {statusText}
+                </div>
+              )}
+            </div>
+
           </div>
         )}
       </div>

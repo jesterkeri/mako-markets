@@ -42,6 +42,7 @@ vi.mock('../magic-browser', () => ({
 
 import {
   generateClientNonce,
+  hasPmDraftRef,
   runCreatePrivateMarket,
   shapeEnumToString,
   type RunOutcome,
@@ -280,6 +281,33 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     fetchQueue.push(response);
   }
 
+  // Phase 2C-2 step 11b: shared draft-response stub. Every post-draft
+  // outcome of runCreatePrivateMarket must surface { slug, clientNonce,
+  // pendingDbId } as `pmDraft` so the /create/private UI can deep-link
+  // `/m/<slug>` on failure paths. Keeping the fixture in one place
+  // means a future field addition to PmDraftRef touches one stub, not
+  // eight tests.
+  const DRAFT_SLUG = 'ABCD1234';
+  const DRAFT_PENDING_ID = '00000000-0000-0000-0000-00000000d1ff';
+  const DRAFT_NONCE = ('0x' + 'cd'.repeat(32)) as Hex;
+  function draftBodyStub(): Record<string, unknown> {
+    return {
+      slug: DRAFT_SLUG,
+      clientNonce: DRAFT_NONCE,
+      pendingDbId: DRAFT_PENDING_ID,
+    };
+  }
+
+  /// Assert that an outcome's pmDraft matches what the draft route
+  /// returned. Called from every post-draft outcome test below.
+  function expectPmDraftMatchesStub(outcome: RunOutcome): void {
+    const ref = (outcome as { pmDraft?: { slug?: string; clientNonce?: Hex; pendingDbId?: string } }).pmDraft;
+    expect(ref).toBeDefined();
+    expect(ref?.slug).toBe(DRAFT_SLUG);
+    expect(ref?.clientNonce).toBe(DRAFT_NONCE);
+    expect(ref?.pendingDbId).toBe(DRAFT_PENDING_ID);
+  }
+
   function sponsoredBodyStub(): Record<string, unknown> {
     return {
       pendingUserOpId: '00000000-0000-0000-0000-00000000aaaa',
@@ -330,7 +358,7 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   };
 
   it('happy path: draft + sponsor + sign + send → sent', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234', pendingDbId: 'd1', clientNonce: '0x...' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({
       status: 200,
@@ -347,6 +375,7 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     expect(result.kind).toBe('sent');
     if (result.kind !== 'sent') return;
     expect(result.txHash).toBe(('0x' + 'cc'.repeat(32)) as Hex);
+    expectPmDraftMatchesStub(result);
 
     // Verify call sequence: draft, sponsor, send.
     expect(fetchCalls).toHaveLength(3);
@@ -402,13 +431,18 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     expect(result.status).toBe(409);
     expect(result.error).toBe('pm_draft_duplicate');
 
+    // Phase 2C-2 step 11b: step='draft' outcomes do NOT carry pmDraft
+    // (the slug was never reserved). UI must not deep-link /m/<slug>
+    // in this case.
+    expect(result.pmDraft).toBeUndefined();
+
     // Only 1 fetch — draft. No sponsor / send.
     expect(fetchCalls).toHaveLength(1);
     expect(mocks.signSafeOpHash).not.toHaveBeenCalled();
   });
 
   it('sponsor failure → sponsor_failed with step="sponsor" (no sign / send calls)', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({
       status: 403,
       body: { error: 'NOT_ALLOWED', reason: 'pm_draft_wrong_creator' },
@@ -421,6 +455,7 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     expect(result.step).toBe('sponsor');
     expect(result.status).toBe(403);
     expect(result.reason).toBe('pm_draft_wrong_creator');
+    expectPmDraftMatchesStub(result);
 
     expect(fetchCalls).toHaveLength(2); // draft + sponsor, no send
     expect(mocks.signSafeOpHash).not.toHaveBeenCalled();
@@ -431,7 +466,7 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   // was unreachable for 2xx, so 202 hit the success-switch which
   // has no 'send_in_progress' case.
   it('send 202 → kind="in_progress" (Codex r1 MAJ-1 regression pin)', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({
       status: 202,
@@ -444,33 +479,36 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     expect(result.kind).toBe('in_progress');
     if (result.kind !== 'in_progress') return;
     expect(result.retryAfterSeconds).toBe(3);
+    expectPmDraftMatchesStub(result);
   });
 
   it('send 410 → kind="expired"', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({ status: 410, body: { error: 'expired' } });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
 
     const result = await runCreatePrivateMarket(ARGS);
     expect(result.kind).toBe('expired');
+    expectPmDraftMatchesStub(result);
   });
 
   it('send 423 → kind="manual_review"', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({ status: 423, body: { error: 'manual_review' } });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
 
     const result = await runCreatePrivateMarket(ARGS);
     expect(result.kind).toBe('manual_review');
+    expectPmDraftMatchesStub(result);
   });
 
   // Codex r2 MIN-1: regression for the defensive default in the
   // success switch. A 200 response with an unrecognised status (or
   // missing status) must NOT fall through to undefined.
   it('send 200 with unexpected status → kind="send_failed" (Codex r2 MIN-1)', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({ status: 200, body: { status: 'wat' } });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
@@ -480,10 +518,11 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     if (result.kind !== 'send_failed') return;
     expect(result.error).toBe('unexpected_send_status');
     expect(result.detail).toContain('wat');
+    expectPmDraftMatchesStub(result);
   });
 
   it('send 200 with NO status field → kind="send_failed"', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({ status: 200, body: {} });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
@@ -492,10 +531,11 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     expect(result.kind).toBe('send_failed');
     if (result.kind !== 'send_failed') return;
     expect(result.error).toBe('unexpected_send_status');
+    expectPmDraftMatchesStub(result);
   });
 
   it('send 5xx → kind="send_failed"', async () => {
-    enqueue({ status: 200, body: { slug: 'ABCD1234' } });
+    enqueue({ status: 200, body: draftBodyStub() });
     enqueue({ status: 200, body: sponsoredBodyStub() });
     enqueue({ status: 502, body: { error: 'bundler_unreachable' } });
     mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
@@ -505,5 +545,33 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     if (result.kind !== 'send_failed') return;
     expect(result.status).toBe(502);
     expect(result.error).toBe('bundler_unreachable');
+    expectPmDraftMatchesStub(result);
+  });
+
+  // Phase 2C-2 step 11b: hasPmDraftRef type guard narrows correctly
+  // for downstream UI usage. The guard is exported from aa-client so
+  // the /create/private page can deep-link `/m/<slug>` from any
+  // post-draft outcome without optional chaining.
+  it('hasPmDraftRef narrows the outcome type after a post-draft failure', async () => {
+    enqueue({ status: 200, body: draftBodyStub() });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    enqueue({ status: 410, body: { error: 'expired' } });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(hasPmDraftRef(result)).toBe(true);
+    if (!hasPmDraftRef(result)) return;
+    // After the guard, `result.pmDraft` is non-optional.
+    expect(result.pmDraft.slug).toBe(DRAFT_SLUG);
+  });
+
+  it('hasPmDraftRef returns false on step="draft" outcomes', async () => {
+    enqueue({
+      status: 409,
+      body: { error: 'pm_draft_duplicate' },
+    });
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(hasPmDraftRef(result)).toBe(false);
   });
 });

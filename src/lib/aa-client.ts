@@ -77,6 +77,18 @@ export type SponsorResponse = {
   recovered?: boolean;
 };
 
+/// Phase 2C-2 step 0: the draft response that PM-create surfaces.
+/// Only `runCreatePrivateMarket` ever populates this; non-PM helpers
+/// (`runCreateMarket`, `runPlaceBet`, `runSendUsdc`) leave it absent.
+/// Threaded onto every outcome variant that occurs AFTER the draft
+/// POST resolves so the UI can deep-link `/m/<slug>` even on revert /
+/// expired / submitted-but-receipt-pending paths.
+export interface PmDraftRef {
+  slug: string;
+  clientNonce: Hex;
+  pendingDbId: string;
+}
+
 /// Discriminated outcome the dev surface renders. Each variant carries
 /// enough state for the UI to show what happened without re-fetching.
 export type RunOutcome =
@@ -93,14 +105,25 @@ export type RunOutcome =
       error: string;
       reason?: string;
       detail?: string;
+      /// Set only when step === 'sponsor' from runCreatePrivateMarket
+      /// (the draft already landed). Absent on step === 'draft' and
+      /// on every non-PM helper.
+      pmDraft?: PmDraftRef;
     }
-  | { kind: 'send_failed'; status: number; error: string; detail?: string }
+  | {
+      kind: 'send_failed';
+      status: number;
+      error: string;
+      detail?: string;
+      pmDraft?: PmDraftRef;
+    }
   | {
       kind: 'sent';
       pendingUserOpId: string;
       txHash: Hex;
       userOpHash: Hex;
       recovered?: boolean;
+      pmDraft?: PmDraftRef;
     }
   | {
       kind: 'reverted';
@@ -108,24 +131,41 @@ export type RunOutcome =
       txHash: Hex;
       userOpHash: Hex;
       failureReason: string;
+      pmDraft?: PmDraftRef;
     }
   | {
       kind: 'submitted';
       pendingUserOpId: string;
       userOpHash: Hex;
+      pmDraft?: PmDraftRef;
     }
   | {
       kind: 'failed_pre_submit';
       pendingUserOpId: string;
       failureReason: string;
+      pmDraft?: PmDraftRef;
     }
-  | { kind: 'expired'; pendingUserOpId: string }
+  | { kind: 'expired'; pendingUserOpId: string; pmDraft?: PmDraftRef }
   | {
       kind: 'in_progress';
       pendingUserOpId: string;
       retryAfterSeconds: number;
+      pmDraft?: PmDraftRef;
     }
-  | { kind: 'manual_review'; pendingUserOpId: string };
+  | {
+      kind: 'manual_review';
+      pendingUserOpId: string;
+      pmDraft?: PmDraftRef;
+    };
+
+/// Type guard: narrows `outcome` to a variant where `pmDraft` is
+/// guaranteed present. After `hasPmDraftRef(outcome)`, TS lets you
+/// read `outcome.pmDraft.slug` etc. without optional chaining.
+export function hasPmDraftRef<O extends RunOutcome>(
+  outcome: O,
+): outcome is O & { pmDraft: PmDraftRef } {
+  return (outcome as { pmDraft?: PmDraftRef }).pmDraft !== undefined;
+}
 
 export type RunSponsoredOpArgs = {
   chainId: number;
@@ -1026,12 +1066,19 @@ export async function runCreatePrivateMarket(
         typeof draftBody.detail === 'string' ? draftBody.detail : undefined,
     };
   }
-  // The draft response carries { slug, clientNonce, pendingDbId }.
-  // The 2C-1 dev smoke ignores them — the on-chain tx doesn't
-  // reference slug, and pendingDbId is server-internal. Phase 2D
-  // form UIs that want to render "your market URL will be /m/<slug>"
-  // can either fetch by-nonce or extend RunOutcome with a PM
-  // submitted variant. Decision deferred to 2D.
+  // Phase 2C-2 step 0: capture the draft response so every post-draft
+  // outcome can surface { slug, clientNonce, pendingDbId } for the
+  // /create/private UI to deep-link `/m/<slug>` even on failure paths.
+  const draftBody = draft.body as {
+    slug: string;
+    clientNonce: Hex;
+    pendingDbId: string;
+  };
+  const pmDraft: PmDraftRef = {
+    slug: draftBody.slug,
+    clientNonce: draftBody.clientNonce,
+    pendingDbId: draftBody.pendingDbId,
+  };
 
   // (3) Encode createMarket callData.
   const callData = encodeFunctionData({
@@ -1059,6 +1106,7 @@ export async function runCreatePrivateMarket(
       error: (sponsor.body as { error?: string }).error ?? 'unknown',
       reason: (sponsor.body as { reason?: string }).reason,
       detail: (sponsor.body as { message?: string }).message,
+      pmDraft,
     };
   }
   const sponsored = sponsor.body as SponsorResponse;
@@ -1098,6 +1146,7 @@ export async function runCreatePrivateMarket(
         kind: 'in_progress',
         pendingUserOpId: sponsored.pendingUserOpId,
         retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
+        pmDraft,
       };
     }
     // 202 with an unexpected body shape — surface as send_failed
@@ -1106,15 +1155,21 @@ export async function runCreatePrivateMarket(
       kind: 'send_failed',
       status: 202,
       error: 'unexpected_202_body',
+      pmDraft,
     };
   }
   if (send.status === 410) {
-    return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    return {
+      kind: 'expired',
+      pendingUserOpId: sponsored.pendingUserOpId,
+      pmDraft,
+    };
   }
   if (send.status === 423) {
     return {
       kind: 'manual_review',
       pendingUserOpId: sponsored.pendingUserOpId,
+      pmDraft,
     };
   }
 
@@ -1128,6 +1183,7 @@ export async function runCreatePrivateMarket(
       status: send.status,
       error: sendBody.error ?? 'unknown',
       detail: sendBody.message,
+      pmDraft,
     };
   }
 
@@ -1152,6 +1208,7 @@ export async function runCreatePrivateMarket(
         txHash: sendBody.txHash as Hex,
         userOpHash: sendBody.userOpHash as Hex,
         recovered: sponsored.recovered,
+        pmDraft,
       };
     case 'reverted':
       return {
@@ -1160,21 +1217,28 @@ export async function runCreatePrivateMarket(
         txHash: sendBody.txHash as Hex,
         userOpHash: sendBody.userOpHash as Hex,
         failureReason: sendBody.failureReason ?? 'on-chain revert',
+        pmDraft,
       };
     case 'submitted':
       return {
         kind: 'submitted',
         pendingUserOpId: sponsored.pendingUserOpId,
         userOpHash: sendBody.userOpHash as Hex,
+        pmDraft,
       };
     case 'failed_pre_submit':
       return {
         kind: 'failed_pre_submit',
         pendingUserOpId: sponsored.pendingUserOpId,
         failureReason: sendBody.failureReason ?? 'bundler reject',
+        pmDraft,
       };
     case 'expired':
-      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+      return {
+        kind: 'expired',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        pmDraft,
+      };
     default:
       // Codex r2 MIN-1: any 2xx response with an unrecognised
       // `status` field (or missing body / 204 no-content) must NOT
@@ -1189,6 +1253,7 @@ export async function runCreatePrivateMarket(
           typeof sendBody.status === 'string'
             ? `unknown status: ${sendBody.status}`
             : 'missing status field',
+        pmDraft,
       };
   }
 }

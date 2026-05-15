@@ -35,6 +35,7 @@ const TABS: Array<{
   bg: string;
   text: string;
   activeShadow: string;
+  borderClass?: string;
 }> = [
   {
     key: 'all',
@@ -63,6 +64,7 @@ const TABS: Array<{
     bg: 'bg-ink',
     text: 'text-paper',
     activeShadow: 'shadow-[4px_4px_0_0_#FACC15]',
+    borderClass: 'border-paper',
   },
 ];
 
@@ -138,7 +140,7 @@ export default function Home() {
                 shadow has room to breathe instead of being clipped by the
                 scroll container's implicit overflow-y. */}
             <nav className="flex items-center gap-3 mb-6 flex-wrap">
-              {TABS.map(({ key, label, bg, text, activeShadow }) => {
+              {TABS.map(({ key, label, bg, text, activeShadow, borderClass }) => {
                 const isActive = tab === key;
                 return (
                   <button
@@ -146,7 +148,7 @@ export default function Home() {
                     onClick={() => setTab(key)}
                     aria-current={isActive ? 'page' : undefined}
                     className={`
-                      mako-label px-4 py-2 rounded-full border-2 border-ink transition-all
+                      mako-label px-4 py-2 rounded-full border-2 ${borderClass || 'border-ink'} transition-all
                       whitespace-nowrap ${bg} ${text}
                       ${isActive
                         ? `${activeShadow} -translate-y-[2px] -translate-x-[2px]`

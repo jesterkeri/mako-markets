@@ -49,6 +49,7 @@ import {
   bigintToNumber,
   bytesToUtf8,
   normalizeHex,
+  secondsBigIntToDate,
 } from './normalize';
 
 // ---- Types -----------------------------------------------------------------
@@ -615,6 +616,15 @@ async function reconcileOneRow(
       dust: meta.market.dust.toString(),
       totalStake: meta.market.totalStake.toString(),
       feeTaken: meta.market.feeTaken.toString(),
+      // Timestamps + visibility flags. Backfill path for rows whose
+      // confirmed-flip predates the indexer fix that writes these on
+      // MarketCreated. Reading from `meta.market` (getMarket() view)
+      // is the canonical source; writing on every resnapshot is
+      // idempotent for already-correct rows.
+      stakingOpensAt: secondsBigIntToDate(meta.market.stakingOpensAt),
+      closeAt: secondsBigIntToDate(meta.market.closeAt),
+      visibilityView: meta.market.viewMode,
+      visibilityParticipation: meta.market.participationMode,
       frozenAt: meta.market.metadataFrozenEmitted
         ? sql`COALESCE(${pmMarkets.frozenAt}, NOW())`
         : null,

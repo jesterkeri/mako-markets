@@ -45,7 +45,7 @@ import { useUser } from './use-user';
  * Throws with a friendly message if the user declines the switch so
  * the UI can display something useful instead of the EIP-1193 string.
  */
-function useEnsureMonadChain() {
+export function useEnsureMonadChain() {
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   return async () => {
