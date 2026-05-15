@@ -20,6 +20,22 @@ export function normalizeHex(
   value: `0x${string}`,
   byteLen: 20 | 32,
 ): `0x${string}` {
+  return _normalizeHexInner(value as string, byteLen);
+}
+
+/// Thin string-typed wrapper for the common 20-byte address case. The
+/// chain returns checksummed (EIP-55 mixed-case) addresses from viem
+/// while user sessions / DB rows store the lowercase form; both must
+/// converge to one canonical shape before `===` comparison. Plan v8
+/// MAJ-1: every validator that compares two addresses MUST route both
+/// sides through this helper, otherwise a mixed-case viem return and a
+/// lowercase DB value would reject as "different" even though they
+/// reference the same EVM account.
+export function normalizeAddressLower(addr: string): `0x${string}` {
+  return _normalizeHexInner(addr, 20);
+}
+
+function _normalizeHexInner(value: string, byteLen: 20 | 32): `0x${string}` {
   if (typeof value !== 'string' || !value.startsWith('0x')) {
     throw new Error(`normalizeHex: not a 0x-prefixed string: ${String(value)}`);
   }
