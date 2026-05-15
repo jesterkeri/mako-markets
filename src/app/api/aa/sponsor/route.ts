@@ -11,6 +11,7 @@ import { isSupportedAaChainId } from '@/lib/aa-config';
 import {
   assertBetBatchedCalls,
   assertBetSingleCall,
+  assertClaimCall,
   assertCreateMarketCall,
   assertCreateMarketShape,
   assertPmCreateMarketCall,
@@ -235,6 +236,7 @@ export async function POST(req: Request) {
           | 'bet_single'
           | 'send_usdc'
           | 'create_market'
+          | 'claim'
           | 'pm_create_market';
         call: Call;
       }
@@ -322,6 +324,20 @@ export async function POST(req: Request) {
           nowSec: block.timestamp,
         });
         buildArgs = { kind: 'create_market', call };
+        break;
+      }
+      case 'claim': {
+        // claim-magic-parity: single-call MakoMarketsV4.claim(id) from
+        // the Safe. No clock-relative checks — contract enforces
+        // resolution + position + has-not-claimed.
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertClaimCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'claim', call };
         break;
       }
       case 'pm_create_market': {

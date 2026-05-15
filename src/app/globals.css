@@ -151,6 +151,11 @@
   --shadow-brutal-signal: 4px 4px 0 0 var(--color-signal);
   /* Soft outer glow over mako-red for indicator dots / pulses. */
   --shadow-mako-pulse: 0 0 8px color-mix(in srgb, var(--color-mako-red) 60%, transparent);
+  /* Soft upward drop used to lift fixed-bottom mobile surfaces (BetSheet,
+     ClaimButton sheet) above the page. claim-magic-parity r1 NIT-1:
+     was previously inlined as rgba(0,0,0,0.12) which never flipped in
+     dark mode. color-mix gives a theme-aware 12% tint of mako-shadow. */
+  --shadow-mobile-lift: 0 -12px 40px color-mix(in srgb, var(--mako-shadow) 12%, transparent);
 }
 
 html {

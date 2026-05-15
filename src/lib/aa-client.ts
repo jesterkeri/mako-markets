@@ -49,6 +49,7 @@ export type SponsorRequestBody =
   | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'send_usdc'; chainId: number; call: Call }
   | { kind: 'create_market'; chainId: number; call: Call }
+  | { kind: 'claim'; chainId: number; call: Call }
   | { kind: 'pm_create_market'; chainId: number; call: Call };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
@@ -929,6 +930,264 @@ export async function runCreateMarket(
 
 /// Flip the first byte of ECDSA `r` in a 77-byte SafeOp envelope. XOR
 /// with 0xff so the mutation is deterministic regardless of the original
+// ── runClaim (claim-magic-parity Magic claim flow) ─────────────────────────
+
+/// Args for the Magic-flow claim helper. Mirrors `runSendUsdc` /
+/// `runCreateMarket` shape so the UI state machine in `useClaim` can
+/// share the `RunOutcome` discriminated union without per-orchestrator
+/// branching.
+export type RunClaimArgs = {
+  chainId: number;
+  /// MakoMarketsV4 contract address. Caller passes via env so tests
+  /// can swap.
+  makoAddress: Address;
+  /// Resolved market id whose payout the Safe is claiming.
+  marketId: bigint;
+  /// Magic-derived EOA — passed to signSafeOpHash so the personal_sign
+  /// call goes through Magic's RPC provider against the Safe's owner.
+  magicEoa: Address;
+};
+
+const CLAIM_ABI = [
+  {
+    type: 'function',
+    name: 'claim',
+    inputs: [{ name: 'id', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// Browser-side end-to-end claim: build callData → /api/aa/sponsor
+/// (kind='claim') → Magic personal_sign → /api/aa/send.
+/// Outcome shape matches `runSendUsdc` so the UI hook can dispatch
+/// status without per-orchestrator branching.
+export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
+  const callData = encodeFunctionData({
+    abi: CLAIM_ABI,
+    functionName: 'claim',
+    args: [args.marketId],
+  });
+
+  const body: SponsorRequestBody = {
+    kind: 'claim',
+    chainId: args.chainId,
+    call: {
+      to: args.makoAddress,
+      value: '0x0' as Hex,
+      data: callData,
+    },
+  };
+
+  // 1. Sponsor. Codex r1 MAJ-1: catch transport throws (network / DNS /
+  // aborted fetch) so the helper always resolves a typed RunOutcome.
+  let sponsor;
+  try {
+    sponsor = await postJson('/api/aa/sponsor', body);
+  } catch (err) {
+    return {
+      kind: 'sponsor_failed',
+      status: 0,
+      error: 'sponsor_transport_failed',
+      detail: (err as Error)?.message,
+    };
+  }
+  if (!sponsor.ok) {
+    // Codex r2 MAJ-1: postJson returns body: null when the route
+    // produces a non-JSON 500 (or any response without a JSON body).
+    // Casting null to `{ error?: string }` would throw on property
+    // access. Use the helpers to read fields defensively.
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: readStringField(sponsor.body, 'error') ?? 'unknown',
+      reason: readStringField(sponsor.body, 'reason'),
+      detail: readStringField(sponsor.body, 'message'),
+    };
+  }
+
+  // Codex r1 MAJ-1: shape-validate the sponsor 200 body BEFORE touching
+  // it. BigInt(undefined) / BigInt(null) / BigInt('garbage') all throw
+  // and previously did so outside any try/catch. Same fix that landed
+  // on PM Phase 2C-2 r3. Codex r2 MAJ-1: isRecord guard now covers
+  // null bodies up front so subsequent SponsorResponse cast is safe.
+  if (!isRecord(sponsor.body)) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: 'sponsor_bad_response',
+      detail: 'sponsor 2xx body was not an object',
+    };
+  }
+  const sponsored = sponsor.body as SponsorResponse;
+  if (
+    !sponsored.safeOpHash ||
+    !sponsored.pendingUserOpId ||
+    sponsored.validAfter == null ||
+    sponsored.validUntil == null
+  ) {
+    return {
+      kind: 'sponsor_failed',
+      status: sponsor.status,
+      error: 'sponsor_bad_response',
+      detail: 'sponsor 200 missing required fields',
+    };
+  }
+
+  // 2. Magic personal_sign over the SafeOp hash.
+  // Codex r1 MAJ-1: BigInt() coercions live INSIDE the try so a non-
+  // numeric validity field (string that bypassed the shape check, e.g.
+  // 'not-a-number') is caught and produces a typed RunOutcome rather
+  // than propagating a SyntaxError.
+  let signature;
+  try {
+    const validAfter = BigInt(sponsored.validAfter);
+    const validUntil = BigInt(sponsored.validUntil);
+    signature = await signSafeOpHash({
+      hash: sponsored.safeOpHash,
+      magicEoa: args.magicEoa,
+      validAfter,
+      validUntil,
+    });
+  } catch (err) {
+    const msg = ((err as Error)?.message ?? '').toLowerCase();
+    const isReject =
+      msg.includes('user rejected') || msg.includes('user denied');
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: isReject ? 'sign_rejected' : 'sign_failed',
+      detail: (err as Error)?.message,
+    };
+  }
+
+  // 3. Send. Codex r1 MAJ-1: catch transport throws same as the sponsor.
+  let send;
+  try {
+    send = await postJson('/api/aa/send', {
+      pendingUserOpId: sponsored.pendingUserOpId,
+      signature,
+    });
+  } catch (err) {
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: 'send_transport_failed',
+      detail: (err as Error)?.message,
+    };
+  }
+
+  // Codex r1 MAJ-2: branch on status BEFORE the !send.ok check. fetch's
+  // `res.ok` is true for ALL 2xx including 202, so a 202
+  // `send_in_progress` would previously fall through to the success
+  // switch, match no case, and resolve to undefined — useClaim would
+  // then crash on `outcome.kind`. Same fix that already landed in
+  // runCreatePrivateMarket.
+  // Codex r2 MAJ-1: send.body can be null when the route produces a
+  // non-JSON response. Every read site below uses readStringField /
+  // readNumberField so a null body cannot crash on property access.
+  if (send.status === 202) {
+    const status = readStringField(send.body, 'status');
+    const retryAfterSeconds = readNumberField(send.body, 'retryAfterSeconds');
+    if (status === 'send_in_progress') {
+      return {
+        kind: 'in_progress',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        retryAfterSeconds: retryAfterSeconds ?? 1,
+      };
+    }
+    return {
+      kind: 'send_failed',
+      status: 202,
+      error: 'unexpected_202_body',
+    };
+  }
+  if (send.status === 410) {
+    return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+  }
+  if (send.status === 423) {
+    return {
+      kind: 'manual_review',
+      pendingUserOpId: sponsored.pendingUserOpId,
+    };
+  }
+
+  if (!send.ok) {
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: readStringField(send.body, 'error') ?? 'unknown',
+      detail: readStringField(send.body, 'message'),
+    };
+  }
+
+  // 2xx happy-switch — also guard against a null body before the
+  // status read. An empty 2xx body surfaces as unexpected_send_status.
+  if (!isRecord(send.body)) {
+    return {
+      kind: 'send_failed',
+      status: send.status,
+      error: 'unexpected_send_status',
+      detail: 'send 2xx body was not an object',
+    };
+  }
+  const sendBody = send.body as {
+    status?:
+      | 'sent'
+      | 'reverted'
+      | 'submitted'
+      | 'failed_pre_submit'
+      | 'expired';
+    txHash?: Hex;
+    userOpHash?: Hex;
+    failureReason?: string;
+  };
+  switch (sendBody.status) {
+    case 'sent':
+      return {
+        kind: 'sent',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        recovered: sponsored.recovered,
+      };
+    case 'reverted':
+      return {
+        kind: 'reverted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        txHash: sendBody.txHash as Hex,
+        userOpHash: sendBody.userOpHash as Hex,
+        failureReason: sendBody.failureReason ?? 'on-chain revert',
+      };
+    case 'submitted':
+      return {
+        kind: 'submitted',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        userOpHash: sendBody.userOpHash as Hex,
+      };
+    case 'failed_pre_submit':
+      return {
+        kind: 'failed_pre_submit',
+        pendingUserOpId: sponsored.pendingUserOpId,
+        failureReason: sendBody.failureReason ?? 'bundler reject',
+      };
+    case 'expired':
+      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
+    default:
+      // Codex r1 MAJ-2 defensive default: a 2xx with an unrecognised
+      // status field (or missing) must NOT resolve to undefined.
+      return {
+        kind: 'send_failed',
+        status: send.status,
+        error: 'unexpected_send_status',
+        detail:
+          typeof sendBody.status === 'string'
+            ? `unknown status: ${sendBody.status}`
+            : 'missing status field',
+      };
+  }
+}
+
 /// byte value. Used by tamper mode to deterministically trigger drift
 /// Guard B. Length-preserving — output is always the same Hex77 the
 /// route's zod schema expects.
@@ -936,6 +1195,34 @@ function tamperFirstRByte(signature: Hex): Hex {
   const original = parseInt(signature.slice(26, 28), 16);
   const flipped = (original ^ 0xff).toString(16).padStart(2, '0');
   return `0x${signature.slice(2, 26)}${flipped}${signature.slice(28)}` as Hex;
+}
+
+/// Codex r2 MAJ-1 helpers: postJson() may return `body: null` when the
+/// route emits a non-JSON 500 / 502 / empty 2xx. Every body-field read
+/// in runClaim (and other orchestrators that adopt this pattern) must
+/// guard before accessing properties — `(null as { error?: string }).error`
+/// throws. These three helpers centralise that guarding so the call
+/// sites stay tight.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readStringField(
+  body: unknown,
+  key: string,
+): string | undefined {
+  if (!isRecord(body)) return undefined;
+  const v = body[key];
+  return typeof v === 'string' ? v : undefined;
+}
+
+function readNumberField(
+  body: unknown,
+  key: string,
+): number | undefined {
+  if (!isRecord(body)) return undefined;
+  const v = body[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 async function postJson(

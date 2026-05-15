@@ -13,10 +13,10 @@ import { z } from 'zod';
 // `HexBigint` is `0x` + 1+ hex digits (no length cap) so we can carry
 // uint256 values over the wire without lossy `Number` round-tripping.
 //
-// Phase 1D + 1E + 1H + 2C-1 shape: `SponsorRequest` is a zod
-// `discriminatedUnion('kind', ...)` over six variants — the `kind`
-// field is REQUIRED and the only discriminator. No env-aware default,
-// no fallback. The six variants are:
+// Phase 1D + 1E + 1H + 2C-1 + claim-magic-parity shape: `SponsorRequest`
+// is a zod `discriminatedUnion('kind', ...)` over seven variants — the
+// `kind` field is REQUIRED and the only discriminator. No env-aware
+// default, no fallback. The seven variants are:
 //   - `SmokeRequest` (kind='smoke')          single-call USDC.transfer self
 //   - `BetSingleRequest` (kind='bet_single') single-call placeBet
 //   - `BetBatchedRequest` (kind='bet_batched') tuple [approve, placeBet]
@@ -24,6 +24,8 @@ import { z } from 'zod';
 //                                            arbitrary recipient (Phase 1E)
 //   - `CreateMarketRequest` (kind='create_market') single-call MakoMarketsV4
 //                                            createMarket (Phase 1H)
+//   - `ClaimRequest` (kind='claim')          single-call MakoMarketsV4.claim
+//                                            (claim-magic-parity)
 //   - `PmCreateMarketRequest` (kind='pm_create_market') single-call
 //                                            MakoPrivateMarketsV1.createMarket
 //                                            (Phase 2C-1)
@@ -105,6 +107,22 @@ const SendUsdcRequest = z
   })
   .strict();
 
+const ClaimRequest = z
+  .object({
+    kind: z.literal('claim'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// claim-magic-parity: single-call `MakoMarketsV4.claim(id)` from
+    /// the Safe. The allowlist enforces:
+    ///   - inner.to === MAKO_ADDRESS
+    ///   - inner.value === 0n
+    ///   - inner selector === claim (0x379607f5)
+    ///   - decoded id ≥ 0 (uint256, viem already enforces upper bound)
+    /// No clock-relative checks — contract enforces resolution +
+    /// position + has-not-claimed.
+    call: CallShape,
+  })
+  .strict();
+
 const CreateMarketRequest = z
   .object({
     kind: z.literal('create_market'),
@@ -156,6 +174,7 @@ export const SponsorRequest = z.discriminatedUnion('kind', [
   BetBatchedRequest,
   SendUsdcRequest,
   CreateMarketRequest,
+  ClaimRequest,
   PmCreateMarketRequest,
 ]);
 
@@ -165,6 +184,7 @@ export type BetSingleRequest = z.infer<typeof BetSingleRequest>;
 export type BetBatchedRequest = z.infer<typeof BetBatchedRequest>;
 export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
 export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
+export type ClaimRequest = z.infer<typeof ClaimRequest>;
 export type PmCreateMarketRequest = z.infer<typeof PmCreateMarketRequest>;
 
 export const SendRequest = z.object({

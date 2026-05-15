@@ -29,7 +29,12 @@ import {
 import { USDC_ADDRESS, usdcContract } from './usdc';
 import { parseUsdc } from './usdc';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
-import { runCreateMarket, runPlaceBet, type RunOutcome } from './aa-client';
+import {
+  runClaim,
+  runCreateMarket,
+  runPlaceBet,
+  type RunOutcome,
+} from './aa-client';
 import { useUser } from './use-user';
 
 /**
@@ -591,21 +596,171 @@ export function usePlaceBet() {
 
 /**
  * Claim winnings (or refund) for a resolved market.
+ *
+ * claim-magic-parity: dual-path mirror of `usePlaceBet` / `useCreateMarket`.
+ * Magic-authed users go through /api/aa/sponsor + Magic personal_sign +
+ * /api/aa/send (kind='claim'); wallet-connected users use the existing
+ * wagmi `writeContractAsync` flow.
+ *
+ * Without this dual-path, Magic users either couldn't see the claim
+ * button (the visibility bug fixed in ClaimButton + MarketClaimAction) or,
+ * if visible, the click would fail because `writeContractAsync` has no
+ * signer for an embedded Safe.
  */
+export type ClaimPhase =
+  | 'idle'
+  | 'preparing'
+  | 'awaitingSign'   // Magic: prompting user for personal_sign
+  | 'awaitingClaim'  // Magic: bundler accepted, polling receipt
+  | 'awaitingWallet' // wallet: writeContract pending
+  | 'success'
+  | 'submitted'      // Magic: bundler accepted, receipt poll timed out (cron settles)
+  | 'error';
+
 export function useClaim() {
-  const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract();
+  const { user, isLoading: userLoading } = useUser();
+  const { writeContractAsync } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
 
-  const claim = async (id: bigint) => {
-    await ensureChain();
-    return writeContractAsync({
-      ...makoContract,
-      functionName: 'claim',
-      args: [id],
-    });
-  };
+  const [phase, setPhase] = useState<ClaimPhase>('idle');
+  const [error, setError] = useState<Error | null>(null);
+  const [hash, setHash] = useState<`0x${string}` | undefined>();
+  // Synchronous double-submit guard (mirrors usePlaceBet's ref pattern).
+  const inFlightRef = useRef(false);
 
-  return { claim, hash, isPending, error, reset };
+  const reset = useCallback(() => {
+    setPhase('idle');
+    setError(null);
+    setHash(undefined);
+  }, []);
+
+  const claim = useCallback(async (id: bigint) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setError(null);
+    setHash(undefined);
+    setPhase('preparing');
+
+    try {
+      // Codex r1 MAJ-3: while /api/user/me is in flight, `user` is
+      // null. Falling through to the wallet branch would let a Magic
+      // user accidentally route through a stale wagmi connection
+      // (the wrong identity). Surface a clean retry error instead.
+      if (userLoading) {
+        setPhase('error');
+        setError(new Error('Still loading your account. Please retry in a moment.'));
+        return;
+      }
+
+      // ── Magic-authed branch ────────────────────────────────────────
+      if (user?.authType === 'magic') {
+        const magicEoa = user.magicEoa as `0x${string}`;
+        setPhase('awaitingSign');
+        const outcome: RunOutcome = await runClaim({
+          chainId: MONAD_TESTNET_ID,
+          makoAddress: MAKO_ADDRESS,
+          marketId: id,
+          magicEoa,
+        });
+        setPhase('awaitingClaim');
+        switch (outcome.kind) {
+          case 'sent':
+            setHash(outcome.txHash);
+            setPhase('success');
+            return;
+          case 'reverted':
+            setHash(outcome.txHash);
+            setPhase('error');
+            setError(
+              new Error(
+                'Claim reverted on chain. Try refreshing; your position is safe.',
+              ),
+            );
+            return;
+          case 'submitted':
+            // Bundler accepted; receipt poll didn't confirm in 90s.
+            // Cron settles within ~5 min from on-chain truth.
+            setPhase('submitted');
+            return;
+          case 'failed_pre_submit':
+            setPhase('error');
+            setError(
+              new Error(`Bundler rejected the claim: ${outcome.failureReason}`),
+            );
+            return;
+          case 'in_progress':
+            setPhase('error');
+            setError(
+              new Error(
+                `Already sending: please wait ${outcome.retryAfterSeconds}s and try again.`,
+              ),
+            );
+            return;
+          case 'expired':
+            setPhase('error');
+            setError(new Error('Confirmation took too long; please retry.'));
+            return;
+          case 'manual_review':
+            setPhase('error');
+            setError(
+              new Error(
+                'This claim needs operator review. We will follow up; no action needed.',
+              ),
+            );
+            return;
+          case 'sponsor_failed':
+            setPhase('error');
+            setError(
+              new Error(
+                outcome.error === 'CAP_EXCEEDED'
+                  ? "You've reached today's sponsored-op limit (5/day). Try again tomorrow, or use a connected wallet."
+                  : outcome.error === 'SPONSOR_UNAVAILABLE'
+                    ? 'Sponsorship temporarily unavailable. Try again shortly, or use a connected wallet.'
+                    : outcome.error === 'NOT_ALLOWED'
+                      ? `Claim rejected by sponsorship policy${outcome.reason ? ` (${outcome.reason})` : ''}.`
+                      : `Sponsorship failed: ${outcome.detail ?? outcome.error}`,
+              ),
+            );
+            return;
+          case 'send_failed':
+            setPhase('error');
+            setError(
+              new Error(
+                outcome.error === 'SIG_VALIDATION'
+                  ? 'Could not verify your signature. Please retry.'
+                  : `Send failed: ${outcome.detail ?? outcome.error}`,
+              ),
+            );
+            return;
+        }
+        return;
+      }
+
+      // ── Wallet-connected branch (existing wagmi flow) ──────────────
+      await ensureChain();
+      setPhase('awaitingWallet');
+      const txHash = await writeContractAsync({
+        ...makoContract,
+        functionName: 'claim',
+        args: [id],
+      });
+      setHash(txHash);
+      setPhase('success');
+    } catch (e) {
+      setPhase('error');
+      setError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, [user, userLoading, writeContractAsync, ensureChain]);
+
+  const isPending =
+    phase === 'preparing' ||
+    phase === 'awaitingSign' ||
+    phase === 'awaitingClaim' ||
+    phase === 'awaitingWallet';
+
+  return { claim, hash, isPending, error, reset, phase };
 }
 
 /**
