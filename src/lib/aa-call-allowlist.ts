@@ -112,7 +112,48 @@ export type NotAllowedReason =
   | 'pm_bad_create_args'
   | 'pm_bad_create_metadata'
   | 'pm_bad_create_timestamps'
-  | 'pm_treasury_not_allowed';
+  | 'pm_treasury_not_allowed'
+  // Phase 2E-1 PM action flows. Granular buckets per action follow the
+  // same `<action>_args` + `<action>_<gate>` shape as createMarket so a
+  // 403 carries a self-explanatory reason without needing a generic
+  // bucket. Plus three chain-state buckets from the multicall hydration
+  // path (sponsor-chain-state.ts):
+  //   - pm_state_rpc_failure       transport-level multicall throw
+  //   - pm_bad_state_shape_unknown view decoded but shape/state out of
+  //                                range, or side-view per-call failure
+  //                                while getMarket succeeded
+  //   - pm_market_not_found        getMarket per-call failure (only
+  //                                realistic revert is MarketUnknown)
+  // bet (Friendly only) — _stakeCommon gates share semantics with stake.
+  | 'pm_bad_bet_args'
+  // stake (OpenVote / PrizePool) — Stage A-G in pm-call-allowlist.ts.
+  | 'pm_bad_stake_args'
+  | 'pm_bad_stake_treasury'
+  | 'pm_bad_stake_state'
+  | 'pm_bad_stake_time'
+  | 'pm_bad_stake_allowlist'
+  | 'pm_bad_stake_bounds'
+  // claim (anyone) — PM-specific so v4's `bad_claim_args` isn't reused.
+  | 'pm_bad_claim_args'
+  // finalize / finalizeMetadata (anyone-can-call, idempotent).
+  | 'pm_bad_finalize_args'
+  | 'pm_bad_finalize_metadata_args'
+  // Creator-action validators (resolve / confirm / distribute / cancel).
+  | 'pm_bad_creator_action_args'
+  | 'pm_bad_creator_action_not_creator'
+  | 'pm_bad_creator_action_window'
+  | 'pm_bad_creator_action_state'
+  | 'pm_bad_creator_action_empty_pool'
+  | 'pm_bad_creator_action_wrong_shape'
+  // editMetadata (creator-only, pre-stakingOpensAt only).
+  | 'pm_bad_edit_args'
+  | 'pm_bad_edit_not_creator'
+  | 'pm_bad_edit_window_closed'
+  | 'pm_bad_edit_shape_mismatch'
+  // Chain-state hydration failures (sponsor-chain-state.ts).
+  | 'pm_market_not_found'
+  | 'pm_state_rpc_failure'
+  | 'pm_bad_state_shape_unknown';
 
 export class NotAllowedError extends Error {
   constructor(
