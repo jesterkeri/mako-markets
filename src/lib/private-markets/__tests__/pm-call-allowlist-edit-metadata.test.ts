@@ -57,7 +57,10 @@ vi.mock('../treasury', () => ({
   getPmTreasuryAddress: () => mockGetPmTreasuryAddress(),
 }));
 
-import { assertPmEditMetadataCall } from '../pm-call-allowlist';
+import {
+  assertPmEditMetadataCall,
+  assertPmEditMetadataCallShapeNoTreasury,
+} from '../pm-call-allowlist';
 import { createSponsorMarketStateCache } from '../sponsor-chain-state';
 
 const TREASURY: Address = '0xdead000000000000000000000000000000000099';
@@ -362,5 +365,113 @@ describe('assertPmEditMetadataCall — plan v8 MAJ-1 normalization regression', 
       cache: createSponsorMarketStateCache(),
     }).catch((e) => e);
     expect((err as NotAllowedError).reason).toBe('pm_bad_edit_not_creator');
+  });
+});
+
+// ── Codex r3 MIN-1: pre-flight shape-only entry point ──────────────────────
+//
+// assertPmEditMetadataCallShapeNoTreasury is invoked by the sponsor
+// route BEFORE getBlock + getPmTreasuryAddress (Codex r2 MAJ-1 fix).
+// A failure here MUST short-circuit the route without ever hitting
+// RPC. These tests pin the rejection paths so a future refactor that
+// silently moves a check past the pre-flight gate fails loudly.
+
+describe('assertPmEditMetadataCallShapeNoTreasury (Codex r3 MIN-1)', () => {
+  it('accepts a well-formed editMetadata call', () => {
+    expect(() =>
+      assertPmEditMetadataCallShapeNoTreasury({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: CREATOR_CHECKSUMMED,
+        call: {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeEditMetadata(MARKET_ID, makeValidParams()),
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects wrong target with pm_bad_edit_args/wrong_target', () => {
+    let err: unknown;
+    try {
+      assertPmEditMetadataCallShapeNoTreasury({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: CREATOR_CHECKSUMMED,
+        call: {
+          to: '0xbeef000000000000000000000000000000000099' as Address,
+          value: 0n,
+          data: encodeEditMetadata(MARKET_ID, makeValidParams()),
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as NotAllowedError).reason).toBe('pm_bad_edit_args');
+    expect((err as NotAllowedError).detail).toBe('wrong_target');
+  });
+
+  it('rejects wrong selector with pm_bad_edit_args/wrong_selector', () => {
+    let err: unknown;
+    try {
+      assertPmEditMetadataCallShapeNoTreasury({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: CREATOR_CHECKSUMMED,
+        call: {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          // 4-byte selector + 32-byte uint256 — passes length gate
+          // but wrong selector for editMetadata.
+          data: ('0xdeadbeef' + '00'.repeat(32)) as Hex,
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as NotAllowedError).reason).toBe('pm_bad_edit_args');
+    expect((err as NotAllowedError).detail).toBe('wrong_selector');
+  });
+
+  it('rejects malformed CreateParams via the createMarket body validator', () => {
+    // Empty title — assertPmCreateParamsShapeNoTreasury surfaces this
+    // as pm_bad_create_metadata. The route's catch handler will turn
+    // it into a 403 NOT_ALLOWED before any RPC.
+    let err: unknown;
+    try {
+      assertPmEditMetadataCallShapeNoTreasury({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: CREATOR_CHECKSUMMED,
+        call: {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeEditMetadata(
+            MARKET_ID,
+            makeValidParams({ title: '0x' as `0x${string}` }),
+          ),
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as NotAllowedError).reason).toBe('pm_bad_create_metadata');
+    expect((err as NotAllowedError).detail).toBe('title_empty');
+  });
+
+  it('rejects wrong chain BEFORE any decode (cheapest gate first)', () => {
+    let err: unknown;
+    try {
+      assertPmEditMetadataCallShapeNoTreasury({
+        chainId: 1,
+        safeAddress: CREATOR_CHECKSUMMED,
+        call: {
+          to: PM_CONTRACT_ADDRESS,
+          value: 0n,
+          data: encodeEditMetadata(MARKET_ID, makeValidParams()),
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as NotAllowedError).reason).toBe('pm_bad_edit_args');
+    expect((err as NotAllowedError).detail).toBe('wrong_chain');
   });
 });
