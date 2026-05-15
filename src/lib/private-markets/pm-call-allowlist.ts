@@ -44,7 +44,12 @@ import { decodeFunctionData, type Address, type Hex } from 'viem';
 
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
-import { NotAllowedError } from '@/lib/aa-call-allowlist';
+import {
+  NotAllowedError,
+  assertPmCreateParamsShapeNoTreasury,
+  assertPmCreateParamsTreasuryExclusion,
+} from '@/lib/aa-call-allowlist';
+import type { PmCreateParamsTuple } from './abi-fragments';
 import { PM_MIN_STAKE_USDC_BASE_UNITS } from '@/lib/aa-constants';
 import type { SupportedAaChainId } from '@/lib/aa-config';
 
@@ -59,6 +64,8 @@ import {
   PM_CONFIRM_SELECTOR,
   PM_DISTRIBUTE_ABI,
   PM_DISTRIBUTE_SELECTOR,
+  PM_EDIT_METADATA_ABI,
+  PM_EDIT_METADATA_SELECTOR,
   PM_FINALIZE_ABI,
   PM_FINALIZE_SELECTOR,
   PM_FINALIZE_METADATA_ABI,
@@ -778,4 +785,117 @@ async function assertSingleArgCreatorAction(params: {
     safeAddressLower: normalizeAddressLower(args.safeAddress),
     nowSec: args.nowSec,
   });
+}
+
+// ── editMetadata validator (slice 1C-4) ────────────────────────────────────
+//
+// `editMetadata(uint256 marketId, CreateParams p)` lets the creator
+// rewrite a market's metadata BEFORE `stakingOpensAt`. The contract
+// gates:
+//
+//   m.creator == address(0)         revert MarketUnknown()
+//   msg.sender != m.creator         revert NotCreator()
+//   block.timestamp >= m.stakingOpensAt  revert StakingAlreadyOpen()
+//   m.shape != p.shape              revert WrongShape()
+//   _validateCreate(p)              (full createMarket shape validator)
+//
+// Stage labels (plan v8 Stage C):
+//   A. outer shape (chainId / target / value / calldata / selector)
+//   B. ABI decode (marketId, p)
+//   C. gating:
+//      - hydrate chain state
+//      - creator equality (plan v8 MAJ-1: both sides normalized)
+//      - state.shape === p.shape   (shape is IMMUTABLE on edit)
+//      - nowSec < state.stakingOpensAt (pre-staking window only)
+//      - assertPmCreateParamsShapeNoTreasury(p)   (full body validation)
+//      - assertPmCreateParamsTreasuryExclusion(p, treasury)
+//
+// editMetadata is sponsor-time-clock-relative (the stakingOpensAt gate
+// is "now must be before stakingOpensAt"); the validator takes `nowSec`
+// from the route's `getBlock({ blockTag: 'latest' }).timestamp` call.
+
+export async function assertPmEditMetadataCall(args: {
+  chainId: SupportedAaChainId;
+  safeAddress: Address;
+  call: CallTuple;
+  nowSec: bigint;
+  cache: SponsorMarketStateCache;
+}): Promise<void> {
+  // ── Stage A — outer shape ────────────────────────────────────────────────
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_edit_args', 'wrong_chain');
+  }
+  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_edit_args', 'wrong_target');
+  }
+  if (args.call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_edit_args', 'bad_value');
+  }
+  if (args.call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_edit_args', 'short_calldata');
+  }
+  if (args.call.data.slice(0, 10).toLowerCase() !== PM_EDIT_METADATA_SELECTOR) {
+    throw new NotAllowedError('pm_bad_edit_args', 'wrong_selector');
+  }
+
+  // ── Stage B — ABI decode ─────────────────────────────────────────────────
+  let decoded: {
+    functionName: 'editMetadata';
+    args: readonly [bigint, PmCreateParamsTuple];
+  };
+  try {
+    const result = decodeFunctionData({
+      abi: PM_EDIT_METADATA_ABI,
+      data: args.call.data,
+    });
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_edit_args', 'decode_failed');
+  }
+  const [marketId, p] = decoded.args;
+
+  // ── Stage C — hydrate + gates ────────────────────────────────────────────
+  const state = await hydrateMarketStateOrThrow({
+    chainId: args.chainId,
+    marketId,
+    cache: args.cache,
+  });
+
+  // Plan v8 MAJ-1 normalization. The cache stores `state.creator`
+  // lowercased; the safeAddress is normalized here. Mixed-case viem
+  // returns and lowercase session storage both converge before `===`.
+  const safeLower = normalizeAddressLower(args.safeAddress);
+  if (state.creator !== safeLower) {
+    throw new NotAllowedError('pm_bad_edit_not_creator');
+  }
+
+  // Shape is immutable on edit. Contract gate:
+  //   if (m.shape != p.shape) revert WrongShape();
+  if (state.shape !== p.shape) {
+    throw new NotAllowedError('pm_bad_edit_shape_mismatch');
+  }
+
+  // Pre-staking window. Contract gate:
+  //   if (block.timestamp >= m.stakingOpensAt) revert StakingAlreadyOpen();
+  // Validator mirrors the strict `<` so the equal-second boundary
+  // rejects (matches the contract's `>=` revert).
+  if (args.nowSec >= state.stakingOpensAt) {
+    throw new NotAllowedError('pm_bad_edit_window_closed');
+  }
+
+  // Full createMarket shape validation. Catches every per-field
+  // invariant (enum bounds, metadata sizes, option/participant/
+  // allowlist counts + duplicates, stake bounds, winners). Throws
+  // NotAllowedError with `pm_bad_create_args` / `pm_bad_create_metadata`
+  // / `pm_bad_create_timestamps` — these are intentionally surfaced
+  // through their createMarket reasons because the contract uses the
+  // same `_validateCreate` body. Operators see the same 403 surface
+  // for a malformed createMarket and a malformed editMetadata.
+  assertPmCreateParamsShapeNoTreasury(p);
+
+  // Treasury exclusion. Treasury cannot appear in participants /
+  // allowlist of the edited params (same as createMarket).
+  const treasury = normalizeAddressLower(await getPmTreasuryAddress());
+  assertPmCreateParamsTreasuryExclusion(p, treasury);
 }

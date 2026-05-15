@@ -866,6 +866,31 @@ export function assertCreateMarketShape(args: {
 
 const PM_ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
+/// Validate Stage 1 invariants on the decoded PM CreateParams tuple.
+/// No treasury, no clock, no RPC. Throws NotAllowedError on any
+/// failure. Exported so the editMetadata validator can reuse it
+/// without re-encoding the params back into createMarket-shaped
+/// calldata (editMetadata's selector is distinct; the createMarket
+/// stage entry points require the wrapping selector to match).
+export function assertPmCreateParamsShapeNoTreasury(
+  p: PmCreateParamsTuple,
+): void {
+  _assertPmCreateMarketSemanticsNoTreasury(p);
+}
+
+/// Validate Stage 2 treasury exclusion on the decoded PM CreateParams
+/// tuple. Pure sync. Exported so editMetadata can reuse the same
+/// treasury check that runs on createMarket. Treasury comparison is
+/// case-insensitive; the caller must have already resolved the
+/// treasury address (typically via the cached
+/// `getPmTreasuryAddress()` accessor).
+export function assertPmCreateParamsTreasuryExclusion(
+  p: PmCreateParamsTuple,
+  treasury: Address,
+): void {
+  _assertPmCreateMarketTreasuryExclusion(p, treasury);
+}
+
 /// Internal helper. Validates Stage 1 invariants on the decoded params.
 /// No treasury, no clock. Throws NotAllowedError on any failure.
 function _assertPmCreateMarketSemanticsNoTreasury(p: PmCreateParamsTuple): void {

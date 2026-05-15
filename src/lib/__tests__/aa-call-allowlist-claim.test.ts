@@ -174,37 +174,44 @@ describe('CLAIM_SELECTOR', () => {
 // ── Send-time wrapper validation ───────────────────────────────────────
 
 describe('assertSponsoredCallData (extended for claim)', () => {
-  it('accepts a wrapper containing a valid claim call', () => {
+  it('accepts a wrapper containing a valid claim call', async () => {
     const wrapperData = wrapOpZero({
       to: MAKO_ADDRESS,
       value: 0n,
       data: encodeClaim(42n),
     });
-    expect(() =>
+    // async assertion: `.resolves.toBeUndefined()` rather than
+    // `.not.toThrow()` since assertSponsoredCallData returns a Promise.
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapperData,
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects wrapper targeting USDC for the claim selector (wrong inner.to)', () => {
+  it('rejects wrapper targeting USDC for the claim selector (wrong inner.to)', async () => {
     // The wrapper-level dispatch keys off `inner.to` first. A claim
     // selector pointed at USDC would route to the USDC-transfer branch
     // and fail there. Either way, the call is rejected; the test pins
     // that the cross-target combination does not leak through.
+    //
+    // assertSponsoredCallData has been async since Phase 2C-1 (PM
+    // dispatcher awaits getPmTreasuryAddress). Tests must use
+    // `.rejects.toBeInstanceOf(...)` so the Promise rejection is
+    // caught — `.toThrow(...)` only handles synchronous throws.
     const wrapperData = wrapOpZero({
       to: USDC_ADDRESS,
       value: 0n,
       data: encodeClaim(7n),
     });
-    expect(() =>
+    await expect(
       assertSponsoredCallData({
         chainId: MONAD_TESTNET_ID,
         safeAddress: SAFE,
         callData: wrapperData,
       }),
-    ).toThrow(NotAllowedError);
+    ).rejects.toBeInstanceOf(NotAllowedError);
   });
 });
