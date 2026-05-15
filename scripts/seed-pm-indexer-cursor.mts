@@ -22,10 +22,13 @@ import { createPublicClient, http } from 'viem';
 import postgres from 'postgres';
 
 import { monadTestnet, MONAD_TESTNET_ID } from '../src/lib/chain.js';
+import { logResolvedTarget, requireDevStage } from './_smoke-guard.mjs';
 
 const REWIND_BUFFER = 5_000n;
 
 async function main() {
+  requireDevStage('seed-pm-indexer-cursor');
+
   const address = process.env.NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS;
   if (!address) {
     console.error('Missing NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS in .env.local');
@@ -42,6 +45,12 @@ async function main() {
 
   const rpcUrl =
     process.env.MONAD_RPC_URL || monadTestnet.rpcUrls.default.http[0];
+
+  logResolvedTarget('seed-pm-indexer-cursor', {
+    dbUrl: connectionString,
+    contractAddress: address,
+    rpcUrl,
+  });
   const publicClient = createPublicClient({
     chain: monadTestnet,
     transport: http(rpcUrl),

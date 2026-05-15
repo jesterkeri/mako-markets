@@ -108,7 +108,7 @@ export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
             onClick={() => onChange('viewMode', 'link_only')}
             className={`py-3 mako-label rounded-xl border-2 border-ink transition-all ${
               state.viewMode === 'link_only'
-                ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
                 : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
             }`}
           >
@@ -119,7 +119,7 @@ export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
             onClick={() => onChange('viewMode', 'public')}
             className={`py-3 mako-label rounded-xl border-2 border-ink transition-all ${
               state.viewMode === 'public'
-                ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
                 : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
             }`}
           >
@@ -140,7 +140,7 @@ export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
             onClick={() => onChange('participationMode', 'open')}
             className={`py-3 mako-label rounded-xl border-2 border-ink transition-all ${
               state.participationMode === 'open'
-                ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
                 : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
             }`}
           >
@@ -151,7 +151,7 @@ export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
             onClick={() => onChange('participationMode', 'allowlisted')}
             className={`py-3 mako-label rounded-xl border-2 border-ink transition-all ${
               state.participationMode === 'allowlisted'
-                ? 'bg-ink text-paper shadow-[4px_4px_0_0_#D94A3D] -translate-y-[2px] -translate-x-[2px]'
+                ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
                 : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
             }`}
           >

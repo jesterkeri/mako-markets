@@ -29,8 +29,11 @@ import postgres from 'postgres';
 import { monadTestnet, MONAD_TESTNET_ID } from '../src/lib/chain.js';
 import * as schema from '../src/db/schema.js';
 import { runPmMaintenanceCron } from '../src/lib/private-markets/cron.js';
+import { logResolvedTarget, requireDevStage } from './_smoke-guard.mjs';
 
 async function main() {
+  requireDevStage('run-pm-maintenance-once');
+
   const address = process.env.NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS;
   if (!address) {
     console.error('Missing NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS in .env.local');
@@ -51,6 +54,12 @@ async function main() {
   const publicClient = createPublicClient({
     chain: monadTestnet,
     transport: http(rpcUrl),
+  });
+
+  logResolvedTarget('run-pm-maintenance-once', {
+    dbUrl: connectionString,
+    contractAddress: address,
+    rpcUrl,
   });
 
   console.log('================================================');

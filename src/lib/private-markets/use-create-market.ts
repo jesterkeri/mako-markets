@@ -189,7 +189,7 @@ export function usePmCreateMarket(): UsePmCreateMarket {
         // ── Wallet branch ────────────────────────────────────────────
         if (user.authType === 'wallet') {
           if (!publicClient) {
-            throw mkErr('unknown', 'RPC CLIENT NOT READY — RETRY');
+            throw mkErr('unknown', 'RPC CLIENT NOT READY: RETRY');
           }
 
           // Step 0a: identity guard.
@@ -304,7 +304,7 @@ export function usePmCreateMarket(): UsePmCreateMarket {
               timeout: 90_000,
             });
           } catch {
-            throw mkErr('receipt_timeout', 'TX TIMED OUT — CHECK EXPLORER', {
+            throw mkErr('receipt_timeout', 'TX TIMED OUT, CHECK EXPLORER', {
               draft,
             });
           }
@@ -375,7 +375,7 @@ export function usePmCreateMarket(): UsePmCreateMarket {
             });
           }
           if (outcome.kind === 'expired') {
-            throw mkErr('send_expired', 'SIGN TIMED OUT — TRY AGAIN', {
+            throw mkErr('send_expired', 'SIGN TIMED OUT, TRY AGAIN', {
               draft,
             });
           }
@@ -396,14 +396,14 @@ export function usePmCreateMarket(): UsePmCreateMarket {
           if (outcome.kind === 'in_progress') {
             throw mkErr(
               'send_in_progress',
-              `IN PROGRESS — RETRY IN ${outcome.retryAfterSeconds}S`,
+              `IN PROGRESS: RETRY IN ${outcome.retryAfterSeconds}S`,
               { draft },
             );
           }
           if (outcome.kind === 'manual_review') {
             throw mkErr(
               'send_manual_review',
-              'OPERATOR REVIEW REQUIRED — CONTACT SUPPORT',
+              'OPERATOR REVIEW REQUIRED: CONTACT SUPPORT',
               { draft },
             );
           }
@@ -414,7 +414,7 @@ export function usePmCreateMarket(): UsePmCreateMarket {
             // user can revisit /m/<slug> later.
             throw mkErr(
               'send_submitted_pending',
-              'TX SUBMITTED — RECEIPT STILL PENDING; CHECK BACK',
+              'TX SUBMITTED: RECEIPT STILL PENDING; CHECK BACK',
               { draft },
             );
           }

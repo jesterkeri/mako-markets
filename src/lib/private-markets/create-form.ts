@@ -172,13 +172,30 @@ function participationModeToInt(p: ParticipationMode): 0 | 1 {
   return p === 'open' ? 0 : 1;
 }
 
+/// Strict regex for a USDC display amount: unsigned, optional decimal
+/// of 1..6 digits. Rejects:
+///   - signs (+/-) — viem.parseUnits silently accepts negatives
+///   - scientific notation ('1e10')
+///   - >6 decimal digits — viem.parseUnits silently rounds away precision
+///   - leading/trailing whitespace, empty fractional ('1.')
+///   - hex / radix prefixes
+const USDC_DISPLAY_RE = /^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/;
+
 /// Parse a USDC display string into 6-decimal base units. Returns null
 /// on invalid input. Empty string and '0' both resolve to 0n.
+///
+/// Codex r1 MAJ-2: viem.parseUnits is too permissive — it accepts
+/// negatives and silently rounds over-precision values. We gate it
+/// behind a strict regex so anything that reaches parseUnits is
+/// already known-good.
 function parseUsdcDisplay(display: string): bigint | null {
   const trimmed = display.trim();
-  if (trimmed === '' || trimmed === '0') return 0n;
+  if (trimmed === '') return 0n;
+  if (!USDC_DISPLAY_RE.test(trimmed)) return null;
   try {
-    return parseUnits(trimmed, 6);
+    const parsed = parseUnits(trimmed, 6);
+    if (parsed < 0n) return null; // belt + suspenders; regex precludes
+    return parsed;
   } catch {
     return null;
   }

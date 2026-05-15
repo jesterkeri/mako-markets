@@ -33,7 +33,7 @@ export function FriendlyForm({ state, errors, onChange, onSubmit, phase, error, 
         {/* Header - No Box */}
         <div className="mb-12">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-3 h-3 bg-mako-red rounded-full animate-pulse shadow-[0_0_8px_rgba(217,74,61,0.6)]"></div>
+            <div className="w-3 h-3 bg-mako-red rounded-full animate-pulse shadow-mako-pulse"></div>
             <span className="font-mono text-xs tracking-[0.2em] uppercase opacity-60 text-canvas-fg">Market Spec</span>
           </div>
           <h2 className="font-display font-black text-6xl xl:text-7xl uppercase tracking-tighter leading-[0.85] mb-6 text-canvas-fg">

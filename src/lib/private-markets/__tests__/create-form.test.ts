@@ -454,6 +454,89 @@ describe('validatePmCreateForm — friendly shape', () => {
     );
     expect(e.perStakeMin).toMatch(/INVALID/);
   });
+
+  // Codex r1 MAJ-2: strict USDC parser rejects values viem.parseUnits
+  // would silently accept (negatives, signs, scientific notation,
+  // over-precision rounding).
+  it('rejects negative USDC values', () => {
+    const e = validatePmCreateForm(
+      { ...validFriendly(), perStakeMin: '-1' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perStakeMin).toMatch(/INVALID/);
+  });
+  it('rejects leading-plus signed USDC values', () => {
+    const e = validatePmCreateForm(
+      { ...validFriendly(), perStakeMin: '+1' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perStakeMin).toMatch(/INVALID/);
+  });
+  it('rejects scientific-notation USDC values', () => {
+    const e = validatePmCreateForm(
+      { ...validFriendly(), perStakeMin: '1e6' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perStakeMin).toMatch(/INVALID/);
+  });
+  it('rejects USDC values with >6 decimal digits (over-precision rounding)', () => {
+    const e = validatePmCreateForm(
+      { ...validFriendly(), perStakeMin: '0.0099999' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perStakeMin).toMatch(/INVALID/);
+  });
+  it('rejects USDC value with trailing dot ("1.")', () => {
+    const e = validatePmCreateForm(
+      { ...validFriendly(), perStakeMin: '1.' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perStakeMin).toMatch(/INVALID/);
+  });
+  it('rejects hex-prefixed USDC value', () => {
+    const e = validatePmCreateForm(
+      { ...validFriendly(), perStakeMin: '0x10' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perStakeMin).toMatch(/INVALID/);
+  });
+  it('accepts exactly 6 decimal digits', () => {
+    const e = validatePmCreateForm(
+      { ...validFriendly(), perStakeMin: '0.010000' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perStakeMin).toBeUndefined();
+  });
+});
+
+// ─── Strict USDC parser — Prize Pool perWalletCumulativeMax ──────────────
+//
+// Codex r1 MAJ-2 specifically called out perWalletCumulativeMax on
+// Prize Pool, which only checked `null` before the strict-parser swap.
+// These tests pin that the strict parser now rejects negatives /
+// scientific / over-precision on that field too.
+describe('validatePmCreateForm — prize_pool perWalletCumulativeMax strict parsing', () => {
+  it('rejects negative perWalletCumulativeMax', () => {
+    const e = validatePmCreateForm(
+      { ...validPrizePool(), perWalletCumulativeMax: '-100' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perWalletCumulativeMax).toMatch(/INVALID/);
+  });
+  it('rejects over-precision perWalletCumulativeMax', () => {
+    const e = validatePmCreateForm(
+      { ...validPrizePool(), perWalletCumulativeMax: '5.0000001' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perWalletCumulativeMax).toMatch(/INVALID/);
+  });
+  it('accepts perWalletCumulativeMax = 0 (no cap)', () => {
+    const e = validatePmCreateForm(
+      { ...validPrizePool(), perWalletCumulativeMax: '0' },
+      { nowSeconds: NOW },
+    );
+    expect(e.perWalletCumulativeMax).toBeUndefined();
+  });
 });
 
 // ─── Open Vote shape ───────────────────────────────────────────────────────

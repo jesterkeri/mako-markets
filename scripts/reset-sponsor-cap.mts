@@ -15,13 +15,19 @@ loadEnv({ path: '.env' });
 
 import postgres from 'postgres';
 
+import { logResolvedTarget, requireDevStage } from './_smoke-guard.mjs';
+
 async function main() {
+  requireDevStage('reset-sponsor-cap');
+
   const connectionString =
     process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
   if (!connectionString) {
     console.error('Missing DATABASE_URL or POSTGRES_URL in .env.local');
     process.exit(1);
   }
+
+  logResolvedTarget('reset-sponsor-cap', { dbUrl: connectionString });
 
   const sql = postgres(connectionString, { prepare: false });
   try {

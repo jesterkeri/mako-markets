@@ -145,8 +145,12 @@
   --shadow-brutal: 4px 4px 0 0 var(--mako-shadow);
   --shadow-brutal-sm: 2px 2px 0 0 var(--mako-shadow);
   --shadow-brutal-lg: 6px 6px 0 0 var(--mako-shadow);
-  --shadow-brutal-red: 4px 4px 0 0 #D94A3D;
-  --shadow-brutal-signal: 4px 4px 0 0 #FACC15;
+  /* Codex r1 MIN-2: reference brand color tokens rather than hard-coding
+     the hex so a future palette tweak flows through automatically. */
+  --shadow-brutal-red: 4px 4px 0 0 var(--color-mako-red);
+  --shadow-brutal-signal: 4px 4px 0 0 var(--color-signal);
+  /* Soft outer glow over mako-red for indicator dots / pulses. */
+  --shadow-mako-pulse: 0 0 8px color-mix(in srgb, var(--color-mako-red) 60%, transparent);
 }
 
 html {

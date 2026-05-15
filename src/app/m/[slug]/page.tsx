@@ -97,24 +97,40 @@ export default async function MarketStubPage({ params }: MarketPageProps) {
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-y-2 border-ink py-4">
-          <div className="flex flex-col">
-            <span className="text-sm font-bold uppercase text-muted">
-              OPENS
-            </span>
-            <span className="font-mono font-bold">
-              {formatTimestamp(market.stakingOpensAt)}
-            </span>
+        {/* Codex r1 MIN-1: only render timestamps on confirmed rows.
+            Pending rows can carry placeholder dates (epoch 0) until the
+            confirmed-flip pass writes the real stakingOpensAt/closeAt
+            from the chain event. Showing those would mislead the user
+            during the indexer-lag window post-create. */}
+        {market.createStatus === 'confirmed' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-y-2 border-ink py-4">
+            <div className="flex flex-col">
+              <span className="text-sm font-bold uppercase text-muted">
+                OPENS
+              </span>
+              <span className="font-mono font-bold">
+                {formatTimestamp(market.stakingOpensAt)}
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-bold uppercase text-muted">
+                CLOSES
+              </span>
+              <span className="font-mono font-bold">
+                {formatTimestamp(market.closeAt)}
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col">
+        ) : (
+          <div className="border-y-2 border-ink py-4">
             <span className="text-sm font-bold uppercase text-muted">
-              CLOSES
+              OPENS / CLOSES
             </span>
-            <span className="font-mono font-bold">
-              {formatTimestamp(market.closeAt)}
-            </span>
+            <div className="font-mono font-bold text-muted">
+              AWAITING INDEXER CONFIRMATION
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="pt-4">
           <CopyLinkButton url={shareUrl} />
