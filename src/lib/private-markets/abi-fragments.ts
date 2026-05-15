@@ -66,6 +66,22 @@ export const PM_CREATE_MARKET_SELECTOR: Hex = toFunctionSelector(
   PM_CREATE_MARKET_ABI[0],
 );
 
+/// PM treasury view function — immutable, set in constructor. Used by
+/// /create/private to feed validatePmCreateForm so treasury-in-allowlist
+/// + treasury-in-participants are blocked at submit time (Codex r2 MAJ-2).
+/// Server-side reads use src/lib/private-markets/treasury.ts (memoized);
+/// the client uses this ABI fragment via wagmi's useReadContract for a
+/// single chain-direct lookup on /create/private mount.
+export const PM_TREASURY_ABI = [
+  {
+    type: 'function',
+    name: 'treasury',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+  },
+] as const;
+
 /// Browser-and-server-shared shape of CreateParams. Object form (not
 /// positional tuple) because viem's encodeFunctionData accepts either
 /// and the named form is far less footgun-prone for callers. Field

@@ -7,11 +7,32 @@ interface CommonFieldsProps {
   onChange: <K extends keyof PmCreateFormState>(key: K, value: PmCreateFormState[K]) => void;
 }
 
+/// Codex r2 MIN-1: show the user's resolved local timezone next to the
+/// datetime pickers so it's unambiguous what timezone the typed value
+/// is interpreted in. /m/[slug] displays UTC; this label closes the
+/// loop. Falls back to a UTC-offset string if Intl.DateTimeFormat
+/// can't resolve a named zone (very old browsers).
+function getLocalTimezoneLabel(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) return tz;
+  } catch {
+    /* fall through */
+  }
+  const offsetMin = -new Date().getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `UTC${sign}${hh}:${mm}`;
+}
+
 export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
   const titleBytes = byteLength(state.title || '');
   const descBytes = byteLength(state.description || '');
   const urlBytes = byteLength(state.streamUrl || '');
   const allowlistCount = state.allowlist ? state.allowlist.length : 0;
+  const tzLabel = getLocalTimezoneLabel();
 
   return (
     <>
@@ -76,7 +97,12 @@ export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
       <div className="px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* STAKING OPENS AT */}
         <div className="flex flex-col">
-          <label className="mako-label text-muted mb-3">STAKING OPENS AT</label>
+          <div className="flex justify-between items-baseline mb-3">
+            <label className="mako-label text-muted">STAKING OPENS AT</label>
+            {/* Codex r2 MIN-1: surface the user's tz so they know
+                what zone they're typing in. /m/[slug] displays UTC. */}
+            <span className="mako-label text-subtle text-[10px]">{tzLabel}</span>
+          </div>
           <DateTimePicker
             value={state.stakingOpensAtIso}
             onChange={(next) => onChange('stakingOpensAtIso', next)}
@@ -88,7 +114,10 @@ export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
 
         {/* CLOSES AT */}
         <div className="flex flex-col">
-          <label className="mako-label text-muted mb-3">CLOSES AT</label>
+          <div className="flex justify-between items-baseline mb-3">
+            <label className="mako-label text-muted">CLOSES AT</label>
+            <span className="mako-label text-subtle text-[10px]">{tzLabel}</span>
+          </div>
           <DateTimePicker
             value={state.closeAtIso}
             onChange={(next) => onChange('closeAtIso', next)}

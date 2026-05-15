@@ -23,13 +23,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useAccount } from 'wagmi';
+import { useAccount, useReadContract } from 'wagmi';
+import type { Address } from 'viem';
 
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { WalletDriftBanner } from '@/components/WalletDriftBanner';
+import { MONAD_TESTNET_ID } from '@/lib/chain';
+import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
 import { useUser } from '@/lib/use-user';
 import { isWalletDrifted } from '@/lib/wallet-drift';
+import { PM_TREASURY_ABI } from '@/lib/private-markets/abi-fragments';
 import {
   initialFormStateForShape,
   validatePmCreateForm,
@@ -82,17 +86,46 @@ export default function CreatePrivateMarketPage() {
     setFormState((prev) => ({ ...prev, [key]: value }));
   };
 
+  // Codex r2 MAJ-2: read the PM treasury address once on mount so the
+  // validator can reject treasury-in-allowlist and treasury-in-Prize-
+  // Pool-participants at submit time. Without this, the validator
+  // silently skipped those checks and the contract revert was the
+  // first place the user found out — after a draft slot had already
+  // been allocated. Treasury is immutable per contract (set in the
+  // constructor, no setter), so a single chain read is authoritative.
+  const treasuryRead = useReadContract({
+    address: PM_CONTRACT_ADDRESS,
+    abi: PM_TREASURY_ABI,
+    functionName: 'treasury',
+    chainId: MONAD_TESTNET_ID,
+    query: {
+      // Treasury never changes — cache it forever within the session.
+      staleTime: Infinity,
+      gcTime: Infinity,
+    },
+  });
+  const treasuryAddress: Address | null = treasuryRead.data
+    ? (treasuryRead.data as Address)
+    : null;
+  const treasuryLoading = treasuryRead.isLoading;
+  const treasuryError = treasuryRead.isError;
+
   // Validator runs on every render — cheap, pure, no fetch. The form
   // components display per-field errors and compute submit enablement.
   const errors = useMemo(
-    () => validatePmCreateForm(formState),
-    [formState],
+    () => validatePmCreateForm(formState, { treasuryAddress }),
+    [formState, treasuryAddress],
   );
 
   const drifted = isWalletDrifted(user ?? null, connectedWallet);
   const signedIn = Boolean(user);
+  // Codex r2 MAJ-2: gate submit on treasury being known. While loading,
+  // the validator can't enforce the treasury exclusion checks, so
+  // letting submit through would re-introduce the bug we're fixing.
+  const submitBlockedByTreasury = treasuryLoading || treasuryError;
 
   const onSubmit = () => {
+    if (submitBlockedByTreasury) return;
     void submit(formState);
   };
 
@@ -169,6 +202,27 @@ export default function CreatePrivateMarketPage() {
             </div>
           )}
 
+          {/* Codex r2 MAJ-2: surface treasury fetch state when it's
+              blocking submit. Hidden on the happy path so the rest of
+              the form stays uncluttered. */}
+          {shape !== null && signedIn && treasuryError && (
+            <div className="border-2 border-ink bg-paper p-4 shadow-brutal space-y-2">
+              <p className="font-bold uppercase">
+                TREASURY CHECK UNAVAILABLE
+              </p>
+              <p className="text-sm">
+                The on-chain treasury address could not be fetched. This
+                is required to validate the allowlist + participants.
+                Refresh the page to retry.
+              </p>
+            </div>
+          )}
+          {shape !== null && signedIn && treasuryLoading && !treasuryError && (
+            <div className="border-2 border-ink bg-surface-elevated p-3 text-sm font-bold uppercase">
+              VERIFYING TREASURY ADDRESS...
+            </div>
+          )}
+
           {/* Shape form — only renders after a shape is picked. */}
         {shape === 'friendly' && (
           <FriendlyForm
@@ -180,6 +234,14 @@ export default function CreatePrivateMarketPage() {
             error={error}
             drifted={drifted}
             signedIn={signedIn}
+            submitBlocked={submitBlockedByTreasury}
+            submitBlockedReason={
+              treasuryError
+                ? 'TREASURY CHECK UNAVAILABLE'
+                : treasuryLoading
+                  ? 'VERIFYING TREASURY...'
+                  : null
+            }
           />
         )}
         {shape === 'open_vote' && (
@@ -192,6 +254,14 @@ export default function CreatePrivateMarketPage() {
             error={error}
             drifted={drifted}
             signedIn={signedIn}
+            submitBlocked={submitBlockedByTreasury}
+            submitBlockedReason={
+              treasuryError
+                ? 'TREASURY CHECK UNAVAILABLE'
+                : treasuryLoading
+                  ? 'VERIFYING TREASURY...'
+                  : null
+            }
           />
         )}
           {shape === 'prize_pool' && (
@@ -204,6 +274,14 @@ export default function CreatePrivateMarketPage() {
               error={error}
               drifted={drifted}
               signedIn={signedIn}
+              submitBlocked={submitBlockedByTreasury}
+              submitBlockedReason={
+                treasuryError
+                  ? 'TREASURY CHECK UNAVAILABLE'
+                  : treasuryLoading
+                    ? 'VERIFYING TREASURY...'
+                    : null
+              }
             />
           )}
         </div>

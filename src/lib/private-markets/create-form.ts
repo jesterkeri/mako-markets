@@ -201,14 +201,35 @@ function parseUsdcDisplay(display: string): bigint | null {
   }
 }
 
+/// Format a local Date back to the YYYY-MM-DDTHH:MM shape the picker
+/// emits. Used by parseIsoToUnixSeconds to detect normalized values
+/// (DST gap: e.g. 2024-03-10T02:30 in US/Eastern, which `new Date()`
+/// silently shifts to 03:30). Codex r2 MIN-1.
+function formatLocalIsoMinute(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
 /// Parse a `datetime-local` ISO string into Unix seconds. Returns null
 /// on invalid input. Browser supplies local-time ISO without timezone
 /// suffix; `new Date(iso)` interprets it as local time, which is what
 /// the user typed.
+///
+/// Codex r2 MIN-1: reject normalized parses. If
+/// formatLocalIsoMinute(new Date(iso)) !== iso, the input named a
+/// non-existent local time (DST spring-forward gap) and `new Date`
+/// silently rolled it forward. Treat as invalid so the user sees an
+/// error rather than a silently-different timestamp.
 function parseIsoToUnixSeconds(iso: string): number | null {
   if (!iso || iso.trim() === '') return null;
-  const ms = new Date(iso).getTime();
+  const trimmed = iso.trim();
+  const date = new Date(trimmed);
+  const ms = date.getTime();
   if (!Number.isFinite(ms)) return null;
+  if (formatLocalIsoMinute(date) !== trimmed) return null;
   return Math.floor(ms / 1000);
 }
 

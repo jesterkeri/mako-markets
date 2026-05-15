@@ -11,14 +11,20 @@ interface ShapeFormProps {
   error: PmCreateError | null;
   drifted: boolean;
   signedIn: boolean;
+  /// Codex r2 MAJ-2: external blocker (e.g. treasury fetch loading or
+  /// errored). When true, the submit button is disabled and the label
+  /// reflects the blocker so the user understands why submit is gated.
+  submitBlocked?: boolean;
+  submitBlockedReason?: string | null;
 }
 
-export function FriendlyForm({ state, errors, onChange, onSubmit, phase, error, drifted, signedIn }: ShapeFormProps) {
+export function FriendlyForm({ state, errors, onChange, onSubmit, phase, error, drifted, signedIn, submitBlocked, submitBlockedReason }: ShapeFormProps) {
   const hasErrors = Object.keys(errors).length > 0;
-  const submitDisabled = !signedIn || drifted || hasErrors || (phase !== 'idle' && phase !== 'error');
+  const submitDisabled = !signedIn || drifted || hasErrors || (phase !== 'idle' && phase !== 'error') || Boolean(submitBlocked);
 
   let buttonLabel = 'CREATE FRIENDLY MARKET';
   if (!signedIn) buttonLabel = 'SIGN IN TO CREATE';
+  else if (submitBlocked && submitBlockedReason) buttonLabel = submitBlockedReason;
   else if (phase === 'preparing') buttonLabel = 'PREPARING...';
   else if (phase === 'sponsoring') buttonLabel = 'SPONSORING USER OP...';
   else if (phase === 'wallet_drafting') buttonLabel = 'RESERVING SLUG...';

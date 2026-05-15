@@ -574,4 +574,79 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     const result = await runCreatePrivateMarket(ARGS);
     expect(hasPmDraftRef(result)).toBe(false);
   });
+
+  // ── Codex r2 MAJ-1: post-draft transport throws preserve pmDraft ─────
+  //
+  // Each helper resolves to a typed RunOutcome — never throws — after
+  // /api/pm/markets/draft has succeeded. Tests force fetch / Magic
+  // signer to throw and assert pmDraft is attached so the UI can
+  // deep-link /m/<slug> for retry/recovery.
+
+  it('sponsor fetch throws → sponsor_failed step=sponsor with pmDraft', async () => {
+    enqueue({ status: 200, body: draftBodyStub() });
+    // Don't enqueue a sponsor response — let the unstubbed fetch throw
+    // via the "unexpected fetch" path in the global mock. But the
+    // mock throws synchronously inside the fetch impl; that throw IS
+    // what we're simulating (transport / network failure).
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.step).toBe('sponsor');
+    expect(result.error).toBe('sponsor_transport_failed');
+    expectPmDraftMatchesStub(result);
+  });
+
+  it('Magic sign throws (user rejected) → send_failed sign_rejected with pmDraft', async () => {
+    enqueue({ status: 200, body: draftBodyStub() });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    mocks.signSafeOpHash.mockRejectedValueOnce(
+      new Error('user rejected the request'),
+    );
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.error).toBe('sign_rejected');
+    expectPmDraftMatchesStub(result);
+  });
+
+  it('Magic sign throws (network) → send_failed sign_failed with pmDraft', async () => {
+    enqueue({ status: 200, body: draftBodyStub() });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    mocks.signSafeOpHash.mockRejectedValueOnce(
+      new Error('network connection lost'),
+    );
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.error).toBe('sign_failed');
+    expectPmDraftMatchesStub(result);
+  });
+
+  it('send fetch throws → send_failed send_transport_failed with pmDraft', async () => {
+    enqueue({ status: 200, body: draftBodyStub() });
+    enqueue({ status: 200, body: sponsoredBodyStub() });
+    // Sign succeeds; no third response enqueued — fetch on send
+    // throws via the "unexpected fetch" path.
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.error).toBe('send_transport_failed');
+    expectPmDraftMatchesStub(result);
+  });
+
+  it('draft fetch throws → sponsor_failed step=draft with NO pmDraft', async () => {
+    // No draft response enqueued.
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.step).toBe('draft');
+    expect(result.error).toBe('draft_transport_failed');
+    // Pre-draft failure: pmDraft must be absent.
+    expect(hasPmDraftRef(result)).toBe(false);
+  });
 });

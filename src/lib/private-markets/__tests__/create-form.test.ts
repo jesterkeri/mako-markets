@@ -539,6 +539,56 @@ describe('validatePmCreateForm — prize_pool perWalletCumulativeMax strict pars
   });
 });
 
+// ─── Codex r2 MIN-1: DST / normalized-datetime rejection ─────────────────
+//
+// `new Date('YYYY-MM-DDTHH:MM')` silently rolls invalid local times
+// into the next valid moment (Feb 29 in non-leap years, DST spring-
+// forward gap). parseIsoToUnixSeconds now reformats the parsed Date
+// back into the same shape and rejects any input that didn't survive
+// the round-trip. Without that check, the form would accept a value
+// for a time the user named but a market would be created at a
+// different time than they thought.
+describe('validatePmCreateForm — normalized datetime rejection (Codex r2 MIN-1)', () => {
+  it('rejects Feb 29 in a non-leap year (silently rolls to Mar 1)', () => {
+    // 2023 is not a leap year; new Date('2023-02-29T12:00') → Mar 1.
+    const e = validatePmCreateForm(
+      {
+        ...validFriendly(),
+        stakingOpensAtIso: '2023-02-29T12:00',
+        closeAtIso: '2023-02-29T13:00',
+      },
+      { nowSeconds: NOW },
+    );
+    // Both fields normalize, both reject as REQUIRED (the parse
+    // returns null, which the existing branch maps to REQUIRED).
+    expect(e.stakingOpensAtIso).toBeDefined();
+    expect(e.closeAtIso).toBeDefined();
+  });
+
+  it('rejects month 13 (silently rolls into next year)', () => {
+    // new Date('2030-13-01T12:00') is implementation-defined but
+    // commonly Invalid Date OR Jan 2031. The parser MUST reject
+    // either outcome.
+    const e = validatePmCreateForm(
+      {
+        ...validFriendly(),
+        stakingOpensAtIso: '2030-13-01T12:00',
+        closeAtIso: '2030-13-01T13:00',
+      },
+      { nowSeconds: NOW },
+    );
+    expect(e.stakingOpensAtIso).toBeDefined();
+    expect(e.closeAtIso).toBeDefined();
+  });
+
+  it('accepts a normal datetime that round-trips cleanly', () => {
+    // Sanity: the round-trip check does NOT reject a valid input.
+    const e = validatePmCreateForm(validFriendly(), { nowSeconds: NOW });
+    expect(e.stakingOpensAtIso).toBeUndefined();
+    expect(e.closeAtIso).toBeUndefined();
+  });
+});
+
 // ─── Open Vote shape ───────────────────────────────────────────────────────
 
 describe('validatePmCreateForm — open_vote shape', () => {

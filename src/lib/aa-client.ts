@@ -1048,13 +1048,45 @@ export async function runCreatePrivateMarket(
     clientNonce,
   };
 
+  // Codex r2 MAJ-1: encode callData BEFORE allocating the draft. If the
+  // ABI fragment / params shape mismatch is going to throw, it does so
+  // without burning a slug + pending DB row.
+  let callData: Hex;
+  try {
+    callData = encodeFunctionData({
+      abi: PM_CREATE_MARKET_ABI,
+      functionName: 'createMarket',
+      args: [paramsWithNonce],
+    });
+  } catch (err) {
+    return {
+      kind: 'sponsor_failed',
+      step: 'draft',
+      status: 0,
+      error: 'encode_failed',
+      detail: (err as Error)?.message,
+    };
+  }
+
   // (2) Draft endpoint — reserves slug + inserts pending row.
-  const draft = await postJson('/api/pm/markets/draft', {
-    chainId: args.chainId,
-    contractAddress: PM_CONTRACT_ADDRESS,
-    shape: shapeEnumToString(paramsWithNonce.shape),
-    clientNonce,
-  });
+  // Codex r2 MAJ-1: catch transport throws too, not just non-2xx.
+  let draft;
+  try {
+    draft = await postJson('/api/pm/markets/draft', {
+      chainId: args.chainId,
+      contractAddress: PM_CONTRACT_ADDRESS,
+      shape: shapeEnumToString(paramsWithNonce.shape),
+      clientNonce,
+    });
+  } catch (err) {
+    return {
+      kind: 'sponsor_failed',
+      step: 'draft',
+      status: 0,
+      error: 'draft_transport_failed',
+      detail: (err as Error)?.message,
+    };
+  }
   if (!draft.ok) {
     const draftBody = draft.body as { error?: string; detail?: unknown };
     return {
@@ -1080,14 +1112,11 @@ export async function runCreatePrivateMarket(
     pendingDbId: draftBody.pendingDbId,
   };
 
-  // (3) Encode createMarket callData.
-  const callData = encodeFunctionData({
-    abi: PM_CREATE_MARKET_ABI,
-    functionName: 'createMarket',
-    args: [paramsWithNonce],
-  });
-
   // (4) Sponsor.
+  // Codex r2 MAJ-1: every post-draft operation must return a typed
+  // outcome with pmDraft attached, never throw. fetch can throw on
+  // network failure / DNS error / aborted request; JSON parse can
+  // throw on a malformed response body.
   const body: SponsorRequestBody = {
     kind: 'pm_create_market',
     chainId: args.chainId,
@@ -1097,7 +1126,19 @@ export async function runCreatePrivateMarket(
       data: callData,
     },
   };
-  const sponsor = await postJson('/api/aa/sponsor', body);
+  let sponsor;
+  try {
+    sponsor = await postJson('/api/aa/sponsor', body);
+  } catch (err) {
+    return {
+      kind: 'sponsor_failed',
+      step: 'sponsor',
+      status: 0,
+      error: 'sponsor_transport_failed',
+      detail: (err as Error)?.message,
+      pmDraft,
+    };
+  }
   if (!sponsor.ok) {
     return {
       kind: 'sponsor_failed',
@@ -1112,20 +1153,49 @@ export async function runCreatePrivateMarket(
   const sponsored = sponsor.body as SponsorResponse;
 
   // (5) Magic signing — over the SafeOp hash + validity window.
+  // Codex r2 MAJ-1: Magic.rpcProvider.request throws on user rejection
+  // + provider network errors. Surface as send_failed with pmDraft so
+  // the UI can offer "Retry at /m/<slug>".
   const validAfter = BigInt(sponsored.validAfter);
   const validUntil = BigInt(sponsored.validUntil);
-  const signature = await signSafeOpHash({
-    hash: sponsored.safeOpHash,
-    magicEoa: args.magicEoa,
-    validAfter,
-    validUntil,
-  });
+  let signature;
+  try {
+    signature = await signSafeOpHash({
+      hash: sponsored.safeOpHash,
+      magicEoa: args.magicEoa,
+      validAfter,
+      validUntil,
+    });
+  } catch (err) {
+    const msg = ((err as Error)?.message ?? '').toLowerCase();
+    const isReject =
+      msg.includes('user rejected') || msg.includes('user denied');
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: isReject ? 'sign_rejected' : 'sign_failed',
+      detail: (err as Error)?.message,
+      pmDraft,
+    };
+  }
 
   // (6) Send.
-  const send = await postJson('/api/aa/send', {
-    pendingUserOpId: sponsored.pendingUserOpId,
-    signature,
-  });
+  // Codex r2 MAJ-1: same transport-throw protection as the sponsor leg.
+  let send;
+  try {
+    send = await postJson('/api/aa/send', {
+      pendingUserOpId: sponsored.pendingUserOpId,
+      signature,
+    });
+  } catch (err) {
+    return {
+      kind: 'send_failed',
+      status: 0,
+      error: 'send_transport_failed',
+      detail: (err as Error)?.message,
+      pmDraft,
+    };
+  }
 
   // Status-based branching BEFORE the ok check (Codex 2C-1 step-11 r1
   // MAJ-1): fetch's `res.ok` is true for all 2xx, including 202.
