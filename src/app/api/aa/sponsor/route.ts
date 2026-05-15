@@ -20,6 +20,19 @@ import {
   assertSponsorableCall,
   NotAllowedError,
 } from '@/lib/aa-call-allowlist';
+import {
+  assertPmBetCall,
+  assertPmCancelCall,
+  assertPmClaimCall,
+  assertPmConfirmCall,
+  assertPmDistributeCall,
+  assertPmEditMetadataCall,
+  assertPmFinalizeCall,
+  assertPmFinalizeMetadataCall,
+  assertPmResolveCall,
+  assertPmStakeCall,
+} from '@/lib/private-markets/pm-call-allowlist';
+import { createSponsorMarketStateCache } from '@/lib/private-markets/sponsor-chain-state';
 import { getAaPublicClient } from '@/lib/aa-public-client';
 import { summarizeAaErrorWithCause } from '@/lib/aa-errors';
 import {
@@ -237,7 +250,17 @@ export async function POST(req: Request) {
           | 'send_usdc'
           | 'create_market'
           | 'claim'
-          | 'pm_create_market';
+          | 'pm_create_market'
+          | 'pm_bet'
+          | 'pm_stake'
+          | 'pm_claim'
+          | 'pm_resolve'
+          | 'pm_confirm'
+          | 'pm_distribute'
+          | 'pm_cancel'
+          | 'pm_finalize'
+          | 'pm_finalize_metadata'
+          | 'pm_edit_metadata';
         call: Call;
       }
     | { kind: 'bet_batched'; calls: readonly [Call, Call] };
@@ -419,6 +442,209 @@ export async function POST(req: Request) {
         // row. No funds at risk; user just gets a synthetic-slug
         // market instead of their chosen one.
         buildArgs = { kind: 'pm_create_market', call };
+        break;
+      }
+
+      // ── Phase 2E-1 PM action branches (slice 1D-2) ──────────────────────
+      //
+      // Seven branches share a chain-state hydration step: bet / stake
+      // / resolve / confirm / distribute / cancel / edit_metadata all
+      // need market state via `readSponsorMarketState`. Each route
+      // invocation creates a FRESH request-scoped cache (per the
+      // v7 MAJ-1 module-scope-cache bug). Even though each branch
+      // currently only hydrates one marketId, the cache is the
+      // contract for "no second multicall for the same id" — and a
+      // future internal refactor (e.g., a pre-flight existence check)
+      // would silently regress without it.
+      //
+      // Three branches need NO chain state: claim / finalize /
+      // finalize_metadata — the contract enforces every gate and
+      // idempotency. They run the structural-only validators below.
+      //
+      // bet / stake / resolve / edit_metadata all need `nowSec` for
+      // their time-window check. `getBlock` is read once and passed
+      // through.
+      case 'pm_bet': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmBetCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_bet', call };
+        break;
+      }
+      case 'pm_stake': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmStakeCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_stake', call };
+        break;
+      }
+      case 'pm_claim': {
+        // No chain reads — contract enforces all gates.
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertPmClaimCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'pm_claim', call };
+        break;
+      }
+      case 'pm_resolve': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmResolveCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_resolve', call };
+        break;
+      }
+      case 'pm_confirm': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmConfirmCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_confirm', call };
+        break;
+      }
+      case 'pm_distribute': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmDistributeCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_distribute', call };
+        break;
+      }
+      case 'pm_cancel': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmCancelCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_cancel', call };
+        break;
+      }
+      case 'pm_finalize': {
+        // No chain reads — contract handles existence + idempotency.
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertPmFinalizeCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'pm_finalize', call };
+        break;
+      }
+      case 'pm_finalize_metadata': {
+        // No chain reads — contract handles existence + idempotency.
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertPmFinalizeMetadataCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'pm_finalize_metadata', call };
+        break;
+      }
+      case 'pm_edit_metadata': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const cache = createSponsorMarketStateCache();
+        await assertPmEditMetadataCall({
+          chainId,
+          safeAddress,
+          call,
+          nowSec: block.timestamp,
+          cache,
+        });
+        buildArgs = { kind: 'pm_edit_metadata', call };
         break;
       }
     }

@@ -168,6 +168,128 @@ const PmCreateMarketRequest = z
   })
   .strict();
 
+// ── Phase 2E-1 PM action variants (slice 1D-1) ─────────────────────────────
+//
+// Ten single-call sponsored ops against MakoPrivateMarketsV1. Every
+// variant carries a `CallShape` and the `kind` is the only discriminator.
+// Per-action allowlist enforcement lives in
+// `src/lib/private-markets/pm-call-allowlist.ts`; the schemas here are
+// purely the wire shape.
+
+const PmBetRequest = z
+  .object({
+    kind: z.literal('pm_bet'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Friendly-only `bet(marketId, side, amount)` against
+    /// MakoPrivateMarketsV1. Full sponsor-time validator runs
+    /// Stage A-G (outer / decode / chain-state / treasury / state /
+    /// time / allowlist / bounds).
+    call: CallShape,
+  })
+  .strict();
+
+const PmStakeRequest = z
+  .object({
+    kind: z.literal('pm_stake'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// OpenVote / PrizePool `stake(marketId, optionIndex, amount)`.
+    /// Friendly markets reject (must use `pm_bet`). Sponsor-time
+    /// validator covers Stage A-G plus OpenVote `amount === fixedStake`.
+    call: CallShape,
+  })
+  .strict();
+
+const PmClaimRequest = z
+  .object({
+    kind: z.literal('pm_claim'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Per-wallet payout `claim(marketId)`. Anyone-can-call once a
+    /// market is in a terminal state. Validator is structural only
+    /// (no chain reads, no clock); contract enforces resolution +
+    /// has-not-claimed.
+    call: CallShape,
+  })
+  .strict();
+
+const PmResolveRequest = z
+  .object({
+    kind: z.literal('pm_resolve'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Friendly creator-action `resolve(marketId, outcome)` with
+    /// outcome ∈ {0 = NO, 1 = YES}. Validator hydrates state and
+    /// enforces the `_requireCreatorAction` gate plus shape ==
+    /// Friendly.
+    call: CallShape,
+  })
+  .strict();
+
+const PmConfirmRequest = z
+  .object({
+    kind: z.literal('pm_confirm'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// OpenVote creator-action `confirm(marketId)`. Validator
+    /// hydrates state and enforces the `_requireCreatorAction` gate
+    /// plus shape == OpenVote.
+    call: CallShape,
+  })
+  .strict();
+
+const PmDistributeRequest = z
+  .object({
+    kind: z.literal('pm_distribute'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// PrizePool creator-action `distribute(marketId)`. Validator
+    /// hydrates state and enforces the `_requireCreatorAction` gate
+    /// plus shape == PrizePool.
+    call: CallShape,
+  })
+  .strict();
+
+const PmCancelRequest = z
+  .object({
+    kind: z.literal('pm_cancel'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Any-shape creator-action `cancel(marketId)`. Validator runs
+    /// the `_requireCreatorAction` gate without per-shape enforcement.
+    call: CallShape,
+  })
+  .strict();
+
+const PmFinalizeRequest = z
+  .object({
+    kind: z.literal('pm_finalize'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Anyone-can-call lazy state finalization `finalize(marketId)`.
+    /// Idempotent on chain — already-terminal markets return without
+    /// revert. Validator is structural only.
+    call: CallShape,
+  })
+  .strict();
+
+const PmFinalizeMetadataRequest = z
+  .object({
+    kind: z.literal('pm_finalize_metadata'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Anyone-can-call `finalizeMetadata(marketId)` advisory event.
+    /// Contract guards with `MetadataFreezeNotReady` until
+    /// stakingOpensAt. Idempotent after the event is emitted.
+    call: CallShape,
+  })
+  .strict();
+
+const PmEditMetadataRequest = z
+  .object({
+    kind: z.literal('pm_edit_metadata'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Creator-only metadata rewrite `editMetadata(marketId, p)` —
+    /// pre-stakingOpensAt only. Validator hydrates state, enforces
+    /// creator equality + shape immutability + pre-staking window,
+    /// then re-runs the full createMarket body validator and
+    /// treasury exclusion on the new params.
+    call: CallShape,
+  })
+  .strict();
+
 export const SponsorRequest = z.discriminatedUnion('kind', [
   SmokeRequest,
   BetSingleRequest,
@@ -176,6 +298,16 @@ export const SponsorRequest = z.discriminatedUnion('kind', [
   CreateMarketRequest,
   ClaimRequest,
   PmCreateMarketRequest,
+  PmBetRequest,
+  PmStakeRequest,
+  PmClaimRequest,
+  PmResolveRequest,
+  PmConfirmRequest,
+  PmDistributeRequest,
+  PmCancelRequest,
+  PmFinalizeRequest,
+  PmFinalizeMetadataRequest,
+  PmEditMetadataRequest,
 ]);
 
 export type SponsorRequest = z.infer<typeof SponsorRequest>;
@@ -186,6 +318,16 @@ export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
 export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
 export type ClaimRequest = z.infer<typeof ClaimRequest>;
 export type PmCreateMarketRequest = z.infer<typeof PmCreateMarketRequest>;
+export type PmBetRequest = z.infer<typeof PmBetRequest>;
+export type PmStakeRequest = z.infer<typeof PmStakeRequest>;
+export type PmClaimRequest = z.infer<typeof PmClaimRequest>;
+export type PmResolveRequest = z.infer<typeof PmResolveRequest>;
+export type PmConfirmRequest = z.infer<typeof PmConfirmRequest>;
+export type PmDistributeRequest = z.infer<typeof PmDistributeRequest>;
+export type PmCancelRequest = z.infer<typeof PmCancelRequest>;
+export type PmFinalizeRequest = z.infer<typeof PmFinalizeRequest>;
+export type PmFinalizeMetadataRequest = z.infer<typeof PmFinalizeMetadataRequest>;
+export type PmEditMetadataRequest = z.infer<typeof PmEditMetadataRequest>;
 
 export const SendRequest = z.object({
   pendingUserOpId: z.string().uuid(),
