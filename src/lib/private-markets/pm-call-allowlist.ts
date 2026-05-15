@@ -899,3 +899,247 @@ export async function assertPmEditMetadataCall(args: {
   const treasury = normalizeAddressLower(await getPmTreasuryAddress());
   assertPmCreateParamsTreasuryExclusion(p, treasury);
 }
+
+// ── Shape-only entry points (slice 1D-3) ────────────────────────────────────
+//
+// Send-time re-validation runs structural-only checks because chain
+// state may have drifted between sponsor and send. SafeOp hash
+// recomputation (Guard A in /api/aa/send) catches tampering of the
+// persisted call shape; the structural checks below are an
+// independent layer that catches an attacker forging an entirely
+// different inner call inside an allowlisted Safe wrapper.
+//
+// Each shape-only helper covers Stages A + B of its full counterpart:
+//   outer shape (chainId / target / value / calldata / selector)
+//   ABI decode + per-arg constraints (side / option-index / outcome /
+//     amount > 0n)
+//
+// Reason mapping is intentionally identical to the full validator so
+// a 403 from sponsor-time and send-time look the same to operators.
+
+export function assertPmBetCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_bet_args', 'wrong_chain');
+  }
+  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_bet_args', 'wrong_target');
+  }
+  if (args.call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_bet_args', 'bad_value');
+  }
+  if (args.call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_bet_args', 'short_calldata');
+  }
+  if (args.call.data.slice(0, 10).toLowerCase() !== PM_BET_SELECTOR) {
+    throw new NotAllowedError('pm_bad_bet_args', 'wrong_selector');
+  }
+  let decoded: { functionName: 'bet'; args: readonly [bigint, number, bigint] };
+  try {
+    const result = decodeFunctionData({ abi: PM_BET_ABI, data: args.call.data });
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_bet_args', 'decode_failed');
+  }
+  const [, side, amount] = decoded.args;
+  if (side !== FRIENDLY_NO && side !== FRIENDLY_YES) {
+    throw new NotAllowedError('pm_bad_bet_args', 'bad_side');
+  }
+  if (amount <= 0n) {
+    throw new NotAllowedError('pm_bad_bet_args', 'bad_amount');
+  }
+}
+
+export function assertPmStakeCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_stake_args', 'wrong_chain');
+  }
+  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_stake_args', 'wrong_target');
+  }
+  if (args.call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_stake_args', 'bad_value');
+  }
+  if (args.call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_stake_args', 'short_calldata');
+  }
+  if (args.call.data.slice(0, 10).toLowerCase() !== PM_STAKE_SELECTOR) {
+    throw new NotAllowedError('pm_bad_stake_args', 'wrong_selector');
+  }
+  let decoded: {
+    functionName: 'stake';
+    args: readonly [bigint, bigint, bigint];
+  };
+  try {
+    const result = decodeFunctionData({
+      abi: PM_STAKE_ABI,
+      data: args.call.data,
+    });
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_stake_args', 'decode_failed');
+  }
+  const [, , amount] = decoded.args;
+  if (amount <= 0n) {
+    throw new NotAllowedError('pm_bad_stake_args', 'bad_amount');
+  }
+}
+
+/// Shared helper for the four creator-action shape-only variants. The
+/// full validator's outer + decode body is identical across them.
+function assertCreatorActionCallShape(params: {
+  chainId: number;
+  call: CallTuple;
+  expectedSelector: Hex;
+  abi:
+    | typeof PM_RESOLVE_ABI
+    | typeof PM_CONFIRM_ABI
+    | typeof PM_DISTRIBUTE_ABI
+    | typeof PM_CANCEL_ABI;
+  hasOutcome: boolean;
+}): void {
+  if (params.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_chain');
+  }
+  if (params.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_target');
+  }
+  if (params.call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'bad_value');
+  }
+  if (params.call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'short_calldata');
+  }
+  if (
+    params.call.data.slice(0, 10).toLowerCase() !== params.expectedSelector
+  ) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_selector');
+  }
+  let decoded: { args: readonly unknown[] };
+  try {
+    const result = decodeFunctionData({
+      abi: params.abi,
+      data: params.call.data,
+    });
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_creator_action_args', 'decode_failed');
+  }
+  if (params.hasOutcome) {
+    const outcome = decoded.args[1] as number;
+    if (outcome !== FRIENDLY_NO && outcome !== FRIENDLY_YES) {
+      throw new NotAllowedError('pm_bad_creator_action_args', 'bad_outcome');
+    }
+  }
+}
+
+export function assertPmResolveCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+}): void {
+  assertCreatorActionCallShape({
+    chainId: args.chainId,
+    call: args.call,
+    expectedSelector: PM_RESOLVE_SELECTOR,
+    abi: PM_RESOLVE_ABI,
+    hasOutcome: true,
+  });
+}
+
+export function assertPmConfirmCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+}): void {
+  assertCreatorActionCallShape({
+    chainId: args.chainId,
+    call: args.call,
+    expectedSelector: PM_CONFIRM_SELECTOR,
+    abi: PM_CONFIRM_ABI,
+    hasOutcome: false,
+  });
+}
+
+export function assertPmDistributeCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+}): void {
+  assertCreatorActionCallShape({
+    chainId: args.chainId,
+    call: args.call,
+    expectedSelector: PM_DISTRIBUTE_SELECTOR,
+    abi: PM_DISTRIBUTE_ABI,
+    hasOutcome: false,
+  });
+}
+
+export function assertPmCancelCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+}): void {
+  assertCreatorActionCallShape({
+    chainId: args.chainId,
+    call: args.call,
+    expectedSelector: PM_CANCEL_SELECTOR,
+    abi: PM_CANCEL_ABI,
+    hasOutcome: false,
+  });
+}
+
+/// editMetadata shape includes the full createMarket body validation
+/// on the new params PLUS treasury exclusion. Treasury accessor is
+/// process-cached after first call; the helper takes it as an arg so
+/// the send-time dispatcher can await once and pass through to both
+/// pm_create_market and pm_edit_metadata shape checks.
+export function assertPmEditMetadataCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+  treasury: Address;
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_edit_args', 'wrong_chain');
+  }
+  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_edit_args', 'wrong_target');
+  }
+  if (args.call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_edit_args', 'bad_value');
+  }
+  if (args.call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_edit_args', 'short_calldata');
+  }
+  if (args.call.data.slice(0, 10).toLowerCase() !== PM_EDIT_METADATA_SELECTOR) {
+    throw new NotAllowedError('pm_bad_edit_args', 'wrong_selector');
+  }
+  let decoded: {
+    functionName: 'editMetadata';
+    args: readonly [bigint, PmCreateParamsTuple];
+  };
+  try {
+    const result = decodeFunctionData({
+      abi: PM_EDIT_METADATA_ABI,
+      data: args.call.data,
+    });
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_edit_args', 'decode_failed');
+  }
+  const [, p] = decoded.args;
+  assertPmCreateParamsShapeNoTreasury(p);
+  assertPmCreateParamsTreasuryExclusion(p, args.treasury);
+}

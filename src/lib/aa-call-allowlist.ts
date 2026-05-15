@@ -71,11 +71,33 @@ import {
   SEND_USDC_MAX_PER_OP_BASE_UNITS,
 } from './aa-constants';
 import {
+  PM_BET_SELECTOR,
+  PM_CANCEL_SELECTOR,
+  PM_CLAIM_SELECTOR as _PM_CLAIM_SELECTOR_FOR_DISPATCH,
+  PM_CONFIRM_SELECTOR,
   PM_CREATE_MARKET_ABI,
   PM_CREATE_MARKET_SELECTOR,
+  PM_DISTRIBUTE_SELECTOR,
+  PM_EDIT_METADATA_SELECTOR,
+  PM_FINALIZE_METADATA_SELECTOR,
+  PM_FINALIZE_SELECTOR,
+  PM_RESOLVE_SELECTOR,
+  PM_STAKE_SELECTOR,
   type PmCreateParamsTuple,
 } from './private-markets/abi-fragments';
 import { getPmTreasuryAddress } from './private-markets/treasury';
+import {
+  assertPmBetCallShape,
+  assertPmCancelCallShape,
+  assertPmClaimCall,
+  assertPmConfirmCallShape,
+  assertPmDistributeCallShape,
+  assertPmEditMetadataCallShape,
+  assertPmFinalizeCall,
+  assertPmFinalizeMetadataCall,
+  assertPmResolveCallShape,
+  assertPmStakeCallShape,
+} from './private-markets/pm-call-allowlist';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -1517,9 +1539,17 @@ export async function assertSponsoredCallData(args: {
       throw new NotAllowedError('bad_selector');
     }
     if (to.toLowerCase() === PM_CONTRACT_ADDRESS.toLowerCase()) {
-      // Phase 2C-1 PM send-time dispatch. Mirrors the MAKO branch's
-      // chainId guard + selector dispatch shape. Only one PM method
-      // (createMarket) is currently sponsored.
+      // Phase 2C-1 + 2E-1 PM send-time dispatch. Mirrors the MAKO branch's
+      // chainId guard + per-selector dispatch. 11 PM selectors total:
+      //   - createMarket  (2C-1)
+      //   - bet, stake, claim, resolve, confirm, distribute, cancel,
+      //     finalize, finalizeMetadata, editMetadata  (2E-1)
+      //
+      // Send-time runs SHAPE-ONLY validators — no chain hydration, no
+      // clock-relative checks, no state checks. Drift in time / state
+      // is caught by Guard A (SafeOp hash recomputation) before the
+      // bundler is reached. The structural shape checks here are an
+      // independent layer against forged inner calls.
       if (args.chainId !== MONAD_TESTNET_ID) {
         throw new NotAllowedError('pm_bad_create_args', 'wrong_chain');
       }
@@ -1527,19 +1557,100 @@ export async function assertSponsoredCallData(args: {
         throw new NotAllowedError('bad_selector');
       }
       const innerSelector = data.slice(0, 10).toLowerCase();
+      const innerCall = { to, value, data };
+
       if (innerSelector === PM_CREATE_MARKET_SELECTOR) {
-        // Send-time uses Stage 1+2 (no clock check). Drift in
-        // clock-relative timestamps is caught by Guard A (SafeOp
-        // hash recomputation) BEFORE the bundler is reached. The
-        // treasury read is awaited from the cached accessor — first
-        // call on a fresh process reads chain, subsequent calls
-        // return the cached value immediately.
         const treasury = await getPmTreasuryAddress();
         assertPmCreateMarketShape({
           chainId: args.chainId,
           safeAddress: args.safeAddress,
-          call: { to, value, data },
+          call: innerCall,
           treasury,
+        });
+        return;
+      }
+      if (innerSelector === PM_EDIT_METADATA_SELECTOR) {
+        const treasury = await getPmTreasuryAddress();
+        assertPmEditMetadataCallShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+          treasury,
+        });
+        return;
+      }
+      if (innerSelector === PM_BET_SELECTOR) {
+        assertPmBetCallShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === PM_STAKE_SELECTOR) {
+        assertPmStakeCallShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === _PM_CLAIM_SELECTOR_FOR_DISPATCH) {
+        // PM claim selector collides with v4 claim (same signature);
+        // we already discriminated on wrapper.to === PM_CONTRACT_ADDRESS
+        // above, so this is unambiguous.
+        assertPmClaimCall({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === PM_RESOLVE_SELECTOR) {
+        assertPmResolveCallShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === PM_CONFIRM_SELECTOR) {
+        assertPmConfirmCallShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === PM_DISTRIBUTE_SELECTOR) {
+        assertPmDistributeCallShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === PM_CANCEL_SELECTOR) {
+        assertPmCancelCallShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === PM_FINALIZE_SELECTOR) {
+        assertPmFinalizeCall({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
+        });
+        return;
+      }
+      if (innerSelector === PM_FINALIZE_METADATA_SELECTOR) {
+        assertPmFinalizeMetadataCall({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          call: innerCall,
         });
         return;
       }
