@@ -51,12 +51,20 @@ import type { SupportedAaChainId } from '@/lib/aa-config';
 import {
   PM_BET_ABI,
   PM_BET_SELECTOR,
+  PM_CANCEL_ABI,
+  PM_CANCEL_SELECTOR,
   PM_CLAIM_ABI,
   PM_CLAIM_SELECTOR,
+  PM_CONFIRM_ABI,
+  PM_CONFIRM_SELECTOR,
+  PM_DISTRIBUTE_ABI,
+  PM_DISTRIBUTE_SELECTOR,
   PM_FINALIZE_ABI,
   PM_FINALIZE_SELECTOR,
   PM_FINALIZE_METADATA_ABI,
   PM_FINALIZE_METADATA_SELECTOR,
+  PM_RESOLVE_ABI,
+  PM_RESOLVE_SELECTOR,
   PM_STAKE_ABI,
   PM_STAKE_SELECTOR,
 } from './abi-fragments';
@@ -513,5 +521,261 @@ export async function assertPmStakeCall(args: {
     // enforces equality against fixedStake instead).
     applyPerStakeBounds: !isOpenVote,
     reasonNamespace: 'pm_bad_stake_args',
+  });
+}
+
+// ── Creator-action validators (slice 1C-3) ──────────────────────────────────
+//
+// resolve / confirm / distribute / cancel all share the contract's
+// `_requireCreatorAction` gate:
+//
+//   if (m.creator == address(0))                 revert MarketUnknown();
+//   if (msg.sender != m.creator)                  revert NotCreator();
+//   if (block.timestamp < m.closeAt)              revert CreatorWindowClosed();
+//   if (block.timestamp >= m.closeAt + GRACE)     revert CreatorWindowClosed();
+//   if (m.state != MarketState.Created)           revert CreatorActionInvalidState();
+//   if (m.totalStake == 0)                        revert NoStakesToSettle();
+//
+// Per-shape: resolve → Friendly + outcome ∈ {0,1}; confirm → OpenVote;
+//            distribute → PrizePool; cancel → any shape.
+//
+// Stage labels (plan v8: "Stage A-C for creator actions"):
+//   A. outer shape (chainId / target / value / calldata / selector)
+//   B. ABI decode + arg constraints (outcome for resolve, marketId
+//      otherwise)
+//   C. chain-state hydration + the _requireCreatorAction gate
+//      (creator / window / state / totalStake) + per-shape gate
+
+const POST_CLOSE_GRACE_SEC = BigInt(7 * 24 * 60 * 60); // 7 days
+
+/// Shared _requireCreatorAction gate. The contract's revert order is:
+///   creator equality → window-low → window-high → state → totalStake
+/// We follow the same order so operators see consistent reason mapping
+/// across all four creator-action validators. The `wrongShape` callback
+/// is invoked after the common gates if the per-shape check fails.
+async function assertCreatorActionGates(args: {
+  state: SponsorMarketState;
+  safeAddressLower: `0x${string}`;
+  nowSec: bigint;
+}): Promise<void> {
+  // Creator equality. Plan v8 MAJ-1: both sides routed through
+  // normalizeAddressLower at SOURCE — the cache stores creator
+  // lowercased; safeAddressLower was normalized by the caller.
+  if (args.state.creator !== args.safeAddressLower) {
+    throw new NotAllowedError('pm_bad_creator_action_not_creator');
+  }
+
+  // Creator-action window: closeAt ≤ nowSec < closeAt + grace.
+  if (args.nowSec < args.state.closeAt) {
+    throw new NotAllowedError(
+      'pm_bad_creator_action_window',
+      'before_window',
+    );
+  }
+  if (args.nowSec >= args.state.closeAt + POST_CLOSE_GRACE_SEC) {
+    throw new NotAllowedError('pm_bad_creator_action_window', 'after_window');
+  }
+
+  // Stored state must be Created. Resolved / Canceled / EmptyPoolResolved
+  // are terminal; ZeroStakeExpired is the lazy-state companion to
+  // totalStake==0 (caught next anyway, but the explicit state check
+  // matches the contract's revert ordering).
+  if (args.state.storedState !== PmMarketState.Created) {
+    throw new NotAllowedError('pm_bad_creator_action_state');
+  }
+
+  // totalStake > 0 — zero-stake markets cannot be settled by the
+  // creator; they're either lazily ZeroStakeExpired or finalize-able.
+  if (args.state.totalStake === 0n) {
+    throw new NotAllowedError('pm_bad_creator_action_empty_pool');
+  }
+}
+
+/// Validate a single PM `resolve(marketId, outcome)` call. Friendly-only.
+/// Outcome must be FRIENDLY_NO (0) or FRIENDLY_YES (1) — REFUND is not a
+/// valid resolve outcome (v6 r2 Codex finding).
+export async function assertPmResolveCall(args: {
+  chainId: SupportedAaChainId;
+  safeAddress: Address;
+  call: CallTuple;
+  nowSec: bigint;
+  cache: SponsorMarketStateCache;
+}): Promise<void> {
+  // Stage A
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_chain');
+  }
+  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_target');
+  }
+  if (args.call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'bad_value');
+  }
+  if (args.call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'short_calldata');
+  }
+  if (args.call.data.slice(0, 10).toLowerCase() !== PM_RESOLVE_SELECTOR) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_selector');
+  }
+
+  // Stage B
+  let decoded: {
+    functionName: 'resolve';
+    args: readonly [bigint, number];
+  };
+  try {
+    const result = decodeFunctionData({
+      abi: PM_RESOLVE_ABI,
+      data: args.call.data,
+    });
+    decoded = result as unknown as typeof decoded;
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_creator_action_args', 'decode_failed');
+  }
+  const [marketId, outcome] = decoded.args;
+  if (outcome !== FRIENDLY_NO && outcome !== FRIENDLY_YES) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'bad_outcome');
+  }
+
+  // Stage C: hydrate + common gates + shape gate
+  const state = await hydrateMarketStateOrThrow({
+    chainId: args.chainId,
+    marketId,
+    cache: args.cache,
+  });
+  if (state.shape !== 0) {
+    throw new NotAllowedError(
+      'pm_bad_creator_action_wrong_shape',
+      'not_friendly',
+    );
+  }
+  await assertCreatorActionGates({
+    state,
+    safeAddressLower: normalizeAddressLower(args.safeAddress),
+    nowSec: args.nowSec,
+  });
+}
+
+/// Validate a single PM `confirm(marketId)` call. OpenVote-only.
+export async function assertPmConfirmCall(args: {
+  chainId: SupportedAaChainId;
+  safeAddress: Address;
+  call: CallTuple;
+  nowSec: bigint;
+  cache: SponsorMarketStateCache;
+}): Promise<void> {
+  await assertSingleArgCreatorAction({
+    args,
+    expectedSelector: PM_CONFIRM_SELECTOR,
+    abi: PM_CONFIRM_ABI,
+    requiredShape: 1, // OpenVote
+    wrongShapeDetail: 'not_open_vote',
+  });
+}
+
+/// Validate a single PM `distribute(marketId)` call. PrizePool-only.
+export async function assertPmDistributeCall(args: {
+  chainId: SupportedAaChainId;
+  safeAddress: Address;
+  call: CallTuple;
+  nowSec: bigint;
+  cache: SponsorMarketStateCache;
+}): Promise<void> {
+  await assertSingleArgCreatorAction({
+    args,
+    expectedSelector: PM_DISTRIBUTE_SELECTOR,
+    abi: PM_DISTRIBUTE_ABI,
+    requiredShape: 2, // PrizePool
+    wrongShapeDetail: 'not_prize_pool',
+  });
+}
+
+/// Validate a single PM `cancel(marketId)` call. Any-shape (Friendly /
+/// OpenVote / PrizePool) so `requiredShape: null` skips the per-shape gate.
+export async function assertPmCancelCall(args: {
+  chainId: SupportedAaChainId;
+  safeAddress: Address;
+  call: CallTuple;
+  nowSec: bigint;
+  cache: SponsorMarketStateCache;
+}): Promise<void> {
+  await assertSingleArgCreatorAction({
+    args,
+    expectedSelector: PM_CANCEL_SELECTOR,
+    abi: PM_CANCEL_ABI,
+    requiredShape: null,
+    wrongShapeDetail: null,
+  });
+}
+
+/// Internal shared body for the three single-arg creator-action
+/// validators (confirm / distribute / cancel). All three take only
+/// `marketId` and gate identically modulo the per-shape check.
+async function assertSingleArgCreatorAction(params: {
+  args: {
+    chainId: SupportedAaChainId;
+    safeAddress: Address;
+    call: CallTuple;
+    nowSec: bigint;
+    cache: SponsorMarketStateCache;
+  };
+  expectedSelector: Hex;
+  abi: typeof PM_CONFIRM_ABI | typeof PM_DISTRIBUTE_ABI | typeof PM_CANCEL_ABI;
+  requiredShape: 0 | 1 | 2 | null;
+  wrongShapeDetail: 'not_open_vote' | 'not_prize_pool' | null;
+}): Promise<void> {
+  const { args, expectedSelector, abi, requiredShape, wrongShapeDetail } =
+    params;
+
+  // Stage A
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_chain');
+  }
+  if (args.call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_target');
+  }
+  if (args.call.value !== 0n) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'bad_value');
+  }
+  if (args.call.data.length < 10) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'short_calldata');
+  }
+  if (args.call.data.slice(0, 10).toLowerCase() !== expectedSelector) {
+    throw new NotAllowedError('pm_bad_creator_action_args', 'wrong_selector');
+  }
+
+  // Stage B
+  let marketId: bigint;
+  try {
+    const result = decodeFunctionData({ abi, data: args.call.data });
+    marketId = (result.args as readonly [bigint])[0];
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('pm_bad_creator_action_args', 'decode_failed');
+  }
+  if (typeof marketId !== 'bigint') {
+    throw new NotAllowedError(
+      'pm_bad_creator_action_args',
+      'bad_market_id_type',
+    );
+  }
+
+  // Stage C
+  const state = await hydrateMarketStateOrThrow({
+    chainId: args.chainId,
+    marketId,
+    cache: args.cache,
+  });
+  if (requiredShape !== null && state.shape !== requiredShape) {
+    throw new NotAllowedError(
+      'pm_bad_creator_action_wrong_shape',
+      wrongShapeDetail ?? 'wrong_shape',
+    );
+  }
+  await assertCreatorActionGates({
+    state,
+    safeAddressLower: normalizeAddressLower(args.safeAddress),
+    nowSec: args.nowSec,
   });
 }
