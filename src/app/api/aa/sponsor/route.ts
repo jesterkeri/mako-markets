@@ -22,17 +22,26 @@ import {
 } from '@/lib/aa-call-allowlist';
 import {
   assertPmBetBatchedCalls,
+  assertPmBetBatchedCallsShape,
   assertPmBetCall,
+  assertPmBetCallShape,
   assertPmCancelCall,
+  assertPmCancelCallShape,
   assertPmClaimCall,
   assertPmConfirmCall,
+  assertPmConfirmCallShape,
   assertPmDistributeCall,
+  assertPmDistributeCallShape,
   assertPmEditMetadataCall,
+  assertPmEditMetadataCallShapeNoTreasury,
   assertPmFinalizeCall,
   assertPmFinalizeMetadataCall,
   assertPmResolveCall,
+  assertPmResolveCallShape,
   assertPmStakeBatchedCalls,
+  assertPmStakeBatchedCallsShape,
   assertPmStakeCall,
+  assertPmStakeCallShape,
 } from '@/lib/private-markets/pm-call-allowlist';
 import { createSponsorMarketStateCache } from '@/lib/private-markets/sponsor-chain-state';
 import { getAaPublicClient } from '@/lib/aa-public-client';
@@ -476,6 +485,11 @@ export async function POST(req: Request) {
           value: hexToBigInt(c.value as Hex),
           data: c.data as Hex,
         };
+        // Codex r2 MAJ-1: cheap shape-only checks BEFORE getBlock(). A
+        // malformed authenticated request must never force an RPC
+        // roundtrip — same pattern createMarket already uses via
+        // assertCreateMarketShape.
+        assertPmBetCallShape({ chainId, safeAddress, call });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -506,6 +520,10 @@ export async function POST(req: Request) {
             data: b.data as Hex,
           },
         ];
+        // Codex r2 MAJ-1 pre-flight: shape-only batched check before
+        // getBlock. Catches wrong approve target/spender/amount + wrong
+        // bet target/selector/side/amount without paying for RPC.
+        assertPmBetBatchedCallsShape({ chainId, safeAddress, calls });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -527,6 +545,8 @@ export async function POST(req: Request) {
           value: hexToBigInt(c.value as Hex),
           data: c.data as Hex,
         };
+        // Codex r2 MAJ-1 pre-flight.
+        assertPmStakeCallShape({ chainId, safeAddress, call });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -557,6 +577,8 @@ export async function POST(req: Request) {
             data: b.data as Hex,
           },
         ];
+        // Codex r2 MAJ-1 pre-flight.
+        assertPmStakeBatchedCallsShape({ chainId, safeAddress, calls });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -590,6 +612,8 @@ export async function POST(req: Request) {
           value: hexToBigInt(c.value as Hex),
           data: c.data as Hex,
         };
+        // Codex r2 MAJ-1 pre-flight.
+        assertPmResolveCallShape({ chainId, safeAddress, call });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -611,6 +635,8 @@ export async function POST(req: Request) {
           value: hexToBigInt(c.value as Hex),
           data: c.data as Hex,
         };
+        // Codex r2 MAJ-1 pre-flight.
+        assertPmConfirmCallShape({ chainId, safeAddress, call });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -632,6 +658,8 @@ export async function POST(req: Request) {
           value: hexToBigInt(c.value as Hex),
           data: c.data as Hex,
         };
+        // Codex r2 MAJ-1 pre-flight.
+        assertPmDistributeCallShape({ chainId, safeAddress, call });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -653,6 +681,8 @@ export async function POST(req: Request) {
           value: hexToBigInt(c.value as Hex),
           data: c.data as Hex,
         };
+        // Codex r2 MAJ-1 pre-flight.
+        assertPmCancelCallShape({ chainId, safeAddress, call });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
@@ -698,6 +728,15 @@ export async function POST(req: Request) {
           value: hexToBigInt(c.value as Hex),
           data: c.data as Hex,
         };
+        // Codex r2 MAJ-1 pre-flight: outer shape + decode + full
+        // createMarket body validation on new params. NO treasury or
+        // block read here — those land after this gate passes. A
+        // malformed pm_edit_metadata caller can't force RPC.
+        assertPmEditMetadataCallShapeNoTreasury({
+          chainId,
+          safeAddress,
+          call,
+        });
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });

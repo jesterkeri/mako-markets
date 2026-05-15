@@ -99,6 +99,7 @@ import {
   assertPmResolveCallShape,
   assertPmStakeBatchedCallsShape,
   assertPmStakeCallShape,
+  isPmTarget,
 } from './private-markets/pm-call-allowlist';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
@@ -1207,7 +1208,7 @@ function _decodePmCreateMarketCall(
   if (chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_create_args', 'wrong_chain');
   }
-  if (call.to.toLowerCase() !== PM_CONTRACT_ADDRESS.toLowerCase()) {
+  if (!isPmTarget(call.to)) {
     throw new NotAllowedError('pm_bad_create_args', 'wrong_target');
   }
   if (call.value !== 0n) {
@@ -1540,7 +1541,7 @@ export async function assertSponsoredCallData(args: {
       }
       throw new NotAllowedError('bad_selector');
     }
-    if (to.toLowerCase() === PM_CONTRACT_ADDRESS.toLowerCase()) {
+    if (isPmTarget(to)) {
       // Phase 2C-1 + 2E-1 PM send-time dispatch. Mirrors the MAKO branch's
       // chainId guard + per-selector dispatch. 11 PM selectors total:
       //   - createMarket  (2C-1)
@@ -1731,7 +1732,7 @@ export async function assertSponsoredCallData(args: {
       decodeAndAssertPlaceBet(sub1);
       return;
     }
-    if (sub1.to.toLowerCase() === PM_CONTRACT_ADDRESS.toLowerCase()) {
+    if (isPmTarget(sub1.to)) {
       // PM batched: discriminate bet vs stake by inner selector. The
       // approve sub-call is validated inside the batched shape
       // validator (spender must be PM_CONTRACT_ADDRESS).

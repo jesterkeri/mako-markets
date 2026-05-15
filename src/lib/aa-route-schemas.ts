@@ -13,22 +13,32 @@ import { z } from 'zod';
 // `HexBigint` is `0x` + 1+ hex digits (no length cap) so we can carry
 // uint256 values over the wire without lossy `Number` round-tripping.
 //
-// Phase 1D + 1E + 1H + 2C-1 + claim-magic-parity shape: `SponsorRequest`
-// is a zod `discriminatedUnion('kind', ...)` over seven variants — the
-// `kind` field is REQUIRED and the only discriminator. No env-aware
-// default, no fallback. The seven variants are:
-//   - `SmokeRequest` (kind='smoke')          single-call USDC.transfer self
-//   - `BetSingleRequest` (kind='bet_single') single-call placeBet
-//   - `BetBatchedRequest` (kind='bet_batched') tuple [approve, placeBet]
-//   - `SendUsdcRequest` (kind='send_usdc')   single-call USDC.transfer to
-//                                            arbitrary recipient (Phase 1E)
-//   - `CreateMarketRequest` (kind='create_market') single-call MakoMarketsV4
-//                                            createMarket (Phase 1H)
-//   - `ClaimRequest` (kind='claim')          single-call MakoMarketsV4.claim
-//                                            (claim-magic-parity)
-//   - `PmCreateMarketRequest` (kind='pm_create_market') single-call
-//                                            MakoPrivateMarketsV1.createMarket
-//                                            (Phase 2C-1)
+// Phase 1D + 1E + 1H + 2C-1 + claim-magic-parity + 2E-1 shape:
+// `SponsorRequest` is a zod `discriminatedUnion('kind', ...)` over
+// nineteen variants — the `kind` field is REQUIRED and the only
+// discriminator. No env-aware default, no fallback. The variants are:
+//   v4 / smoke / send (Phases 1D, 1E, 1H, claim-magic-parity):
+//     - SmokeRequest        (kind='smoke')         USDC.transfer self
+//     - BetSingleRequest    (kind='bet_single')    placeBet
+//     - BetBatchedRequest   (kind='bet_batched')   [approve, placeBet]
+//     - SendUsdcRequest     (kind='send_usdc')     USDC.transfer arb.
+//     - CreateMarketRequest (kind='create_market') MakoMarketsV4 create
+//     - ClaimRequest        (kind='claim')         MakoMarketsV4 claim
+//   PM single-call actions (Phase 2C-1 + 2E-1):
+//     - PmCreateMarketRequest    (kind='pm_create_market')
+//     - PmBetRequest             (kind='pm_bet')
+//     - PmStakeRequest           (kind='pm_stake')
+//     - PmClaimRequest           (kind='pm_claim')
+//     - PmResolveRequest         (kind='pm_resolve')
+//     - PmConfirmRequest         (kind='pm_confirm')
+//     - PmDistributeRequest      (kind='pm_distribute')
+//     - PmCancelRequest          (kind='pm_cancel')
+//     - PmFinalizeRequest        (kind='pm_finalize')
+//     - PmFinalizeMetadataRequest (kind='pm_finalize_metadata')
+//     - PmEditMetadataRequest    (kind='pm_edit_metadata')
+//   PM batched approve+action (Codex r1 MAJ-1):
+//     - PmBetBatchedRequest      (kind='pm_bet_batched')
+//     - PmStakeBatchedRequest    (kind='pm_stake_batched')
 // `.strict()` on each rejects unknown keys so a malicious body can't carry
 // both `call` and `calls` to confuse the route's branching.
 // ----------------------------------------------------------------------------

@@ -105,7 +105,7 @@ const PM_TARGET_LOWER: `0x${string}` = normalizeAddressLower(
 );
 const USDC_TARGET_LOWER: `0x${string}` = normalizeAddressLower(USDC_ADDRESS);
 
-function isPmTarget(addr: Address): boolean {
+export function isPmTarget(addr: Address): boolean {
   return normalizeAddressLower(addr) === PM_TARGET_LOWER;
 }
 
@@ -1261,16 +1261,17 @@ export function assertPmStakeBatchedCallsShape(args: {
   });
 }
 
-/// editMetadata shape includes the full createMarket body validation
-/// on the new params PLUS treasury exclusion. Treasury accessor is
-/// process-cached after first call; the helper takes it as an arg so
-/// the send-time dispatcher can await once and pass through to both
-/// pm_create_market and pm_edit_metadata shape checks.
-export function assertPmEditMetadataCallShape(args: {
+/// Cheap shape-only editMetadata pre-flight (Codex r2 MAJ-1): outer
+/// shape + decode + full createMarket body validation on the new
+/// params. NO treasury check (skipped to keep this RPC-free). Used by
+/// the sponsor route BEFORE the treasury+block reads so a malformed
+/// caller can't force a `getPmTreasuryAddress` + `getBlock`
+/// roundtrip. Same pre-flight pattern createMarket already uses via
+/// `assertPmCreateMarketShapeNoTreasury`.
+export function assertPmEditMetadataCallShapeNoTreasury(args: {
   chainId: number;
   safeAddress: Address;
   call: CallTuple;
-  treasury: Address;
 }): void {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('pm_bad_edit_args', 'wrong_chain');
@@ -1303,5 +1304,34 @@ export function assertPmEditMetadataCallShape(args: {
   }
   const [, p] = decoded.args;
   assertPmCreateParamsShapeNoTreasury(p);
+}
+
+/// editMetadata shape includes the full createMarket body validation
+/// on the new params PLUS treasury exclusion. Treasury accessor is
+/// process-cached after first call; the helper takes it as an arg so
+/// the send-time dispatcher can await once and pass through to both
+/// pm_create_market and pm_edit_metadata shape checks.
+export function assertPmEditMetadataCallShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: CallTuple;
+  treasury: Address;
+}): void {
+  // Reuse the no-treasury body for outer shape + decode + Stage 1 body.
+  assertPmEditMetadataCallShapeNoTreasury({
+    chainId: args.chainId,
+    safeAddress: args.safeAddress,
+    call: args.call,
+  });
+  // Re-decode here (cheap) to surface `p` for the treasury exclusion
+  // call. Decoding twice in the send-time path is acceptable — the
+  // re-decode never throws (the no-treasury body already proved the
+  // calldata decodes cleanly) and keeps the helper's contract clean
+  // (caller passes `treasury` once, validator does everything else).
+  const result = decodeFunctionData({
+    abi: PM_EDIT_METADATA_ABI,
+    data: args.call.data,
+  });
+  const [, p] = result.args as readonly [bigint, PmCreateParamsTuple];
   assertPmCreateParamsTreasuryExclusion(p, args.treasury);
 }
