@@ -1152,14 +1152,40 @@ export async function runCreatePrivateMarket(
   }
   const sponsored = sponsor.body as SponsorResponse;
 
+  // Codex r3 MAJ-1: validate the sponsor 200 body BEFORE touching it.
+  // BigInt(undefined) / BigInt(null) / BigInt('') / BigInt('garbage')
+  // all throw — and previously did so outside the sign try/catch,
+  // leaking past pmDraft. Treat a malformed 200 as a sponsor failure
+  // so the UI still gets the slug for /m/<slug> retry deep-link.
+  if (
+    !sponsored ||
+    typeof sponsored !== 'object' ||
+    !sponsored.safeOpHash ||
+    !sponsored.pendingUserOpId ||
+    sponsored.validAfter == null ||
+    sponsored.validUntil == null
+  ) {
+    return {
+      kind: 'sponsor_failed',
+      step: 'sponsor',
+      status: sponsor.status,
+      error: 'sponsor_bad_response',
+      detail: 'sponsor 200 missing required fields',
+      pmDraft,
+    };
+  }
+
   // (5) Magic signing — over the SafeOp hash + validity window.
   // Codex r2 MAJ-1: Magic.rpcProvider.request throws on user rejection
-  // + provider network errors. Surface as send_failed with pmDraft so
-  // the UI can offer "Retry at /m/<slug>".
-  const validAfter = BigInt(sponsored.validAfter);
-  const validUntil = BigInt(sponsored.validUntil);
+  // + provider network errors.
+  // Codex r3 MAJ-1: the BigInt() coercions live inside the try so a
+  // non-numeric validAfter/validUntil (string that bypassed the shape
+  // check, e.g. 'xyz') is caught with pmDraft attached rather than
+  // propagating out of the helper.
   let signature;
   try {
+    const validAfter = BigInt(sponsored.validAfter);
+    const validUntil = BigInt(sponsored.validUntil);
     signature = await signSafeOpHash({
       hash: sponsored.safeOpHash,
       magicEoa: args.magicEoa,
@@ -1170,10 +1196,18 @@ export async function runCreatePrivateMarket(
     const msg = ((err as Error)?.message ?? '').toLowerCase();
     const isReject =
       msg.includes('user rejected') || msg.includes('user denied');
+    // Distinguish BigInt-coercion failure from a real signer failure so
+    // the UI can surface a clearer error code.
+    const isBigIntFail =
+      msg.includes('cannot convert') || msg.includes('syntaxerror');
     return {
       kind: 'send_failed',
       status: 0,
-      error: isReject ? 'sign_rejected' : 'sign_failed',
+      error: isBigIntFail
+        ? 'sign_failed'
+        : isReject
+          ? 'sign_rejected'
+          : 'sign_failed',
       detail: (err as Error)?.message,
       pmDraft,
     };

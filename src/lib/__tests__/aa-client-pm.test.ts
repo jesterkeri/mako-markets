@@ -649,4 +649,54 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     // Pre-draft failure: pmDraft must be absent.
     expect(hasPmDraftRef(result)).toBe(false);
   });
+
+  // ── Codex r3 MAJ-1: malformed sponsor 200 body ────────────────────────
+  //
+  // A sponsor response that's 200 OK but missing validAfter/validUntil
+  // (or null body) used to throw via BigInt(undefined) outside the
+  // sign try/catch, propagating past pmDraft. The helper now validates
+  // the shape before any BigInt coercion and returns sponsor_failed
+  // with pmDraft attached.
+
+  it('sponsor 200 with missing validAfter → sponsor_failed sponsor_bad_response with pmDraft', async () => {
+    enqueue({ status: 200, body: draftBodyStub() });
+    const malformed = { ...sponsoredBodyStub() };
+    delete (malformed as Record<string, unknown>).validAfter;
+    enqueue({ status: 200, body: malformed });
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.step).toBe('sponsor');
+    expect(result.error).toBe('sponsor_bad_response');
+    expectPmDraftMatchesStub(result);
+  });
+
+  it('sponsor 200 with null body → sponsor_failed sponsor_bad_response with pmDraft', async () => {
+    enqueue({ status: 200, body: draftBodyStub() });
+    enqueue({ status: 200, body: null });
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('sponsor_failed');
+    if (result.kind !== 'sponsor_failed') return;
+    expect(result.error).toBe('sponsor_bad_response');
+    expectPmDraftMatchesStub(result);
+  });
+
+  it('sponsor 200 with non-numeric validAfter → send_failed sign_failed with pmDraft', async () => {
+    // Shape check passes (field present), but BigInt() throws on a
+    // non-numeric string. Caught inside the sign try.
+    enqueue({ status: 200, body: draftBodyStub() });
+    enqueue({
+      status: 200,
+      body: { ...sponsoredBodyStub(), validAfter: 'not-a-number' },
+    });
+    mocks.signSafeOpHash.mockResolvedValueOnce('0x' + 'dd'.repeat(77));
+
+    const result = await runCreatePrivateMarket(ARGS);
+    expect(result.kind).toBe('send_failed');
+    if (result.kind !== 'send_failed') return;
+    expect(result.error).toBe('sign_failed');
+    expectPmDraftMatchesStub(result);
+  });
 });
