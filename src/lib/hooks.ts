@@ -1060,7 +1060,7 @@ export function useCreateMarket() {
             case 'sponsor_failed': {
               const message =
                 outcome.error === 'CAP_EXCEEDED'
-                  ? "You've reached today's sponsored-op limit. Try again tomorrow, or use a connected wallet."
+                  ? `You've reached today's sponsored-op limit (${SPONSOR_CAP_PER_USER_PER_DAY}/day). Try again tomorrow, or use a connected wallet.`
                   : outcome.error === 'SPONSOR_UNAVAILABLE'
                     ? 'Sponsorship temporarily unavailable. Try again shortly, or use a connected wallet.'
                     : outcome.error === 'NOT_ALLOWED'
