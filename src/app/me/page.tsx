@@ -15,7 +15,18 @@ import { AvatarCircle } from '@/components/AvatarCircle';
 import { useUser } from '@/lib/use-user';
 import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 
-type PositionsTab = 'active' | 'closed';
+/**
+ * `awaiting` sits between active and closed: the bet window has passed
+ * (`bettingCloseTime <= now`) but the contract hasn't been resolved yet.
+ * Before this split, those markets were lumped under "active" (the old
+ * filter gated on `closeTime > now`), which was confusing — the user
+ * couldn't bet OR claim anything from them, but they showed up as
+ * "active positions". Three states map to the user's actual options:
+ *   - Active   = still bettable
+ *   - Awaiting = closed for bets, not yet resolved (no action available)
+ *   - Closed   = resolved (claim if you won, refund if applicable)
+ */
+type PositionsTab = 'active' | 'awaiting' | 'closed';
 
 type UserPosition = {
   market: MarketWithId;
@@ -80,14 +91,24 @@ export default function MyMarketsPage() {
   }, [betsData, markets, address]);
 
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  /// Active = still bettable. Filter on `bettingCloseTime > now` (NOT
+  /// `closeTime > now`) so markets in the resolve-pending window —
+  /// betting closed but not yet resolved — drop out of "active" into
+  /// the new "awaiting" tab.
   const active = userPositions.filter(
-    (p) => !p.market.resolved && p.market.closeTime > nowSec,
+    (p) => !p.market.resolved && p.market.bettingCloseTime > nowSec,
   );
-  const closed = userPositions.filter(
-    (p) => p.market.resolved || p.market.closeTime <= nowSec,
+  /// Awaiting Resolution: betting window has passed but the market
+  /// isn't resolved yet. User can't bet, can't claim — purely a
+  /// "watching for resolution" state.
+  const awaiting = userPositions.filter(
+    (p) => !p.market.resolved && p.market.bettingCloseTime <= nowSec,
   );
+  /// Closed = resolved. Claim/refund actions live here.
+  const closed = userPositions.filter((p) => p.market.resolved);
 
-  const shown = tab === 'active' ? active : closed;
+  const shown =
+    tab === 'active' ? active : tab === 'awaiting' ? awaiting : closed;
 
   /// Batched MAKO label lookup for the visible positions feed — same
   /// shape as the home feed (`src/app/page.tsx`) and the admin lists.
@@ -219,7 +240,7 @@ export default function MyMarketsPage() {
         <h1 className="md:hidden mako-display text-[clamp(1.875rem,3vw,2.25rem)] mb-6 text-canvas-fg">MY MARKETS</h1>
 
         {/* Tabs */}
-        <div className="flex gap-3 mb-8 border-b-2 border-canvas-divider pb-4">
+        <div className="flex gap-3 mb-8 border-b-2 border-canvas-divider pb-4 flex-wrap">
           <button
             type="button"
             onClick={() => setTab('active')}
@@ -227,6 +248,14 @@ export default function MyMarketsPage() {
             className="mako-label px-4 py-2 rounded-full border-2 border-transparent text-canvas-fg hover:border-canvas-fg aria-[current=page]:border-ink aria-[current=page]:bg-surface-elevated aria-[current=page]:text-ink aria-[current=page]:shadow-[2px_2px_0_0_#D94A3D] transition-all"
           >
             ACTIVE · {active.length}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('awaiting')}
+            aria-current={tab === 'awaiting' ? 'page' : undefined}
+            className="mako-label px-4 py-2 rounded-full border-2 border-transparent text-canvas-fg hover:border-canvas-fg aria-[current=page]:border-ink aria-[current=page]:bg-surface-elevated aria-[current=page]:text-ink aria-[current=page]:shadow-[2px_2px_0_0_#D94A3D] transition-all"
+          >
+            AWAITING · {awaiting.length}
           </button>
           <button
             type="button"
@@ -256,12 +285,18 @@ export default function MyMarketsPage() {
           <div className="rotate-2 transform mt-12 max-w-md mx-auto">
             <div className="bg-paper border-2 border-ink rounded-xl shadow-brutal p-6 text-center">
               <div className="mako-title text-xl mb-2">
-                {tab === 'active' ? 'No active positions' : 'No closed positions'}
+                {tab === 'active'
+                  ? 'No active positions'
+                  : tab === 'awaiting'
+                    ? 'No positions awaiting resolution'
+                    : 'No closed positions'}
               </div>
               <div className="mako-body text-muted text-sm">
                 {tab === 'active'
                   ? 'Place a bet from the feed to see it here'
-                  : 'Your resolved + expired bets will appear here'}
+                  : tab === 'awaiting'
+                    ? 'Bets sitting between bet-close and resolution land here'
+                    : 'Your resolved bets will appear here'}
               </div>
             </div>
           </div>

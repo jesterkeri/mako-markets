@@ -124,13 +124,20 @@ export default function AdminCreateMakoPage() {
 
   const { newId: parsedNewId, error: decodeError } = parsedReceipt;
 
-  /// Form state — question/oracleRef/timing as before, plus optional
-  /// outcome labels (both filled or both empty).
+  /// Form state — question + timing + optional outcome labels.
+  ///
+  /// `oracleRef` is dead metadata for MAKO markets — the contract's
+  /// resolveMarket() is a direct admin call and never reads the field.
+  /// The other 6 market types use it for the auto-resolver to identify
+  /// an event / price feed; MAKO doesn't. Keeping a required input
+  /// here would confuse future admins (task #178). We auto-generate
+  /// `manual:mako:<timestamp>` at submit time instead — short enough
+  /// to fit the bytes32 slot, deterministic enough for log grepping,
+  /// invisible to the admin.
   const [magicStatusBanner, setMagicStatusBanner] = useState<string | null>(null);
   const [labelSaveBanner, setLabelSaveBanner] = useState<string | null>(null);
 
   const [question, setQuestion] = useState('');
-  const [oracleRefInput, setOracleRefInput] = useState('');
   const [closeMinutes, setCloseMinutes] = useState(60);
   const [bettingCloseMinutes, setBettingCloseMinutes] = useState(55);
   const [label1, setLabel1] = useState('');
@@ -162,11 +169,8 @@ export default function AdminCreateMakoPage() {
   const effectiveNewId = hookNewId ?? parsedNewId;
 
   const trimmedQuestion = question.trim();
-  const trimmedRef = oracleRefInput.trim();
   const questionBytes = utf8ByteLengthShared(trimmedQuestion);
   const questionOverLimit = questionBytes > MAKO_QUESTION_MAX_BYTES;
-  const oracleRefBytes = utf8ByteLengthShared(trimmedRef);
-  const oracleRefTooLong = oracleRefBytes > 32;
 
   /// Shared validator from src/lib/mako-labels.ts — applies the same
   /// both-or-neither + byte-cap rule the SIWE write route enforces.
@@ -220,9 +224,7 @@ export default function AdminCreateMakoPage() {
   const disabled =
     isBusy
     || !trimmedQuestion
-    || !trimmedRef
     || questionOverLimit
-    || oracleRefTooLong
     || bettingCloseMinutes >= closeMinutes
     || labelsInvalid
     || drifted
@@ -329,14 +331,10 @@ export default function AdminCreateMakoPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!trimmedQuestion || !trimmedRef || isBusy || drifted) return;
+    if (!trimmedQuestion || isBusy || drifted) return;
 
     if (questionOverLimit) {
       console.error('[admin/create-mako] question too long (bytes)', questionBytes);
-      return;
-    }
-    if (oracleRefTooLong) {
-      console.error('[admin/create-mako] oracle ref too long', oracleRefBytes);
       return;
     }
     if (labelsInvalid) {
@@ -359,7 +357,14 @@ export default function AdminCreateMakoPage() {
       return;
     }
 
-    const oracleRef = toBytes32(trimmedRef);
+    /// Auto-generated oracleRef: `manual:mako:<timestamp_sec>`. Format
+    /// is 22-25 ASCII chars (well under the 32-byte bytes32 cap),
+    /// deterministic per submit, unique enough for admin log grepping
+    /// (the daily per-user cap is 10/day so timestamp collisions are
+    /// impossible). The field is dead metadata on chain — MAKO's
+    /// resolveMarket() is a direct admin call and never reads it.
+    /// See task #178.
+    const oracleRef = toBytes32(`manual:mako:${submitNowSec}`);
 
     /// Snapshot labels at submit time so the save effect can't race
     /// post-receipt edits (Group B review MAJOR 3). `null` means the
@@ -485,28 +490,6 @@ export default function AdminCreateMakoPage() {
             </div>
           </div>
 
-          <div className="px-6 py-5 border-b-2 border-ink">
-            <label htmlFor="mako-oracle-ref" className="mako-label text-muted mb-3 block">
-              ORACLE REF (RESOLVER NOTE)
-            </label>
-            <input
-              id="mako-oracle-ref"
-              type="text"
-              value={oracleRefInput}
-              onChange={(e) => setOracleRefInput(e.target.value)}
-              disabled={isBusy}
-              placeholder="manual:mako:xyz"
-              className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-paper font-mono text-sm outline-none disabled:opacity-50"
-            />
-            <div
-              className={`mako-label mt-2 tabular-nums ${
-                oracleRefTooLong ? 'text-mako-red' : 'text-muted'
-              }`}
-            >
-              {oracleRefBytes} / 32 BYTES * FREE-FORM TAG FOR ADMIN BOOKKEEPING
-              {oracleRefTooLong ? ' * OVER LIMIT' : ''}
-            </div>
-          </div>
 
           {/*
             Optional outcome labels. Both blank = default YES/NO display
