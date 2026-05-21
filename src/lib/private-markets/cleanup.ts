@@ -66,6 +66,13 @@ export async function sweepStalePending(
 
   const cutoff = new Date(now.getTime() - ttlMs);
   const cutoffIso = cutoff.toISOString();
+  // postgres-js with `prepare: false` (Neon's pooled path) takes the
+  // simple-query route and chokes on raw Date binds with
+  // `TypeError: ERR_INVALID_ARG_TYPE` ("Received an instance of Date").
+  // pglite is permissive and accepts Dates, which is why the
+  // integration tests miss it; only the real DB surfaces this. Bind
+  // the timestamp columns as ISO strings, matching `cutoffIso` above.
+  const nowIso = now.toISOString();
 
   // Subselect → UPDATE. Each adapter (postgres-js + pglite) returns
   // rows on `.returning()` so the count is the actual UPDATE result,
@@ -74,9 +81,9 @@ export async function sweepStalePending(
   const result = await db.execute(sql`
     UPDATE pm_markets
        SET create_status = 'failed',
-           failed_at = ${now},
+           failed_at = ${nowIso},
            failure_reason = 'stale-pending-sweep',
-           updated_at = ${now}
+           updated_at = ${nowIso}
      WHERE id IN (
        SELECT id FROM pm_markets
         WHERE chain_id = ${chainId}

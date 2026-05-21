@@ -135,14 +135,87 @@ export function logMetric(
 
 export function logCronError(
   code: PmErrorCode,
-  context: PmStructuredLogContext & { errorMessage: string },
+  context: PmStructuredLogContext & {
+    errorMessage: string;
+    /// Optional raw error — when supplied, the cause chain is walked
+    /// and postgres-js / driver fields (code, severity, detail, hint,
+    /// position, internalPosition, where, schema, table, column,
+    /// dataType, constraint, file, routine) are captured per link.
+    /// Without this, Drizzle's "Failed query: <SQL>\nparams: ..."
+    /// wrapper hides the actual PG error, which is what made the
+    /// 2B-5 sweep failures opaque to debug.
+    error?: unknown;
+  },
 ): void {
-  const line: BasePmLogLine & typeof context = {
+  const { error, ...rest } = context;
+  const line: BasePmLogLine & typeof rest & { errorCauseChain?: unknown[] } = {
     kind: 'pm.error',
     code,
     severity: 'error',
     ts: nowIso(),
-    ...context,
+    ...rest,
   };
+  if (error !== undefined) {
+    line.errorCauseChain = serializeCauseChain(error);
+  }
   emit('error', line);
+}
+
+/// Walk the `.cause` chain (Node's standard error-chaining) and pull
+/// the diagnostic fields driver libraries expose. Stops at depth 8 to
+/// guard against pathological circular chains.
+function serializeCauseChain(err: unknown): unknown[] {
+  const chain: unknown[] = [];
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current; depth += 1) {
+    chain.push(serializeError(current));
+    if (
+      current instanceof Error &&
+      current.cause &&
+      current.cause !== current
+    ) {
+      current = current.cause;
+    } else if (
+      typeof current === 'object' &&
+      current !== null &&
+      'cause' in current &&
+      (current as { cause?: unknown }).cause !== current
+    ) {
+      current = (current as { cause?: unknown }).cause;
+    } else {
+      break;
+    }
+  }
+  return chain;
+}
+
+function serializeError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    const driverFields = [
+      'code',
+      'severity',
+      'detail',
+      'hint',
+      'position',
+      'internalPosition',
+      'where',
+      'schema',
+      'table',
+      'column',
+      'dataType',
+      'constraint',
+      'file',
+      'routine',
+    ] as const;
+    const out: Record<string, unknown> = {
+      name: err.name,
+      message: err.message,
+    };
+    for (const f of driverFields) {
+      const v = (err as unknown as Record<string, unknown>)[f];
+      if (v !== undefined) out[f] = v;
+    }
+    return out;
+  }
+  return { value: String(err) };
 }

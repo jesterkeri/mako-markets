@@ -70,6 +70,7 @@ export async function runPmIndexerCron(
       chainId,
       contractAddress,
       errorMessage: message,
+      error: err,
     });
     throw err;
   }
@@ -153,6 +154,7 @@ export async function runPmMaintenanceCron(
       chainId,
       contractAddress,
       errorMessage: sweepError,
+      error: err,
     });
   }
 
@@ -175,6 +177,7 @@ export async function runPmMaintenanceCron(
       chainId,
       contractAddress,
       errorMessage: resnapshotError,
+      error: err,
     });
   }
 
