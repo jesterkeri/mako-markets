@@ -39,6 +39,14 @@ const mocks = vi.hoisted(() => ({
   runCreateMarket: vi.fn(),
   chainId: 10143, // Monad testnet — matches MONAD_TESTNET_ID
   connectedAddress: '0xcafe000000000000000000000000000000000001',
+  // v4 redeploy (slice 4c-3): both the Magic and wallet branches now
+  // read USDC allowance via publicClient.readContract before submitting
+  // a non-MAKO createMarket. Mock returns MaxUint256 so the test's
+  // wallet path doesn't try to submit an extra approve tx (which would
+  // then expect a second writeContractAsync call), and the Magic path
+  // hands runCreateMarket a real bigint allowance.
+  readContract: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
 }));
 
 vi.mock('@/lib/use-user', () => ({
@@ -56,7 +64,11 @@ vi.mock('wagmi', () => ({
     error: null,
     reset: vi.fn(),
   }),
-  usePublicClient: () => undefined,
+  usePublicClient: () => ({
+    readContract: (...args: unknown[]) => mocks.readContract(...args),
+    waitForTransactionReceipt: (...args: unknown[]) =>
+      mocks.waitForTransactionReceipt(...args),
+  }),
   useReadContract: () => ({ data: undefined, refetch: vi.fn() }),
   useReadContracts: () => ({ data: undefined, isLoading: false, error: null }),
 }));
@@ -107,6 +119,10 @@ const VALID_ARGS = {
   bettingCloseTime: 1_000_000n,
   closeTime: 2_000_000n,
   question: 'Will SAS beat MIN?',
+  // v4 redeploy: every createMarket now requires a creator-seed bet on a
+  // chosen side. 1 USDC seed on YES is the minimum for non-MAKO types.
+  creatorSeed: 1_000_000n,
+  creatorYes: true,
 };
 
 afterEach(() => {
@@ -115,12 +131,21 @@ afterEach(() => {
   mocks.writeContractAsync.mockReset();
   mocks.switchChainAsync.mockReset();
   mocks.runCreateMarket.mockReset();
+  mocks.readContract.mockReset();
+  mocks.waitForTransactionReceipt.mockReset();
 });
 
 describe('useCreateMarket — Codex r1 MIN-1: wallet-flow reroute', () => {
   beforeEach(() => {
     mocks.writeContractAsync.mockResolvedValue('0x' + 'cc'.repeat(32));
     mocks.switchChainAsync.mockResolvedValue(undefined);
+    // Default: allowance already at MaxUint256 so the wallet branch
+    // skips the approve tx. Tests that exercise the approve path
+    // override this to return 0n and assert a 2-call sequence.
+    mocks.readContract.mockResolvedValue(
+      0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffn,
+    );
+    mocks.waitForTransactionReceipt.mockResolvedValue({ status: 'success' });
   });
 
   it('wallet-auth user routes to writeContractAsync, NOT runCreateMarket', async () => {
@@ -186,5 +211,74 @@ describe('useCreateMarket — Codex r1 MIN-1: wallet-flow reroute', () => {
     expect(mocks.runCreateMarket).not.toHaveBeenCalled();
     expect(mocks.writeContractAsync).not.toHaveBeenCalled();
     expect(mocks.switchChainAsync).not.toHaveBeenCalled();
+  });
+});
+
+// ── Wallet approval sub-flow (codex r1 4e MINOR 1) ─────────────────────────
+//
+// The wallet branch's createMarket now requires a USDC allowance on
+// MakoMarketsV4 for non-MAKO types (slice 4c-3). Mirrored from the
+// usePlaceBet pattern: read allowance, if short submit approve(MaxUint256)
+// and wait for the receipt, then submit createMarket. Two paths to pin:
+//   1. Low allowance → 2-tx sequence (approve, wait, create).
+//   2. Approve receipt status === 'reverted' → returns kind:'error' and
+//      does NOT submit createMarket.
+
+describe('useCreateMarket — wallet approval path (slice 4c-3)', () => {
+  beforeEach(() => {
+    mocks.user = { user: WALLET_USER, isLoading: false };
+    mocks.switchChainAsync.mockResolvedValue(undefined);
+  });
+
+  it('low allowance: submits approve, waits for receipt, then createMarket (2-tx sequence)', async () => {
+    // First writeContract = approve, second = createMarket.
+    mocks.writeContractAsync
+      .mockResolvedValueOnce('0x' + 'aa'.repeat(32))
+      .mockResolvedValueOnce('0x' + 'cc'.repeat(32));
+    // allowance = 0 — below the 1 USDC creator seed.
+    mocks.readContract.mockResolvedValueOnce(0n);
+    mocks.waitForTransactionReceipt.mockResolvedValueOnce({ status: 'success' });
+
+    const { result } = renderHook(() => useCreateMarket());
+
+    await act(async () => {
+      await result.current.create(VALID_ARGS);
+    });
+
+    // Exactly two writeContractAsync calls: approve then createMarket.
+    expect(mocks.writeContractAsync).toHaveBeenCalledTimes(2);
+    const first = mocks.writeContractAsync.mock.calls[0]![0] as {
+      functionName: string;
+      args: readonly unknown[];
+    };
+    const second = mocks.writeContractAsync.mock.calls[1]![0] as {
+      functionName: string;
+    };
+    expect(first.functionName).toBe('approve');
+    expect(second.functionName).toBe('createMarket');
+    // Approval was waited on between the two writes.
+    expect(mocks.waitForTransactionReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('approval receipt reverts: returns kind=error and does NOT submit createMarket', async () => {
+    mocks.writeContractAsync.mockResolvedValueOnce('0x' + 'aa'.repeat(32));
+    mocks.readContract.mockResolvedValueOnce(0n);
+    // Approve mined but reverted on-chain.
+    mocks.waitForTransactionReceipt.mockResolvedValueOnce({ status: 'reverted' });
+
+    const { result } = renderHook(() => useCreateMarket());
+
+    let outcome: Awaited<ReturnType<typeof result.current.create>> | undefined;
+    await act(async () => {
+      outcome = await result.current.create(VALID_ARGS);
+    });
+
+    expect(outcome?.kind).toBe('error');
+    // The approve happened, but createMarket MUST NOT have been called.
+    expect(mocks.writeContractAsync).toHaveBeenCalledTimes(1);
+    const only = mocks.writeContractAsync.mock.calls[0]![0] as {
+      functionName: string;
+    };
+    expect(only.functionName).toBe('approve');
   });
 });

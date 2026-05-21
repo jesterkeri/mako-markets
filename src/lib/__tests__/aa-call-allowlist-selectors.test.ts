@@ -24,9 +24,13 @@ describe('aa-call-allowlist selector pinning', () => {
     );
   });
 
-  it('CREATEMARKET_SELECTOR matches createMarket(uint8,bytes32,uint64,uint64,string)', () => {
+  it('CREATEMARKET_SELECTOR matches createMarket(uint8,bytes32,uint64,uint64,string,uint256,bool)', () => {
+    // v4 redeploy: signature appended creatorSeed (uint256) + creatorYes (bool).
+    // Old 5-arg selector was 0xda6a7338; new 7-arg selector is 0xd1aa0ea8.
     expect(CREATEMARKET_SELECTOR).toBe(
-      toFunctionSelector('createMarket(uint8,bytes32,uint64,uint64,string)'),
+      toFunctionSelector(
+        'createMarket(uint8,bytes32,uint64,uint64,string,uint256,bool)',
+      ),
     );
   });
 

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMarkets } from '@/lib/hooks';
+import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
 import { MarketType } from '@/lib/contract';
 import { MarketCard } from '@/components/MarketCard';
 import { AuthMenu } from '@/components/AuthMenu';
@@ -100,6 +101,23 @@ export default function Home() {
     return true;
   });
 
+  /// Batched MAKO label lookup at the feed parent. Only MAKO market ids
+  /// go into the input — the other six types short-circuit because they
+  /// have no DB row to fetch and the helper they'd hit
+  /// (`outcomeLabelForMarket`) delegates to "YES" / "NO" anyway. Empty
+  /// MAKO id list → hook stays `enabled: false`, zero network. Sorted
+  /// inside the hook so re-ordering the feed doesn't trigger refetches.
+  /// Labels for each visible card are passed down via prop; MarketCard
+  /// does NOT call any label hook itself.
+  const makoIds = useMemo(
+    () =>
+      filtered
+        .filter((m) => m.mType === MarketType.MAKO)
+        .map((m) => m.id.toString()),
+    [filtered],
+  );
+  const { data: labelsByMarketId } = useMakoLabelsBatch(makoIds);
+
   return (
     <main className="flex-1 flex flex-col min-h-screen">
       <MobileChromeHeader />
@@ -175,7 +193,14 @@ export default function Home() {
                     href={`/market/${market.id.toString()}`}
                     className="block h-full"
                   >
-                    <MarketCard market={market} />
+                    <MarketCard
+                      market={market}
+                      labels={
+                        market.mType === MarketType.MAKO
+                          ? labelsByMarketId?.get(market.id.toString()) ?? null
+                          : null
+                      }
+                    />
                   </Link>
                 ))}
               </div>

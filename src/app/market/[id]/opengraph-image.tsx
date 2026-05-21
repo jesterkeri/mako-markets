@@ -1,6 +1,6 @@
 import { ImageResponse } from 'next/og';
 import { createPublicClient, http } from 'viem';
-import { makoAbi, MarketType, type MarketWithId } from '@/lib/contract';
+import { makoAbi, MarketType, marketTypeLabel, type MarketWithId } from '@/lib/contract';
 import { humanizeUntil } from '@/lib/time';
 
 /**
@@ -46,10 +46,7 @@ async function fetchMarket(id: bigint): Promise<MarketWithId | null> {
 }
 
 function tagFor(mType: MarketType): string {
-  if (mType === MarketType.FOOTBALL) return 'FOOTBALL';
-  if (mType === MarketType.CRYPTO) return 'CRYPTO';
-  if (mType === MarketType.BASKETBALL) return 'NBA';
-  return 'EVENT';
+  return marketTypeLabel(mType);
 }
 
 // Color tokens mirror globals.css so the OG image feels like the site.

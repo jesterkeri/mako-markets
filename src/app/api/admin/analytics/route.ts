@@ -11,6 +11,8 @@ import { makoAbi, MAKO_ADDRESS } from '@/lib/contract';
 import { formatUsdcExact } from '@/lib/usdc';
 import type { AdminAnalytics } from '@/lib/admin-analytics';
 import { getAdminSession } from '@/lib/admin-session';
+import { db } from '@/db/client';
+import { getMakoLabelsBatch } from '@/lib/mako-labels-server';
 
 /**
  * GET /api/admin/analytics
@@ -289,7 +291,7 @@ async function aggregate(): Promise<AdminAnalytics> {
       totalVolumeBaseUnits += m.totalYes + m.totalNo;
       return {
         id: BigInt(i).toString(),
-        mType: m.mType as 0 | 1 | 2,
+        mType: m.mType as 0 | 1 | 2 | 3 | 4 | 5 | 6,
         creator: m.creator,
         question: m.question,
         createdAtSec: Number(m.createdAt),
@@ -508,15 +510,35 @@ async function aggregate(): Promise<AdminAnalytics> {
       ...chainKey(l),
     });
   }
+  /// Build an O(1) lookup from on-chain marketId → mType so resolve
+  /// entries can carry the market type alongside the outcome. The
+  /// `markets` array we just constructed uses `id: BigInt(i).toString()`
+  /// (the on-chain market id), so the map is keyed by the same string
+  /// form the resolve log's `a.id.toString()` produces below. Missing
+  /// ids (resolve event for a market not in the analytics window)
+  /// fall through to 0; ActivityRow will delegate to the pure label
+  /// helper because `labels` stays null, so the visible string is
+  /// identical to the pre-Group D path.
+  const marketTypeById = new Map(markets.map((m) => [m.id, m.mType]));
+
   for (const l of resolveLogs) {
     const a = (l as unknown as { args: { id: bigint; outcome: number } }).args;
+    const marketId = a.id.toString();
     entries.push({
       kind: 'resolve',
-      marketId: a.id.toString(),
+      marketId,
       txHash: l.transactionHash!,
       blockNumber: l.blockNumber!.toString(),
       tsSec: tsOf(l.blockNumber!),
       outcome: a.outcome as 0 | 1 | 2 | 3,
+      /// mType populated from the existing markets lookup — no new
+      /// chain reads. Defaults to 0 if the resolve event references a
+      /// market id outside the analytics window (unusual; falls back
+      /// to the pure helper at render time).
+      mType: (marketTypeById.get(marketId) ?? 0) as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+      /// labels filled in below AFTER the cap (one batched DB read for
+      /// just the MAKO subset of VISIBLE resolves, not every event).
+      labels: null,
       ...chainKey(l),
     });
   }
@@ -560,6 +582,45 @@ async function aggregate(): Promise<AdminAnalytics> {
     void _logIdx;
     return wire;
   });
+
+  /// MAKO label enrichment for the resolve activity rows that survived
+  /// the 200-cap. Single batched DB read against `getMakoLabelsBatch`
+  /// scoped to the MAKO subset of visible resolves only. Non-MAKO
+  /// resolves and non-resolve entries are untouched; the `labels`
+  /// field stays null on those rows.
+  ///
+  /// Activity rows can't call `useMakoLabels` client-side because
+  /// they're rendered en masse from a single analytics response —
+  /// per-row hooks would create N+1 fetches against the labels
+  /// endpoint and the activity feed regularly carries 100+ rows.
+  /// Joining on the server is the only path that gives ActivityRow
+  /// pure-prop semantics without sacrificing batching.
+  const makoResolveIds: string[] = [];
+  for (const row of cappedActivity) {
+    if (row.kind === 'resolve' && row.mType === 6) {
+      makoResolveIds.push(row.marketId);
+    }
+  }
+  if (makoResolveIds.length > 0) {
+    try {
+      const labelMap = await getMakoLabelsBatch(db, makoResolveIds);
+      for (const row of cappedActivity) {
+        if (row.kind === 'resolve' && row.mType === 6) {
+          row.labels = labelMap.get(row.marketId) ?? null;
+        }
+      }
+    } catch (e) {
+      /// Label enrichment is display-only — a DB hiccup must not
+      /// take down the entire analytics response. Log + leave the
+      /// `labels` fields as null; ActivityRow falls back to "YES" /
+      /// "NO" via the pure helper. Same degradation pattern the
+      /// admin streams use for chain-side failures.
+      console.warn(
+        '[admin/analytics] getMakoLabelsBatch failed; activity rows fall back to YES/NO',
+        e,
+      );
+    }
+  }
 
   // --- DAU (30-day bucket, UTC) ---
   const DAYS = 30;

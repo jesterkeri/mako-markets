@@ -5,7 +5,7 @@
 // wrapper-hotfix learning at the create-market layer:
 //
 //   1. Body shape pinned literally (kind, chainId, target, value).
-//   2. Inner selector pinned via the literal 0xda6a7338 string —
+//   2. Inner selector pinned via the literal 0xd1aa0ea8 string —
 //      independent of any local ABI fragment.
 //   3. Each createMarket arg slot decoded back and asserted equal to
 //      the input. Fixture deliberately uses `bettingCloseTime !==
@@ -43,6 +43,8 @@ const CREATEMARKET_ABI = [
       { name: 'bettingCloseTime', type: 'uint64' },
       { name: 'closeTime', type: 'uint64' },
       { name: 'question', type: 'string' },
+      { name: 'creatorSeed', type: 'uint256' },
+      { name: 'creatorYes', type: 'bool' },
     ],
     outputs: [{ name: 'id', type: 'uint256' }],
     stateMutability: 'nonpayable',
@@ -56,12 +58,15 @@ describe('buildCreateMarketSponsorRequest cross-module pin', () => {
   const args = {
     chainId: MONAD_TESTNET_ID,
     makoAddress: MAKO_ADDRESS,
-    mType: 0, // CRYPTO
+    mType: 1, // CRYPTO (enum is FOOTBALL=0, CRYPTO=1, BASKETBALL=2, ...)
     oracleRef:
       '0xab0000000000000000000000000000000000000000000000000000000000ffaa' as Hex,
     bettingCloseTime: 1_800_000_300n,
     closeTime: 1_800_000_900n, // distinct from bettingCloseTime — swap-detectable
     question: 'BTC > 100k by close?',
+    // v4 redeploy: every createMarket carries creator seed + side.
+    creatorSeed: 1_000_000n,
+    creatorYes: true,
   };
 
   it('produces the expected outer body shape (kind/chainId/target/value)', () => {
@@ -73,9 +78,9 @@ describe('buildCreateMarketSponsorRequest cross-module pin', () => {
     expect(body.call.value).toBe('0x0');
   });
 
-  it('inner selector pinned by literal 0xda6a7338 (independent of local ABI)', () => {
+  it('inner selector pinned by literal 0xd1aa0ea8 (independent of local ABI)', () => {
     const body = buildCreateMarketSponsorRequest(args);
-    expect(body.call.data.slice(0, 10)).toBe('0xda6a7338');
+    expect(body.call.data.slice(0, 10)).toBe('0xd1aa0ea8');
     // Cross-check: the constant the validator uses matches.
     expect(body.call.data.slice(0, 10)).toBe(CREATEMARKET_SELECTOR);
   });
@@ -94,6 +99,8 @@ describe('buildCreateMarketSponsorRequest cross-module pin', () => {
       bigint,
       bigint,
       string,
+      bigint,
+      boolean,
     ];
 
     expect(decodedArgs[0]).toBe(args.mType);
@@ -105,14 +112,18 @@ describe('buildCreateMarketSponsorRequest cross-module pin', () => {
     expect(decodedArgs[3]).toBe(args.closeTime);
     expect(decodedArgs[2]).not.toBe(decodedArgs[3]);
     expect(decodedArgs[4]).toBe(args.question);
+    // v4 redeploy: pin creatorSeed + creatorYes tuple slots so a future
+    // encoder typo that swapped uint256 + bool would surface here.
+    expect(decodedArgs[5]).toBe(args.creatorSeed);
+    expect(decodedArgs[6]).toBe(args.creatorYes);
   });
 
-  it('validator accepts builder output (e2e client→server round-trip)', () => {
+  it('validator accepts builder output (e2e client→server round-trip)', async () => {
     const body = buildCreateMarketSponsorRequest(args);
 
     // nowSec chosen 1 hour before closeTime → comfortably inside the
     // duration window, well past MIN+SERVER_BUFFER.
-    expect(() =>
+    await expect(
       assertCreateMarketCall({
         chainId: body.chainId,
         safeAddress: SAFE,
@@ -122,8 +133,10 @@ describe('buildCreateMarketSponsorRequest cross-module pin', () => {
           data: body.call.data,
         },
         nowSec: args.closeTime - 3600n,
+        readBlocked: async () => false,
+        readCreatorCreatesToday: async () => ({ count: 0n, remaining: 10n }),
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
   it('builder is pure — same input → same output across calls', () => {

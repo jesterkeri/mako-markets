@@ -3,6 +3,8 @@ import { and, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { userSafes, type AaPendingUserOp } from '@/db/schema';
+import { makoAbi } from '@/lib/MakoMarkets.abi';
+import { MAKO_ADDRESS } from '@/lib/contract';
 import {
   PENDING_TTL_MS,
   VALIDITY_WINDOW_MAX_UINT48,
@@ -12,6 +14,8 @@ import {
   assertBetBatchedCalls,
   assertBetSingleCall,
   assertClaimCall,
+  assertCreateMarketBatchedCallsShape,
+  assertCreateMarketBatchedCallsSponsor,
   assertCreateMarketCall,
   assertCreateMarketShape,
   assertPmCreateMarketCall,
@@ -275,7 +279,11 @@ export async function POST(req: Request) {
         call: Call;
       }
     | {
-        kind: 'bet_batched' | 'pm_bet_batched' | 'pm_stake_batched';
+        kind:
+          | 'bet_batched'
+          | 'create_market_batched'
+          | 'pm_bet_batched'
+          | 'pm_stake_batched';
         calls: readonly [Call, Call];
       };
   try {
@@ -354,13 +362,93 @@ export async function POST(req: Request) {
         const block = await getAaPublicClient(chainId).getBlock({
           blockTag: 'latest',
         });
-        assertCreateMarketCall({
+        // v4 redeploy (slice 4c): validator is async and reads
+        // blocked(safeAddress) from the v4 contract for non-MAKO creates.
+        // The chain read lives inside the validator (per codex r7 nit-2)
+        // so the route doesn't need to know about the gate; we just
+        // hand it a publicClient-backed callback. MAKO creates skip
+        // the read by design (admin-Safe owner gate is the access control).
+        const aaClient = getAaPublicClient(chainId);
+        await assertCreateMarketCall({
           chainId,
           safeAddress,
           call,
           nowSec: block.timestamp,
+          readBlocked: async (safe) =>
+            (await aaClient.readContract({
+              address: MAKO_ADDRESS,
+              abi: makoAbi,
+              functionName: 'blocked',
+              args: [safe],
+            })) as boolean,
+          readCreatorCreatesToday: async (safe) => {
+            const [count, remaining] = (await aaClient.readContract({
+              address: MAKO_ADDRESS,
+              abi: makoAbi,
+              functionName: 'creatorCreatesToday',
+              args: [safe],
+            })) as readonly [bigint, bigint];
+            return { count, remaining };
+          },
         });
         buildArgs = { kind: 'create_market', call };
+        break;
+      }
+      case 'create_market_batched': {
+        // v4 redeploy (slice 4c-3): batched approve+create for Magic users
+        // whose Safe has insufficient USDC allowance against MakoMarketsV4.
+        // Same shape-then-clock-then-blocklist discipline as the single-call
+        // path; the batched validator handles tuple-level checks (approve
+        // target/spender/amount) and recurses into the same async single-
+        // call sponsor validator for sub[1].
+        const sub0 = parsed.data.calls[0];
+        const sub1 = parsed.data.calls[1];
+        const calls: readonly [Call, Call] = [
+          {
+            to: sub0.to as Address,
+            value: hexToBigInt(sub0.value as Hex),
+            data: sub0.data as Hex,
+          },
+          {
+            to: sub1.to as Address,
+            value: hexToBigInt(sub1.value as Hex),
+            data: sub1.data as Hex,
+          },
+        ] as const;
+        // Cheap shape pre-flight before any RPC. assertCreateMarketBatched-
+        // CallsShape recurses into the sync single-call shape validator.
+        assertCreateMarketBatchedCallsShape({
+          chainId,
+          safeAddress,
+          calls,
+        });
+        const block = await getAaPublicClient(chainId).getBlock({
+          blockTag: 'latest',
+        });
+        const aaClient = getAaPublicClient(chainId);
+        await assertCreateMarketBatchedCallsSponsor({
+          chainId,
+          safeAddress,
+          calls,
+          nowSec: block.timestamp,
+          readBlocked: async (safe) =>
+            (await aaClient.readContract({
+              address: MAKO_ADDRESS,
+              abi: makoAbi,
+              functionName: 'blocked',
+              args: [safe],
+            })) as boolean,
+          readCreatorCreatesToday: async (safe) => {
+            const [count, remaining] = (await aaClient.readContract({
+              address: MAKO_ADDRESS,
+              abi: makoAbi,
+              functionName: 'creatorCreatesToday',
+              args: [safe],
+            })) as readonly [bigint, bigint];
+            return { count, remaining };
+          },
+        });
+        buildArgs = { kind: 'create_market_batched', calls };
         break;
       }
       case 'claim': {
@@ -770,7 +858,25 @@ export async function POST(req: Request) {
         { status: 403 },
       );
     }
-    throw e;
+    // codex r1 4f-fe MINOR 1: validators may now do chain reads
+    // (`blocked(safe)`, `creatorCreatesToday(safe)`) and either can
+    // reject with a non-NotAllowedError if the RPC errors or the view
+    // reverts (e.g. interim state between FE deploy and contract
+    // redeploy). Map to a clean 502 with a sanitized summary instead
+    // of letting Next surface a generic 500. No funds at risk —
+    // incrementOrReject hasn't run yet — but the user deserves a
+    // clear error and operators a debuggable log line.
+    const summary = summarizeAaErrorWithCause(e);
+    console.error('[aa.sponsor.validate_failed]', {
+      userId: session.userId,
+      chainId,
+      kind: parsed.data.kind,
+      ...summary,
+    });
+    return Response.json(
+      { error: 'VALIDATE_FAILED' },
+      { status: 502 },
+    );
   }
 
   // Step 6: PRECHECK in-flight.

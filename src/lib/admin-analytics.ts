@@ -70,7 +70,7 @@ export type AdminAnalytics = {
   }>;
   markets: Array<{
     id: string;
-    mType: 0 | 1 | 2;
+    mType: 0 | 1 | 2 | 3 | 4 | 5 | 6;
     creator: `0x${string}`;
     question: string;
     createdAtSec: number;
@@ -86,7 +86,24 @@ export type AdminAnalytics = {
   activity: Array<
     | { kind: 'bet'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountUsdc: string; isYes: boolean }
     | { kind: 'market'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}` }
-    | { kind: 'resolve'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; outcome: 0 | 1 | 2 | 3 }
+    /// Resolve rows are enriched server-side with `mType` (from the
+    /// existing markets lookup the analytics route already builds)
+    /// and `labels` (a single batched `getMakoLabelsBatch` call for
+    /// the MAKO subset of resolve marketIds). `labels` is non-null
+    /// ONLY when `mType === MAKO` AND a DB row exists; null in every
+    /// other case. ActivityRow uses these directly via
+    /// `outcomeLabelForMarket({ mType: a.mType }, a.labels, a.outcome)`
+    /// — no client-side hook, no per-row fetch.
+    | {
+        kind: 'resolve';
+        marketId: string;
+        txHash: `0x${string}`;
+        blockNumber: string;
+        tsSec: number;
+        outcome: 0 | 1 | 2 | 3;
+        mType: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+        labels: { label1: string; label2: string } | null;
+      }
     | { kind: 'claim'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountUsdc: string }
     | { kind: 'fee'; marketId: string; txHash: `0x${string}`; blockNumber: string; tsSec: number; user: `0x${string}`; amountUsdc: string }
   >;

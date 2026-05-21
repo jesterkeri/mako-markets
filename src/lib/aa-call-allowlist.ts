@@ -58,8 +58,10 @@ import { USDC_ADDRESS } from './usdc';
 import {
   CREATE_MARKET_QUESTION_MAX_BYTES,
   CREATE_MARKET_MIN_SERVER_BUFFER_SEC,
+  MAKO_ADMIN_SAFE_ADDRESS,
   MAKO_V4_MAX_DURATION_SEC,
   MAKO_V4_MIN_DURATION_SEC,
+  MIN_CREATOR_SEED_USDC_BASE,
   PM_MAX_ALLOWLIST,
   PM_MAX_DESCRIPTION_BYTES,
   PM_MAX_OPTION_LABEL_BYTES,
@@ -131,6 +133,25 @@ export type NotAllowedReason =
   | 'bad_create_args'
   | 'bad_create_question'
   | 'bad_create_timestamps'
+  // v4 redeploy (slice 4c) — creator seed + MAKO admin gate + blocklist.
+  // Distinct codes so a 403 carries actionable info without forcing
+  // operators to parse a `detail` string.
+  | 'bad_create_seed_too_small'
+  | 'bad_create_mako_nonzero_seed'
+  | 'bad_create_mako_non_admin'
+  | 'bad_create_mtype_out_of_range'
+  | 'bad_create_blocked_wallet'
+  // v4 redeploy (slice 4f): sponsor-time mirror of the contract's
+  // CreatorDailyCapExceeded (MAX_CREATES_PER_DAY=10 per UTC day for
+  // non-MAKO). Saves a Magic user from burning sponsor budget on an
+  // op that would revert at simulation. MAKO is contract-exempt.
+  | 'bad_create_daily_cap_exceeded'
+  // Codex r1 4e MAJOR 1: MAKO has no creator seed (always 0n), so the
+  // batched approve+create path has no business being used for a MAKO
+  // create. Rejecting up-front prevents an admin session from granting
+  // a MaxUint256 USDC allowance to MAKO via the batched dispatcher
+  // (admin uses the single-call path for MAKO).
+  | 'bad_create_mako_in_batched_path'
   // claim-magic-parity claim flow:
   | 'bad_claim_args'
   // Phase 2C-1 PM create-market flow:
@@ -237,10 +258,13 @@ const PLACEBET_ABI = [
   },
 ] as const;
 
-/// `createMarket(uint8, bytes32, uint64, uint64, string)`. Phase 1H
-/// create-market flow. Mirrors v4 contract method exactly. The mType
-/// argument is a uint8 enum mapped to MarketType {FOOTBALL=0, CRYPTO=1,
-/// BASKETBALL=2} (matches MakoMarketsV4.sol enum order).
+/// `createMarket(uint8, bytes32, uint64, uint64, string, uint256, bool)`.
+/// Phase 1H create-market flow, extended in the v4 redeploy (slice 4c)
+/// with `creatorSeed` + `creatorYes` for the bundled creator-bet seed.
+/// Mirrors v4 contract method exactly. The mType argument is a uint8 enum
+/// mapped to MarketType {FOOTBALL=0, CRYPTO=1, BASKETBALL=2, FOREX=3,
+/// COMMODITIES=4, STOCKS=5, MAKO=6} — must match MakoMarketsV4.sol enum
+/// order (append-only). Reordering existing values breaks indexers + AA.
 const CREATEMARKET_ABI = [
   {
     type: 'function',
@@ -251,6 +275,8 @@ const CREATEMARKET_ABI = [
       { name: 'bettingCloseTime', type: 'uint64' },
       { name: 'closeTime', type: 'uint64' },
       { name: 'question', type: 'string' },
+      { name: 'creatorSeed', type: 'uint256' },
+      { name: 'creatorYes', type: 'bool' },
     ],
     outputs: [{ name: 'id', type: 'uint256' }],
     stateMutability: 'nonpayable',
@@ -263,7 +289,7 @@ const CREATEMARKET_ABI = [
 /// each constant matches `viem.toFunctionSelector(signature)`; CI
 /// fails on drift.
 export const PLACEBET_SELECTOR = '0x1a38cac6' as const;
-export const CREATEMARKET_SELECTOR = '0xda6a7338' as const;
+export const CREATEMARKET_SELECTOR = '0xd1aa0ea8' as const;
 /// `claim(uint256)` selector. Phase 2 claim-magic-parity. Confirmed
 /// via `keccak256(toBytes('claim(uint256)')).slice(0, 10)` at module
 /// dev time — pinned as a hex literal so a drift in the ABI fragment
@@ -688,12 +714,16 @@ export function decodeAndAssertClaimShape(call: {
 
 /// Tuple shape of the decoded createMarket args. Shared by sponsor-time
 /// (with chain-time check) and send-time (shape-only) validators.
+/// v4 redeploy (slice 4c) appended creatorSeed (uint256) and creatorYes
+/// (bool) at the end.
 type CreateMarketArgs = readonly [
-  number,    // mType (uint8 enum)
+  number,    // mType (uint8 enum, 0..6)
   Hex,       // oracleRef (bytes32)
   bigint,    // bettingCloseTime (uint64)
   bigint,    // closeTime (uint64)
   string,    // question
+  bigint,    // creatorSeed (uint256, USDC base units)
+  boolean,   // creatorYes
 ];
 
 /// Decode + structural assertions shared between sponsor-time and
@@ -724,6 +754,17 @@ function decodeCreateMarketArgs(call: {
     throw new NotAllowedError('bad_value');
   }
 
+  // Selector check BEFORE decode (codex r5 M-1). Wrong-selector data
+  // must not reach decodeFunctionData where viem may throw a raw
+  // ABIDecodingError that escapes the route discipline.
+  if (call.data.slice(0, 10).toLowerCase() !== CREATEMARKET_SELECTOR) {
+    throw new NotAllowedError('bad_create_args', 'wrong_selector');
+  }
+
+  // Decode wrapped in try/catch. Truncated or otherwise-malformed
+  // calldata that survived the 4-byte selector check (e.g. attacker
+  // pads selector with garbage args) resolves to a NotAllowed reason
+  // instead of a raw viem ABI throw. Same documented failure mode.
   let decoded: { functionName: 'createMarket'; args: CreateMarketArgs };
   try {
     const result = decodeFunctionData({
@@ -731,6 +772,7 @@ function decodeCreateMarketArgs(call: {
       data: call.data,
     });
     if (result.functionName !== 'createMarket') {
+      // Defensive: should be unreachable given the selector check above.
       throw new NotAllowedError('bad_create_args', 'wrong_selector');
     }
     decoded = result as unknown as typeof decoded;
@@ -739,10 +781,14 @@ function decodeCreateMarketArgs(call: {
     throw new NotAllowedError('bad_create_args', 'decode_failed');
   }
 
-  const [mType, , bettingCloseTime, closeTime, question] = decoded.args;
+  const [mType, , bettingCloseTime, closeTime, question, creatorSeed] = decoded.args;
 
-  if (!(mType === 0 || mType === 1 || mType === 2)) {
-    throw new NotAllowedError('bad_create_args', 'bad_mtype_enum');
+  // mType 0..6 — the v4 redeploy widened the enum (FOREX, COMMODITIES,
+  // STOCKS, MAKO). Reject anything outside the contract's enum range
+  // with a distinct reason so a stale frontend bundle's mType=99 doesn't
+  // get a vague rejection.
+  if (mType < 0 || mType > 6 || !Number.isInteger(mType)) {
+    throw new NotAllowedError('bad_create_mtype_out_of_range');
   }
 
   // UTF-8 byte length, NOT character count. The contract's qLen check
@@ -758,6 +804,22 @@ function decodeCreateMarketArgs(call: {
   // clock-relative invariant — true at any point in time.
   if (bettingCloseTime > closeTime) {
     throw new NotAllowedError('bad_create_timestamps', 'betting_after_close');
+  }
+
+  // Creator seed branch (v4 redeploy). MAKO type must have creatorSeed
+  // exactly 0; non-MAKO types must have creatorSeed >= MIN_CREATOR_SEED.
+  // The contract enforces both gates; the validator mirrors them so a
+  // doomed sponsor is rejected before getBlock + Pimlico round-trip.
+  // mType=6 is MAKO (append-only enum; see CREATEMARKET_ABI header).
+  const MAKO_MARKET_TYPE = 6;
+  if (mType === MAKO_MARKET_TYPE) {
+    if (creatorSeed !== 0n) {
+      throw new NotAllowedError('bad_create_mako_nonzero_seed');
+    }
+  } else {
+    if (creatorSeed < MIN_CREATOR_SEED_USDC_BASE) {
+      throw new NotAllowedError('bad_create_seed_too_small');
+    }
   }
 
   return decoded.args;
@@ -808,18 +870,39 @@ function decodeAndAssertCreateMarket(args: {
 /// selector is `createMarket`. Drift in clock-relative timestamps
 /// is caught by Guard A (SafeOp hash recomputation) before the
 /// bundler is reached; this validator's job is shape-only.
-function decodeAndAssertCreateMarketShape(call: {
-  to: Address;
-  value: bigint;
-  data: Hex;
+///
+/// MAKO admin gate (slice 4c): MAKO-type markets require the sender's
+/// Safe to equal the pinned `MAKO_ADMIN_SAFE_ADDRESS`. The check is
+/// static (env-bound at module load) so it lives in the shape variant
+/// — no chain read needed. Non-MAKO types skip this branch.
+function decodeAndAssertCreateMarketShape(args: {
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
 }): void {
-  decodeCreateMarketArgs(call);
+  const decoded = decodeCreateMarketArgs(args.call);
+  const mType = decoded[0];
+  const MAKO_MARKET_TYPE = 6;
+  if (mType === MAKO_MARKET_TYPE) {
+    if (args.safeAddress.toLowerCase() !== MAKO_ADMIN_SAFE_ADDRESS) {
+      throw new NotAllowedError('bad_create_mako_non_admin');
+    }
+  }
 }
 
 /// Validate a single `MakoMarketsV4.createMarket(...)` call (sponsor-time,
 /// kind='create_market'). Used by /api/aa/sponsor for the Phase 1H Magic
-/// create-market flow.
-export function assertCreateMarketCall(args: {
+/// create-market flow. v4 redeploy (slice 4c) made this async to admit a
+/// sponsor-time chain read of `blocked(safeAddress)` for non-MAKO creates
+/// — without the read, a blocked Magic user can keep burning sponsor
+/// budget on ops that revert on-chain.
+///
+/// `readBlocked` is passed in by the sponsor route so the validator stays
+/// testable without RPC. Tests pass a stub (`async () => false` or
+/// `async () => true` for the negative case). MAKO-type creates skip the
+/// read entirely (bypass-by-design per codex r3 m-1: setBlocked could
+/// flag the admin Safe but MAKO creation is gated by owner equality, not
+/// blocklist).
+export async function assertCreateMarketCall(args: {
   chainId: number;
   safeAddress: Address;
   call: { to: Address; value: bigint; data: Hex };
@@ -827,11 +910,62 @@ export function assertCreateMarketCall(args: {
   /// getAaPublicClient(chainId).getBlock({ blockTag: 'latest' }) before
   /// invoking the validator. Browser Date.now() is NOT trusted.
   nowSec: bigint;
-}): void {
+  /// Chain read of `MakoMarketsV4.blocked(safeAddress)`. Wired by the
+  /// sponsor route to `publicClient.readContract({...})`. Tests stub.
+  /// Called only for non-MAKO creates; MAKO bypasses by design.
+  readBlocked: (safe: Address) => Promise<boolean>;
+  /// Chain read of `MakoMarketsV4.creatorCreatesToday(safeAddress)`.
+  /// Returns `(count, remaining)`. Non-MAKO only; MAKO is contract-exempt
+  /// from the daily cap and skips this read. Mirrors the on-chain
+  /// `CreatorDailyCapExceeded` revert so a doomed Magic create gets a
+  /// 403 at sponsor time instead of burning sponsor budget round-tripping
+  /// to a guaranteed-revert simulation.
+  readCreatorCreatesToday: (
+    safe: Address,
+  ) => Promise<{ count: bigint; remaining: bigint }>;
+}): Promise<void> {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('bad_create_args', 'wrong_chain');
   }
+  // Decode + structural checks + clock checks (sync). decodeCreateMarketArgs
+  // is reused inside decodeAndAssertCreateMarket so the shape pass also
+  // catches the new MAKO seed + mType-range + selector-first invariants.
   decodeAndAssertCreateMarket({ call: args.call, nowSec: args.nowSec });
+
+  // MAKO admin gate (mirrors shape-side check for defense in depth — a
+  // future refactor that bypasses the shape pre-flight still hits this).
+  const decoded = decodeCreateMarketArgs(args.call);
+  const mType = decoded[0];
+  const MAKO_MARKET_TYPE = 6;
+  if (mType === MAKO_MARKET_TYPE) {
+    if (args.safeAddress.toLowerCase() !== MAKO_ADMIN_SAFE_ADDRESS) {
+      throw new NotAllowedError('bad_create_mako_non_admin');
+    }
+    return; // MAKO bypasses blocklist + daily cap by design.
+  }
+
+  // Non-MAKO: sponsor-time chain read of blocked(safeAddress). A blocked
+  // wallet's seed transfer would revert at the contract; reject here so
+  // the user doesn't burn daily sponsor cap on a doomed op.
+  const isBlocked = await args.readBlocked(args.safeAddress);
+  if (isBlocked) {
+    throw new NotAllowedError('bad_create_blocked_wallet');
+  }
+
+  // Non-MAKO: sponsor-time mirror of the contract's daily-cap invariant
+  // (MakoMarketsV4 MAX_CREATES_PER_DAY = 10 per UTC day). Without this
+  // read, a Magic user at the cap would burn sponsor budget bouncing off
+  // `CreatorDailyCapExceeded` at simulation. The view returns the count
+  // for the CURRENT UTC bucket — a reading taken seconds before midnight
+  // can be stale by the time the op is mined, but at worst the user
+  // succeeds on a fresh slot they would have gotten anyway; the contract
+  // is still the authoritative gate. We key on `remaining === 0n` (codex
+  // r1 NIT) rather than count >= 10n so a future contract bump to the
+  // cap doesn't silently drift the mirror.
+  const { remaining } = await args.readCreatorCreatesToday(args.safeAddress);
+  if (remaining === 0n) {
+    throw new NotAllowedError('bad_create_daily_cap_exceeded');
+  }
 }
 
 /// Cheap shape-only validation — no clock, no chain RPC. Round-8 MINOR 1:
@@ -839,9 +973,10 @@ export function assertCreateMarketCall(args: {
 /// or misconfigured caller can't force the route to do an RPC roundtrip
 /// for a request that would always reject on shape. Same shape checks
 /// the full validator does (chainId, target, value, decode, mType,
-/// question, immutable bettingCloseTime <= closeTime); skips the
-/// clock-relative checks. Suitable for both pre-flight gating AND
-/// send-time re-validation.
+/// question, immutable bettingCloseTime <= closeTime, MAKO admin gate,
+/// creator-seed branch); skips the clock-relative checks AND the chain-
+/// read blocklist gate (those live in the async sponsor validator).
+/// Suitable for both pre-flight gating AND send-time re-validation.
 export function assertCreateMarketShape(args: {
   chainId: number;
   safeAddress: Address;
@@ -850,7 +985,170 @@ export function assertCreateMarketShape(args: {
   if (args.chainId !== MONAD_TESTNET_ID) {
     throw new NotAllowedError('bad_create_args', 'wrong_chain');
   }
-  decodeAndAssertCreateMarketShape(args.call);
+  decodeAndAssertCreateMarketShape({
+    safeAddress: args.safeAddress,
+    call: args.call,
+  });
+}
+
+// ── Create-market batched validators (slice 4c-2) ───────────────────────────
+//
+// `create_market_batched` is the v4 redeploy analog of `bet_batched`. Magic
+// users have zero USDC allowance on the new MakoMarketsV4 contract; a bare
+// sponsored `createMarket` would `safeTransferFrom(creatorSeed)` and revert.
+// Solution: bundle `[approve(USDC→MAKO, MaxUint256), createMarket(...)]`
+// into a MultiSend op=1 via the same buildSponsoredUserOp path used for
+// the bet flow.
+//
+// MAKO IS REJECTED FROM THIS PATH (codex r1 4e MAJOR 1). MAKO creates
+// always carry `creatorSeed === 0n`, so no `safeTransferFrom` happens and
+// the approve sub-call has nothing to do. Without this gate, an
+// authenticated admin session could still POST a `create_market_batched`
+// body with mType=MAKO and the sponsor would happily grant MAKO an
+// unlimited USDC allowance via the batched dispatcher. We pre-screen
+// mType from the createMarket sub-call AFTER the approve check (so
+// reversed-order tuples still surface `bad_approval_target` from the
+// approve decode) but BEFORE the inner single-call validator (which
+// would otherwise let a 0-seed admin batched path through). No on-chain
+// allowance has been granted at this point — the route's
+// buildSponsoredUserOp call happens after this validator returns.
+//
+// Two variants per the plan r6 M-1 split:
+//   - assertCreateMarketBatchedCallsSponsor  (async, awaits async single-call)
+//   - assertCreateMarketBatchedCallsShape    (sync, no chain reads)
+
+const MAKO_MARKET_TYPE_NUMBER = 6;
+
+/// Pre-screen the createMarket sub-call's mType. Throws
+/// `bad_create_mako_in_batched_path` if mType decodes to MAKO. Used by
+/// both batched validators AFTER `decodeAndAssertApprove` (so a
+/// reversed-order tuple still throws `bad_approval_target` first) and
+/// BEFORE the recursive single-call validator (so a 0-seed admin
+/// batched body is refused with a specific reason rather than slipping
+/// through the inner MAKO-admin gate).
+///
+/// Does NOT use `decodeCreateMarketArgs` because that helper runs the
+/// full single-call validation pipeline inline (including the MAKO-
+/// nonzero-seed and seed-too-small branches), which would surface those
+/// reasons first and mask the batched-path rejection. We only need the
+/// first decoded arg (`mType`) — everything else is the inner
+/// validator's job once the MAKO gate has passed.
+function assertNotMakoInBatchedPath(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): void {
+  // Pre-decode invariants — same reasons the single-call validator
+  // would surface, kept in this gate so a malformed target / value /
+  // selector doesn't accidentally pass the MAKO check by way of a
+  // raw decode throw.
+  if (call.to.toLowerCase() !== MAKO_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('bad_create_args', 'wrong_target');
+  }
+  if (call.value !== 0n) {
+    throw new NotAllowedError('bad_value');
+  }
+  if (call.data.slice(0, 10).toLowerCase() !== CREATEMARKET_SELECTOR) {
+    throw new NotAllowedError('bad_create_args', 'wrong_selector');
+  }
+
+  let mType: number;
+  try {
+    const result = decodeFunctionData({
+      abi: CREATEMARKET_ABI,
+      data: call.data,
+    });
+    if (result.functionName !== 'createMarket') {
+      throw new NotAllowedError('bad_create_args', 'wrong_selector');
+    }
+    const args = result.args as unknown as readonly [number, ...unknown[]];
+    mType = args[0];
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('bad_create_args', 'decode_failed');
+  }
+
+  if (mType === MAKO_MARKET_TYPE_NUMBER) {
+    throw new NotAllowedError('bad_create_mako_in_batched_path');
+  }
+}
+
+/// Sponsor-time async validator for the 2-call `[approve, createMarket]`
+/// tuple. Awaits the recursive single-call sponsor validator so any
+/// rejection from the inner createMarket path (including the chain-read
+/// blocklist gate for non-MAKO) propagates as a NotAllowedError. The
+/// MultiSend wrapper does NOT exist at this point — the route validates
+/// the input tuple BEFORE buildSponsoredUserOp wraps it.
+export async function assertCreateMarketBatchedCallsSponsor(args: {
+  chainId: number;
+  safeAddress: Address;
+  calls: readonly [
+    { to: Address; value: bigint; data: Hex },
+    { to: Address; value: bigint; data: Hex },
+  ];
+  /// Latest Monad block timestamp — same shape as the single-call validator.
+  nowSec: bigint;
+  /// Chain read of `MakoMarketsV4.blocked(safeAddress)`. Threaded into the
+  /// recursive single-call sponsor validator; MAKO inner branch bypasses.
+  readBlocked: (safe: Address) => Promise<boolean>;
+  /// Chain read of `MakoMarketsV4.creatorCreatesToday(safeAddress)`.
+  /// Threaded into the recursive single-call validator. MAKO is rejected
+  /// from the batched path entirely (assertNotMakoInBatchedPath), so this
+  /// read always fires for inputs that get past the pre-screen.
+  readCreatorCreatesToday: (
+    safe: Address,
+  ) => Promise<{ count: bigint; remaining: bigint }>;
+}): Promise<void> {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('bad_create_args', 'wrong_chain');
+  }
+  // Ordering: tuple[0] is the approve, tuple[1] is the createMarket.
+  // A reversed-order tuple → bad_approval_target (tuple[0] target check
+  // fires first since approve target=USDC and createMarket target=MAKO).
+  decodeAndAssertApprove(args.calls[0]);
+  // MAKO pre-screen (codex r1 4e MAJOR 1). Runs AFTER the approve
+  // check (which catches structural problems like reversed tuples)
+  // but BEFORE the inner single-call validator (which would
+  // otherwise surface bad_create_mako_nonzero_seed /
+  // bad_create_mako_non_admin and let a 0-seed admin path through).
+  // The approve has already passed structurally at this point, but
+  // no on-chain allowance has been granted yet — the route's
+  // buildSponsoredUserOp call happens after this validator returns.
+  assertNotMakoInBatchedPath(args.calls[1]);
+  await assertCreateMarketCall({
+    chainId: args.chainId,
+    safeAddress: args.safeAddress,
+    call: args.calls[1],
+    nowSec: args.nowSec,
+    readBlocked: args.readBlocked,
+    readCreatorCreatesToday: args.readCreatorCreatesToday,
+  });
+}
+
+/// Send-time sync shape-only batched validator. No clock, no chain RPC.
+/// Recurses into `assertCreateMarketShape` for sub[1] so the MAKO admin
+/// gate is re-checked at send-time alongside the immutable shape pass.
+/// The route uses this as a pre-flight before getBlock + Pimlico round-
+/// trip and again at send-time after Magic signing.
+export function assertCreateMarketBatchedCallsShape(args: {
+  chainId: number;
+  safeAddress: Address;
+  calls: readonly [
+    { to: Address; value: bigint; data: Hex },
+    { to: Address; value: bigint; data: Hex },
+  ];
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('bad_create_args', 'wrong_chain');
+  }
+  decodeAndAssertApprove(args.calls[0]);
+  // MAKO pre-screen mirror — see sponsor variant.
+  assertNotMakoInBatchedPath(args.calls[1]);
+  assertCreateMarketShape({
+    chainId: args.chainId,
+    safeAddress: args.safeAddress,
+    call: args.calls[1],
+  });
 }
 
 // ── Private-markets create-market validators (Phase 2C-1) ──────────────────
@@ -1513,7 +1811,9 @@ export async function assertSponsoredCallData(args: {
         throw new NotAllowedError('bad_placebet_args');
       }
       // Phase 1H: dispatch by 4-byte selector. placeBet (0x1a38cac6)
-      // and createMarket (0xda6a7338) are the two MAKO methods we
+      // and createMarket (0xd1aa0ea8 after the v4 redeploy that appended
+      // creatorSeed + creatorYes; the prior 5-arg signature was
+      // 0xda6a7338) are the two MAKO methods we
       // sponsor today. Selector dispatch — not exception-catch
       // fallthrough — so a malformed placeBet cannot silently remap
       // to bad_create_args (or vice versa).
@@ -1528,8 +1828,13 @@ export async function assertSponsoredCallData(args: {
       if (innerSelector === CREATEMARKET_SELECTOR) {
         // Shape-only at send-time. Clock-relative timestamp drift is
         // caught by Guard A (SafeOp hash recomputation) before the
-        // bundler is reached.
-        decodeAndAssertCreateMarketShape({ to, value, data });
+        // bundler is reached. Pass safeAddress so the MAKO admin gate
+        // re-checks at send-time (defense-in-depth against drift between
+        // the sponsor-time approval and the persisted callData).
+        decodeAndAssertCreateMarketShape({
+          safeAddress: args.safeAddress,
+          call: { to, value, data },
+        });
         return;
       }
       if (innerSelector === CLAIM_SELECTOR) {
@@ -1728,9 +2033,32 @@ export async function assertSponsoredCallData(args: {
     const sub1 = { to: sub[1].to, value: sub[1].value, data: sub[1].data };
 
     if (sub1.to.toLowerCase() === MAKO_ADDRESS.toLowerCase()) {
-      decodeAndAssertApprove(sub0);
-      decodeAndAssertPlaceBet(sub1);
-      return;
+      // v4 MAKO target carries TWO batched actions today: placeBet
+      // (existing 1D flow) and createMarket (slice 4c-2). Discriminate
+      // by inner selector so a typo'd selector can't silently route to
+      // the wrong validator.
+      if (sub1.data.length < 10) {
+        throw new NotAllowedError('bad_selector');
+      }
+      const makoInnerSelector = sub1.data.slice(0, 10).toLowerCase();
+      if (makoInnerSelector === PLACEBET_SELECTOR) {
+        decodeAndAssertApprove(sub0);
+        decodeAndAssertPlaceBet(sub1);
+        return;
+      }
+      if (makoInnerSelector === CREATEMARKET_SELECTOR) {
+        // Send-time uses the shape variant — clock + chain-read are caught
+        // by Guard A (SafeOp hash recomputation) before the bundler is
+        // reached. MAKO admin gate IS re-checked here via the recursive
+        // assertCreateMarketShape inside the batched shape validator.
+        assertCreateMarketBatchedCallsShape({
+          chainId: args.chainId,
+          safeAddress: args.safeAddress,
+          calls: [sub0, sub1] as const,
+        });
+        return;
+      }
+      throw new NotAllowedError('bad_selector');
     }
     if (isPmTarget(sub1.to)) {
       // PM batched: discriminate bet vs stake by inner selector. The

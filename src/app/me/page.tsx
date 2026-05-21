@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useAccount, useReadContracts } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMarkets } from '@/lib/hooks';
-import { makoContract, type MarketWithId } from '@/lib/contract';
+import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
+import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
 import { MarketCard } from '@/components/MarketCard';
 import { MarketClaimAction } from '@/components/MarketClaimAction';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -87,6 +88,20 @@ export default function MyMarketsPage() {
   );
 
   const shown = tab === 'active' ? active : closed;
+
+  /// Batched MAKO label lookup for the visible positions feed — same
+  /// shape as the home feed (`src/app/page.tsx`) and the admin lists.
+  /// MarketCard accepts `labels` as a prop; the leaf does not call any
+  /// label hook of its own. Non-MAKO ids excluded from the input so the
+  /// hook short-circuits when the user has no MAKO positions in view.
+  const makoIds = useMemo(
+    () =>
+      shown
+        .filter(({ market }) => market.mType === MarketType.MAKO)
+        .map(({ market }) => market.id.toString()),
+    [shown],
+  );
+  const { data: labelsByMarketId } = useMakoLabelsBatch(makoIds);
 
   // Sub-F round-2 MINOR 1: Magic users start with `user === null` while
   // /api/user/me is in flight. Without this gate, /me flashes the full
@@ -265,7 +280,14 @@ export default function MyMarketsPage() {
               return (
                 <div key={market.id.toString()} className="flex flex-col gap-3">
                   <Link href={`/market/${market.id.toString()}`} className="block">
-                    <MarketCard market={market} />
+                    <MarketCard
+                      market={market}
+                      labels={
+                        market.mType === MarketType.MAKO
+                          ? labelsByMarketId?.get(market.id.toString()) ?? null
+                          : null
+                      }
+                    />
                   </Link>
                   {showInlineClaim && (
                     <MarketClaimAction market={market} onClaimed={refetch} />

@@ -2,19 +2,21 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useAccount } from 'wagmi';
-import { type MarketWithId } from '@/lib/contract';
+import { MarketType, type MarketWithId } from '@/lib/contract';
 import { usePlaceBet, useUsdcAllowance, useUsdcBalance } from '@/lib/hooks';
 import { computePreviewPayout } from '@/lib/bet';
 import { parseUsdc, formatUsdc } from '@/lib/usdc';
 import { useUser } from '@/lib/use-user';
 import { isWalletDrifted } from '@/lib/wallet-drift';
 import { WalletDriftBanner } from '@/components/WalletDriftBanner';
+import { useMakoLabels } from '@/lib/use-mako-labels';
+import { outcomeLabelForMarket } from '@/components/admin-shared';
 
 /**
- * v4 minimum bet — `MakoMarketsV4.MIN_BET` = 1_000_000 base units (1 USDC).
+ * v4 minimum bet — `MakoMarketsV4.MIN_BET` = 100_000 base units (0.10 USDC).
  * Solidity constant; not admin-tunable.
  */
-const MIN_BET_USDC_BASE = 1_000_000n;
+const MIN_BET_USDC_BASE = 100_000n;
 
 /**
  * Fixed-bottom bet sheet for both auth flows.
@@ -52,6 +54,17 @@ export function BetSheet({
   side: 'yes' | 'no';
   onSuccess?: () => void;
 }) {
+  /// MAKO outcome labels — null for non-MAKO markets (hook stays
+  /// disabled, no fetch fires). The render path uses
+  /// `outcomeLabelForMarket` which delegates to the pure
+  /// `outcomeLabel` when labels are null, so the wagmi-flow YES/NO
+  /// stays byte-identical for the six public market types.
+  const { data: makoLabels } = useMakoLabels(
+    market.mType === MarketType.MAKO ? market.id.toString() : null,
+  );
+  const sideOutcome: 0 | 1 | 2 | 3 = side === 'yes' ? 1 : 2;
+  const sideLabel = outcomeLabelForMarket(market, makoLabels ?? null, sideOutcome);
+
   const [amount, setAmount] = useState('1');
   // Collapsed state. When true the sheet shrinks to just the header bar
   // (BET YES/NO + balance pill + chevron) so the user can read the
@@ -208,9 +221,9 @@ export function BetSheet({
       if (phase === 'awaitingBet') return 'CONFIRMING ON CHAIN…';
       if (phase === 'success') return 'BET PLACED ✓';
       if (phase === 'submitted') return 'BET SUBMITTED';
-      if (validation.reason === 'min') return 'MIN BET 1 USDC';
+      if (validation.reason === 'min') return 'MIN BET 0.1 USDC';
       if (validation.reason === 'balance') return 'INSUFFICIENT USDC';
-      return `CONFIRM BET · ${amount || '0'} USDC ${side.toUpperCase()}`;
+      return `CONFIRM BET · ${amount || '0'} USDC ${sideLabel}`;
     }
     // Wallet flow (existing 2-tx path, unchanged):
     if (phase === 'preparing') return 'PREPARING…';
@@ -219,10 +232,10 @@ export function BetSheet({
     if (phase === 'betting') return 'CONFIRM IN WALLET…';
     if (phase === 'awaitingBet') return 'TX LANDING…';
     if (phase === 'success') return 'BET PLACED ✓';
-    if (validation.reason === 'min') return 'MIN BET 1 USDC';
+    if (validation.reason === 'min') return 'MIN BET 0.1 USDC';
     if (validation.reason === 'balance') return 'INSUFFICIENT USDC';
-    if (needsApprove) return `APPROVE USDC · ${amount || '0'} ${side.toUpperCase()}`;
-    return `PLACE BET · ${amount || '0'} USDC ${side.toUpperCase()}`;
+    if (needsApprove) return `APPROVE USDC · ${amount || '0'} ${sideLabel}`;
+    return `PLACE BET · ${amount || '0'} USDC ${sideLabel}`;
   })();
 
   const successText = phase === 'success' ? 'BET PLACED ✓' : null;
@@ -271,7 +284,7 @@ export function BetSheet({
               </svg>
             </button>
             <h2 className="mako-display text-[clamp(1.5rem,3vw,2.25rem)] tracking-tight leading-none truncate">
-              {side === 'yes' ? 'BET YES' : 'BET NO'}
+              BET {sideLabel}
               {collapsed && betUsdc > 0n && (
                 <span className="mako-mono text-sm sm:text-base text-muted ml-2 align-middle lg:hidden">
                   · {amount} USDC

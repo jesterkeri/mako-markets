@@ -212,6 +212,30 @@ export function useUsdcAllowance(
   });
 }
 
+/**
+ * v4 redeploy (slice 4f): daily creator-create cap. Reads the contract's
+ * `creatorCreatesToday(creator)` view, which returns `(count, remaining)`
+ * for the current UTC bucket (`block.timestamp / 86400`). MAX is 10.
+ *
+ * MAKO is contract-exempt; callers gate per-tab so this is only invoked
+ * for non-MAKO surfaces. Returns `null` when no account is connected so
+ * the caller can render a non-blocking placeholder.
+ */
+export function useCreatorCreatesToday(account?: `0x${string}`) {
+  return useReadContract({
+    ...makoContract,
+    functionName: 'creatorCreatesToday',
+    args: account ? [account] : undefined,
+    query: {
+      enabled: !!account,
+      // 30s is enough for the UI: the cap only changes when this same
+      // user creates a market (we refetch on submit anyway). Drift past
+      // UTC midnight reconciles on next poll.
+      refetchInterval: 30_000,
+    },
+  });
+}
+
 // ---------------------------------------------------------------
 // Writes — bet flow (external-wallet only)
 // ---------------------------------------------------------------
@@ -813,6 +837,14 @@ type CreateMarketArgs = {
   bettingCloseTime: bigint;
   closeTime: bigint;
   question: string;
+  /// USDC base units the creator commits as their first bet. For non-MAKO
+  /// types must be >= MIN_CREATOR_SEED_USDC_BASE (1_000_000n). For MAKO
+  /// type must be exactly 0n (admin-curated, no seed).
+  creatorSeed: bigint;
+  /// Side the creator's seed bet lands on. Ignored when mType === MAKO
+  /// (no seed transferred). Caller still passes a value; the contract
+  /// rejects nonzero seed for MAKO regardless of this flag.
+  creatorYes: boolean;
 };
 
 /// Pinned to Monad testnet so the receipt decode targets the correct
@@ -822,6 +854,7 @@ const MAGIC_RECEIPT_TIMEOUT_MS = 30_000;
 
 export function useCreateMarket() {
   const { user, isLoading: userLoading } = useUser();
+  const { address } = useAccount();
   const {
     writeContractAsync,
     data: hash,
@@ -910,14 +943,38 @@ export function useCreateMarket() {
           setMagicUserOpHash(undefined);
           setMagicPhase('creating');
 
+          // v4 redeploy (slice 4c-3): read the Safe's USDC allowance against
+          // MAKO so runCreateMarket can pick single-call vs batched. Mirror
+          // of the usePlaceBet pattern (line ~366). Skip the read entirely
+          // for MAKO — creatorSeed=0n, no transfer happens, and an RPC
+          // failure here would prevent an otherwise-valid admin create.
+          const safeAddress = user.safeAddress as `0x${string}`;
+          let currentAllowance = 0n;
+          if (args.mType !== MarketType.MAKO) {
+            if (!publicClient) {
+              throw new Error(
+                'publicClient unavailable — chain transport not initialized',
+              );
+            }
+            currentAllowance = (await publicClient.readContract({
+              ...usdcContract,
+              functionName: 'allowance',
+              args: [safeAddress, MAKO_ADDRESS],
+            })) as bigint;
+          }
+
           const outcome: RunOutcome = await runCreateMarket({
             chainId: MONAD_TESTNET_ID,
             makoAddress: MAKO_ADDRESS,
+            usdcAddress: USDC_ADDRESS,
             mType: args.mType,
             oracleRef: args.oracleRef,
             bettingCloseTime: args.bettingCloseTime,
             closeTime: args.closeTime,
             question: args.question,
+            creatorSeed: args.creatorSeed,
+            creatorYes: args.creatorYes,
+            currentAllowance,
             magicEoa: user.magicEoa as `0x${string}`,
           });
 
@@ -1093,6 +1150,43 @@ export function useCreateMarket() {
       // ── Wallet-connected branch (existing wagmi flow) ──────────────
       try {
         await ensureChain();
+
+        // v4 redeploy (slice 4c-3): createMarket now pulls `creatorSeed`
+        // USDC via safeTransferFrom for non-MAKO types. Mirror the
+        // usePlaceBet wallet approval pattern: read allowance, approve
+        // MaxUint256 if short, wait for receipt, then submit. MAKO
+        // creates skip — creatorSeed is 0n, no transfer happens.
+        if (args.mType !== MarketType.MAKO) {
+          if (!publicClient) {
+            throw new Error(
+              'publicClient unavailable — chain transport not initialized',
+            );
+          }
+          if (!address) {
+            throw new Error(
+              'wallet address unavailable — connector not initialized',
+            );
+          }
+          const currentAllowance = (await publicClient.readContract({
+            ...usdcContract,
+            functionName: 'allowance',
+            args: [address, MAKO_ADDRESS],
+          })) as bigint;
+          if (currentAllowance < args.creatorSeed) {
+            const aHash = await writeContractAsync({
+              ...usdcContract,
+              functionName: 'approve',
+              args: [MAKO_ADDRESS, maxUint256],
+            });
+            const approveReceipt = await publicClient.waitForTransactionReceipt({
+              hash: aHash,
+            });
+            if (approveReceipt.status !== 'success') {
+              throw new Error('USDC approval failed on-chain.');
+            }
+          }
+        }
+
         await writeContractAsync({
           ...makoContract,
           functionName: 'createMarket',
@@ -1102,6 +1196,8 @@ export function useCreateMarket() {
             args.bettingCloseTime,
             args.closeTime,
             args.question,
+            args.creatorSeed,
+            args.creatorYes,
           ],
         });
         return { kind: 'wallet_submitted' };

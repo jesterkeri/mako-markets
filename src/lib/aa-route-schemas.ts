@@ -13,17 +13,18 @@ import { z } from 'zod';
 // `HexBigint` is `0x` + 1+ hex digits (no length cap) so we can carry
 // uint256 values over the wire without lossy `Number` round-tripping.
 //
-// Phase 1D + 1E + 1H + 2C-1 + claim-magic-parity + 2E-1 shape:
+// Phase 1D + 1E + 1H + 2C-1 + claim-magic-parity + 2E-1 + v4-redeploy shape:
 // `SponsorRequest` is a zod `discriminatedUnion('kind', ...)` over
-// nineteen variants — the `kind` field is REQUIRED and the only
+// twenty variants — the `kind` field is REQUIRED and the only
 // discriminator. No env-aware default, no fallback. The variants are:
-//   v4 / smoke / send (Phases 1D, 1E, 1H, claim-magic-parity):
-//     - SmokeRequest        (kind='smoke')         USDC.transfer self
-//     - BetSingleRequest    (kind='bet_single')    placeBet
-//     - BetBatchedRequest   (kind='bet_batched')   [approve, placeBet]
-//     - SendUsdcRequest     (kind='send_usdc')     USDC.transfer arb.
-//     - CreateMarketRequest (kind='create_market') MakoMarketsV4 create
-//     - ClaimRequest        (kind='claim')         MakoMarketsV4 claim
+//   v4 / smoke / send (Phases 1D, 1E, 1H, claim-magic-parity, v4 redeploy):
+//     - SmokeRequest                (kind='smoke')                 USDC.transfer self
+//     - BetSingleRequest            (kind='bet_single')            placeBet
+//     - BetBatchedRequest           (kind='bet_batched')           [approve, placeBet]
+//     - SendUsdcRequest             (kind='send_usdc')             USDC.transfer arb.
+//     - CreateMarketRequest         (kind='create_market')         MakoMarketsV4 create
+//     - CreateMarketBatchedRequest  (kind='create_market_batched') [approve, createMarket]
+//     - ClaimRequest                (kind='claim')                 MakoMarketsV4 claim
 //   PM single-call actions (Phase 2C-1 + 2E-1):
 //     - PmCreateMarketRequest    (kind='pm_create_market')
 //     - PmBetRequest             (kind='pm_bet')
@@ -139,20 +140,51 @@ const CreateMarketRequest = z
     chainId: z.literal(MONAD_TESTNET_ID),
     /// Phase 1H Magic create-market flow: single-call
     /// `MakoMarketsV4.createMarket(mType, oracleRef, bettingCloseTime,
-    /// closeTime, question)` from the Safe. The allowlist enforces:
+    /// closeTime, question, creatorSeed, creatorYes)` from the Safe.
+    /// The allowlist enforces:
     ///   - inner.to === MAKO_ADDRESS
     ///   - inner.value === 0n
-    ///   - inner selector === createMarket (0xda6a7338)
-    ///   - decoded mType ∈ {0, 1, 2}
+    ///   - inner selector === createMarket (0xd1aa0ea8 after the v4
+    ///     redeploy that appended creatorSeed + creatorYes; the prior
+    ///     5-arg signature was 0xda6a7338)
+    ///   - decoded mType ∈ {0..6} (FOOTBALL / CRYPTO / BASKETBALL /
+    ///     FOREX / COMMODITIES / STOCKS / MAKO — append-only)
     ///   - decoded question byte length ∈ [1, 200]
     ///   - decoded bettingCloseTime > nowSec (chain time)
     ///   - decoded closeTime > nowSec
+    ///   - For mType ∈ {0..5}: decoded creatorSeed >=
+    ///     MIN_CREATOR_SEED_USDC_BASE (1_000_000n) and the safe is not
+    ///     blocklisted on the v4 contract
+    ///   - For mType === 6 (MAKO): decoded creatorSeed === 0n AND
+    ///     safe === MAKO_ADMIN_SAFE_ADDRESS
     ///   - decoded bettingCloseTime <= closeTime
     ///   - decoded duration ≥ MAKO_V4_MIN_DURATION_SEC + CREATE_MARKET_MIN_SERVER_BUFFER_SEC
     ///   - decoded duration ≤ MAKO_V4_MAX_DURATION_SEC
     /// Send-time re-validation enforces shape only (no clock checks);
     /// timestamp drift is caught by SafeOp hash recomputation (Guard A).
     call: CallShape,
+  })
+  .strict();
+
+const CreateMarketBatchedRequest = z
+  .object({
+    kind: z.literal('create_market_batched'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// v4 redeploy (slice 4c-3): batched approve+create path for Magic
+    /// users whose Safe has insufficient USDC allowance on MakoMarketsV4.
+    /// Exactly two calls: `approve(MAKO_ADDRESS, MaxUint256)` then
+    /// `createMarket(...)`. Route validates the tuple via the
+    /// assertCreateMarketBatchedCalls{Sponsor,Shape} pair; lib's
+    /// buildSponsoredUserOp emits the MultiSend op=1 wrapper. Without
+    /// this path the contract's seed `safeTransferFrom` would revert
+    /// on every first-time non-MAKO Magic create.
+    ///
+    /// MAKO-type creates never enter this path (their seed is 0n so no
+    /// allowance is needed); the client picks the non-batched variant
+    /// for MAKO and the validator catches a MAKO-with-allowance call
+    /// as `bad_create_mako_nonzero_seed` via the recursive single-call
+    /// validator.
+    calls: z.tuple([CallShape, CallShape]),
   })
   .strict();
 
@@ -336,6 +368,7 @@ export const SponsorRequest = z.discriminatedUnion('kind', [
   BetBatchedRequest,
   SendUsdcRequest,
   CreateMarketRequest,
+  CreateMarketBatchedRequest,
   ClaimRequest,
   PmCreateMarketRequest,
   PmBetRequest,
@@ -358,6 +391,7 @@ export type BetSingleRequest = z.infer<typeof BetSingleRequest>;
 export type BetBatchedRequest = z.infer<typeof BetBatchedRequest>;
 export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
 export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
+export type CreateMarketBatchedRequest = z.infer<typeof CreateMarketBatchedRequest>;
 export type ClaimRequest = z.infer<typeof ClaimRequest>;
 export type PmCreateMarketRequest = z.infer<typeof PmCreateMarketRequest>;
 export type PmBetRequest = z.infer<typeof PmBetRequest>;

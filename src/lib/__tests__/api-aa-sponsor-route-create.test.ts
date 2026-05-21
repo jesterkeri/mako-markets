@@ -32,6 +32,10 @@ const NOW_SEC = 1_800_000_000n;
 const ORACLE_REF: Hex =
   '0xab0000000000000000000000000000000000000000000000000000000000ffaa';
 
+// v4 redeploy: createMarket takes 7 args. The route-level test must
+// encode against the deployed ABI; if this drifts back to 5 args the
+// route returns bad_create_args (selector mismatch) before any
+// validator-specific reason can be surfaced.
 const CREATEMARKET_ABI = [
   {
     type: 'function',
@@ -42,6 +46,8 @@ const CREATEMARKET_ABI = [
       { name: 'bettingCloseTime', type: 'uint64' },
       { name: 'closeTime', type: 'uint64' },
       { name: 'question', type: 'string' },
+      { name: 'creatorSeed', type: 'uint256' },
+      { name: 'creatorYes', type: 'bool' },
     ],
     outputs: [{ name: 'id', type: 'uint256' }],
     stateMutability: 'nonpayable',
@@ -54,6 +60,8 @@ function encodeCreateMarket(args: {
   bettingCloseTime: bigint;
   closeTime: bigint;
   question: string;
+  creatorSeed?: bigint;
+  creatorYes?: boolean;
 }): Hex {
   return encodeFunctionData({
     abi: CREATEMARKET_ABI,
@@ -64,6 +72,8 @@ function encodeCreateMarket(args: {
       args.bettingCloseTime,
       args.closeTime,
       args.question,
+      args.creatorSeed ?? 1_000_000n,
+      args.creatorYes ?? true,
     ],
   });
 }
@@ -77,6 +87,10 @@ const mocks = vi.hoisted(() => ({
   decrementForRefund: vi.fn(),
   buildSponsoredUserOp: vi.fn(),
   getBlock: vi.fn(),
+  // v4 redeploy (slice 4a): non-MAKO createMarket validator now reads
+  // MakoMarketsV4.blocked(safe) via aaClient.readContract. Mock it so
+  // the route can resolve `readBlocked: false` and proceed.
+  readContract: vi.fn(),
 }));
 
 vi.mock('@/lib/csrf', () => ({
@@ -116,6 +130,7 @@ vi.mock('@/lib/user-op', () => ({
 vi.mock('@/lib/aa-public-client', () => ({
   getAaPublicClient: () => ({
     getBlock: () => mocks.getBlock(),
+    readContract: (args: unknown) => mocks.readContract(args),
   }),
 }));
 
@@ -141,6 +156,18 @@ function setupHappyPathMocks(): void {
   mocks.incrementOrReject.mockResolvedValue({ kind: 'within_cap', count: 1 });
   // Fixed chain-time the validator uses for clock-relative checks.
   mocks.getBlock.mockResolvedValue({ timestamp: NOW_SEC });
+  // Default: the Safe is not blocked. The single-call validator reads
+  // MakoMarketsV4.blocked(safe) for non-MAKO creates; this returns
+  // false unless a specific test overrides it. Slice 4f added a second
+  // read — creatorCreatesToday(safe) → (count, remaining). Dispatch by
+  // functionName so both reads resolve correctly.
+  mocks.readContract.mockImplementation((args: unknown) => {
+    const fn = (args as { functionName?: string }).functionName;
+    if (fn === 'creatorCreatesToday') {
+      return Promise.resolve([0n, 10n] as const);
+    }
+    return Promise.resolve(false); // blocked()
+  });
   mocks.buildSponsoredUserOp.mockResolvedValue({
     userOp: {
       sender: SAFE,
@@ -268,11 +295,15 @@ describe('/api/aa/sponsor — create_market dispatch (Phase 1H)', () => {
     expect(mocks.insertPending).not.toHaveBeenCalled();
   });
 
-  it('bad mType: validator throws → 403 bad_create_args', async () => {
+  it('bad mType: validator throws → 403 bad_create_mtype_out_of_range', async () => {
     setupHappyPathMocks();
 
+    // v4 redeploy enum widening: valid mTypes are {0..6} (FOOTBALL, CRYPTO,
+    // BASKETBALL, FOREX, COMMODITIES, STOCKS, MAKO). 7 is out-of-range and
+    // surfaces the dedicated reason added in slice 4c-1 (was the generic
+    // bad_create_args under the old {0,1,2} regime).
     const data = encodeCreateMarket({
-      mType: 5, // out of {0, 1, 2}
+      mType: 7,
       oracleRef: ORACLE_REF,
       bettingCloseTime: NOW_SEC + 1800n,
       closeTime: NOW_SEC + 3600n,
@@ -288,8 +319,80 @@ describe('/api/aa/sponsor — create_market dispatch (Phase 1H)', () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error?: string; reason?: string };
     expect(body.error).toBe('NOT_ALLOWED');
-    expect(body.reason).toBe('bad_create_args');
+    expect(body.reason).toBe('bad_create_mtype_out_of_range');
 
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+  });
+
+  // codex r1 4f-fe MINOR 2: pin cap-exceeded all the way through the
+  // route, not just the validator. The chain-read mock has to dispatch
+  // by functionName so blocked() returns false but creatorCreatesToday
+  // returns [10n, 0n] (remaining === 0n → bad_create_daily_cap_exceeded).
+  it('daily cap exhausted: 403 NOT_ALLOWED + bad_create_daily_cap_exceeded BEFORE rate-limit + builder', async () => {
+    setupHappyPathMocks();
+    mocks.readContract.mockImplementation((args: unknown) => {
+      const fn = (args as { functionName?: string }).functionName;
+      if (fn === 'creatorCreatesToday') {
+        return Promise.resolve([10n, 0n] as const);
+      }
+      return Promise.resolve(false);
+    });
+    const data = encodeCreateMarket({
+      mType: 1, // CRYPTO (non-MAKO)
+      oracleRef: ORACLE_REF,
+      bettingCloseTime: NOW_SEC + 1800n,
+      closeTime: NOW_SEC + 3600n,
+      question: 'q',
+    });
+    const res = await POST(
+      mkReq({
+        kind: 'create_market',
+        chainId: 10143,
+        call: { to: MAKO_ADDRESS, value: '0x0', data },
+      }),
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error?: string; reason?: string };
+    expect(body.error).toBe('NOT_ALLOWED');
+    expect(body.reason).toBe('bad_create_daily_cap_exceeded');
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+    expect(mocks.insertPending).not.toHaveBeenCalled();
+  });
+
+  // codex r1 4f-fe MINOR 1: chain-read failure (RPC down, view reverts,
+  // contract not yet redeployed) → mapped 502 VALIDATE_FAILED rather
+  // than letting Next surface a generic 500 stack trace. Rate-limit +
+  // builder must not have been called — no funds at risk.
+  it('creatorCreatesToday read fails: 502 VALIDATE_FAILED, rate-limit + builder not touched', async () => {
+    setupHappyPathMocks();
+    mocks.readContract.mockImplementation((args: unknown) => {
+      const fn = (args as { functionName?: string }).functionName;
+      if (fn === 'creatorCreatesToday') {
+        return Promise.reject(
+          new Error('execution reverted: contract not deployed'),
+        );
+      }
+      return Promise.resolve(false);
+    });
+    const data = encodeCreateMarket({
+      mType: 1,
+      oracleRef: ORACLE_REF,
+      bettingCloseTime: NOW_SEC + 1800n,
+      closeTime: NOW_SEC + 3600n,
+      question: 'q',
+    });
+    const res = await POST(
+      mkReq({
+        kind: 'create_market',
+        chainId: 10143,
+        call: { to: MAKO_ADDRESS, value: '0x0', data },
+      }),
+    );
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe('VALIDATE_FAILED');
     expect(mocks.incrementOrReject).not.toHaveBeenCalled();
     expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
   });

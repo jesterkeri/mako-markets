@@ -13,10 +13,13 @@ import {
   fourDp,
   short,
   explorerAddress,
-  outcomeLabel,
+  outcomeLabelForMarket,
   typeLabel,
 } from '@/components/admin-shared';
 import { useNowSec } from '@/lib/use-now';
+import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
+import { MarketType } from '@/lib/contract';
+import type { MakoOutcomeLabels } from '@/lib/mako-labels';
 
 type Filter = 'all' | 'open' | 'pending' | 'resolved';
 
@@ -89,34 +92,67 @@ export default function AdminMarketsPage() {
           NO MARKETS IN THIS FILTER
         </div>
       ) : (
-        filtered.map((m) => <MarketRow key={m.id} market={m} />)
+        <MarketsList markets={filtered} />
       )}
     </main>
   );
 }
 
+type AnalyticsMarket = {
+  id: string;
+  mType: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  creator: `0x${string}`;
+  question: string;
+  createdAtSec: number;
+  closeTimeSec: number;
+  bettingCloseTimeSec: number;
+  poolUsdc: string;
+  yesUsdc: string;
+  noUsdc: string;
+  bettorCount: number;
+  outcome: 0 | 1 | 2 | 3;
+  resolved: boolean;
+};
+
+/// List-level batched lookup: collect MAKO market ids from the visible
+/// rows, fetch labels in one query, pass the relevant slice into each
+/// MarketRow as a prop. MarketRow never calls a label hook itself,
+/// matching the home-feed pattern.
+function MarketsList({ markets }: { markets: AnalyticsMarket[] }) {
+  const makoIds = useMemo(
+    () =>
+      markets.filter((m) => m.mType === MarketType.MAKO).map((m) => m.id),
+    [markets],
+  );
+  const { data: labelsByMarketId } = useMakoLabelsBatch(makoIds);
+
+  return (
+    <>
+      {markets.map((m) => (
+        <MarketRow
+          key={m.id}
+          market={m}
+          labels={
+            m.mType === MarketType.MAKO
+              ? labelsByMarketId?.get(m.id) ?? null
+              : null
+          }
+        />
+      ))}
+    </>
+  );
+}
+
 function MarketRow({
   market: m,
+  labels,
 }: {
-  market: {
-    id: string;
-    mType: 0 | 1 | 2;
-    creator: `0x${string}`;
-    question: string;
-    createdAtSec: number;
-    closeTimeSec: number;
-    bettingCloseTimeSec: number;
-    poolUsdc: string;
-    yesUsdc: string;
-    noUsdc: string;
-    bettorCount: number;
-    outcome: 0 | 1 | 2 | 3;
-    resolved: boolean;
-  };
+  market: AnalyticsMarket;
+  labels: MakoOutcomeLabels | null;
 }) {
   const nowSec = useNowSec();
   const status = m.resolved
-    ? `RESOLVED ${outcomeLabel(m.outcome)}`
+    ? `RESOLVED ${outcomeLabelForMarket({ mType: m.mType }, labels, m.outcome)}`
     : m.closeTimeSec <= nowSec
       ? 'CLOSED · AWAITING RESOLVE'
       : 'OPEN';
@@ -154,10 +190,12 @@ function MarketRow({
 
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 mako-label text-muted">
         <span>
-          YES <span className="text-ink tabular-nums">{fourDp(m.yesUsdc)}</span>
+          {outcomeLabelForMarket({ mType: m.mType }, labels, 1)}{' '}
+          <span className="text-ink tabular-nums">{fourDp(m.yesUsdc)}</span>
         </span>
         <span>
-          NO <span className="text-ink tabular-nums">{fourDp(m.noUsdc)}</span>
+          {outcomeLabelForMarket({ mType: m.mType }, labels, 2)}{' '}
+          <span className="text-ink tabular-nums">{fourDp(m.noUsdc)}</span>
         </span>
         <span>
           BETTORS <span className="text-ink tabular-nums">{m.bettorCount}</span>

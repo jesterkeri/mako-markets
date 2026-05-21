@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { type MarketWithId, MarketType } from '@/lib/contract';
+import { type MarketWithId, MarketType, marketTypeLabel } from '@/lib/contract';
 import { poolSizeUsdc, secondsUntilBettingClose, yesMultiplier, noMultiplier } from '@/lib/mocks';
 import { formatUsdc } from '@/lib/usdc';
 import { useNowSec } from '@/lib/use-now';
+import { outcomeLabelForMarket } from '@/components/admin-shared';
+import type { MakoOutcomeLabels } from '@/lib/mako-labels';
 
 function formatTimeLeft(s: number): string {
   if (s <= 0) return 'CLOSED';
@@ -14,11 +16,11 @@ function formatTimeLeft(s: number): string {
   return `${m}m ${s % 60}s`;
 }
 
+// Display label collapsed to the shared marketTypeLabel utility so all 7
+// MarketType entries (incl. FOREX / COMMODITIES / STOCKS / MAKO) render
+// correctly. Local wrapper kept for symbol stability in this file.
 function categoryLabel(t: MarketType): string {
-  if (t === MarketType.FOOTBALL) return 'FOOTBALL';
-  if (t === MarketType.CRYPTO) return 'CRYPTO';
-  if (t === MarketType.BASKETBALL) return 'NBA';
-  return 'EVENT';
+  return marketTypeLabel(t);
 }
 
 /**
@@ -51,7 +53,23 @@ function displayMult(sidePool: bigint, raw: number): number {
  * stops being legal, closeTime is when resolution becomes legal. For
  * sports they're hours apart; the bettor cares about the former.
  */
-export function MarketCard({ market }: { market: MarketWithId }) {
+/**
+ * `labels` prop: outcome label override for MAKO markets. Passed in by
+ * the feed parent (`src/app/page.tsx`) after a batched
+ * `useMakoLabelsBatch` lookup; null when the market is not MAKO, when
+ * no DB labels row exists, or while the batched fetch is in flight.
+ *
+ * MarketCard does NOT call `useMakoLabels` itself — that would re-issue
+ * one fetch per visible card and undo the batch endpoint. See plan
+ * round-6 fix: batching lives at the parent, leaves accept props.
+ */
+export function MarketCard({
+  market,
+  labels = null,
+}: {
+  market: MarketWithId;
+  labels?: MakoOutcomeLabels | null;
+}) {
   const [timeLeft, setTimeLeft] = useState(() => secondsUntilBettingClose(market));
 
   useEffect(() => {
@@ -106,16 +124,22 @@ export function MarketCard({ market }: { market: MarketWithId }) {
           {market.question}
         </h3>
 
-        {/* YES / NO tiles — multiplier only */}
+        {/* Outcome tiles — labeled via outcomeLabelForMarket. Non-MAKO
+            markets get "YES" / "NO" via delegation; labeled MAKO
+            markets show the admin-chosen pair (e.g. "APC" / "PDP"). */}
         <div className="mt-auto grid grid-cols-2 gap-3">
           <div className="bg-ink text-paper py-3 px-4 border-2 border-ink rounded-lg">
-            <div className="mako-label text-paper/80">YES</div>
+            <div className="mako-label text-paper/80">
+              {outcomeLabelForMarket(market, labels, 1)}
+            </div>
             <div className="mako-display text-3xl tabular-nums mt-1.5">
               {yesMult > 0 ? `${yesMult.toFixed(2)}x` : '—'}
             </div>
           </div>
           <div className="bg-mako-red text-paper py-3 px-4 border-2 border-ink rounded-lg">
-            <div className="mako-label text-paper/80">NO</div>
+            <div className="mako-label text-paper/80">
+              {outcomeLabelForMarket(market, labels, 2)}
+            </div>
             <div className="mako-display text-3xl tabular-nums mt-1.5">
               {noMult > 0 ? `${noMult.toFixed(2)}x` : '—'}
             </div>

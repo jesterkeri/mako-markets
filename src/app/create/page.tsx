@@ -6,8 +6,14 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAccount, useWaitForTransactionReceipt } from 'wagmi';
 import { type Hex } from 'viem';
 import { decodeMarketCreatedId, MarketType } from '@/lib/contract';
-import { useCreateMarket, type CreateMarketResult } from '@/lib/hooks';
+import {
+  useCreateMarket,
+  useCreatorCreatesToday,
+  type CreateMarketResult,
+} from '@/lib/hooks';
 import { useUser } from '@/lib/use-user';
+import { MIN_CREATOR_SEED_USDC_BASE } from '@/lib/aa-constants';
+import { parseUsdc, formatUsdc } from '@/lib/usdc';
 import { isWalletDrifted } from '@/lib/wallet-drift';
 import { WalletDriftBanner } from '@/components/WalletDriftBanner';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -33,11 +39,21 @@ import {
 } from '@/lib/crypto-assets';
 
 /**
- * /create -- three-tab market creation form.
+ * /create -- six-tab market creation form (one per publicly-creatable
+ * contract MarketType).
  *
  * Tab 1: CRYPTO -- live CoinGecko prices. Encodes `SYMBOL:gt:STRIKE` in bytes32.
  * Tab 2: FOOTBALL -- EPL fixtures via football-data.org.
  * Tab 3: BASKETBALL -- NBA games via balldontlie. home/away win + over/under total points.
+ * Tab 4-6: FOREX / COMMODITIES / STOCKS -- same on-chain shape as CRYPTO
+ *   (strike + direction + duration). Rendered by PriceFeedTab keyed on `kind`.
+ *   Live price grid + auto-resolver feeds are deferred to a follow-up phase.
+ *
+ * The contract's 7th market type, MAKO, is admin-curated and is NOT
+ * surfaced here. Its create form lives at /admin/create-mako, behind
+ * the admin gate. The on-chain `onlyOwner` modifier on createMarket
+ * for MAKO is the authoritative gate; the UI separation just keeps the
+ * non-admin /create surface clean.
  *
  * v4 takes TWO timestamps per market:
  *   - `bettingCloseTime` is when placeBet stops (sports: kickoff - 10 min;
@@ -48,8 +64,13 @@ import {
  * Do NOT thread the same timestamp into both args (the v3 model). Sports
  * markets would become legally resolvable before the event ends.
  */
-
-type Tab = 'crypto' | 'football' | 'basketball';
+type Tab =
+  | 'crypto'
+  | 'football'
+  | 'basketball'
+  | 'forex'
+  | 'commodities'
+  | 'stocks';
 type Direction = 'above' | 'below';
 
 /**
@@ -122,7 +143,131 @@ type CreateArgs = {
   bettingCloseTime: bigint;
   closeTime: bigint;
   question: string;
+  /** Creator's bundled first bet, in USDC base units. The v4 contract
+   *  requires `creatorSeed >= MIN_CREATOR_SEED` (1 USDC) for all
+   *  publicly-creatable market types. */
+  creatorSeed: bigint;
+  /** Side the creator is seeding on. Ignored when creatorSeed === 0n. */
+  creatorYes: boolean;
 };
+
+const SEED_SIDES: Array<{ key: 'yes' | 'no'; label: string }> = [
+  { key: 'yes', label: 'YES' },
+  { key: 'no', label: 'NO' },
+];
+
+/**
+ * Parse a human-typed seed amount into USDC base units.
+ *
+ * Returns the parsed bigint, or `null` if the input is empty, malformed,
+ * or below the contract minimum. Used by every tab to gate its
+ * submit button and disable when the seed is invalid. parseUsdc throws
+ * on garbage input ("1.2.3", "abc"); we catch that here so callers get a
+ * uniform `null` rather than a thrown exception.
+ */
+function parseCreatorSeed(human: string): bigint | null {
+  const trimmed = human.trim();
+  if (!trimmed) return null;
+  try {
+    const base = parseUsdc(trimmed);
+    if (base < MIN_CREATOR_SEED_USDC_BASE) return null;
+    return base;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Shared seed input + YES/NO side toggle. Rendered by every tab as its
+ * final block before the submit button. The contract treats
+ * `creatorSeed` as the creator's first bet — it goes into the pool and
+ * is claimable like any other bet at resolution, not a fee. The copy
+ * here is deliberately phrased that way so users don't read it as a
+ * tax.
+ */
+function CreatorSeedBlock({
+  seedInput,
+  setSeedInput,
+  side,
+  setSide,
+  isBusy,
+}: {
+  seedInput: string;
+  setSeedInput: (s: string) => void;
+  side: 'yes' | 'no';
+  setSide: (s: 'yes' | 'no') => void;
+  isBusy: boolean;
+}) {
+  const parsed = parseCreatorSeed(seedInput);
+  const seedTooSmall = seedInput.trim() !== '' && parsed === null;
+  const minLabel = formatUsdc(MIN_CREATOR_SEED_USDC_BASE);
+
+  // Codex r1 4d-2 MINOR: reject the keystroke rather than stripping
+  // invalid chars. The old `replace(/[^0-9.]/g, '')` would silently
+  // transform a pasted "1e3" into "13" (a different amount). The
+  // strict-decimal regex below accepts empty / "1" / "1." / "1.25"
+  // and rejects everything else, so a bad paste is visibly refused
+  // instead of mutating into the wrong number.
+  const onSeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value;
+    if (next === '' || /^\d*(?:\.\d*)?$/.test(next)) {
+      setSeedInput(next);
+    }
+  };
+
+  return (
+    <div className="px-6 py-5 border-b-2 border-ink">
+      <label htmlFor="creator-seed" className="mako-label text-muted mb-3 block">
+        YOUR FIRST BET (USDC)
+      </label>
+      <div className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-paper">
+        <span className="mako-label text-muted">$</span>
+        <input
+          id="creator-seed"
+          type="text"
+          inputMode="decimal"
+          value={seedInput}
+          onChange={onSeedChange}
+          disabled={isBusy}
+          className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl tabular-nums disabled:opacity-50"
+          placeholder={minLabel}
+        />
+      </div>
+      <div
+        className={`mako-label mt-2 tabular-nums ${
+          seedTooSmall ? 'text-mako-red' : 'text-muted'
+        }`}
+      >
+        {seedTooSmall
+          ? `MINIMUM ${minLabel} USDC * GOES INTO THE POOL * CLAIMABLE AT RESOLUTION`
+          : `MINIMUM ${minLabel} USDC * GOES INTO THE POOL AS YOUR FIRST BET`}
+      </div>
+
+      <label className="mako-label text-muted mt-5 mb-3 block">YOUR SIDE</label>
+      <div className="grid grid-cols-2 gap-3">
+        {SEED_SIDES.map(({ key, label }) => {
+          const isActive = side === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSide(key)}
+              disabled={isBusy}
+              aria-pressed={isActive}
+              className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
+                isActive
+                  ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
+                  : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // Crypto-only duration presets. 5 minutes is the floor (below that the
 // window is too narrow for spot to move meaningfully). 7 days is the
@@ -141,7 +286,14 @@ const DURATIONS: Array<{ label: string; short: string; seconds: number }> = [
 ];
 
 function isTab(s: string | null): s is Tab {
-  return s === 'crypto' || s === 'football' || s === 'basketball';
+  return (
+    s === 'crypto'
+    || s === 'football'
+    || s === 'basketball'
+    || s === 'forex'
+    || s === 'commodities'
+    || s === 'stocks'
+  );
 }
 
 export default function CreateMarketPage() {
@@ -186,6 +338,26 @@ export default function CreateMarketPage() {
   const { address: connectedWallet } = useAccount();
   const drifted = isWalletDrifted(user ?? null, connectedWallet);
 
+  // Daily creator-create cap (slice 4f). The on-chain contract caps
+  // public `createMarket` calls at 10 per UTC day per wallet. Mirror
+  // it here so the submit button can disable and a counter can render
+  // before the user even attempts. Read on whichever identity will
+  // actually call createMarket: Magic → safeAddress, wallet → connected
+  // wallet. MAKO is admin-only and lives on /admin/create-mako (no
+  // counter there — admin path is contract-exempt).
+  const capCreator: `0x${string}` | undefined =
+    user?.authType === 'magic'
+      ? (user.safeAddress as `0x${string}`)
+      : user?.authType === 'wallet'
+        ? connectedWallet ?? undefined
+        : undefined;
+  const { data: createsTodayData, refetch: refetchCreatesToday } =
+    useCreatorCreatesToday(capCreator);
+  const createsToday = createsTodayData
+    ? Number((createsTodayData as readonly [bigint, bigint])[0])
+    : null;
+  const dailyCapHit = createsToday !== null && createsToday >= 10;
+
   // For the wallet path: derive the decoded new id from the receipt
   // (same as 1C). The Magic path resolves `create()` with newId
   // already decoded, so this only fires for `flow === 'wallet'`.
@@ -216,7 +388,19 @@ export default function CreateMarketPage() {
 
   const handleCreate = async (args: CreateArgs) => {
     try {
+      // Each tab owns its own seed input + side toggle and passes them
+      // through `args`. MAKO is admin-only and lives on
+      // /admin/create-mako; this handler only services the public
+      // tabs, which all require a non-zero creator seed.
       const result: CreateMarketResult = await create(args);
+      // Slice 4f: refetch the creator-creates-today view on any outcome
+      // that may have advanced the counter on-chain. The contract
+      // increments on every public create; checking on every non-error
+      // outcome covers the wallet-flow case where we lack a synchronous
+      // newId. The view is cheap (single 32-byte SSTORE).
+      if (result.kind !== 'error' && result.kind !== 'reverted') {
+        refetchCreatesToday();
+      }
       switch (result.kind) {
         case 'created':
           // Magic happy path — hook decoded newId; redirect.
@@ -334,6 +518,27 @@ export default function CreateMarketPage() {
           </div>
         )}
 
+        {/* Daily cap counter (slice 4f). Renders when the wallet has a
+            known count. The submit-side gate is enforced per-tab via
+            `dailyCapHit`; this just surfaces the count so the user
+            understands why the button greys out at 10. */}
+        {capCreator && createsToday !== null && tab !== null && (
+          <div
+            className={`mb-6 w-full max-w-2xl px-4 py-3 mako-label rounded-xl border-2 flex items-center justify-between ${
+              dailyCapHit
+                ? 'bg-mako-red/15 text-mako-red border-mako-red'
+                : 'bg-surface-elevated text-ink border-ink'
+            }`}
+          >
+            <span>
+              CREATES TODAY: {createsToday}/10
+            </span>
+            <span className="text-[10px] opacity-70">
+              {dailyCapHit ? 'CAP REACHED * RESETS AT UTC MIDNIGHT' : 'PER UTC DAY'}
+            </span>
+          </div>
+        )}
+
         {tab !== null && (
           <div className="w-full flex flex-col lg:flex-row gap-8 lg:gap-12 mb-12 items-start justify-center">
             
@@ -354,11 +559,17 @@ export default function CreateMarketPage() {
                   {tab === 'crypto' && <>CRYPTO<br/>MARKET</>}
                   {tab === 'football' && <>FOOTBALL<br/>MARKET</>}
                   {tab === 'basketball' && <>NBA<br/>MARKET</>}
+                  {tab === 'forex' && <>FOREX<br/>MARKET</>}
+                  {tab === 'commodities' && <>COMMODITIES<br/>MARKET</>}
+                  {tab === 'stocks' && <>STOCKS<br/>MARKET</>}
                 </h2>
                 <p className="font-sans font-medium text-lg text-canvas-fg/70 leading-relaxed border-l-4 border-mako-red pl-5 py-1">
                   {tab === 'crypto' && 'Live token prices. Pick a strike, a direction, and a duration. Lives as short as 5 minutes.'}
                   {tab === 'football' && 'EPL fixtures. Pick home, draw, away, or a total-goals over/under.'}
                   {tab === 'basketball' && 'NBA games. Pick home or away win, or a total-points over/under.'}
+                  {tab === 'forex' && 'FX pairs (EUR/USD, GBP/USD, USD/JPY). Same shape as crypto: strike, direction, duration.'}
+                  {tab === 'commodities' && 'Spot commodities (gold, silver, oil). Pick a price level and a settlement window.'}
+                  {tab === 'stocks' && 'Single-name equities (AAPL, NVDA, TSLA). Same shape as crypto: strike, direction, duration.'}
                 </p>
               </div>
 
@@ -372,10 +583,23 @@ export default function CreateMarketPage() {
                   { title: "FIXTURE", desc: "Select an upcoming EPL match." },
                   { title: "OUTCOME", desc: "Pick the winning side or total goals." },
                   { title: "TIMING", desc: "Automatically settles after the match." }
-                ] : [
+                ] : tab === 'basketball' ? [
                   { title: "GAME", desc: "Select an upcoming NBA game." },
                   { title: "OUTCOME", desc: "Pick the winning side or total points." },
                   { title: "TIMING", desc: "Automatically settles after the game." }
+                ] : tab === 'forex' ? [
+                  { title: "PAIR", desc: "Pick an FX pair (EUR/USD, GBP/USD, USD/JPY...)." },
+                  { title: "STRIKE", desc: "Set the target exchange rate." },
+                  { title: "DIRECTION", desc: "Will it settle above or below?" }
+                ] : tab === 'commodities' ? [
+                  { title: "ASSET", desc: "Pick a commodity (XAU/USD, XAG/USD, oil...)." },
+                  { title: "STRIKE", desc: "Set the target spot price." },
+                  { title: "DIRECTION", desc: "Will it settle above or below?" }
+                ] : [
+                  // stocks (default — all remaining tabs share the strike/direction shape)
+                  { title: "TICKER", desc: "Pick an equity ticker (AAPL, NVDA, TSLA...)." },
+                  { title: "STRIKE", desc: "Set the target close price." },
+                  { title: "DIRECTION", desc: "Will it settle above or below?" }
                 ]).map((step, i) => (
                   <div key={i} className="flex items-start gap-6 group">
                     <div className="text-6xl font-display font-black text-canvas-fg/10 group-hover:text-mako-red transition-colors select-none -mt-3">
@@ -397,9 +621,12 @@ export default function CreateMarketPage() {
             {/* FORM CONTAINER */}
             <div className="w-full lg:max-w-2xl flex-1 flex flex-col order-2 lg:order-1">
               <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
-                {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
-                {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
-                {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} />}
+                {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
+                {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
+                {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
+                {tab === 'forex' && <PriceFeedTab kind="forex" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
+                {tab === 'commodities' && <PriceFeedTab kind="commodities" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
+                {tab === 'stocks' && <PriceFeedTab kind="stocks" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
               </div>
 
               {/* Non-busy status line below the submit button */}
@@ -437,15 +664,22 @@ type TabProps = {
   // submit handlers are responsible for the early-return + the disabled
   // predicate.
   drifted: boolean;
+  // v4 redeploy (slice 4f): daily creator-create cap mirror. Tabs
+  // fold this into their `disabled` predicate so the submit button is
+  // greyed out when the wallet has already hit 10 creates today. MAKO
+  // is contract-exempt and lives on /admin/create-mako instead.
+  dailyCapHit: boolean;
 };
 
-function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
+function CryptoTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit }: TabProps) {
   const [prices, setPrices] = useState<CryptoPrices | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<CryptoSymbol>('BTC');
   const [direction, setDirection] = useState<Direction>('above');
   const [strikeInput, setStrikeInput] = useState('');
   const [strikeTouched, setStrikeTouched] = useState(false);
   const [durationSec, setDurationSec] = useState(300);
+  const [seedInput, setSeedInput] = useState(formatUsdc(MIN_CREATOR_SEED_USDC_BASE));
+  const [side, setSide] = useState<'yes' | 'no'>('yes');
 
   // Wall clock for the bettingCloseTime preview. The contract view
   // `suggestedCryptoBettingCloseTime(createdAt, resolutionTime)` is pure,
@@ -527,6 +761,8 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
     // get stuck until forceRefund. Belt-and-suspenders with the button's
     // `disabled` guard below.
     if (effectiveStrike <= 0 || isBusy || drifted) return;
+    const creatorSeed = parseCreatorSeed(seedInput);
+    if (creatorSeed === null) return;
 
     const op = direction === 'above' ? 'gt' : 'lt';
     const oracleRefStr = `${selectedSymbol}:${op}:${effectiveStrike}`;
@@ -584,10 +820,13 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
       bettingCloseTime,
       closeTime,
       question: autoQuestion,
+      creatorSeed,
+      creatorYes: side === 'yes',
     });
   };
 
-  const disabled = isBusy || effectiveStrike <= 0 || drifted;
+  const disabled =
+    isBusy || effectiveStrike <= 0 || drifted || dailyCapHit || parseCreatorSeed(seedInput) === null;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
@@ -759,6 +998,14 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
         </p>
       </div>
 
+      <CreatorSeedBlock
+        seedInput={seedInput}
+        setSeedInput={setSeedInput}
+        side={side}
+        setSide={setSide}
+        isBusy={isBusy}
+      />
+
       <button
         type="submit"
         disabled={disabled}
@@ -778,11 +1025,13 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
 // FOOTBALL TAB -- EPL fixtures from football-data.org + question builder
 // ======================================================================
 
-function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
+function FootballTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit }: TabProps) {
   const [fixtures, setFixtures] = useState<FootballFixture[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedFixture, setSelectedFixture] = useState<FootballFixture | null>(null);
   const [questionType, setQuestionType] = useState<FootballQuestionType>('home_win');
+  const [seedInput, setSeedInput] = useState(formatUsdc(MIN_CREATOR_SEED_USDC_BASE));
+  const [side, setSide] = useState<'yes' | 'no'>('yes');
   // Track wall-clock to re-render the "closes in ..." countdown. 10s is tight
   // enough to keep the displayed countdown honest near the cutoff. The real
   // guard against a stale-state race at submit time lives in handleSubmit.
@@ -891,6 +1140,9 @@ function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
       return;
     }
 
+    const creatorSeed = parseCreatorSeed(seedInput);
+    if (creatorSeed === null) return;
+
     const oracleRef = toBytes32(oracleRefStr);
 
     await onSubmit({
@@ -899,6 +1151,8 @@ function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
       bettingCloseTime: timestamps.bettingCloseTime,
       closeTime: timestamps.closeTime,
       question: autoQuestion,
+      creatorSeed,
+      creatorYes: side === 'yes',
     });
   };
 
@@ -908,7 +1162,9 @@ function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
     || oracleRefTooLong
     || closeTooSoon
     || tooFarOut
-    || drifted;
+    || drifted
+    || dailyCapHit
+    || parseCreatorSeed(seedInput) === null;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
@@ -1039,6 +1295,14 @@ function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
         )}
       </div>
 
+      <CreatorSeedBlock
+        seedInput={seedInput}
+        setSeedInput={setSeedInput}
+        side={side}
+        setSide={setSide}
+        isBusy={isBusy}
+      />
+
       <button
         type="submit"
         disabled={disabled}
@@ -1058,12 +1322,14 @@ function FootballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
 // BASKETBALL TAB -- NBA games from balldontlie + home/away/total points
 // ======================================================================
 
-function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
+function BasketballTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit }: TabProps) {
   const [games, setGames] = useState<BasketballGame[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedGame, setSelectedGame] = useState<BasketballGame | null>(null);
   const [questionType, setQuestionType] = useState<BasketballQuestionType>('home_win');
   const [totalInput, setTotalInput] = useState<string>('215.5');
+  const [seedInput, setSeedInput] = useState(formatUsdc(MIN_CREATOR_SEED_USDC_BASE));
+  const [side, setSide] = useState<'yes' | 'no'>('yes');
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 10_000);
@@ -1171,6 +1437,9 @@ function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
       return;
     }
 
+    const creatorSeed = parseCreatorSeed(seedInput);
+    if (creatorSeed === null) return;
+
     const oracleRef = toBytes32(oracleRefStr);
 
     await onSubmit({
@@ -1179,6 +1448,8 @@ function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
       bettingCloseTime: timestamps.bettingCloseTime,
       closeTime: timestamps.closeTime,
       question: autoQuestion,
+      creatorSeed,
+      creatorYes: side === 'yes',
     });
   };
 
@@ -1189,7 +1460,9 @@ function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
     (isTotalQ && totalNumber <= 0) ||
     closeTooSoon ||
     tooFarOut ||
-    drifted;
+    drifted ||
+    dailyCapHit ||
+    parseCreatorSeed(seedInput) === null;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
@@ -1341,6 +1614,14 @@ function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
         )}
       </div>
 
+      <CreatorSeedBlock
+        seedInput={seedInput}
+        setSeedInput={setSeedInput}
+        side={side}
+        setSide={setSide}
+        isBusy={isBusy}
+      />
+
       <button
         type="submit"
         disabled={disabled}
@@ -1355,3 +1636,293 @@ function BasketballTab({ onSubmit, isBusy, statusText, drifted }: TabProps) {
     </form>
   );
 }
+
+// ======================================================================
+// PRICE-FEED TAB -- generic strike/direction/duration form for FOREX,
+// COMMODITIES, and STOCKS. Same on-chain shape as CRYPTO (the contract
+// just distinguishes them via mType for downstream oracle routing) but
+// no live-price grid yet — the user types the symbol directly. Live
+// price grids per asset class are a follow-up visual task.
+// ======================================================================
+
+type PriceFeedKind = 'forex' | 'commodities' | 'stocks';
+
+type PriceFeedTabProps = TabProps & { kind: PriceFeedKind };
+
+const PRICE_FEED_COPY: Record<PriceFeedKind, {
+  mType: MarketType;
+  label: string;
+  symbolLabel: string;
+  symbolHint: string;
+  symbolPlaceholder: string;
+  strikeLabel: string;
+  defaultSymbol: string;
+  defaultStrike: string;
+  questionVerb: string;
+}> = {
+  forex: {
+    mType: MarketType.FOREX,
+    label: 'FX',
+    symbolLabel: 'PAIR',
+    symbolHint: 'BASE/QUOTE * E.G. EURUSD',
+    symbolPlaceholder: 'EURUSD',
+    strikeLabel: 'STRIKE RATE',
+    defaultSymbol: 'EURUSD',
+    defaultStrike: '1.08',
+    questionVerb: 'trade',
+  },
+  commodities: {
+    mType: MarketType.COMMODITIES,
+    label: 'COMMODITY',
+    symbolLabel: 'ASSET',
+    symbolHint: 'TICKER * E.G. XAUUSD, WTI, BRENT',
+    symbolPlaceholder: 'XAUUSD',
+    strikeLabel: 'STRIKE PRICE (USD)',
+    defaultSymbol: 'XAUUSD',
+    defaultStrike: '2400',
+    questionVerb: 'settle',
+  },
+  stocks: {
+    mType: MarketType.STOCKS,
+    label: 'STOCK',
+    symbolLabel: 'TICKER',
+    symbolHint: 'EQUITY SYMBOL * E.G. AAPL, NVDA, TSLA',
+    symbolPlaceholder: 'AAPL',
+    strikeLabel: 'STRIKE PRICE (USD)',
+    defaultSymbol: 'AAPL',
+    defaultStrike: '200',
+    questionVerb: 'close',
+  },
+};
+
+function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit }: PriceFeedTabProps) {
+  const copy = PRICE_FEED_COPY[kind];
+  const [symbol, setSymbol] = useState(copy.defaultSymbol);
+  const [direction, setDirection] = useState<Direction>('above');
+  const [strikeInput, setStrikeInput] = useState(copy.defaultStrike);
+  const [durationSec, setDurationSec] = useState(3600);
+  const [seedInput, setSeedInput] = useState(formatUsdc(MIN_CREATOR_SEED_USDC_BASE));
+  const [side, setSide] = useState<'yes' | 'no'>('yes');
+
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const strikeNumber = useMemo(() => {
+    const n = Number(strikeInput);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }, [strikeInput]);
+
+  const closeTimeSec = nowSec + durationSec;
+  const bettingCloseSec = useMemo(
+    () => Number(suggestedCryptoBettingCloseTimeMirror(nowSec, closeTimeSec)),
+    [nowSec, closeTimeSec],
+  );
+
+  const oracleRefStr = useMemo(() => {
+    if (!normalizedSymbol || strikeNumber <= 0) return '';
+    const op = direction === 'above' ? 'gt' : 'lt';
+    return `${normalizedSymbol}:${op}:${strikeNumber}`;
+  }, [normalizedSymbol, direction, strikeNumber]);
+
+  const oracleRefTooLong = useMemo(() => {
+    if (!oracleRefStr) return false;
+    return new TextEncoder().encode(oracleRefStr).length > 32;
+  }, [oracleRefStr]);
+
+  const autoQuestion = useMemo(() => {
+    if (!normalizedSymbol || strikeNumber <= 0) return '';
+    const durationLabel =
+      DURATIONS.find((d) => d.seconds === durationSec)?.label ?? `${durationSec}s`;
+    const dirWord = direction === 'above' ? 'above' : 'below';
+    return `Will ${normalizedSymbol} ${copy.questionVerb} ${dirWord} ${strikeNumber} in ${durationLabel}?`;
+  }, [normalizedSymbol, direction, strikeNumber, durationSec, copy.questionVerb]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!normalizedSymbol || strikeNumber <= 0 || oracleRefTooLong || isBusy || drifted) return;
+
+    const submitNowSec = Math.floor(Date.now() / 1000);
+    const submitCloseSec =
+      submitNowSec +
+      Math.min(
+        durationSec + TX_LANDING_BUFFER_SEC,
+        MAX_DURATION_SEC - TX_LANDING_BUFFER_SEC,
+      );
+    const submitBettingCloseSec = Number(
+      suggestedCryptoBettingCloseTimeMirror(submitNowSec, submitCloseSec),
+    );
+
+    const closeTime = BigInt(submitCloseSec);
+    const bettingCloseTime = BigInt(submitBettingCloseSec);
+
+    const validation = validateMarketTimestamps({
+      nowSec: submitNowSec,
+      bettingCloseTime,
+      closeTime,
+    });
+    if (validation) {
+      console.error(`[create-${kind}] validation failed:`, validation);
+      return;
+    }
+
+    const creatorSeed = parseCreatorSeed(seedInput);
+    if (creatorSeed === null) return;
+
+    const oracleRef = toBytes32(oracleRefStr);
+
+    await onSubmit({
+      mType: copy.mType,
+      oracleRef,
+      bettingCloseTime,
+      closeTime,
+      question: autoQuestion,
+      creatorSeed,
+      creatorYes: side === 'yes',
+    });
+  };
+
+  const disabled =
+    isBusy
+    || !normalizedSymbol
+    || strikeNumber <= 0
+    || oracleRefTooLong
+    || drifted
+    || dailyCapHit
+    || parseCreatorSeed(seedInput) === null;
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col">
+      {/* Symbol */}
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label htmlFor="pf-symbol" className="mako-label text-muted mb-3 block">
+          {copy.symbolLabel}
+        </label>
+        <div className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-paper">
+          <input
+            id="pf-symbol"
+            type="text"
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value.toUpperCase().slice(0, 12))}
+            disabled={isBusy}
+            placeholder={copy.symbolPlaceholder}
+            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl uppercase tabular-nums disabled:opacity-50"
+          />
+        </div>
+        <div className="mako-label text-muted mt-2">{copy.symbolHint}</div>
+      </div>
+
+      {/* Direction */}
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">DIRECTION</label>
+        <div className="grid grid-cols-2 gap-3">
+          {(['above', 'below'] as const).map((dir) => {
+            const isActive = direction === dir;
+            return (
+              <button
+                key={dir}
+                type="button"
+                onClick={() => setDirection(dir)}
+                disabled={isBusy}
+                aria-pressed={isActive}
+                className={`py-3 mako-label rounded-xl border-2 border-ink transition-all disabled:opacity-50 ${
+                  isActive
+                    ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
+                    : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
+                }`}
+              >
+                {dir === 'above' ? 'UP / ABOVE' : 'DN / BELOW'}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Strike */}
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label htmlFor="pf-strike" className="mako-label text-muted mb-3 block">
+          {copy.strikeLabel}
+        </label>
+        <div className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-paper">
+          <input
+            id="pf-strike"
+            type="text"
+            inputMode="decimal"
+            value={strikeInput}
+            onChange={(e) => setStrikeInput(e.target.value.replace(/[^0-9.]/g, ''))}
+            disabled={isBusy}
+            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl tabular-nums disabled:opacity-50"
+            placeholder={copy.defaultStrike}
+          />
+        </div>
+      </div>
+
+      {/* Duration */}
+      <div className="px-6 py-5 border-b-2 border-ink">
+        <label className="mako-label text-muted mb-3 block">DURATION</label>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {DURATIONS.map((d) => {
+            const isActive = durationSec === d.seconds;
+            return (
+              <button
+                key={d.seconds}
+                type="button"
+                onClick={() => setDurationSec(d.seconds)}
+                disabled={isBusy}
+                aria-pressed={isActive}
+                className={`py-2.5 mako-label rounded-lg border-2 border-ink transition-all disabled:opacity-50 tabular-nums ${
+                  isActive
+                    ? 'bg-ink text-paper shadow-brutal-red -translate-y-[1px] -translate-x-[1px]'
+                    : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px]'
+                }`}
+              >
+                {d.short}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mako-label text-muted mt-3 leading-relaxed">
+          BETS CLOSE {humanizeUntil(bettingCloseSec - nowSec).toUpperCase()} * RESOLVES {humanizeUntil(closeTimeSec - nowSec).toUpperCase()}
+        </div>
+      </div>
+
+      {/* Auto-question */}
+      <div className="px-6 py-5 border-b-2 border-ink bg-surface-elevated">
+        <label className="mako-label text-muted mb-2 block">QUESTION (AUTO-GENERATED)</label>
+        <p className="mako-title text-lg leading-tight">{autoQuestion || '-'}</p>
+        {oracleRefTooLong && (
+          <p className="mako-label text-mako-red mt-2">
+            ORACLE REF TOO LONG ({oracleRefStr.length} BYTES) * MAX 32 * PICK SHORTER SYMBOL OR STRIKE
+          </p>
+        )}
+        <p className="mako-label text-subtle text-[10px] mt-2 leading-relaxed">
+          {copy.label} auto-resolver is not yet wired. This market type will resolve manually until the price-feed adapter ships.
+        </p>
+      </div>
+
+      <CreatorSeedBlock
+        seedInput={seedInput}
+        setSeedInput={setSeedInput}
+        side={side}
+        setSide={setSide}
+        isBusy={isBusy}
+      />
+
+      <button
+        type="submit"
+        disabled={disabled}
+        className={`w-full py-5 mako-display text-lg uppercase tracking-tight transition-colors ${
+          disabled
+            ? 'bg-surface-elevated text-muted cursor-not-allowed'
+            : 'bg-signal text-ink hover:bg-signal/90'
+        }`}
+      >
+        {isBusy ? statusText ?? '...' : `CREATE ${copy.label} MARKET`}
+      </button>
+    </form>
+  );
+}
+

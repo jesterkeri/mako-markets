@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { ADMIN_ADDRESS } from '@/lib/admin';
+import { MarketType, marketTypeLabel } from '@/lib/contract';
 import { humanizeUntil } from '@/lib/time';
 import { useNowSec } from '@/lib/use-now';
 import { monadTestnet } from '@/lib/chain';
 import type { AdminAnalytics } from '@/lib/admin-analytics';
+import type { MakoOutcomeLabels } from '@/lib/mako-labels';
 
 /**
  * Shared bits every /admin/* page reuses: back bar, not-authorized panel,
@@ -56,8 +58,51 @@ export function outcomeLabel(o: 0 | 1 | 2 | 3): string {
   return o === 1 ? 'YES' : o === 2 ? 'NO' : o === 3 ? 'REFUND' : '—';
 }
 
-export function typeLabel(m: 0 | 1 | 2): string {
-  return m === 0 ? 'FOOTBALL' : m === 1 ? 'CRYPTO' : 'BASKETBALL';
+/**
+ * MAKO-aware outcome label. Overrides ONLY outcomes 1 and 2 when
+ *   (a) the market is MAKO type AND
+ *   (b) DB labels exist for it.
+ * Everything else delegates to the pure `outcomeLabel(outcome)` so
+ * REFUND (outcome 3), PENDING (outcome 0), and the non-MAKO path stay
+ * byte-identical to the existing helper. This rule is the round-3 plan
+ * fix: a labeled MAKO market with outcome === 3 must still render
+ * "REFUND", not the label and not "TIE".
+ *
+ * The behavioral table (verified by tests in admin-shared.test.tsx):
+ *
+ *   mType     labels   outcome   result
+ *   MAKO      {A,B}    1         "A"
+ *   MAKO      {A,B}    2         "B"
+ *   MAKO      {A,B}    3         "REFUND"  (delegated)
+ *   MAKO      {A,B}    0         "—"       (delegated)
+ *   MAKO      null     1         "YES"     (delegated — fallback)
+ *   MAKO      null     2         "NO"      (delegated)
+ *   MAKO      null     3         "REFUND"  (delegated)
+ *   FOOTBALL  {A,B}    1         "YES"     (delegated — non-MAKO)
+ *   FOOTBALL  null     1         "YES"     (delegated)
+ *   FOOTBALL  null     3         "REFUND"  (delegated)
+ *
+ * Takes `market: { mType }` as a minimal stub — callers that have a
+ * full Market pass it directly; the analytics-row caller passes
+ * `{ mType: a.mType }` after the activity-row enrichment in Group D.
+ */
+export function outcomeLabelForMarket(
+  market: { mType: MarketType | (0 | 1 | 2 | 3 | 4 | 5 | 6) },
+  labels: MakoOutcomeLabels | null,
+  outcome: 0 | 1 | 2 | 3,
+): string {
+  if (market.mType === MarketType.MAKO && labels !== null) {
+    if (outcome === 1) return labels.label1;
+    if (outcome === 2) return labels.label2;
+  }
+  return outcomeLabel(outcome);
+}
+
+export function typeLabel(m: 0 | 1 | 2 | 3 | 4 | 5 | 6): string {
+  // Single source of truth for market-type labels lives in lib/contract.ts.
+  // Admin wire-shape types use the raw numeric union (because the values
+  // come back through JSON, not the runtime enum), so cast and delegate.
+  return marketTypeLabel(m as MarketType);
 }
 
 export function explorerAddress(addr: string): string {
@@ -122,7 +167,14 @@ export function ActivityRow({ activity: a }: { activity: Activity }) {
       break;
     case 'resolve':
       kindLabel = 'RESOLVE';
-      sentence = `#${a.marketId} RESOLVED → ${outcomeLabel(a.outcome)}`;
+      /// Group D enrichment: the analytics route attaches `mType` +
+      /// `labels` to every resolve row (one batched DB read scoped to
+      /// the MAKO subset of visible resolves). Render via the shared
+      /// helper so a labeled MAKO market reads e.g. "#42 RESOLVED →
+      /// APC" instead of "#42 RESOLVED → YES". Non-MAKO + unlabeled
+      /// MAKO + outcome ∈ {0, 3} all delegate to the pure helper —
+      /// same string the pre-Group D code produced.
+      sentence = `#${a.marketId} RESOLVED → ${outcomeLabelForMarket({ mType: a.mType }, a.labels, a.outcome)}`;
       break;
     case 'claim':
       kindLabel = 'CLAIM';

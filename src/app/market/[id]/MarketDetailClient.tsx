@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAccount, useWaitForTransactionReceipt } from 'wagmi';
 import { useMarket, useResolveMarket } from '@/lib/hooks';
 import { useUser } from '@/lib/use-user';
-import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
+import { MarketType, Outcome, marketTypeLabel, type MarketWithId } from '@/lib/contract';
 import { useIsAdmin } from '@/lib/admin';
 import {
   yesMultiplier,
@@ -17,6 +17,8 @@ import {
 import { formatUsdc } from '@/lib/usdc';
 import { BetSheet } from '@/components/BetSheet';
 import { ClaimButton } from '@/components/ClaimButton';
+import { useMakoLabels } from '@/lib/use-mako-labels';
+import { outcomeLabelForMarket } from '@/components/admin-shared';
 import { ShareMarketButton } from '@/components/ShareMarketButton';
 import { BroadcastButton } from '@/components/BroadcastButton';
 import { formatTime, humanizeUntil } from '@/lib/time';
@@ -47,6 +49,25 @@ export function MarketDetailClient({ id }: { id: string }) {
   const isUnauthed = !user && !address && !userLoading && !isConnecting && !isReconnecting;
 
   const [betSide, setBetSide] = useState<'yes' | 'no'>('yes');
+
+  /// MAKO label lookup — null for non-MAKO markets (hook stays
+  /// disabled, no fetch). Header chips (YES X% / X% NO), the embedded
+  /// admin resolve buttons (RESOLVE YES / RESOLVE NO), and any other
+  /// outcome rendering on this page route through
+  /// `outcomeLabelForMarket` which delegates to "YES" / "NO" when
+  /// labels are null. The hook resolves once per market and is shared
+  /// across render branches because it's at the top of the component.
+  const { data: makoLabels } = useMakoLabels(
+    market?.mType === MarketType.MAKO && parsedId !== null
+      ? parsedId.toString()
+      : null,
+  );
+  const yesSideLabel = market
+    ? outcomeLabelForMarket(market, makoLabels ?? null, 1)
+    : 'YES';
+  const noSideLabel = market
+    ? outcomeLabelForMarket(market, makoLabels ?? null, 2)
+    : 'NO';
 
   if (parsedId === null) {
     return <NotFound reason={`Invalid market id: ${id}`} />;
@@ -87,11 +108,7 @@ export function MarketDetailClient({ id }: { id: string }) {
   const isYesEmpty = market?.totalYes === 0n;
   const isNoEmpty = market?.totalNo === 0n;
 
-  const badgeText =
-    market.mType === MarketType.FOOTBALL ? 'FOOTBALL'
-    : market.mType === MarketType.CRYPTO ? 'CRYPTO'
-    : market.mType === MarketType.BASKETBALL ? 'NBA'
-    : 'EVENT';
+  const badgeText = marketTypeLabel(market.mType);
 
   const statusLabel = market.resolved
     ? `RESOLVED: ${Outcome[market.outcome]}`
@@ -152,8 +169,8 @@ export function MarketDetailClient({ id }: { id: string }) {
           {/* Tug of War Probability Bar */}
           <div className="flex flex-col gap-3">
             <div className="flex justify-between items-end px-2">
-              <span className={`mako-display text-[clamp(1.875rem,3vw,2.25rem)] transition-all duration-300 ${betSide === 'yes' ? 'text-signal scale-105 origin-bottom-left' : 'text-muted'}`}>YES {yesProb.toFixed(0)}%</span>
-              <span className={`mako-display text-[clamp(1.875rem,3vw,2.25rem)] transition-all duration-300 ${betSide === 'no' ? 'text-mako-red scale-105 origin-bottom-right' : 'text-muted'}`}>{noProb.toFixed(0)}% NO</span>
+              <span className={`mako-display text-[clamp(1.875rem,3vw,2.25rem)] transition-all duration-300 ${betSide === 'yes' ? 'text-signal scale-105 origin-bottom-left' : 'text-muted'}`}>{yesSideLabel} {yesProb.toFixed(0)}%</span>
+              <span className={`mako-display text-[clamp(1.875rem,3vw,2.25rem)] transition-all duration-300 ${betSide === 'no' ? 'text-mako-red scale-105 origin-bottom-right' : 'text-muted'}`}>{noProb.toFixed(0)}% {noSideLabel}</span>
             </div>
             
             <div className="w-full h-20 md:h-24 flex rounded-full border-4 border-ink overflow-hidden shadow-[8px_8px_0_0_var(--mako-ink)] relative bg-paper cursor-pointer group" onClick={(e) => {
@@ -213,7 +230,12 @@ export function MarketDetailClient({ id }: { id: string }) {
           {/* Awaiting resolution banner */}
           {awaitingResolution && (
             <div className="mt-8">
-              <AwaitingResolutionPanel market={market} onResolved={refetch} />
+              <AwaitingResolutionPanel
+                market={market}
+                onResolved={refetch}
+                yesSideLabel={yesSideLabel}
+                noSideLabel={noSideLabel}
+              />
             </div>
           )}
         </div>
@@ -261,9 +283,16 @@ export function MarketDetailClient({ id }: { id: string }) {
 function AwaitingResolutionPanel({
   market,
   onResolved,
+  yesSideLabel,
+  noSideLabel,
 }: {
   market: MarketWithId;
   onResolved: () => void;
+  /// Pre-resolved outcome labels from the parent. Threaded as props
+  /// rather than re-calling `useMakoLabels` here so the page issues
+  /// one fetch per market detail render, not two.
+  yesSideLabel: string;
+  noSideLabel: string;
 }) {
   const isAdmin = useIsAdmin();
   const { resolve, hash, isPending, error, reset } = useResolveMarket();
@@ -306,14 +335,22 @@ function AwaitingResolutionPanel({
           : null;
 
   if (!isAdmin) {
+    // Headline per market type: sports get event-specific copy, price-feed
+    // types share the CRYPTO copy (FOREX / COMMODITIES / STOCKS resolve via
+    // the same oracle pattern), MAKO is the admin-curated path.
     const headline =
       market.mType === MarketType.FOOTBALL
         ? 'BET LIVE · RESOLVES AFTER FULL TIME'
         : market.mType === MarketType.BASKETBALL
           ? 'BET LIVE · RESOLVES AFTER FINAL BUZZER'
           : market.mType === MarketType.CRYPTO
+            || market.mType === MarketType.FOREX
+            || market.mType === MarketType.COMMODITIES
+            || market.mType === MarketType.STOCKS
             ? 'WINDOW CLOSED · RESOLVING NOW'
-            : 'MARKET CLOSED · RESOLVING';
+            : market.mType === MarketType.MAKO
+              ? 'AWAITING MAKO RESOLUTION'
+              : 'MARKET CLOSED · RESOLVING';
     const closedAgoLabel = humanizeUntil(Number(market.closeTime) - nowSec);
     return (
       <div className="bg-mako-red/10 border-2 border-mako-red rounded-2xl p-5 text-center">
@@ -341,7 +378,7 @@ function AwaitingResolutionPanel({
           onClick={() => handleResolve(Outcome.YES)}
           className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-ink hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          RESOLVE YES
+          RESOLVE {yesSideLabel}
         </button>
         <button
           type="button"
@@ -349,7 +386,7 @@ function AwaitingResolutionPanel({
           onClick={() => handleResolve(Outcome.NO)}
           className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-mako-red hover:text-paper transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          RESOLVE NO
+          RESOLVE {noSideLabel}
         </button>
         <button
           type="button"

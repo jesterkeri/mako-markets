@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 # the public Monad testnet endpoint. If the contract ever redeploys,
 # bump MAKO_ADDRESS here + redeploy the Worker.
 [vars]
-MAKO_ADDRESS = "0xf9853d7ad6601deF4367524A5802B41227ea5c43"
+MAKO_ADDRESS = "0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195"
 MONAD_RPC_URL = "https://testnet-rpc.monad.xyz/"
 # Mako Markets Vercel URL — used by the AA cron scheduler to fire
 # /api/cron/aa-fast (every minute) and /api/cron/aa-slow (every 5 min)

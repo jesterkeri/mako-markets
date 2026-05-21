@@ -832,6 +832,26 @@ export const pmIndexerState = pgTable('pm_indexer_state', {
 });
 
 // ----------------------------------------------------------------------------
+// mako_market_outcome_labels — admin-defined display labels for MAKO markets.
+//
+// `MakoMarketsV4` stores binary outcomes as `Outcome.YES = 1` /
+// `Outcome.NO = 2` with no label fields. This table lets admin-curated MAKO
+// markets show custom labels (e.g. "APC" / "PDP") without a contract
+// redeploy. Labels are display-only; the 1/2 outcome stays the contract
+// source of truth.
+//
+// CHECK constraints (octet_length 1..32 per label) live in the SQL migration
+// at 0007; schema here mirrors only the column shape.
+// ----------------------------------------------------------------------------
+export const makoMarketOutcomeLabels = pgTable('mako_market_outcome_labels', {
+  marketId: bigint('market_id', { mode: 'number' }).primaryKey(),
+  label1: text('label_1').notNull(),
+  label2: text('label_2').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
 // ----------------------------------------------------------------------------
@@ -877,3 +897,5 @@ export type PmClaim = typeof pmClaims.$inferSelect;
 export type NewPmClaim = typeof pmClaims.$inferInsert;
 export type PmIndexerState = typeof pmIndexerState.$inferSelect;
 export type NewPmIndexerState = typeof pmIndexerState.$inferInsert;
+export type MakoMarketOutcomeLabel = typeof makoMarketOutcomeLabels.$inferSelect;
+export type NewMakoMarketOutcomeLabel = typeof makoMarketOutcomeLabels.$inferInsert;

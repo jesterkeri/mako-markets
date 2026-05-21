@@ -12,7 +12,7 @@ import { usdcContract } from './usdc';
  * if the env var is unset.
  */
 export const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS
-  || '0xf9853d7ad6601deF4367524A5802B41227ea5c43') as `0x${string}`;
+  || '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195') as `0x${string}`;
 
 /**
  * Deployed address of MakoPrivateMarketsV1 on Monad testnet.
@@ -52,11 +52,46 @@ export { usdcContract };
 
 /** Market type. Matches `MarketType` enum in the contract.
  *  Append-only: new market types go at the end so existing on-chain
- *  mType values never get silently remapped. */
+ *  mType values never get silently remapped. Slice 4 of the v4 redeploy
+ *  added FOREX / COMMODITIES / STOCKS (price-feed types resolved like
+ *  CRYPTO) and MAKO (admin-curated, manually resolved, no creator fee). */
 export enum MarketType {
   FOOTBALL = 0,
   CRYPTO = 1,
   BASKETBALL = 2,
+  FOREX = 3,
+  COMMODITIES = 4,
+  STOCKS = 5,
+  MAKO = 6,
+}
+
+/**
+ * Single source of truth for display labels per market type.
+ *
+ * Compile-time exhaustive via `satisfies Record<MarketType, string>` —
+ * a future enum entry without a key here is a typecheck error at the
+ * constant, not silently downstream. Runtime-safe via the `?? 'UNKNOWN'`
+ * guard below for numeric-cast values outside 0..6 (e.g., decoded API
+ * responses from a future contract that adds an enum value before the
+ * frontend bundle catches up).
+ *
+ * BASKETBALL renders as "NBA" intentionally — historical product label
+ * from before the codebase used the enum name. All other types render
+ * as their enum name.
+ */
+const MARKET_TYPE_LABELS = {
+  [MarketType.FOOTBALL]:    'FOOTBALL',
+  [MarketType.CRYPTO]:      'CRYPTO',
+  [MarketType.BASKETBALL]:  'NBA',
+  [MarketType.FOREX]:       'FOREX',
+  [MarketType.COMMODITIES]: 'COMMODITIES',
+  [MarketType.STOCKS]:      'STOCKS',
+  [MarketType.MAKO]:        'MAKO',
+} as const satisfies Record<MarketType, string>;
+
+export function marketTypeLabel(t: MarketType): string {
+  const label = (MARKET_TYPE_LABELS as Record<number, string>)[t];
+  return label ?? 'UNKNOWN';
 }
 
 /** Resolution outcome. Matches `Outcome` enum in the contract. */

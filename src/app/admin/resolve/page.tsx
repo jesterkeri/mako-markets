@@ -4,12 +4,15 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useWaitForTransactionReceipt } from 'wagmi';
 import { useMarkets, useResolveMarket } from '@/lib/hooks';
-import { Outcome, type MarketWithId } from '@/lib/contract';
+import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import { useIsAdmin, ADMIN_ADDRESS } from '@/lib/admin';
 import { useAdminSession } from '@/lib/use-admin-session';
+import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
 import { formatUsdc } from '@/lib/usdc';
 import { AdminNav } from '@/components/AdminNav';
 import { AdminLogin } from '@/components/AdminLogin';
+import { outcomeLabelForMarket } from '@/components/admin-shared';
+import type { MakoOutcomeLabels } from '@/lib/mako-labels';
 
 /**
  * Admin-only resolve UI.
@@ -82,23 +85,56 @@ export default function AdminResolvePage() {
           NO PENDING MARKETS
         </div>
       ) : (
-        pending.map((market) => (
-          <ResolveRow
-            key={market.id.toString()}
-            market={market}
-            onResolved={refetch}
-          />
-        ))
+        <ResolveList markets={pending} onResolved={refetch} />
       )}
     </main>
   );
 }
 
+/// Batched labels for the pending list. Same shape as the home feed +
+/// admin markets list (round-6 plan fix: batching at parent, leaves
+/// accept props).
+function ResolveList({
+  markets,
+  onResolved,
+}: {
+  markets: MarketWithId[];
+  onResolved: () => void;
+}) {
+  const makoIds = useMemo(
+    () =>
+      markets
+        .filter((m) => m.mType === MarketType.MAKO)
+        .map((m) => m.id.toString()),
+    [markets],
+  );
+  const { data: labelsByMarketId } = useMakoLabelsBatch(makoIds);
+
+  return (
+    <>
+      {markets.map((market) => (
+        <ResolveRow
+          key={market.id.toString()}
+          market={market}
+          labels={
+            market.mType === MarketType.MAKO
+              ? labelsByMarketId?.get(market.id.toString()) ?? null
+              : null
+          }
+          onResolved={onResolved}
+        />
+      ))}
+    </>
+  );
+}
+
 function ResolveRow({
   market,
+  labels,
   onResolved,
 }: {
   market: MarketWithId;
+  labels: MakoOutcomeLabels | null;
   onResolved: () => void;
 }) {
   const { resolve, hash, isPending, error, reset } = useResolveMarket();
@@ -148,10 +184,12 @@ function ResolveRow({
           <h2 className="mako-title text-lg leading-tight">{market.question}</h2>
           <div className="mako-label text-muted mt-3 flex gap-6">
             <span>
-              YES <span className="text-ink tabular-nums">{yesUsdc}</span>
+              {outcomeLabelForMarket(market, labels, 1)}{' '}
+              <span className="text-ink tabular-nums">{yesUsdc}</span>
             </span>
             <span>
-              NO <span className="text-ink tabular-nums">{noUsdc}</span>
+              {outcomeLabelForMarket(market, labels, 2)}{' '}
+              <span className="text-ink tabular-nums">{noUsdc}</span>
             </span>
             <span>
               BETTORS{' '}
@@ -169,7 +207,7 @@ function ResolveRow({
             onClick={() => handleResolve(Outcome.YES)}
             className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-ink hover:text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            RESOLVE YES
+            RESOLVE {outcomeLabelForMarket(market, labels, 1)}
           </button>
           <button
             type="button"
@@ -177,7 +215,7 @@ function ResolveRow({
             onClick={() => handleResolve(Outcome.NO)}
             className="py-4 mako-label border-r-2 border-ink bg-paper hover:bg-mako-red hover:text-canvas-fg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            RESOLVE NO
+            RESOLVE {outcomeLabelForMarket(market, labels, 2)}
           </button>
           <button
             type="button"

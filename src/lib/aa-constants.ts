@@ -10,10 +10,17 @@
 //   - No imports of `aa-config.ts` or anything else that imports
 //     `server-only` (transitively pulls `server-only` into vitest, scripts,
 //     and any cron context that doesn't run inside Next's server bundler).
-//   - No env access.
+//   - **Env access**: only `NEXT_PUBLIC_*` vars are permitted. Those are
+//     statically inlined at build time and intentionally available on
+//     both client and server, so reading them here doesn't violate the
+//     server-neutral invariant. Secrets MUST live in `aa-config.ts`.
+//     Reading `process.env.SOMETHING_PRIVATE` here would leak the
+//     secret into the client bundle.
 //
 // Consumers: vitest, tsx scripts, server routes, future Vercel/CF cron
-// handlers. Importing this file from a Node script must just work.
+// handlers, client React components. Importing this file from a Node
+// script must just work; importing from a "use client" component must
+// not pull a server-only dependency.
 //
 // Anything that touches a secret stays in `aa-config.ts`. Server code may
 // re-export from here; the inverse is forbidden.
@@ -101,6 +108,34 @@ export const MAKO_V4_MIN_DURATION_SEC = 300n;
 export const MAKO_V4_MAX_DURATION_SEC = 7n * 24n * 60n * 60n;
 export const CREATE_MARKET_QUESTION_MAX_BYTES = 200;
 export const CREATE_MARKET_MIN_SERVER_BUFFER_SEC = 30n;
+
+/// v4 redeploy (slice 4b) — minimum USDC the creator must seed at market
+/// creation as their first bet. Mirrors `MakoMarketsV4.MIN_CREATOR_SEED`
+/// (1_000_000 base units = 1.00 USDC). NOT a fee — the seed lands in the
+/// pool as the creator's first bet, claimable at resolution like any
+/// other bet. Skipped entirely for MAKO-type markets (admin-curated,
+/// `creatorSeed` must be exactly 0n; contract reverts otherwise).
+export const MIN_CREATOR_SEED_USDC_BASE = 1_000_000n;
+
+/// v4 redeploy (slice 4b) — admin Safe address that owns the MakoMarketsV4
+/// contract post-rotation. Pinned at module load so the AA sponsor-time
+/// validator can gate MAKO-type create operations to the admin Safe
+/// without trusting body-supplied claims (see plan r7 M-2 / r4 M-1).
+///
+/// The deploy script (DeployV4.s.sol) rotates `owner` and `resolver` to
+/// this address atomically with the broadcast. If env is unset, the
+/// constant defaults to the zero address — AA validators MUST reject
+/// MAKO creates when this matches, never silently succeed.
+///
+/// Env var `NEXT_PUBLIC_MAKO_ADMIN_SAFE_ADDRESS` is read here so it's
+/// available both server-side and (intentionally) client-side: the
+/// client-side `/create` page needs the same value to disable the MAKO
+/// tab for non-admin sessions before they ever submit. The admin Safe
+/// is a public on-chain address; exposing it client-side is not a leak.
+export const MAKO_ADMIN_SAFE_ADDRESS = (
+  process.env.NEXT_PUBLIC_MAKO_ADMIN_SAFE_ADDRESS ??
+  '0x0000000000000000000000000000000000000000'
+).toLowerCase() as `0x${string}`;
 
 /// Phase 2C-1 — MakoPrivateMarketsV1 createMarket bounds. Pulled
 /// directly from the contract's public constants at

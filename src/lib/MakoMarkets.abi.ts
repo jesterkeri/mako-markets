@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 // Generated from ../mako-contracts/out/MakoMarketsV4.sol/MakoMarketsV4.json
 // Regenerate: jq .abi ../mako-contracts/out/MakoMarketsV4.sol/MakoMarketsV4.json
 //
@@ -7,18 +7,23 @@
 
 export const makoAbi = [
 {"type":"constructor","inputs":[{"name":"_treasury","type":"address","internalType":"address"},{"name":"_usdc","type":"address","internalType":"address"}],"stateMutability":"nonpayable"},
+{"type":"function","name":"MAX_CREATES_PER_DAY","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
 {"type":"function","name":"MAX_DURATION","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
 {"type":"function","name":"MAX_TOTAL_FEE_BPS","inputs":[],"outputs":[{"name":"","type":"uint16","internalType":"uint16"}],"stateMutability":"view"},
 {"type":"function","name":"MIN_BET","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
+{"type":"function","name":"MIN_CREATOR_SEED","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
 {"type":"function","name":"MIN_DURATION","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
 {"type":"function","name":"MIN_RATIO_FLOOR_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
 {"type":"function","name":"MIN_SECONDS_BETWEEN_BETS","inputs":[],"outputs":[{"name":"","type":"uint64","internalType":"uint64"}],"stateMutability":"view"},
 {"type":"function","name":"RESOLUTION_GRACE","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
+{"type":"function","name":"SECONDS_PER_DAY","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
 {"type":"function","name":"blocked","inputs":[{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},
 {"type":"function","name":"claim","inputs":[{"name":"id","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
 {"type":"function","name":"claimCreatorFee","inputs":[{"name":"id","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
 {"type":"function","name":"claimed","inputs":[{"name":"","type":"uint256","internalType":"uint256"},{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},
-{"type":"function","name":"createMarket","inputs":[{"name":"mType","type":"uint8","internalType":"enum MakoMarketsV4.MarketType"},{"name":"oracleRef","type":"bytes32","internalType":"bytes32"},{"name":"bettingCloseTime_","type":"uint64","internalType":"uint64"},{"name":"closeTime","type":"uint64","internalType":"uint64"},{"name":"question","type":"string","internalType":"string"}],"outputs":[{"name":"id","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},
+{"type":"function","name":"createMarket","inputs":[{"name":"mType","type":"uint8","internalType":"enum MakoMarketsV4.MarketType"},{"name":"oracleRef","type":"bytes32","internalType":"bytes32"},{"name":"bettingCloseTime_","type":"uint64","internalType":"uint64"},{"name":"closeTime","type":"uint64","internalType":"uint64"},{"name":"question","type":"string","internalType":"string"},{"name":"creatorSeed","type":"uint256","internalType":"uint256"},{"name":"creatorYes","type":"bool","internalType":"bool"}],"outputs":[{"name":"id","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},
+{"type":"function","name":"creatorCreatesPerDay","inputs":[{"name":"","type":"address","internalType":"address"},{"name":"","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
+{"type":"function","name":"creatorCreatesToday","inputs":[{"name":"creator","type":"address","internalType":"address"}],"outputs":[{"name":"count","type":"uint256","internalType":"uint256"},{"name":"remaining","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},
 {"type":"function","name":"creatorFeeBps","inputs":[],"outputs":[{"name":"","type":"uint16","internalType":"uint16"}],"stateMutability":"view"},
 {"type":"function","name":"forceRefund","inputs":[{"name":"id","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
 {"type":"function","name":"getMarket","inputs":[{"name":"id","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"tuple","internalType":"struct MakoMarketsV4.Market","components":[{"name":"creator","type":"address","internalType":"address"},{"name":"mType","type":"uint8","internalType":"enum MakoMarketsV4.MarketType"},{"name":"oracleRef","type":"bytes32","internalType":"bytes32"},{"name":"question","type":"string","internalType":"string"},{"name":"createdAt","type":"uint64","internalType":"uint64"},{"name":"closeTime","type":"uint64","internalType":"uint64"},{"name":"bettingCloseTime","type":"uint64","internalType":"uint64"},{"name":"totalYes","type":"uint256","internalType":"uint256"},{"name":"totalNo","type":"uint256","internalType":"uint256"},{"name":"yesBettorCount","type":"uint32","internalType":"uint32"},{"name":"noBettorCount","type":"uint32","internalType":"uint32"},{"name":"outcome","type":"uint8","internalType":"enum MakoMarketsV4.Outcome"},{"name":"resolved","type":"bool","internalType":"bool"},{"name":"creatorFeeClaimed","type":"bool","internalType":"bool"},{"name":"protocolFeeBpsSnapshot","type":"uint16","internalType":"uint16"},{"name":"creatorFeeBpsSnapshot","type":"uint16","internalType":"uint16"}]}],"stateMutability":"view"},
@@ -78,6 +83,9 @@ export const makoAbi = [
 {"type":"error","name":"BelowMin","inputs":[]},
 {"type":"error","name":"BetTooSoon","inputs":[]},
 {"type":"error","name":"BettingClosed","inputs":[]},
+{"type":"error","name":"CreatorDailyCapExceeded","inputs":[]},
+{"type":"error","name":"CreatorSeedNotAllowed","inputs":[]},
+{"type":"error","name":"CreatorSeedTooSmall","inputs":[]},
 {"type":"error","name":"ERC20TransferFailed","inputs":[]},
 {"type":"error","name":"ERC20TransferFromFailed","inputs":[]},
 {"type":"error","name":"FeesTooHigh","inputs":[]},
@@ -87,6 +95,7 @@ export const makoAbi = [
 {"type":"error","name":"NoPosition","inputs":[]},
 {"type":"error","name":"NotAuthorized","inputs":[]},
 {"type":"error","name":"NotOwner","inputs":[]},
+{"type":"error","name":"NotOwnerForMakoMarket","inputs":[]},
 {"type":"error","name":"NotResolved","inputs":[]},
 {"type":"error","name":"NotResolver","inputs":[]},
 {"type":"error","name":"Reentrancy","inputs":[]},
@@ -95,5 +104,5 @@ export const makoAbi = [
 {"type":"error","name":"WalletCapExceeded","inputs":[]},
 {"type":"error","name":"WalletIsBlocked","inputs":[]},
 {"type":"error","name":"WalletShareCapExceeded","inputs":[]},
-{"type":"error","name":"ZeroAddress","inputs":[]},
+{"type":"error","name":"ZeroAddress","inputs":[]}
 ] as const;

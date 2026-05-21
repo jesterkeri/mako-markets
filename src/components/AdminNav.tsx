@@ -11,7 +11,7 @@ import Link from 'next/link';
  * treatment).
  */
 
-type AdminSection = 'overview' | 'users' | 'markets' | 'activity' | 'resolve';
+type AdminSection = 'overview' | 'users' | 'markets' | 'activity' | 'resolve' | 'create-mako';
 
 const TABS: Array<{ key: AdminSection; label: string; href: string }> = [
   { key: 'overview', label: 'OVERVIEW', href: '/admin' },
@@ -19,6 +19,7 @@ const TABS: Array<{ key: AdminSection; label: string; href: string }> = [
   { key: 'markets', label: 'MARKETS', href: '/admin/markets' },
   { key: 'activity', label: 'ACTIVITY', href: '/admin/activity' },
   { key: 'resolve', label: 'RESOLVE', href: '/admin/resolve' },
+  { key: 'create-mako', label: 'CREATE MAKO', href: '/admin/create-mako' },
 ];
 
 export function AdminNav({ active }: { active: AdminSection }) {

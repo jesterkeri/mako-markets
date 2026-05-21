@@ -59,6 +59,7 @@ export type SponsorRequestBody =
   | { kind: 'bet_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'send_usdc'; chainId: number; call: Call }
   | { kind: 'create_market'; chainId: number; call: Call }
+  | { kind: 'create_market_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'claim'; chainId: number; call: Call }
   | { kind: 'pm_create_market'; chainId: number; call: Call }
   // Phase 2E-1 slice 1D-1: 10 PM action kinds.
@@ -753,9 +754,9 @@ export type RunCreateMarketArgs = {
   /// MakoMarketsV4 contract address (where `createMarket` is called).
   /// Caller passes via env so tests can swap.
   makoAddress: Address;
-  /// MarketType enum value: 0 = FOOTBALL, 1 = CRYPTO, 2 = BASKETBALL
-  /// (matches MakoMarketsV4.sol enum order — round-8 NIT). Validated
-  /// server-side against {0, 1, 2}.
+  /// MarketType enum value. Append-only enum: 0=FOOTBALL, 1=CRYPTO,
+  /// 2=BASKETBALL, 3=FOREX, 4=COMMODITIES, 5=STOCKS, 6=MAKO. Validated
+  /// server-side against {0..6}.
   mType: number;
   /// Market-specific oracle reference (32 bytes). For testnet beta the
   /// allowlist accepts any 32-byte value; mainnet will require shape
@@ -769,13 +770,37 @@ export type RunCreateMarketArgs = {
   closeTime: bigint;
   /// Human-readable question string. UTF-8 byte length must be in [1, 200].
   question: string;
+  /// USDC base units the creator commits as their first bet. For non-MAKO
+  /// types must be >= MIN_CREATOR_SEED_USDC_BASE (1_000_000n). For MAKO
+  /// must be exactly 0n. Goes into the market pool, NOT to fees — claimable
+  /// at resolution like any other bet. Validated server-side per the v4
+  /// redeploy round-7 spec.
+  creatorSeed: bigint;
+  /// Side the creator's seed bet lands on. Ignored when mType === MAKO.
+  creatorYes: boolean;
+  /// USDC token address. Required for the allowance-driven dispatch:
+  /// non-MAKO creates whose Safe allowance < creatorSeed are routed via
+  /// the batched approve+create path. Ignored for MAKO (creatorSeed=0n).
+  usdcAddress: Address;
+  /// Safe's current USDC allowance against the v4 contract. Drives the
+  /// dispatch: `currentAllowance >= creatorSeed` → single-call,
+  /// otherwise → batched approve+create. Ignored for MAKO.
+  currentAllowance: bigint;
   /// Magic-derived EOA — passed to signSafeOpHash so personal_sign goes
   /// through Magic's RPC provider against the Safe's owner.
   magicEoa: Address;
 };
 
+/// MAKO is enum value 6 in MakoMarketsV4. Pinned as a literal so the
+/// runCreateMarket dispatch can branch on it without importing the full
+/// enum. Must stay in sync with `MarketType.MAKO` in contract.ts.
+const MAKO_MARKET_TYPE = 6;
+
 /// ABI fragment used solely to encode the inner createMarket call. Keep
-/// minimal; do NOT import the full contract ABI here.
+/// minimal; do NOT import the full contract ABI here. v4 redeploy
+/// appended `creatorSeed` (uint256) and `creatorYes` (bool); both
+/// must be present in this fragment or the encoded calldata will
+/// silently target a non-existent ABI.
 const CREATEMARKET_ABI = [
   {
     type: 'function',
@@ -786,6 +811,8 @@ const CREATEMARKET_ABI = [
       { name: 'bettingCloseTime', type: 'uint64' },
       { name: 'closeTime', type: 'uint64' },
       { name: 'question', type: 'string' },
+      { name: 'creatorSeed', type: 'uint256' },
+      { name: 'creatorYes', type: 'bool' },
     ],
     outputs: [{ name: 'id', type: 'uint256' }],
     stateMutability: 'nonpayable',
@@ -808,6 +835,8 @@ export function buildCreateMarketSponsorRequest(args: {
   bettingCloseTime: bigint;
   closeTime: bigint;
   question: string;
+  creatorSeed: bigint;
+  creatorYes: boolean;
 }): {
   kind: 'create_market';
   chainId: number;
@@ -828,19 +857,104 @@ export function buildCreateMarketSponsorRequest(args: {
           args.bettingCloseTime,
           args.closeTime,
           args.question,
+          args.creatorSeed,
+          args.creatorYes,
         ],
       }),
     },
   };
 }
 
+/// Pure builder for the v4 redeploy batched create path. Returns the
+/// two-call tuple `[approve(USDC→MAKO, MaxUint256), createMarket(...)]`
+/// wrapped as a `create_market_batched` sponsor body. Same purity
+/// discipline as the single-call builder — tests target this directly
+/// and decode each sub-call against the local ABI fragment.
+///
+/// MAKO-type creates MUST NOT use this builder (creatorSeed must be 0n
+/// for MAKO, so no allowance is needed). The caller's dispatch must
+/// route MAKO through the single-call builder; the validator catches
+/// MAKO-in-batched as bad_create_mako_nonzero_seed via the recursive
+/// single-call validator.
+export function buildCreateMarketBatchedSponsorRequest(args: {
+  chainId: number;
+  makoAddress: Address;
+  usdcAddress: Address;
+  mType: number;
+  oracleRef: Hex;
+  bettingCloseTime: bigint;
+  closeTime: bigint;
+  question: string;
+  creatorSeed: bigint;
+  creatorYes: boolean;
+}): {
+  kind: 'create_market_batched';
+  chainId: number;
+  calls: readonly [
+    { to: Address; value: '0x0'; data: Hex },
+    { to: Address; value: '0x0'; data: Hex },
+  ];
+} {
+  const approveData = encodeFunctionData({
+    abi: APPROVE_ABI,
+    functionName: 'approve',
+    args: [args.makoAddress, maxUint256],
+  });
+  const createMarketData = encodeFunctionData({
+    abi: CREATEMARKET_ABI,
+    functionName: 'createMarket',
+    args: [
+      args.mType,
+      args.oracleRef,
+      args.bettingCloseTime,
+      args.closeTime,
+      args.question,
+      args.creatorSeed,
+      args.creatorYes,
+    ],
+  });
+  return {
+    kind: 'create_market_batched',
+    chainId: args.chainId,
+    calls: [
+      { to: args.usdcAddress, value: '0x0', data: approveData },
+      { to: args.makoAddress, value: '0x0', data: createMarketData },
+    ] as const,
+  };
+}
+
 /// Browser-side end-to-end: pure builder → /api/aa/sponsor → Magic
 /// personal_sign → /api/aa/send. Outcome shape matches `runPlaceBet`
 /// and `runSendUsdc` so caller hooks can share state machines.
+///
+/// Allowance-driven dispatch (slice 4c-3): non-MAKO creates whose Safe
+/// USDC allowance against the v4 contract is below `creatorSeed` route
+/// to the batched approve+create path. MAKO creates always use the
+/// single-call builder (creatorSeed=0n, no allowance check needed).
 export async function runCreateMarket(
   args: RunCreateMarketArgs,
 ): Promise<RunOutcome> {
-  const body: SponsorRequestBody = buildCreateMarketSponsorRequest({
+  const useBatched =
+    args.mType !== MAKO_MARKET_TYPE &&
+    args.currentAllowance < args.creatorSeed;
+  // Inferred shape (mirrors runPlaceBet's bet_single/bet_batched dispatch):
+  // letting TS pick the discriminated union avoids the readonly-vs-mutable
+  // friction between the typed builders and SponsorRequestBody's mutable
+  // tuple. postJson is body-shape-agnostic.
+  const body = useBatched
+    ? buildCreateMarketBatchedSponsorRequest({
+        chainId: args.chainId,
+        makoAddress: args.makoAddress,
+        usdcAddress: args.usdcAddress,
+        mType: args.mType,
+        oracleRef: args.oracleRef,
+        bettingCloseTime: args.bettingCloseTime,
+        closeTime: args.closeTime,
+        question: args.question,
+        creatorSeed: args.creatorSeed,
+        creatorYes: args.creatorYes,
+      })
+    : buildCreateMarketSponsorRequest({
     chainId: args.chainId,
     makoAddress: args.makoAddress,
     mType: args.mType,
@@ -848,6 +962,8 @@ export async function runCreateMarket(
     bettingCloseTime: args.bettingCloseTime,
     closeTime: args.closeTime,
     question: args.question,
+    creatorSeed: args.creatorSeed,
+    creatorYes: args.creatorYes,
   });
 
   // 1. Sponsor.
