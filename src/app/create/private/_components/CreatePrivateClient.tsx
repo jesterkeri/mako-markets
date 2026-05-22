@@ -25,7 +25,7 @@
 //     visual presentation.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useAccount, useReadContract } from 'wagmi';
@@ -76,13 +76,17 @@ export default function CreatePrivateClient() {
   const [formState, setFormState] = useState<PmCreateFormState>(
     () => initialFormStateForShape(shape ?? 'friendly'),
   );
-  const lastShapeRef = useRef<PmShape | null>(shape);
-  useEffect(() => {
-    if (shape && shape !== lastShapeRef.current) {
-      setFormState(initialFormStateForShape(shape));
-      lastShapeRef.current = shape;
-    }
-  }, [shape]);
+  // Render-phase reset on shape change. Calling setState here (not in
+  // an effect) is the React-idiomatic way to reset state when a prop
+  // changes: React reschedules the render synchronously without the
+  // cascading-render warning the CI lint rule flags. The previous
+  // pattern (lastShapeRef + useEffect with setState) tripped
+  // react-hooks/no-set-state-in-effect on CI.
+  const [prevShape, setPrevShape] = useState<PmShape | null>(shape);
+  if (shape && shape !== prevShape) {
+    setPrevShape(shape);
+    setFormState(initialFormStateForShape(shape));
+  }
 
   const onChange = <K extends keyof PmCreateFormState>(
     key: K,

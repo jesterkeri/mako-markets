@@ -197,7 +197,7 @@ export function OpenVoteForm({ state, errors, onChange, onSubmit, phase, error, 
           <div className="px-4 py-3 mako-label text-center border-t-2 border-ink bg-mako-red/15 text-mako-red">
             {error.draft ? (
               <div className="flex flex-col items-center gap-2">
-                <div>YOUR DRAFT IS AT /M/{error.draft.slug} BUT THE TX DIDN'T LAND. RETRY?</div>
+                <div>YOUR DRAFT IS AT /M/{error.draft.slug} BUT THE TX DIDN&apos;T LAND. RETRY?</div>
                 <div className="flex justify-center gap-3 mt-2">
                   <Link href={`/m/${error.draft.slug}`} className="border-2 border-ink px-4 py-2 hover:bg-surface-elevated transition-colors bg-paper text-ink rounded-lg">
                     VIEW DRAFT
