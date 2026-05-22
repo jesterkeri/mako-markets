@@ -13,8 +13,8 @@ import {
 } from '../price-feed-assets';
 
 describe('price-feed-assets metadata invariants', () => {
-  it('exposes 35 entries split 10 / 5 / 20 by class', () => {
-    expect(PRICE_FEED_ASSETS.length).toBe(35);
+  it('exposes 33 entries split 10 / 3 / 20 by class', () => {
+    expect(PRICE_FEED_ASSETS.length).toBe(33);
     const byClass = PRICE_FEED_ASSETS.reduce<Record<PriceFeedAssetClass, number>>(
       (acc, a) => {
         acc[a.class] = (acc[a.class] ?? 0) + 1;
@@ -22,7 +22,7 @@ describe('price-feed-assets metadata invariants', () => {
       },
       { forex: 0, commodities: 0, stocks: 0 },
     );
-    expect(byClass).toEqual({ forex: 10, commodities: 5, stocks: 20 });
+    expect(byClass).toEqual({ forex: 10, commodities: 3, stocks: 20 });
   });
 
   it('every pinned pythPriceId normalizes cleanly (proves module-load assertion is real)', () => {
@@ -38,7 +38,7 @@ describe('price-feed-assets metadata invariants', () => {
       expect(seen.has(asset.symbol), `duplicate symbol ${asset.symbol}`).toBe(false);
       seen.add(asset.symbol);
     }
-    expect(seen.size).toBe(35);
+    expect(seen.size).toBe(33);
   });
 
   it('no pythPriceId collisions (every feed maps to exactly one symbol)', () => {
@@ -51,7 +51,7 @@ describe('price-feed-assets metadata invariants', () => {
       ).toBe(false);
       seen.add(normalized);
     }
-    expect(seen.size).toBe(35);
+    expect(seen.size).toBe(33);
   });
 
   it('all symbols are ALL CAPS canonical form', () => {
@@ -61,8 +61,8 @@ describe('price-feed-assets metadata invariants', () => {
   });
 
   it('PRICE_FEED_SYMBOLS Set + PRICE_FEED_BY_SYMBOL Map are consistent', () => {
-    expect(PRICE_FEED_SYMBOLS.size).toBe(35);
-    expect(PRICE_FEED_BY_SYMBOL.size).toBe(35);
+    expect(PRICE_FEED_SYMBOLS.size).toBe(33);
+    expect(PRICE_FEED_BY_SYMBOL.size).toBe(33);
     for (const asset of PRICE_FEED_ASSETS) {
       expect(PRICE_FEED_SYMBOLS.has(asset.symbol)).toBe(true);
       expect(PRICE_FEED_BY_SYMBOL.get(asset.symbol)).toBe(asset);
@@ -82,7 +82,7 @@ describe('getAssetsByClass', () => {
 
   it('returns commodities sorted by priority ascending', () => {
     const commodities = getAssetsByClass('commodities');
-    expect(commodities.length).toBe(5);
+    expect(commodities.length).toBe(3);
     const priorities = commodities.map((a) => a.priority);
     expect(priorities).toEqual([...priorities].sort((a, b) => a - b));
     expect(commodities[0].symbol).toBe('XAUUSD');
@@ -130,11 +130,11 @@ describe('isPriceFeedSymbol — case-sensitive allowlist gate', () => {
 });
 
 describe('getPythPriceIds', () => {
-  it('returns 35 unique canonical-0x-form ids', () => {
+  it('returns 33 unique canonical-0x-form ids', () => {
     const ids = getPythPriceIds();
-    expect(ids.length).toBe(35);
+    expect(ids.length).toBe(33);
     const unique = new Set(ids);
-    expect(unique.size).toBe(35);
+    expect(unique.size).toBe(33);
     for (const id of ids) {
       expect(id).toMatch(/^0x[0-9a-f]{64}$/);
     }
@@ -143,7 +143,7 @@ describe('getPythPriceIds', () => {
 
 describe('PYTH_ID_TO_SYMBOL reverse map', () => {
   it('round-trips every entry', () => {
-    expect(PYTH_ID_TO_SYMBOL.size).toBe(35);
+    expect(PYTH_ID_TO_SYMBOL.size).toBe(33);
     for (const asset of PRICE_FEED_ASSETS) {
       const normalized = normalizePythId(asset.pythPriceId);
       expect(PYTH_ID_TO_SYMBOL.get(normalized)).toBe(asset.symbol);

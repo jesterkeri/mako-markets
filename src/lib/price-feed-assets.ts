@@ -24,11 +24,20 @@
  * `MIRROR_PRICE_FEED_ASSETS` to find every sync site. The CRYPTO
  * mirror at `cf-worker/src/index.ts:131-150` is the working pattern.
  *
- * Commodity substitution note: Pyth does NOT publish a spot natural-
- * gas feed — only month-coded futures (NGDH6 / NGDM6 / etc) which
- * carry settlement-date semantics we don't want for binary
- * resolution. Substituted XPT/USD (Platinum) instead so the 5-
- * commodity set has clean spot pricing across the board.
+ * Commodity coverage notes:
+ * - Natural gas: Pyth has no spot feed, only month-coded futures
+ *   (NGDH6 / NGDM6 / etc) with settlement-date semantics we don't
+ *   want for binary resolution. Not in the set.
+ * - Oil (WTI / BRENT): Pyth's USOILSPOT and UKOILSPOT feeds carry
+ *   unusably wide confidence intervals (~80-160bps observed live
+ *   2026-05-22) versus the 50bps resolver reject threshold; markets
+ *   on those feeds would skip every tick and hit 24h forceRefund.
+ *   The aggregate PYTHOIL index feed is tighter (~27bps) but is an
+ *   index rather than a true spot price. Both dropped from the set
+ *   until a real oil API (Twelve Data, EIA, or similar) is wired in
+ *   a follow-up. See [[mako-pyth-feeds]] memory for the decision.
+ * - Result: 3 commodities (XAU gold, XAG silver, XPT platinum), all
+ *   live with tight confidence (<25bps).
  *
  * Stocks session note: every US equity on Pyth has four feeds:
  * `Equity.US.X/USD` (regular session), `.ON`, `.POST`, `.PRE`
@@ -78,16 +87,14 @@ export const PRICE_FEED_ASSETS: readonly PriceFeedAsset[] = [
   { symbol: 'EURJPY', label: 'EUR/JPY', class: 'forex', pythPriceId: '0xd8c874fa511b9838d094109f996890642421e462c3b29501a2560cecf82c2eb4', priority: 9 },
   { symbol: 'GBPJPY', label: 'GBP/JPY', class: 'forex', pythPriceId: '0xcfa65905787703c692c3cac2b8a009a1db51ce68b54f5b206ce6a55bfa2c3cd1', priority: 10 },
 
-  // ─── COMMODITIES (5) ────────────────────────────────────────────
-  // Two metals (XAU + XAG) and two oil spot feeds, plus XPT/USD as
-  // a substitute for natural gas (Pyth has no spot NG feed; only
-  // month-coded futures). All five resolve cleanly to a single
-  // current price with no settlement-date logic.
+  // ─── COMMODITIES (3) ────────────────────────────────────────────
+  // Precious metals only. Oil (WTI / BRENT) dropped because the
+  // spot feeds on Pyth have ~80-160bps confidence intervals,
+  // unusable under the 50bps resolver threshold. Re-add when a
+  // dedicated oil API (Twelve Data / EIA / etc) is wired.
   { symbol: 'XAUUSD', label: 'Gold (XAU/USD)',     class: 'commodities', pythPriceId: '0x765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2', priority: 1 },
   { symbol: 'XAGUSD', label: 'Silver (XAG/USD)',   class: 'commodities', pythPriceId: '0xf2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e', priority: 2 },
-  { symbol: 'WTI',    label: 'WTI Crude (spot)',   class: 'commodities', pythPriceId: '0x925ca92ff005ae943c158e3563f59698ce7e75c5a8c8dd43303a0a154887b3e6', priority: 3 },
-  { symbol: 'BRENT',  label: 'Brent Crude (spot)', class: 'commodities', pythPriceId: '0x27f0d5e09a830083e5491795cac9ca521399c8f7fd56240d09484b14e614d57a', priority: 4 },
-  { symbol: 'XPTUSD', label: 'Platinum (XPT/USD)', class: 'commodities', pythPriceId: '0x398e4bbc7cbf89d6648c21e08019d878967677753b3096799595c78f805a34e5', priority: 5 },
+  { symbol: 'XPTUSD', label: 'Platinum (XPT/USD)', class: 'commodities', pythPriceId: '0x398e4bbc7cbf89d6648c21e08019d878967677753b3096799595c78f805a34e5', priority: 3 },
 
   // ─── STOCKS (20 US equities) ────────────────────────────────────
   // All use `Equity.US.X/USD` regular-session feeds. Off-hours
