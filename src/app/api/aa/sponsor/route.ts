@@ -10,6 +10,7 @@ import {
   VALIDITY_WINDOW_MAX_UINT48,
 } from '@/lib/aa-constants';
 import { isSupportedAaChainId } from '@/lib/aa-config';
+import { isPmEnabled } from '@/lib/pm-enabled';
 import {
   assertBetBatchedCalls,
   assertBetSingleCall,
@@ -193,6 +194,31 @@ function serializeExistingInFlight(args: {
 }
 
 export async function POST(req: Request) {
+  // Step -1: PM feature-flag gate. When NEXT_PUBLIC_PM_ENABLED is
+  // not literal "true", reject any kind starting with `pm_` with
+  // 503 BEFORE any session check, zod-parse, DB read, RPC, or
+  // user-op build. This prevents a direct API caller from
+  // bypassing the UI gate (HoverRevealPicker hides the PRIVATE
+  // column; /create/private and /m/[slug] return 404; this seals
+  // the AA-sponsor surface). `/api/aa/send` is intentionally NOT
+  // gated — it has no `kind` in its request body and the drain
+  // policy lets already-validated pending rows complete; see
+  // [[mako-pm-gate]] memory + the gate plan's locked decision #6.
+  if (!isPmEnabled()) {
+    try {
+      const body = (await req.clone().json()) as { kind?: unknown };
+      if (typeof body?.kind === 'string' && body.kind.startsWith('pm_')) {
+        return Response.json(
+          { error: 'feature_not_enabled' },
+          { status: 503 },
+        );
+      }
+    } catch {
+      // Malformed body falls through to the existing zod-parse
+      // path below, which returns 400 `bad_body` consistently.
+    }
+  }
+
   // Step 0: same-origin gate.
   const origin = checkSameOrigin(req);
   if (!origin.ok) {

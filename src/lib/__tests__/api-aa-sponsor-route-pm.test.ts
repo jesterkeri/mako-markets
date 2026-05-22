@@ -18,8 +18,28 @@
 // runs without Postgres / Pimlico / chain.
 // ----------------------------------------------------------------------------
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { encodeFunctionData, type Address, type Hex } from 'viem';
+
+// #180 PM gate (sponsor route Step -1): the gate rejects pm_*
+// kinds with 503 when NEXT_PUBLIC_PM_ENABLED is not "true". This
+// file's tests exercise the POST-gate dispatch path, so set the
+// flag to "true" before the route module imports, and restore
+// the original value at file teardown so the flag doesn't leak
+// into later test files in the same Vitest worker.
+const PM_FLAG_KEY = 'NEXT_PUBLIC_PM_ENABLED';
+const PM_FLAG_ORIGINAL = process.env[PM_FLAG_KEY];
+beforeAll(() => {
+  process.env[PM_FLAG_KEY] = 'true';
+});
+afterEach(() => {
+  // Reset to "true" after each test in case any test toggles it.
+  process.env[PM_FLAG_KEY] = 'true';
+});
+afterAll(() => {
+  if (PM_FLAG_ORIGINAL === undefined) delete process.env[PM_FLAG_KEY];
+  else process.env[PM_FLAG_KEY] = PM_FLAG_ORIGINAL;
+});
 
 import { PM_CONTRACT_ADDRESS } from '../contract';
 import {

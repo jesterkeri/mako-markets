@@ -197,6 +197,17 @@ async function handleStatusBranch(args: {
   return Response.json({ error: 'unknown_status' }, { status: 500 });
 }
 
+// PM feature-flag policy note (no logic here — comment-only):
+// /api/aa/send is intentionally NOT gated by NEXT_PUBLIC_PM_ENABLED.
+// SendRequest is { pendingUserOpId, signature } with no `kind` in
+// the body, so a top-of-handler kind-gate is structurally
+// impossible. The gate plan's locked decision #6 chose a drain
+// policy instead: sponsor blocks NEW pm_* ops with 503, send lets
+// already-validated pending rows complete. If a flag toggle ever
+// leaves pm_* pending rows in flight, they drain to chain rather
+// than orphaning the user's signature. See [[mako-pm-gate]] memory
+// + /api/aa/sponsor/route.ts:195 for the symmetric gate.
+
 export async function POST(req: Request) {
   // Step 0: same-origin gate (CSRF defense-in-depth).
   const origin = checkSameOrigin(req);

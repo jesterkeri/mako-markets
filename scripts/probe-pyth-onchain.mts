@@ -35,14 +35,14 @@ const monad = {
 const abi = Array.isArray(abiJson) ? abiJson : abiJson.abi;
 const client = createPublicClient({ chain: monad, transport: http() });
 
-const MTYPE_LABEL = {
-  0: 'FOOTBALL',
-  1: 'CRYPTO',
-  2: 'BASKETBALL',
-  3: 'FOREX',
-  4: 'COMMODITIES',
-  5: 'STOCKS',
-  6: 'MAKO',
+const MTYPE_LABEL: Record<string, string> = {
+  '0': 'FOOTBALL',
+  '1': 'CRYPTO',
+  '2': 'BASKETBALL',
+  '3': 'FOREX',
+  '4': 'COMMODITIES',
+  '5': 'STOCKS',
+  '6': 'MAKO',
 };
 
 const count = Number(await client.readContract({
@@ -52,17 +52,40 @@ const count = Number(await client.readContract({
 }));
 console.log(`nextMarketId: ${count}`);
 
-const dist = {};
-const priceFeedMarkets = [];
+// Minimal shape of the v4 Market struct we touch here. Used as a
+// type assertion on the `unknown` return of `readContract` because
+// the abi handle in this script is JSON-loaded (not a `const`-typed
+// viem ABI), so viem can't infer the return shape.
+type MarketRead = {
+  mType: number | bigint;
+  oracleRef: `0x${string}`;
+  resolved: boolean;
+  outcome: number | bigint;
+  closeTime: bigint;
+  question: string;
+};
+
+type PriceFeedMarket = {
+  id: number;
+  mType: number;
+  oracleRef: `0x${string}`;
+  resolved: boolean;
+  outcome: number;
+  closeTime: number;
+  question: string;
+};
+
+const dist: Record<number, number> = {};
+const priceFeedMarkets: PriceFeedMarket[] = [];
 
 for (let i = 0; i < count; i++) {
   try {
-    const m = await client.readContract({
+    const m = (await client.readContract({
       address: MAKO_ADDRESS,
       abi,
       functionName: 'getMarket',
       args: [BigInt(i)],
-    });
+    })) as MarketRead;
     const mType = Number(m.mType);
     dist[mType] = (dist[mType] || 0) + 1;
     if (mType >= 3 && mType <= 5) {
@@ -76,8 +99,9 @@ for (let i = 0; i < count; i++) {
         question: m.question,
       });
     }
-  } catch (e) {
-    console.warn(`market ${i}: read failed: ${e.shortMessage || e.message}`);
+  } catch (e: unknown) {
+    const err = e as { shortMessage?: string; message?: string };
+    console.warn(`market ${i}: read failed: ${err.shortMessage ?? err.message ?? String(e)}`);
   }
 }
 
@@ -91,7 +115,8 @@ if (priceFeedMarkets.length === 0) {
   console.log('  none — no FOREX/COMMODITIES/STOCKS markets exist on chain yet');
   console.log('  → live contract is likely v3 (no support for new types) or v4-fresh with no usage');
 } else {
-  const expectedClassFor = (mt) => mt === 3 ? 'forex' : mt === 4 ? 'commodities' : 'stocks';
+  const expectedClassFor = (mt: number): 'forex' | 'commodities' | 'stocks' =>
+    mt === 3 ? 'forex' : mt === 4 ? 'commodities' : 'stocks';
   for (const m of priceFeedMarkets) {
     let decoded = '';
     try { decoded = hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '').trim(); } catch { decoded = '(decode failed)'; }

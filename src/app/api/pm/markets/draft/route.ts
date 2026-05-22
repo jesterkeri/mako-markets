@@ -8,6 +8,7 @@ import { getUserSession } from '@/lib/user-session';
 import { allocatePmDraft } from '@/lib/private-markets/draft';
 import { loadInFlightForSafe } from '@/lib/aa-pending-user-ops';
 import { checkSameOrigin } from '@/lib/csrf';
+import { isPmEnabled } from '@/lib/pm-enabled';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
 
@@ -67,6 +68,19 @@ const RequestSchema = z
   .strict();
 
 export async function POST(req: Request) {
+  // Step -1: PM feature-flag gate. When NEXT_PUBLIC_PM_ENABLED is
+  // not literal "true", short-circuit with 503 before any same-
+  // origin check, session lookup, body parse, DB write, or slug
+  // allocation. /api/pm/markets/draft is a wholly-PM surface, so
+  // the gate is unconditional (no kind discrimination needed).
+  // See [[mako-pm-gate]] memory for the deploy sequencing.
+  if (!isPmEnabled()) {
+    return Response.json(
+      { error: 'feature_not_enabled' },
+      { status: 503 },
+    );
+  }
+
   // Step 0: same-origin gate (Codex 2C-1 r3 MAJ-1).
   const origin = checkSameOrigin(req);
   if (!origin.ok) {

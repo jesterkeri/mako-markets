@@ -23,6 +23,7 @@ import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { isPmEnabled } from '@/lib/pm-enabled';
 import { getMarketBySlug } from '@/lib/private-markets/queries';
 
 import { CopyLinkButton } from './_components/CopyLinkButton';
@@ -54,6 +55,11 @@ function formatTimestamp(d: Date): string {
 }
 
 export default async function MarketStubPage({ params }: MarketPageProps) {
+  // PM feature-flag gate (#180). Returns 404 before any DB read
+  // when NEXT_PUBLIC_PM_ENABLED is off. Server-side check means
+  // no client JS for this route ever ships under the gate.
+  if (!isPmEnabled()) notFound();
+
   const { slug } = await params;
 
   const market = await getMarketBySlug(slug);

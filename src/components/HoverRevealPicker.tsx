@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 
+import { isPmEnabled } from '@/lib/pm-enabled';
+
 // Public side carries 6 publicly-creatable v4 market types
 // (CRYPTO / FOOTBALL / NBA / FOREX / COMMODITIES / STOCKS). The 7th
 // contract type, MAKO, is admin-curated and does NOT appear on /create
@@ -47,6 +49,13 @@ export function HoverRevealPicker({ className = '' }: { className?: string }) {
   const searchParams = useSearchParams();
   const activeKind = pathname === '/create/private' ? 'private' : pathname === '/create' ? 'public' : null;
   const activeKey = activeKind === 'private' ? searchParams.get('shape') : searchParams.get('tab');
+
+  // #180 PM gate: hide the entire PRIVATE column + tray when
+  // NEXT_PUBLIC_PM_ENABLED is off. Public column expands to full
+  // width. The flag is a build-time-baked NEXT_PUBLIC_*, so this
+  // read is safe on the client and flips with the next Vercel
+  // redeploy after env rotation.
+  const pmEnabled = isPmEnabled();
 
   const [expandedSection, setExpandedSection] = useState<'public' | 'private' | null>(null);
   const [hoveredChild, setHoveredChild] = useState<string | null>(null);
@@ -177,29 +186,32 @@ export function HoverRevealPicker({ className = '' }: { className?: string }) {
 
   return (
     <div className={`relative flex flex-col items-center ${className}`} onMouseLeave={handleMouseLeave}>
-      {/* PARENTS ROW */}
+      {/* PARENTS ROW. When PM is disabled (#180), only the PUBLIC
+          card renders and stretches to full width. */}
       <div className="w-full max-w-3xl flex flex-col sm:flex-row gap-6 mb-8 relative z-20">
         <button
           type="button"
           onClick={() => toggleSection('public')}
           onMouseEnter={() => handleMouseEnter('public')}
           className={`flex-1 flex flex-col items-center justify-center min-h-[160px] ${publicParentColor} text-ink border-2 border-ink p-6 rounded-3xl shadow-brutal transition-transform hover:-translate-y-1 hover:shadow-brutal-lg`}
-          style={{ transform: 'rotate(-4deg)' }}
+          style={{ transform: pmEnabled ? 'rotate(-4deg)' : 'rotate(0deg)' }}
         >
           <div className="font-display font-bold text-3xl mb-2 text-ink">PUBLIC</div>
           <div className="font-bold text-sm uppercase text-ink">OPEN MARKETS EVERYONE CAN SEE</div>
         </button>
 
-        <button
-          type="button"
-          onClick={() => toggleSection('private')}
-          onMouseEnter={() => handleMouseEnter('private')}
-          className={`flex-1 flex flex-col items-center justify-center min-h-[160px] ${privateParentColor} text-ink border-2 border-ink p-6 rounded-3xl shadow-brutal transition-transform hover:-translate-y-1 hover:shadow-brutal-lg`}
-          style={{ transform: 'rotate(4deg)' }}
-        >
-          <div className="font-display font-bold text-3xl mb-2 text-ink">PRIVATE</div>
-          <div className="font-bold text-sm uppercase text-ink">CUSTOM FOR YOUR COMMUNITY</div>
-        </button>
+        {pmEnabled && (
+          <button
+            type="button"
+            onClick={() => toggleSection('private')}
+            onMouseEnter={() => handleMouseEnter('private')}
+            className={`flex-1 flex flex-col items-center justify-center min-h-[160px] ${privateParentColor} text-ink border-2 border-ink p-6 rounded-3xl shadow-brutal transition-transform hover:-translate-y-1 hover:shadow-brutal-lg`}
+            style={{ transform: 'rotate(4deg)' }}
+          >
+            <div className="font-display font-bold text-3xl mb-2 text-ink">PRIVATE</div>
+            <div className="font-bold text-sm uppercase text-ink">CUSTOM FOR YOUR COMMUNITY</div>
+          </button>
+        )}
       </div>
 
       {/* CHILDREN TRAY
@@ -210,7 +222,8 @@ export function HoverRevealPicker({ className = '' }: { className?: string }) {
           visible at a time; the container must reserve enough height
           for the larger tray (Public). Without this min-h, absolute
           children don't expand the parent and Public's mobile layout
-          overflows into the form below. */}
+          overflows into the form below. Private tray omitted when
+          PM gate is off (#180). */}
       <div className="w-full max-w-7xl relative z-10 min-h-[380px] sm:min-h-[260px]">
         {/* PUBLIC CHILDREN — 6 tiles. */}
         <div
@@ -220,13 +233,17 @@ export function HoverRevealPicker({ className = '' }: { className?: string }) {
           {publicChildren.map((c, i) => renderPublicChild(c, i))}
         </div>
 
-        {/* PRIVATE CHILDREN — 3 tiles, genie animation */}
-        <div
-          className="absolute inset-0 grid grid-cols-1 sm:grid-cols-3 gap-6"
-          style={{ pointerEvents: expandedSection === 'private' ? 'auto' : 'none' }}
-        >
-          {privateChildren.map((c, i) => renderPrivateChild(c, i))}
-        </div>
+        {/* PRIVATE CHILDREN — 3 tiles, genie animation. Omitted when
+            PM gate is off so the tray height/pointer-events don't
+            shadow the public column. */}
+        {pmEnabled && (
+          <div
+            className="absolute inset-0 grid grid-cols-1 sm:grid-cols-3 gap-6"
+            style={{ pointerEvents: expandedSection === 'private' ? 'auto' : 'none' }}
+          >
+            {privateChildren.map((c, i) => renderPrivateChild(c, i))}
+          </div>
+        )}
       </div>
     </div>
   );
