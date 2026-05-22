@@ -17,6 +17,8 @@ import {
 import { formatUsdc } from '@/lib/usdc';
 import { BetSheet } from '@/components/BetSheet';
 import { ClaimButton } from '@/components/ClaimButton';
+import { MarketChart } from '@/components/MarketChart';
+import { marketToChartConfig } from '@/lib/market-chart';
 import { useMakoLabels } from '@/lib/use-mako-labels';
 import { outcomeLabelForMarket } from '@/components/admin-shared';
 import { ShareMarketButton } from '@/components/ShareMarketButton';
@@ -226,6 +228,23 @@ export function MarketDetailClient({ id }: { id: string }) {
               NEW MARKET
             </Link>
           </div>
+
+          {/* Price chart — only rendered for CRYPTO / FOREX /
+              COMMODITIES / STOCKS markets whose oracleRef symbol is
+              in the chart allowlist. Sports / MAKO / MON markets
+              return null and the slot disappears entirely. */}
+          {(() => {
+            const chartConfig = marketToChartConfig(market);
+            if (!chartConfig) return null;
+            return (
+              <section className="mt-8 min-w-0" aria-label="Price chart">
+                <MarketChart
+                  oracleSymbol={chartConfig.oracleSymbol}
+                  assetClass={chartConfig.assetClass}
+                />
+              </section>
+            );
+          })()}
 
           {/* Awaiting resolution banner */}
           {awaitingResolution && (
