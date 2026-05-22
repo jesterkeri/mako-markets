@@ -21,7 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';
-import { encodeFunctionData, type Address, type Hex } from 'viem';
+import { encodeFunctionData, stringToHex, type Address, type Hex } from 'viem';
 
 import {
   assertCreateMarketCall,
@@ -92,6 +92,25 @@ const SAFE_WRAPPER_ABI = [
 
 const ORACLE_REF: Hex =
   '0x4254433a67743a313030303030000000000000000000000000000000000000ff';
+
+/// Encode a `SYMBOL:op:STRIKE` ASCII string into a bytes32 (right-padded
+/// with zeros). Used by the #180 price-feed gate tests; the existing
+/// FOOTBALL / CRYPTO / BASKETBALL coverage keeps using the BTC oracleRef
+/// constant above.
+function priceFeedOracleRef(symbol: string, op: 'gt' | 'lt', strike: string): Hex {
+  return stringToHex(`${symbol}:${op}:${strike}`, { size: 32 });
+}
+
+/// Class-appropriate oracleRef per mType. Tests that loop over multiple
+/// mTypes use this so the price-feed gate (#180) gets a valid symbol
+/// for mType 3/4/5; non-price-feed mTypes (0/1/2/6) keep the BTC ref
+/// since they don't go through the price-feed allowlist.
+function oracleRefForMType(mType: number): Hex {
+  if (mType === 3) return priceFeedOracleRef('EURUSD', 'gt', '1.0850');
+  if (mType === 4) return priceFeedOracleRef('XAUUSD', 'gt', '2400');
+  if (mType === 5) return priceFeedOracleRef('AAPL', 'gt', '170');
+  return ORACLE_REF;
+}
 
 function encodeCreateMarket(args: {
   mType: number;
@@ -169,7 +188,10 @@ describe('assertCreateMarketCall', () => {
             value: 0n,
             data: encodeCreateMarket({
               mType,
-              oracleRef: ORACLE_REF,
+              // mTypes 3/4/5 now run through the #180 price-feed gate;
+              // use a class-appropriate symbol per mType. The other
+              // mTypes keep the BTC oracleRef constant from above.
+              oracleRef: oracleRefForMType(mType),
               bettingCloseTime: NOW_SEC + 1800n,
               closeTime: NOW_SEC + 3600n,
               question: 'q',

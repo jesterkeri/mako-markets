@@ -37,6 +37,7 @@ import {
   formatPriceUsd,
   type CryptoSymbol,
 } from '@/lib/crypto-assets';
+import { getAssetsByClass } from '@/lib/price-feed-assets';
 
 /**
  * /create -- six-tab market creation form (one per publicly-creatable
@@ -47,7 +48,8 @@ import {
  * Tab 3: BASKETBALL -- NBA games via balldontlie. home/away win + over/under total points.
  * Tab 4-6: FOREX / COMMODITIES / STOCKS -- same on-chain shape as CRYPTO
  *   (strike + direction + duration). Rendered by PriceFeedTab keyed on `kind`.
- *   Live price grid + auto-resolver feeds are deferred to a follow-up phase.
+ *   Resolution wired via Pyth Hermes in the cf-worker (#180); live
+ *   price grid per asset class is deferred to a follow-up phase.
  *
  * The contract's 7th market type, MAKO, is admin-curated and is NOT
  * surfaced here. Its create form lives at /admin/create-mako, behind
@@ -1640,9 +1642,10 @@ function BasketballTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit }: T
 // ======================================================================
 // PRICE-FEED TAB -- generic strike/direction/duration form for FOREX,
 // COMMODITIES, and STOCKS. Same on-chain shape as CRYPTO (the contract
-// just distinguishes them via mType for downstream oracle routing) but
-// no live-price grid yet — the user types the symbol directly. Live
-// price grids per asset class are a follow-up visual task.
+// just distinguishes them via mType for downstream oracle routing).
+// Symbols come from the price-feed allowlist (src/lib/price-feed-assets);
+// the cf-worker resolves outcomes via Pyth Hermes (#180). Live price
+// grid per asset class is deferred to a follow-up phase.
 // ======================================================================
 
 type PriceFeedKind = 'forex' | 'commodities' | 'stocks';
@@ -1653,9 +1656,9 @@ const PRICE_FEED_COPY: Record<PriceFeedKind, {
   mType: MarketType;
   label: string;
   symbolLabel: string;
-  symbolHint: string;
-  symbolPlaceholder: string;
   strikeLabel: string;
+  /// Used only as a fallback if the allowlist is somehow empty at
+  /// render time; the runtime default is `getAssetsByClass(kind)[0]`.
   defaultSymbol: string;
   defaultStrike: string;
   questionVerb: string;
@@ -1664,8 +1667,6 @@ const PRICE_FEED_COPY: Record<PriceFeedKind, {
     mType: MarketType.FOREX,
     label: 'FX',
     symbolLabel: 'PAIR',
-    symbolHint: 'BASE/QUOTE * E.G. EURUSD',
-    symbolPlaceholder: 'EURUSD',
     strikeLabel: 'STRIKE RATE',
     defaultSymbol: 'EURUSD',
     defaultStrike: '1.08',
@@ -1675,8 +1676,6 @@ const PRICE_FEED_COPY: Record<PriceFeedKind, {
     mType: MarketType.COMMODITIES,
     label: 'COMMODITY',
     symbolLabel: 'ASSET',
-    symbolHint: 'TICKER * E.G. XAUUSD, WTI, BRENT',
-    symbolPlaceholder: 'XAUUSD',
     strikeLabel: 'STRIKE PRICE (USD)',
     defaultSymbol: 'XAUUSD',
     defaultStrike: '2400',
@@ -1686,8 +1685,6 @@ const PRICE_FEED_COPY: Record<PriceFeedKind, {
     mType: MarketType.STOCKS,
     label: 'STOCK',
     symbolLabel: 'TICKER',
-    symbolHint: 'EQUITY SYMBOL * E.G. AAPL, NVDA, TSLA',
-    symbolPlaceholder: 'AAPL',
     strikeLabel: 'STRIKE PRICE (USD)',
     defaultSymbol: 'AAPL',
     defaultStrike: '200',
@@ -1697,7 +1694,14 @@ const PRICE_FEED_COPY: Record<PriceFeedKind, {
 
 function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit }: PriceFeedTabProps) {
   const copy = PRICE_FEED_COPY[kind];
-  const [symbol, setSymbol] = useState(copy.defaultSymbol);
+  // #180: symbol comes from the price-feed allowlist (closed set per
+  // class). Default to the first asset by priority (the canonical
+  // "most liquid" entry). The PRICE_FEED_COPY.defaultSymbol field
+  // is now only a fallback for the rare case where the allowlist
+  // gets reordered without a re-render; the runtime source of truth
+  // is `assets[0]`.
+  const assets = useMemo(() => getAssetsByClass(kind), [kind]);
+  const [symbol, setSymbol] = useState(assets[0]?.symbol ?? copy.defaultSymbol);
   const [direction, setDirection] = useState<Direction>('above');
   const [strikeInput, setStrikeInput] = useState(copy.defaultStrike);
   const [durationSec, setDurationSec] = useState(3600);
@@ -1802,17 +1806,26 @@ function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit
           {copy.symbolLabel}
         </label>
         <div className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-paper">
-          <input
+          <select
             id="pf-symbol"
-            type="text"
             value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase().slice(0, 12))}
+            onChange={(e) => setSymbol(e.target.value)}
             disabled={isBusy}
-            placeholder={copy.symbolPlaceholder}
-            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl uppercase tabular-nums disabled:opacity-50"
-          />
+            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl uppercase tabular-nums disabled:opacity-50 cursor-pointer"
+          >
+            {assets.map((a) => (
+              <option key={a.symbol} value={a.symbol}>
+                {a.symbol} — {a.label}
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="mako-label text-muted mt-2">{copy.symbolHint}</div>
+        {kind === 'stocks' ? (
+          <div className="mako-label text-muted mt-2">
+            US market hours: NYSE / NASDAQ. Off-hours markets settle
+            against last-traded price.
+          </div>
+        ) : null}
       </div>
 
       {/* Direction */}
@@ -1899,7 +1912,7 @@ function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit
           </p>
         )}
         <p className="mako-label text-subtle text-[10px] mt-2 leading-relaxed">
-          {copy.label} auto-resolver is not yet wired. This market type will resolve manually until the price-feed adapter ships.
+          {copy.label} markets resolve automatically via Pyth Hermes at close time.
         </p>
       </div>
 

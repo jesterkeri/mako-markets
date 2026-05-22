@@ -47,11 +47,13 @@ import {
   decodeFunctionData,
   hexToBigInt,
   hexToBytes,
+  hexToString,
   type Address,
   type Hex,
 } from 'viem';
 
 import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS } from './contract';
+import { PRICE_FEED_BY_SYMBOL } from './price-feed-assets';
 import { MONAD_TESTNET_ID } from './chain';
 import { SAFE_CONFIG } from './safe-config';
 import { USDC_ADDRESS } from './usdc';
@@ -152,6 +154,12 @@ export type NotAllowedReason =
   // a MaxUint256 USDC allowance to MAKO via the batched dispatcher
   // (admin uses the single-call path for MAKO).
   | 'bad_create_mako_in_batched_path'
+  // #180 price-feed allowlist for FOREX / COMMODITIES / STOCKS
+  // (mType 3/4/5). Gate sits inside decodeCreateMarketArgs so every
+  // surface (sponsor, send, batched-sponsor, batched-send) inherits.
+  | 'bad_create_oracleref_format'
+  | 'bad_create_oracleref_unknown_price_feed_symbol'
+  | 'bad_create_oracleref_class_mismatch'
   // claim-magic-parity claim flow:
   | 'bad_claim_args'
   // Phase 2C-1 PM create-market flow:
@@ -712,6 +720,71 @@ export function decodeAndAssertClaimShape(call: {
 
 // ── Create-market validators (Phase 1H) ─────────────────────────────────────
 
+/// Result of parsing a price-feed oracleRef (FOREX / COMMODITIES /
+/// STOCKS). Tagged-union so the caller can surface the specific
+/// NotAllowedReason code rather than collapsing everything into a
+/// generic "bad oracleRef". Local to this module; cf-worker has its
+/// own mirror parser for resolution (chunk C of #180).
+type PriceFeedOracleRefResult =
+  | { kind: 'ok'; symbol: string; op: 'gt' | 'lt'; strike: number }
+  | { kind: 'bad_format' }
+  | { kind: 'unknown_symbol'; symbol: string }
+  | { kind: 'class_mismatch'; symbol: string; actualClass: 'forex' | 'commodities' | 'stocks' };
+
+/// Parse a bytes32 oracleRef as `SYMBOL:gt|lt:STRIKE` against the
+/// price-feed allowlist. Format mirrors CRYPTO oracleRef (the
+/// auto-resolver uses the same SYMBOL:op:STRIKE shape) but with the
+/// symbol drawn from PRICE_FEED_BY_SYMBOL and an `expectedClass`
+/// gate so a FOREX mType can't carry a STOCKS symbol.
+///
+/// Returns a tagged union so the caller can map each failure mode to
+/// a distinct NotAllowedReason. Production caller is
+/// `decodeCreateMarketArgs` (#180 chunk B).
+function parsePriceFeedOracleRef(
+  ref: Hex,
+  expectedClass: 'forex' | 'commodities' | 'stocks',
+): PriceFeedOracleRefResult {
+  // Decode the 32-byte slot to a UTF-8 string, trim trailing nulls.
+  // Mirrors cf-worker/src/index.ts decodeOracleRefString. The
+  // try/catch protects against malformed hex (impossible here since
+  // viem already decoded the bytes32, but defensive).
+  let decoded: string;
+  try {
+    decoded = hexToString(ref, { size: 32 }).replace(/\0+$/, '').trim();
+  } catch {
+    return { kind: 'bad_format' };
+  }
+  if (decoded.length === 0) return { kind: 'bad_format' };
+
+  const parts = decoded.split(':');
+  if (parts.length !== 3) return { kind: 'bad_format' };
+  const [symbolPart, opPart, strikePart] = parts.map((p) => p.trim());
+
+  if (opPart !== 'gt' && opPart !== 'lt') return { kind: 'bad_format' };
+
+  // Allow leading +, integer or decimal, must be finite and positive.
+  // Strict regex AFTER trimming so a trailing-junk symbol doesn't slip
+  // through Number()'s coercion (e.g., "1.0850abc" would parse to NaN
+  // but a permissive caller could be surprised).
+  if (!/^\+?(\d+\.\d+|\d+|\.\d+)$/.test(strikePart)) {
+    return { kind: 'bad_format' };
+  }
+  const strike = Number(strikePart);
+  if (!Number.isFinite(strike) || strike <= 0) return { kind: 'bad_format' };
+
+  const asset = PRICE_FEED_BY_SYMBOL.get(symbolPart);
+  if (!asset) return { kind: 'unknown_symbol', symbol: symbolPart };
+  if (asset.class !== expectedClass) {
+    return {
+      kind: 'class_mismatch',
+      symbol: symbolPart,
+      actualClass: asset.class,
+    };
+  }
+
+  return { kind: 'ok', symbol: symbolPart, op: opPart, strike };
+}
+
 /// Tuple shape of the decoded createMarket args. Shared by sponsor-time
 /// (with chain-time check) and send-time (shape-only) validators.
 /// v4 redeploy (slice 4c) appended creatorSeed (uint256) and creatorYes
@@ -731,7 +804,10 @@ type CreateMarketArgs = readonly [
 ///   - call.to === MAKO_ADDRESS (case-insensitive)
 ///   - call.value === 0n
 ///   - call.data ABI-decodes as createMarket
-///   - mType ∈ {0, 1, 2}
+///   - mType ∈ {0..6} (v4 enum: FOOTBALL, CRYPTO, BASKETBALL, FOREX,
+///     COMMODITIES, STOCKS, MAKO)
+///   - oracleRef on mType ∈ {3, 4, 5} matches the price-feed
+///     allowlist + class-match (#180)
 ///   - question UTF-8 byte length ∈ [1, 200]
 ///   - bettingCloseTime <= closeTime (immutable shape — true at any
 ///     point in time, NOT clock-relative)
@@ -781,7 +857,8 @@ function decodeCreateMarketArgs(call: {
     throw new NotAllowedError('bad_create_args', 'decode_failed');
   }
 
-  const [mType, , bettingCloseTime, closeTime, question, creatorSeed] = decoded.args;
+  const [mType, oracleRef, bettingCloseTime, closeTime, question, creatorSeed] =
+    decoded.args;
 
   // mType 0..6 — the v4 redeploy widened the enum (FOREX, COMMODITIES,
   // STOCKS, MAKO). Reject anything outside the contract's enum range
@@ -789,6 +866,39 @@ function decodeCreateMarketArgs(call: {
   // get a vague rejection.
   if (mType < 0 || mType > 6 || !Number.isInteger(mType)) {
     throw new NotAllowedError('bad_create_mtype_out_of_range');
+  }
+
+  // #180: price-feed allowlist + class-match gate. Single insertion
+  // point inside the shared decode helper so every surface (sponsor,
+  // send, batched-sponsor, batched-send) inherits the check via the
+  // existing decodeCreateMarketArgs call. Clock-independent shape
+  // check — runs in the send-time validators too. CRYPTO (mType=1),
+  // FOOTBALL (0), BASKETBALL (2), MAKO (6) keep their existing
+  // oracleRef semantics unchanged (no symbol/class gate for those
+  // types here; defense-in-depth tightening tracked separately).
+  if (mType === 3 || mType === 4 || mType === 5) {
+    const expectedClass: 'forex' | 'commodities' | 'stocks' =
+      mType === 3 ? 'forex' : mType === 4 ? 'commodities' : 'stocks';
+    const result = parsePriceFeedOracleRef(oracleRef, expectedClass);
+    if (result.kind === 'bad_format') {
+      throw new NotAllowedError('bad_create_oracleref_format');
+    }
+    if (result.kind === 'unknown_symbol') {
+      throw new NotAllowedError(
+        'bad_create_oracleref_unknown_price_feed_symbol',
+        result.symbol,
+      );
+    }
+    if (result.kind === 'class_mismatch') {
+      throw new NotAllowedError(
+        'bad_create_oracleref_class_mismatch',
+        `${result.symbol} is ${result.actualClass}; mType expects ${expectedClass}`,
+      );
+    }
+    // result.kind === 'ok' — fall through to the rest of the
+    // pipeline. The parsed value is not currently used downstream
+    // in this validator; it's the cf-worker resolver that needs the
+    // symbol/op/strike for outcome derivation.
   }
 
   // UTF-8 byte length, NOT character count. The contract's qLen check

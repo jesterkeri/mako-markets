@@ -38,6 +38,12 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { makoAbi } from './abi';
+import {
+  getPythPriceIds,
+  normalizePythId,
+  PRICE_FEED_BY_SYMBOL,
+  PYTH_ID_TO_SYMBOL,
+} from './price-feed-assets';
 
 export interface Env {
   // Secrets — injected from `wrangler secret put`, NEVER log these.
@@ -93,6 +99,12 @@ enum MarketType {
   FOOTBALL = 0,
   CRYPTO = 1,
   BASKETBALL = 2,
+  // v4 redeploy widened the enum; #180 wires Pyth price-feed
+  // resolution for these three classes. MAKO=6 is admin-resolved
+  // and intentionally NOT auto-resolved here.
+  FOREX = 3,
+  COMMODITIES = 4,
+  STOCKS = 5,
 }
 
 enum Outcome {
@@ -515,6 +527,138 @@ async function fetchPrices(): Promise<PriceMap> {
   }
 }
 
+// ── Pyth Hermes (#180): FOREX / COMMODITIES / STOCKS ────────────────
+//
+// Hermes is free + keyless. One batched fetch per tick over all 35
+// pinned price IDs returns a `parsed[]` array with integer
+// `price` / `conf` strings and a per-feed `expo`. We apply the expo
+// and stash the float result keyed by symbol so the per-market
+// resolution branches can do a simple lookup.
+
+const PYTH_HERMES_BASE = 'https://hermes.pyth.network/v2/updates/price/latest';
+
+/// Skip resolution if the Pyth confidence interval relative to the
+/// price exceeds this ratio. 50bps (0.5%). For thin-liquidity
+/// sessions (US equities off-hours, exotic FX during market close)
+/// conf can spike to several percent, which would give a wrong
+/// binary outcome. Skip + retry next tick.
+const CONFIDENCE_REJECT_RATIO = 0.005;
+
+type PythPriceMap = Map<string, { price: number; conf: number }>;
+
+/// Pyth Hermes response shape (parsed subset).
+type PythHermesResponse = {
+  parsed?: Array<{
+    id: string; // bare hex, no 0x prefix (per Pyth v2 API)
+    price?: {
+      price: string;
+      conf: string;
+      expo: number;
+      publish_time?: number;
+    };
+  }>;
+};
+
+async function fetchPythPrices(): Promise<PythPriceMap> {
+  const out: PythPriceMap = new Map();
+  try {
+    const ids = getPythPriceIds();
+    if (ids.length === 0) return out;
+    // Hermes wants repeated `ids[]=<id>` params; .join(',') would
+    // return the wrong response shape (an empty parsed[]). Build
+    // the query string explicitly.
+    const qs = ids.map((id) => `ids%5B%5D=${id}`).join('&');
+    const res = await fetch(`${PYTH_HERMES_BASE}?${qs}`, {
+      headers: { Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT },
+    });
+    if (!res.ok) {
+      console.warn(`[resolver] pyth hermes responded ${res.status}`);
+      return out;
+    }
+    const data = (await res.json()) as PythHermesResponse;
+    for (const row of data.parsed ?? []) {
+      if (!row || typeof row.id !== 'string' || !row.price) continue;
+      // Hermes returns bare hex; canonicalize to `0x...` for the
+      // reverse-map lookup. normalizePythId asserts shape too.
+      let canonical: `0x${string}`;
+      try {
+        canonical = normalizePythId(row.id);
+      } catch {
+        console.warn(`[resolver] pyth: malformed id ${row.id.slice(0, 12)}...`);
+        continue;
+      }
+      const symbol = PYTH_ID_TO_SYMBOL.get(canonical);
+      if (!symbol) {
+        console.warn(`[resolver] pyth: unmapped id ${canonical.slice(0, 12)}...`);
+        continue;
+      }
+      const priceStr = row.price.price;
+      const confStr = row.price.conf;
+      const expo = row.price.expo;
+      if (typeof priceStr !== 'string' || typeof confStr !== 'string' || typeof expo !== 'number') {
+        continue;
+      }
+      // Pyth price = priceInt * 10^expo. expo is typically -8 for
+      // FX/equity, -8 for metals; always negative for these feeds.
+      // Number() handles the int strings fine — they fit in a JS
+      // float without precision loss at these magnitudes.
+      const scale = Math.pow(10, expo);
+      const price = Number(priceStr) * scale;
+      const conf = Number(confStr) * scale;
+      if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(conf) || conf < 0) {
+        continue;
+      }
+      out.set(symbol, { price, conf });
+    }
+    return out;
+  } catch (error) {
+    console.warn(`[resolver] pyth fetch failed: ${shortErrorMessage(error)}`);
+    return out;
+  }
+}
+
+/// Parse a bytes32 oracleRef as `SYMBOL:gt|lt:STRIKE` for FOREX /
+/// COMMODITIES / STOCKS markets. Mirrors the sponsor-time validator
+/// in src/lib/aa-call-allowlist.ts (kept in sync via the price-feed-
+/// assets allowlist). Returns null on any failure mode (format,
+/// unknown symbol, class mismatch) — resolver logs the skip reason
+/// from the calling site.
+type PriceFeedOracleRef = {
+  symbol: string;
+  op: ComparatorOp;
+  strike: number;
+  class: 'forex' | 'commodities' | 'stocks';
+};
+
+function parsePriceFeedOracleRef(
+  ref: Hex,
+  expectedClass: 'forex' | 'commodities' | 'stocks',
+): PriceFeedOracleRef | null {
+  const decoded = decodeOracleRefString(ref);
+  if (!decoded) return null;
+  const parts = decoded.split(':').map((p) => p.trim());
+  if (parts.length !== 3) return null;
+  const [symbolPart, opPart, strikePart] = parts;
+  if (opPart !== 'gt' && opPart !== 'lt') return null;
+  if (!/^\+?(\d+\.\d+|\d+|\.\d+)$/.test(strikePart)) return null;
+  const strike = Number(strikePart);
+  if (!Number.isFinite(strike) || strike <= 0) return null;
+  const asset = PRICE_FEED_BY_SYMBOL.get(symbolPart);
+  if (!asset) return null;
+  if (asset.class !== expectedClass) return null;
+  return { symbol: symbolPart, op: opPart, strike, class: asset.class };
+}
+
+function derivePriceFeedOutcome(
+  parsed: PriceFeedOracleRef,
+  livePrice: number,
+): Outcome {
+  if (parsed.op === 'gt') {
+    return livePrice > parsed.strike ? Outcome.YES : Outcome.NO;
+  }
+  return livePrice < parsed.strike ? Outcome.YES : Outcome.NO;
+}
+
 async function fetchFootballResult(
   matchId: string,
   cache: Map<string, FootballFetchResult>,
@@ -835,7 +979,20 @@ export async function runResolver(env: Env): Promise<void> {
     return;
   }
 
-  const prices = await fetchPrices();
+  // CoinGecko (CRYPTO) + Pyth Hermes (FOREX/COMMODITIES/STOCKS) are
+  // independent providers; fetch in parallel so a 1s Hermes call
+  // doesn't add to tick latency.
+  const [prices, pythPrices] = await Promise.all([
+    fetchPrices(),
+    fetchPythPrices(),
+  ]);
+  // Banner-shape skip log mirroring `football:skip(no-key)` / `nba:skip(no-key)`
+  // at tick start. Pyth has no API key, so the only condition that warrants
+  // a tick-level flag is an empty map from a failed Hermes fetch. Per-market
+  // misses still log individually under the resolve loop.
+  if (pythPrices.size === 0) {
+    console.warn(`[${ts}] pyth:skip(no-symbols) — hermes fetch returned empty`);
+  }
   const footballCache = new Map<string, FootballFetchResult>();
   const footballSearchCache = new Map<string, FootballSearchMatch[]>();
   const nbaGameCache = new Map<number, BasketballGameResult>();
@@ -1021,6 +1178,55 @@ export async function runResolver(env: Env): Promise<void> {
           reason = `nba ${parsed.gameId} ${parsed.questionType} · status ${result.status} · FT ${scores}`;
         }
       }
+    } else if (
+      market.mType === MarketType.FOREX ||
+      market.mType === MarketType.COMMODITIES ||
+      market.mType === MarketType.STOCKS
+    ) {
+      // #180 Pyth-fed price markets. Same gt/lt SYMBOL:op:STRIKE
+      // oracleRef shape as CRYPTO, but the symbol is drawn from the
+      // PRICE_FEED_BY_SYMBOL allowlist (mirrored from src/lib via
+      // ./price-feed-assets) and the class must match the mType.
+      // Sponsor-side validator (aa-call-allowlist.ts) rejects bad
+      // shapes at create time; this branch still guards because a
+      // pre-#180 market created via direct chain write could carry
+      // a malformed oracleRef, and the resolver must skip rather
+      // than crash.
+      const expectedClass: 'forex' | 'commodities' | 'stocks' =
+        market.mType === MarketType.FOREX
+          ? 'forex'
+          : market.mType === MarketType.COMMODITIES
+            ? 'commodities'
+            : 'stocks';
+      const classTag = expectedClass;
+
+      const parsed = parsePriceFeedOracleRef(market.oracleRef, expectedClass);
+      if (!parsed) {
+        console.warn(
+          `[${ts}] market ${i}: unparseable ${classTag} oracleRef "${market.oracleRef}" — skip`,
+        );
+        skipped++;
+        continue;
+      }
+      const live = pythPrices.get(parsed.symbol);
+      if (!live) {
+        console.log(
+          `[${ts}] market ${i}: no pyth price for ${parsed.symbol} — pending (transient, will retry)`,
+        );
+        skipped++;
+        continue;
+      }
+      const ratio = live.conf / live.price;
+      if (ratio > CONFIDENCE_REJECT_RATIO) {
+        const bps = (ratio * 10_000).toFixed(1);
+        console.log(
+          `[${ts}] market ${i}: ${parsed.symbol} low confidence (${bps}bps > 50bps) — pending, retry next tick`,
+        );
+        skipped++;
+        continue;
+      }
+      outcome = derivePriceFeedOutcome(parsed, live.price);
+      reason = `${classTag} ${parsed.symbol} ${parsed.op} ${parsed.strike} · live ${live.price.toFixed(6)} (conf ${(ratio * 10_000).toFixed(1)}bps)`;
     } else {
       skipped++;
       continue;
