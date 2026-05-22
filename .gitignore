@@ -59,3 +59,8 @@ HANDOVER*.md
 
 # Local-only paid-services tracker (per Joshua's request)
 /COSTS.md
+
+# Local done ledger — per-machine audit of what's actually landed.
+# Updated by Claude after every commit / deploy. See feedback memory
+# [[feedback_local_done_ledger]] for the discipline.
+/DONE.md

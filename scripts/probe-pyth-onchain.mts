@@ -22,7 +22,7 @@ import { createPublicClient, http, hexToString } from 'viem';
 import abiJson from '../cf-worker/src/mako-abi.json';
 import { PRICE_FEED_BY_SYMBOL } from '../src/lib/price-feed-assets.js';
 
-const MAKO_ADDRESS = '0xf9853d7ad6601deF4367524A5802B41227ea5c43';
+const MAKO_ADDRESS = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
 const monad = {
   id: 10143,
   name: 'Monad Testnet',
