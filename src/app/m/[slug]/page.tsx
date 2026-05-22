@@ -28,6 +28,11 @@ import { getMarketBySlug } from '@/lib/private-markets/queries';
 
 import { CopyLinkButton } from './_components/CopyLinkButton';
 
+// Skip static prerender. Slug → DB lookup is inherently dynamic, and
+// the PM gate reads NEXT_PUBLIC_PM_ENABLED at request time; static
+// prerender of a notFound() path was crashing /_not-found build.
+export const dynamic = 'force-dynamic';
+
 interface MarketPageProps {
   params: Promise<{ slug: string }>;
 }

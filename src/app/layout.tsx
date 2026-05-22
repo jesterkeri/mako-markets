@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import './globals.css';
 import { Providers } from '@/components/Providers';
 import { Sidebar } from '@/components/Sidebar';
@@ -47,8 +48,15 @@ export default function RootLayout({
             </div>
             {/* MARKET INTEL — right-hand column on xl+ screens. Lives at
                 the layout level so every route (home, /me, /create,
-                /market/[id], /admin/*) shows it in desktop mode. */}
-            <MarketIntelAside />
+                /market/[id], /admin/*) shows it in desktop mode.
+                Wrapped in Suspense because the component reads
+                useSearchParams(); without this, any static prerender
+                that touches the root layout (notably /_not-found when
+                a gated route hits notFound() at build time) fails the
+                Next 16 missing-suspense-with-csr-bailout check. */}
+            <Suspense fallback={null}>
+              <MarketIntelAside />
+            </Suspense>
           </div>
           {/* Crypto price crawl. Fixed to the viewport bottom, needs to be
               inside <Providers> so its useQuery-style fetch has access to

@@ -20,6 +20,13 @@ import { isPmEnabled } from '@/lib/pm-enabled';
 
 import CreatePrivateClient from './_components/CreatePrivateClient';
 
+// Skip static prerender. The gate reads NEXT_PUBLIC_PM_ENABLED at
+// request time; without force-dynamic, an unset flag during build
+// triggers notFound() at static-generation time, which makes Next
+// prerender /_not-found and crashes on any client component in the
+// root layout that uses useSearchParams() without Suspense.
+export const dynamic = 'force-dynamic';
+
 export default function CreatePrivatePage() {
   if (!isPmEnabled()) notFound();
   return <CreatePrivateClient />;
