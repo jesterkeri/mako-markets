@@ -529,11 +529,12 @@ async function fetchPrices(): Promise<PriceMap> {
 
 // ── Pyth Hermes (#180): FOREX / COMMODITIES / STOCKS ────────────────
 //
-// Hermes is free + keyless. One batched fetch per tick over all 35
-// pinned price IDs returns a `parsed[]` array with integer
-// `price` / `conf` strings and a per-feed `expo`. We apply the expo
-// and stash the float result keyed by symbol so the per-market
-// resolution branches can do a simple lookup.
+// Hermes is free + keyless. One batched fetch per tick over all 33
+// pinned price IDs (10 FX + 3 metals + 20 US stocks; oil dropped
+// post-probe, see [[mako-pyth-feeds]]) returns a `parsed[]` array
+// with integer `price` / `conf` strings and a per-feed `expo`. We
+// apply the expo and stash the float result keyed by symbol so the
+// per-market resolution branches can do a simple lookup.
 
 const PYTH_HERMES_BASE = 'https://hermes.pyth.network/v2/updates/price/latest';
 

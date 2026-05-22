@@ -105,7 +105,7 @@ export function PrizePoolForm({ state, errors, onChange, onSubmit, phase, error,
 
       <div className="w-full flex-1 bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden flex flex-col divide-y-2 divide-ink order-2 lg:order-1">
         <CommonFields state={state} errors={errors} onChange={onChange} />
-      
+
       {/* PARTICIPANTS */}
       <div className="px-6 py-5 flex flex-col gap-4">
         <div className="flex justify-between items-baseline mb-1">
@@ -114,7 +114,7 @@ export function PrizePoolForm({ state, errors, onChange, onSubmit, phase, error,
             {state.optionLabels.length} / 50 PARTICIPANTS
           </span>
         </div>
-        
+
         {state.optionLabels.map((label, idx) => {
           const bytes = byteLength(label);
           const wallet = state.participantWallets?.[idx] || '';

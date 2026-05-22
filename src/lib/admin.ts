@@ -52,4 +52,3 @@ export function useIsAdmin(): boolean {
   if (!address) return false;
   return address.toLowerCase() === ADMIN_ADDRESS.toLowerCase();
 }
-

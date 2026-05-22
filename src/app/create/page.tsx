@@ -543,7 +543,7 @@ export default function CreateMarketPage() {
 
         {tab !== null && (
           <div className="w-full flex flex-col lg:flex-row gap-8 lg:gap-12 mb-12 items-start justify-center">
-            
+
             {/* EDITORIAL INFO BLOCK - NO BOXES */}
             <div className="w-full lg:w-[380px] shrink-0 flex flex-col order-1 lg:order-2 lg:sticky lg:top-24 mt-2 lg:mt-0">
               <div className="mb-12">
@@ -570,7 +570,7 @@ export default function CreateMarketPage() {
                   {tab === 'football' && 'EPL fixtures. Pick home, draw, away, or a total-goals over/under.'}
                   {tab === 'basketball' && 'NBA games. Pick home or away win, or a total-points over/under.'}
                   {tab === 'forex' && 'FX pairs (EUR/USD, GBP/USD, USD/JPY). Same shape as crypto: strike, direction, duration.'}
-                  {tab === 'commodities' && 'Spot commodities (gold, silver, oil). Pick a price level and a settlement window.'}
+                  {tab === 'commodities' && 'Precious metals (gold, silver, platinum). Pick a price level and a settlement window.'}
                   {tab === 'stocks' && 'Single-name equities (AAPL, NVDA, TSLA). Same shape as crypto: strike, direction, duration.'}
                 </p>
               </div>
@@ -594,7 +594,7 @@ export default function CreateMarketPage() {
                   { title: "STRIKE", desc: "Set the target exchange rate." },
                   { title: "DIRECTION", desc: "Will it settle above or below?" }
                 ] : tab === 'commodities' ? [
-                  { title: "ASSET", desc: "Pick a commodity (XAU/USD, XAG/USD, oil...)." },
+                  { title: "ASSET", desc: "Pick a metal (XAU/USD gold, XAG/USD silver, XPT/USD platinum)." },
                   { title: "STRIKE", desc: "Set the target spot price." },
                   { title: "DIRECTION", desc: "Will it settle above or below?" }
                 ] : [
@@ -1938,4 +1938,3 @@ function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit
     </form>
   );
 }
-
