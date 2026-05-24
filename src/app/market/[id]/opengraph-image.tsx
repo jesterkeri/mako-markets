@@ -19,7 +19,7 @@ export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
 const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS ??
-  '0xf9853d7ad6601deF4367524A5802B41227ea5c43') as `0x${string}`;
+  '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195') as `0x${string}`;
 const RPC_URL = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
 
 const monadTestnet = {
