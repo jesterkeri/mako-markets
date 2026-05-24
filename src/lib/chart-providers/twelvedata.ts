@@ -64,7 +64,11 @@ export async function fetchTwelveDataCandles(args: {
   const url = new URL('https://api.twelvedata.com/time_series');
   url.searchParams.set('symbol', args.providerSymbol);
   url.searchParams.set('interval', TF_TO_INTERVAL[args.timeframe]);
-  url.searchParams.set('outputsize', String(args.outputsize ?? 200));
+  // TwelveData Basic free tier permits up to 5000 candles per request.
+  // Bump default from 200 → 1500 so the chart shows meaningful
+  // history (~62 days of 1h, ~4y of 1d). Each upstream call costs
+  // the same regardless of outputsize within the cap.
+  url.searchParams.set('outputsize', String(args.outputsize ?? 1500));
   url.searchParams.set('timezone', 'UTC');
   url.searchParams.set('apikey', apiKey);
 

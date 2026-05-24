@@ -47,12 +47,12 @@ const TF_TO_INTERVAL: Partial<Record<Timeframe, string>> = {
 };
 
 // Calibrated range per interval — Yahoo enforces interval × range
-// combinations. Picked to match the candle window used by other
-// providers in this app (~200 candles).
+// combinations. Sized to give the user meaningful history (matches
+// the TwelveData outputsize=1500 bump).
 const TF_TO_RANGE: Partial<Record<Timeframe, string>> = {
-  '15m': '5d',
-  '1h':  '1mo',
-  '1d':  '1y',
+  '15m': '1mo',   // ~2800 bars
+  '1h':  '3mo',   // ~1080 bars (Yahoo 60m caps at 730d, well within)
+  '1d':  '2y',    // ~520 bars
 };
 
 export async function fetchYahooCandles(args: {
@@ -66,22 +66,41 @@ export async function fetchYahooCandles(args: {
     throw new YahooApiError(`unsupported timeframe ${args.timeframe}`);
   }
 
-  const url =
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(args.providerSymbol)}` +
-    `?interval=${interval}&range=${range}`;
+  // Try query1 then query2 (different Yahoo edges; one may be blocked
+  // by region or under load even when the other works).
+  const path = `/v8/finance/chart/${encodeURIComponent(args.providerSymbol)}?interval=${interval}&range=${range}`;
+  const hosts = [
+    'https://query1.finance.yahoo.com',
+    'https://query2.finance.yahoo.com',
+  ];
 
-  const res = await fetch(url, {
-    cache: 'no-store',
-    headers: {
-      // Yahoo blocks unknown user-agents on public endpoints. Any
-      // browser-like UA passes.
-      'user-agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
-    },
-  });
+  let res: Response | null = null;
+  let lastErr: string = '';
+  for (const host of hosts) {
+    try {
+      res = await fetch(host + path, {
+        cache: 'no-store',
+        headers: {
+          // Yahoo blocks unknown user-agents on public endpoints. Any
+          // browser-like UA passes.
+          'user-agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+          'accept': 'application/json',
+        },
+      });
+      if (res.ok) break;
+      lastErr = `${host}: HTTP ${res.status}`;
+      res = null;
+    } catch (e) {
+      lastErr = `${host}: ${(e as Error).message}`;
+      res = null;
+    }
+  }
 
-  if (!res.ok) throw new YahooApiError(`status ${res.status}`);
+  if (!res) {
+    throw new YahooApiError(lastErr || 'all yahoo hosts failed');
+  }
 
   const json = (await res.json()) as {
     chart?: {

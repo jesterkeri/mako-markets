@@ -220,7 +220,13 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
               <div className="mako-label text-[9px] text-muted px-4 py-2 border-b-2 border-ink bg-surface-elevated">
                 INDICATORS
               </div>
-              {toggleRow('VOLUME', showVolume, () => setShowVolume((v) => !v))}
+              {/* Volume only makes sense for asset classes that have
+                  real volume data upstream. FOREX (spot) and the
+                  Yahoo COMEX futures we use for COMMODITIES return
+                  0 volume from the provider, so the histogram would
+                  just be empty bars. */}
+              {assetClass !== 'FOREX' &&
+                toggleRow('VOLUME', showVolume, () => setShowVolume((v) => !v))}
               {toggleRow('MA (20)', showMA20, () => setShowMA20((v) => !v))}
               {toggleRow('EMA (50)', showEMA50, () => setShowEMA50((v) => !v))}
             </div>

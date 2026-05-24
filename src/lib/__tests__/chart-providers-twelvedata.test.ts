@@ -61,7 +61,8 @@ describe('fetchTwelveDataCandles', () => {
     expect(url.origin + url.pathname).toBe('https://api.twelvedata.com/time_series');
     expect(url.searchParams.get('symbol')).toBe('BTC/USD');
     expect(url.searchParams.get('interval')).toBe('1h');
-    expect(url.searchParams.get('outputsize')).toBe('200');
+    // Bumped from 200 → 1500 in #166 polish r7 for richer chart history.
+    expect(url.searchParams.get('outputsize')).toBe('1500');
     expect(url.searchParams.get('timezone')).toBe('UTC');
     expect(url.searchParams.get('apikey')).toBe('test-key');
   });
