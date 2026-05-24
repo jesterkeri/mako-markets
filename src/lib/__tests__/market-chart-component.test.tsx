@@ -133,7 +133,7 @@ describe('<MarketChart>', () => {
     expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('defaults to 1h for all asset classes (Yahoo migration gives commodities intraday too)', async () => {
+  it('defaults to 1h for all asset classes (Pyth supports commodity intraday too)', async () => {
     const fresh = () =>
       new Response(JSON.stringify({ candles: SAMPLE_CANDLES }), { status: 200 }) as Response;
 
@@ -148,7 +148,7 @@ describe('<MarketChart>', () => {
       unmount();
       vi.restoreAllMocks();
     }
-    // COMMODITIES → 1h (Yahoo Finance unlocked intraday for futures)
+    // COMMODITIES → 1h (Pyth supports commodity intraday)
     {
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => fresh());
       renderWithQuery(<MarketChart oracleSymbol="XAUUSD" assetClass="COMMODITIES" />);
@@ -161,10 +161,9 @@ describe('<MarketChart>', () => {
     // Driver swaps {sym, cls} via a button click. The MarketChart
     // instance is preserved (no key change) which simulates Next
     // App Router keeping the client component mounted across
-    // navigations. Since Yahoo unlocked intraday for commodities
-    // and defaultTimeframe is '1h' for all classes now, this test
-    // verifies the reset still picks a class-supported tf and the
-    // new symbol gets a fresh fetch.
+    // navigations. defaultTimeframe is '1h' for all classes; this
+    // test verifies the reset still picks a class-supported tf and
+    // the new symbol gets a fresh fetch.
     function Driver() {
       const [pair, setPair] = useState<{ sym: string; cls: ChartAssetClass }>({
         sym: 'BTC',
@@ -191,7 +190,7 @@ describe('<MarketChart>', () => {
     expect(String(fetchSpy.mock.calls[0][0])).toContain('tf=1h');
 
     // Swap to COMMODITIES — should refetch the new symbol with the
-    // default tf=1h (which is valid for COMMODITIES post-Yahoo).
+    // default tf=1h (valid for COMMODITIES under Pyth).
     fireEvent.click(getByRole('button', { name: 'swap' }));
 
     await waitFor(

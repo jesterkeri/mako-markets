@@ -4,10 +4,8 @@
 // Public chart-data endpoint. GET /api/charts?s=BTC&tf=1h
 //
 // Single provider: Pyth Benchmarks (TradingView shim). Free, no key,
-// region-stable, same source as the cf-worker resolver. Replaced the
-// TwelveData (CRYPTO/FOREX/STOCKS) + Yahoo Finance (COMMODITIES) split
-// in #166 polish r15. The dual-provider stack had a Lagos-IP region
-// block on Yahoo and the TwelveData free tier excluded commodities.
+// region-stable, same source as the cf-worker resolver — so the
+// chart matches what the market settles against.
 //
 // Query schema (zod):
 //   - s: oracleSymbol (canonical on-chain form, case-insensitive)
@@ -17,6 +15,7 @@
 //   200 { candles: Candle[] }
 //   400 { error: 'bad_params' }
 //   404 { error: 'unknown_symbol' }
+//   503 { error: 'rate_limited', provider: 'pyth' }   // Pyth 429 upstream
 //   502 { error: 'upstream_failed', provider?: 'pyth' }
 // ----------------------------------------------------------------------------
 
@@ -79,6 +78,12 @@ export async function GET(req: NextRequest) {
     );
   } catch (err) {
     if (err instanceof PythApiError) {
+      if (err.status === 429) {
+        return Response.json(
+          { error: 'rate_limited', provider: 'pyth' },
+          { status: 503, headers: { 'retry-after': '30' } },
+        );
+      }
       return Response.json({ error: 'upstream_failed', provider: 'pyth' }, { status: 502 });
     }
     return Response.json({ error: 'upstream_failed' }, { status: 502 });

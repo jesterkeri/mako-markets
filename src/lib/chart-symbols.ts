@@ -5,9 +5,9 @@
 //   - `oracleSymbol`: the canonical on-chain form (matches the first
 //     segment of v4 `oracleRef`, `SYMBOL:gt|lt:STRIKE`). ALL CAPS,
 //     no separator. Examples: 'BTC', 'EURUSD', 'XAUUSD', 'AAPL'.
-//   - `providerSymbol`: the form TwelveData / Stooq expects.
-//     TwelveData wants 'BTC/USD' / 'EUR/USD' / bare 'AAPL'. Stooq
-//     wants lowercase 'xauusd' / 'xagusd' / 'xptusd'.
+//   - `providerSymbol`: the form Pyth Benchmarks expects. Class
+//     prefix + slash form: 'Crypto.BTC/USD', 'FX.EUR/USD',
+//     'Metal.XAU/USD', 'Equity.US.AAPL/USD'.
 //
 // This module is INTENTIONALLY SEPARATE from
 // `src/lib/price-feed-assets.ts`. price-feed-assets is the
@@ -61,9 +61,7 @@ export const CHART_SYMBOLS: readonly ChartSymbol[] = [
   { oracleSymbol: 'GBPJPY', providerSymbol: 'FX.GBP/JPY', assetClass: 'FOREX' },
 
   // ── COMMODITIES (3) ─────────────────────────────────────────────
-  // Pyth Benchmarks `Metal.<SYM>/USD` form. Migrated from Yahoo COMEX
-  // futures in #166 polish r15 — Yahoo was region-blocked from some
-  // user IPs. Pyth Benchmarks is served from a global CDN.
+  // Pyth Benchmarks `Metal.<SYM>/USD` form.
   { oracleSymbol: 'XAUUSD', providerSymbol: 'Metal.XAU/USD', assetClass: 'COMMODITIES' },
   { oracleSymbol: 'XAGUSD', providerSymbol: 'Metal.XAG/USD', assetClass: 'COMMODITIES' },
   { oracleSymbol: 'XPTUSD', providerSymbol: 'Metal.XPT/USD', assetClass: 'COMMODITIES' },

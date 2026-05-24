@@ -2,17 +2,13 @@
 // src/lib/chart-providers/pyth.ts
 //
 // Pyth Benchmarks TradingView shim — free, no key, region-stable
-// (served from a global CDN). Returns proper OHLC candles for:
+// (served from a global CDN). Same source as the cf-worker
+// resolver so the chart matches what the market settles against.
+// Returns proper OHLC candles for:
 //   - Crypto.<SYMBOL>/USD
 //   - FX.<BASE>/<QUOTE>
 //   - Metal.<SYMBOL>/USD
 //   - Equity.US.<TICKER>/USD
-//
-// Replaced TwelveData + Yahoo Finance in #166 polish r15 — Yahoo
-// region-blocked Joshua's Lagos IP, and TwelveData's Basic tier
-// excludes commodities. Pyth is the same source the cf-worker
-// resolver uses, so the chart matches what the market settles
-// against.
 //
 // Endpoint:
 //   GET https://benchmarks.pyth.network/v1/shims/tradingview/history
@@ -29,7 +25,12 @@ import 'server-only';
 import type { Candle, Timeframe } from '@/types/chart';
 
 export class PythApiError extends Error {
-  constructor(msg = 'pyth error') { super(msg); this.name = 'PythApiError'; }
+  status?: number;
+  constructor(msg = 'pyth error', status?: number) {
+    super(msg);
+    this.name = 'PythApiError';
+    this.status = status;
+  }
 }
 
 const ENDPOINT = 'https://benchmarks.pyth.network/v1/shims/tradingview/history';
@@ -43,8 +44,8 @@ const TF_TO_RESOLUTION: Record<Timeframe, string> = {
 };
 
 // Approximate seconds-per-candle, used to pick a `from` that yields
-// ~1500 candles regardless of timeframe — matches the history depth
-// the previous TwelveData stack delivered.
+// ~1500 candles regardless of timeframe — the history depth the
+// chart UI expects.
 const TF_TO_SECONDS: Record<Timeframe, number> = {
   '15m': 15 * 60,
   '1h':  60 * 60,
@@ -90,7 +91,7 @@ export async function fetchPythCandles(args: {
   url.searchParams.set('to', String(to));
 
   const res = await fetch(url.toString(), { cache: 'no-store' });
-  if (!res.ok) throw new PythApiError(`status ${res.status}`);
+  if (!res.ok) throw new PythApiError(`status ${res.status}`, res.status);
 
   const json = (await res.json()) as PythHistoryResponse;
   if (json.s === 'error') {

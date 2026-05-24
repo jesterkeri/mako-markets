@@ -100,7 +100,7 @@ describe('GET /api/charts', () => {
     });
   });
 
-  it('200 COMMODITIES on 2h (Pyth supports it, was blocked under Yahoo)', async () => {
+  it('200 COMMODITIES on 2h (Pyth supports commodity intraday)', async () => {
     vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
     const res = await GET(mkReq('s=XAGUSD&tf=2h'));
     expect(res.status).toBe(200);
@@ -131,6 +131,14 @@ describe('GET /api/charts', () => {
     const res = await GET(mkReq('s=BTC&tf=1h'));
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'upstream_failed', provider: 'pyth' });
+  });
+
+  it('503 rate_limited when Pyth returns 429', async () => {
+    vi.mocked(fetchPythCandles).mockRejectedValue(new PythApiError('status 429', 429));
+    const res = await GET(mkReq('s=BTC&tf=1h'));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'rate_limited', provider: 'pyth' });
+    expect(res.headers.get('retry-after')).toBe('30');
   });
 
   it('502 on unknown error', async () => {

@@ -89,14 +89,23 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     [],
   );
 
+  // Cap undo/redo so a long drawing session can't grow the history
+  // arrays without bound. 50 is generous for human-paced edits and
+  // bounds memory at ~50× drawing-array snapshots.
+  const UNDO_LIMIT = 50;
+  const pushBounded = (stack: Drawing[][], snap: Drawing[]) =>
+    [...stack, snap].slice(-UNDO_LIMIT);
+  const unshiftBounded = (stack: Drawing[][], snap: Drawing[]) =>
+    [snap, ...stack].slice(0, UNDO_LIMIT);
+
   const snapshotForUndo = useCallback(() => {
-    setPast((p) => [...p, drawings]);
+    setPast((p) => pushBounded(p, drawings));
     setFuture([]);
   }, [drawings]);
 
   const addDrawing = useCallback((d: Omit<Drawing, 'id'>) => {
     const id = newDrawingId();
-    setPast((p) => [...p, drawings]);
+    setPast((p) => pushBounded(p, drawings));
     setFuture([]);
     setDrawings((curr) => [...curr, { ...d, id }]);
     // Auto-select the new drawing + switch to cursor so the user can
@@ -108,12 +117,26 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     return id;
   }, [drawings]);
 
+  // Continuous update — used by DrawingCanvas during drag/resize
+  // (fires on every mousemove). DELIBERATELY does NOT snapshot;
+  // DrawingCanvas calls `snapshotForUndo` once at drag-start via
+  // the `onBeginEdit` prop, so the undo step restores pre-drag
+  // state in one click, not per pixel.
   const updateDrawing = useCallback((id: string, updates: Partial<Drawing>) => {
     setDrawings((curr) => curr.map((d) => (d.id === id ? { ...d, ...updates } : d)));
   }, []);
 
+  // Discrete commit — used by DrawingEditor for color/width/style/
+  // lock changes. Each click is a user-visible commit so it pushes
+  // an undo frame.
+  const commitDrawingEdit = useCallback((id: string, updates: Partial<Drawing>) => {
+    setPast((p) => pushBounded(p, drawings));
+    setFuture([]);
+    setDrawings((curr) => curr.map((d) => (d.id === id ? { ...d, ...updates } : d)));
+  }, [drawings]);
+
   const removeDrawing = useCallback((id: string) => {
-    setPast((p) => [...p, drawings]);
+    setPast((p) => pushBounded(p, drawings));
     setFuture([]);
     setDrawings((curr) => curr.filter((d) => d.id !== id));
     if (selectedId === id) setSelectedId(null);
@@ -123,7 +146,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     setPast((p) => {
       if (p.length === 0) return p;
       const prev = p[p.length - 1];
-      setFuture((f) => [drawings, ...f]);
+      setFuture((f) => unshiftBounded(f, drawings));
       setDrawings(prev);
       return p.slice(0, -1);
     });
@@ -133,7 +156,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     setFuture((f) => {
       if (f.length === 0) return f;
       const next = f[0];
-      setPast((p) => [...p, drawings]);
+      setPast((p) => pushBounded(p, drawings));
       setDrawings(next);
       return f.slice(1);
     });
@@ -382,6 +405,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
         selectedId={selectedId}
         onAddDrawing={addDrawing}
         onUpdateDrawing={updateDrawing}
+        onBeginEdit={snapshotForUndo}
         onRemoveDrawing={removeDrawing}
         onSelectDrawing={setSelectedId}
       />
@@ -408,7 +432,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
              a touch right so the two floating cards don't visually
              collide. Both are draggable, so user can rearrange. */
           position={{ x: 12, y: 116 }}
-          onUpdate={updateDrawing}
+          onUpdate={commitDrawingEdit}
           onDelete={removeDrawing}
           onClose={() => setSelectedId(null)}
         />

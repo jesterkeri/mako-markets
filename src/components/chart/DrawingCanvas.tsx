@@ -31,6 +31,10 @@ interface Props {
   selectedId: string | null;
   onAddDrawing: (drawing: Omit<Drawing, 'id'>) => string;
   onUpdateDrawing?: (id: string, updates: Partial<Drawing>) => void;
+  /** Fired ONCE at the start of a drag/resize so the parent can
+   *  push a single undo frame for the whole interaction, instead of
+   *  one per mousemove tick. */
+  onBeginEdit?: () => void;
   onRemoveDrawing: (id: string) => void;
   onSelectDrawing: (id: string | null) => void;
 }
@@ -64,7 +68,7 @@ function pointToSegmentDist(
 
 export function DrawingCanvas({
   chart, series, drawings, activeTool, activeColor, selectedId,
-  onAddDrawing, onUpdateDrawing, onRemoveDrawing, onSelectDrawing,
+  onAddDrawing, onUpdateDrawing, onBeginEdit, onRemoveDrawing, onSelectDrawing,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pendingPoint, setPendingPoint] = useState<DrawingPoint | null>(null);
@@ -405,6 +409,7 @@ export function DrawingCanvas({
       if (handleIdx >= 0) {
         const point = mouseToPoint(e.nativeEvent, chart, series, container);
         if (point) {
+          onBeginEdit?.();
           dragState.current = {
             mode: 'resize', drawingId: selectedId, pointIndex: handleIdx,
             startMouse: point, originalPoints: selDrawing.points.map((p) => ({ ...p })),
@@ -420,6 +425,7 @@ export function DrawingCanvas({
       if (nearId === selectedId) {
         const point = mouseToPoint(e.nativeEvent, chart, series, container);
         if (point) {
+          onBeginEdit?.();
           dragState.current = {
             mode: 'move', drawingId: selectedId, pointIndex: -1,
             startMouse: point, originalPoints: selDrawing.points.map((p) => ({ ...p })),
@@ -462,7 +468,7 @@ export function DrawingCanvas({
       setPendingPoint(null);
       setHoverPoint(null);
     }
-  }, [chart, series, activeTool, activeColor, pendingPoint, drawings, selectedId, findNearestDrawing, findNearestHandle, onAddDrawing, onUpdateDrawing, onRemoveDrawing]);
+  }, [chart, series, activeTool, activeColor, pendingPoint, drawings, selectedId, findNearestDrawing, findNearestHandle, onAddDrawing, onUpdateDrawing, onBeginEdit, onRemoveDrawing]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!chart || !series || !canvasRef.current) return;
