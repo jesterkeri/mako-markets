@@ -83,18 +83,31 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
         style={{ background: activeColor }}
       />
       {open && (
-        <div className="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 grid grid-cols-4 gap-1.5 p-2 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm z-40">
-          {DRAWING_COLORS.map((color) => (
-            <button
-              key={color}
-              onClick={() => { onChange(color); setOpen(false); }}
-              className="w-6 h-6 rounded-full border-2 cursor-pointer p-0"
-              style={{
-                background: color,
-                borderColor: activeColor === color ? '#EBE5D9' : 'transparent',
-              }}
-            />
-          ))}
+        <div
+          className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-3"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2 px-0.5">
+            COLOR
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {DRAWING_COLORS.map((color) => {
+              const active = activeColor === color;
+              return (
+                <button
+                  key={color}
+                  onClick={() => { onChange(color); setOpen(false); }}
+                  title={color}
+                  className="w-7 h-7 rounded-md cursor-pointer p-0 border-2 transition-transform hover:scale-110"
+                  style={{
+                    background: color,
+                    borderColor: active ? '#EBE5D9' : '#000000',
+                    boxShadow: active ? '0 0 0 2px #000000 inset' : 'none',
+                  }}
+                />
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
