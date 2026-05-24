@@ -64,3 +64,9 @@ HANDOVER*.md
 # Updated by Claude after every commit / deploy. See feedback memory
 # [[feedback_local_done_ledger]] for the discipline.
 /DONE.md
+
+# Local task ledger — per-machine roadmap mirror of the numbered
+# task list. Pending + in-progress at top, completed audit-trail
+# below, V5 roadmap separate section. Numbers (#166, #185, …) are
+# the canonical task IDs we reference across chat and commits.
+/TASKS.md
