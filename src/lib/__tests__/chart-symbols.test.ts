@@ -29,8 +29,10 @@ describe('chart-symbols', () => {
     it('returns COMMODITIES entry for XAUUSD', () => {
       const e = getChartSymbolByOracle('XAUUSD');
       expect(e).toEqual({
+        // Stooq → Yahoo migration (#166 polish r5): commodities now
+        // route to Yahoo Finance COMEX futures symbols.
         oracleSymbol: 'XAUUSD',
-        providerSymbol: 'xauusd',
+        providerSymbol: 'GC=F',
         assetClass: 'COMMODITIES',
       });
     });

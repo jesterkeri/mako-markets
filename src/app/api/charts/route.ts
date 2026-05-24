@@ -42,9 +42,9 @@ import {
   TwelveDataApiError,
 } from '@/lib/chart-providers/twelvedata';
 import {
-  fetchStooqDailyCandles,
-  StooqApiError,
-} from '@/lib/chart-providers/stooq';
+  fetchYahooCandles,
+  YahooApiError,
+} from '@/lib/chart-providers/yahoo';
 import type { Timeframe } from '@/types/chart';
 
 const Query = z.object({
@@ -82,10 +82,15 @@ export async function GET(req: NextRequest) {
 
   const tf = parsed.data.tf;
 
-  // Commodities are daily-only (Stooq has no intraday). Reject
-  // non-1d up front so we never burn a cache slot or upstream call
-  // on an impossible timeframe.
-  if (entry.assetClass === 'COMMODITIES' && tf !== '1d') {
+  // Yahoo natively supports 15m / 60m / 1d for COMMODITIES futures;
+  // 2h and 4h aren't real intervals at the upstream so we reject
+  // them up front instead of burning a cache slot on a known-empty
+  // fetch. CRYPTO / FOREX / STOCKS run through TwelveData and get
+  // the full 15m/1h/2h/4h/1d range.
+  if (
+    entry.assetClass === 'COMMODITIES' &&
+    tf !== '15m' && tf !== '1h' && tf !== '1d'
+  ) {
     return Response.json({ error: 'timeframe_not_supported' }, { status: 400 });
   }
 
@@ -100,8 +105,9 @@ export async function GET(req: NextRequest) {
             timeframe: tf,
           });
         case 'COMMODITIES':
-          return fetchStooqDailyCandles({
+          return fetchYahooCandles({
             providerSymbol: entry.providerSymbol,
+            timeframe: tf,
           });
         default:
           return assertNever(entry.assetClass);
@@ -121,8 +127,8 @@ export async function GET(req: NextRequest) {
     if (err instanceof TwelveDataRateLimitError) {
       return Response.json({ error: 'rate_limited' }, { status: 503 });
     }
-    if (err instanceof StooqApiError) {
-      return Response.json({ error: 'upstream_failed', provider: 'stooq' }, { status: 502 });
+    if (err instanceof YahooApiError) {
+      return Response.json({ error: 'upstream_failed', provider: 'yahoo' }, { status: 502 });
     }
     if (err instanceof TwelveDataApiError) {
       return Response.json({ error: 'upstream_failed', provider: 'twelvedata' }, { status: 502 });

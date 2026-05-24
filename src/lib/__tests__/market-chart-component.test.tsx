@@ -133,24 +133,7 @@ describe('<MarketChart>', () => {
     expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('shows daily-only banner for COMMODITIES', async () => {
-    mockChartsFetch({ candles: SAMPLE_CANDLES });
-    const { findByText } = renderWithQuery(
-      <MarketChart oracleSymbol="XAUUSD" assetClass="COMMODITIES" />,
-    );
-    await findByText(/DAILY CANDLES ONLY/);
-  });
-
-  it('does NOT show daily-only banner for non-COMMODITIES', async () => {
-    mockChartsFetch({ candles: SAMPLE_CANDLES });
-    const { findByTestId, queryByText } = renderWithQuery(
-      <MarketChart oracleSymbol="BTC" assetClass="CRYPTO" />,
-    );
-    await findByTestId('candlestick-chart');
-    expect(queryByText(/DAILY CANDLES ONLY/)).toBeNull();
-  });
-
-  it('defaults to 1h for CRYPTO/FOREX/STOCKS, 1d for COMMODITIES', async () => {
+  it('defaults to 1h for all asset classes (Yahoo migration gives commodities intraday too)', async () => {
     const fresh = () =>
       new Response(JSON.stringify({ candles: SAMPLE_CANDLES }), { status: 200 }) as Response;
 
@@ -165,19 +148,23 @@ describe('<MarketChart>', () => {
       unmount();
       vi.restoreAllMocks();
     }
-    // COMMODITIES → 1d
+    // COMMODITIES → 1h (Yahoo Finance unlocked intraday for futures)
     {
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => fresh());
       renderWithQuery(<MarketChart oracleSymbol="XAUUSD" assetClass="COMMODITIES" />);
       await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-      expect(String(fetchSpy.mock.calls[0][0])).toContain('tf=1d');
+      expect(String(fetchSpy.mock.calls[0][0])).toContain('tf=1h');
     }
   });
 
-  it('resets tf when assetClass switches CRYPTO → COMMODITIES (codex r1 MAJOR)', async () => {
-    // Driver component to swap assetClass + symbol with the same
-    // MarketChart instance preserved (simulating Next App Router
-    // preserving client components across `/market/[id]` navigation).
+  it('resets tf to a class-supported value on assetClass swap', async () => {
+    // Driver swaps {sym, cls} via a button click. The MarketChart
+    // instance is preserved (no key change) which simulates Next
+    // App Router keeping the client component mounted across
+    // navigations. Since Yahoo unlocked intraday for commodities
+    // and defaultTimeframe is '1h' for all classes now, this test
+    // verifies the reset still picks a class-supported tf and the
+    // new symbol gets a fresh fetch.
     function Driver() {
       const [pair, setPair] = useState<{ sym: string; cls: ChartAssetClass }>({
         sym: 'BTC',
@@ -193,39 +180,27 @@ describe('<MarketChart>', () => {
       );
     }
 
-    // mockImplementation (not mockResolvedValue) returns a fresh
-    // Response per call. Response body is one-shot — a single
-    // Response object can only be `.json()`-ed once, which breaks
-    // the swap re-fetch.
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () =>
         new Response(JSON.stringify({ candles: SAMPLE_CANDLES }), { status: 200 }) as Response,
     );
 
-    const { findByTestId, findByRole, getByRole } = renderWithQuery(<Driver />);
-
-    // Initial CRYPTO render @ tf=1h
+    const { findByTestId, getByRole } = renderWithQuery(<Driver />);
     await findByTestId('candlestick-chart');
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('s=BTC');
     expect(String(fetchSpy.mock.calls[0][0])).toContain('tf=1h');
 
-    // Swap to COMMODITIES — should refetch with tf=1d, NOT tf=1h
+    // Swap to COMMODITIES — should refetch the new symbol with the
+    // default tf=1h (which is valid for COMMODITIES post-Yahoo).
     fireEvent.click(getByRole('button', { name: 'swap' }));
-    await findByRole('tab', { name: '1D' }, { timeout: 3000 });
 
     await waitFor(
       () => {
         const lastUrl = String(fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1][0]);
         expect(lastUrl).toContain('s=XAUUSD');
-        expect(lastUrl).toContain('tf=1d');
+        expect(lastUrl).toContain('tf=1h');
       },
       { timeout: 3000 },
     );
-
-    // No CRYPTO-leftover tf=1h fetch landed on XAUUSD
-    const xauusd1hCall = fetchSpy.mock.calls.find((c) => {
-      const u = String(c[0]);
-      return u.includes('s=XAUUSD') && u.includes('tf=1h');
-    });
-    expect(xauusd1hCall).toBeUndefined();
   });
 });

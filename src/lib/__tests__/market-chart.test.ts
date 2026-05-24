@@ -44,7 +44,7 @@ describe('marketToChartConfig', () => {
     });
     expect(marketToChartConfig(m)).toEqual({
       oracleSymbol: 'XAUUSD',
-      providerSymbol: 'xauusd',
+      providerSymbol: 'GC=F',
       assetClass: 'COMMODITIES',
     });
   });

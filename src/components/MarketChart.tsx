@@ -35,13 +35,14 @@ const TIMEFRAMES_BY_CLASS: Record<ChartAssetClass, readonly Timeframe[]> = {
   CRYPTO:      ['15m', '1h', '2h', '4h', '1d'],
   FOREX:       ['15m', '1h', '2h', '4h', '1d'],
   STOCKS:      ['15m', '1h', '2h', '4h', '1d'],
-  COMMODITIES: ['1d'],
+  // Yahoo Finance futures feed supports 15m / 60m / 1d natively.
+  // 2h + 4h would need aggregation we don't do, so they're hidden.
+  COMMODITIES: ['15m', '1h', '1d'],
 };
 
-// Default to the most-useful timeframe for each class. Commodities
-// only have '1d'; everything else opens at '1h'.
+// Default to the most-useful timeframe for each class.
 function defaultTimeframe(assetClass: ChartAssetClass): Timeframe {
-  return assetClass === 'COMMODITIES' ? '1d' : '1h';
+  return '1h';
 }
 
 const CHART_HEIGHT = 350;
@@ -163,12 +164,10 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     </div>
   );
 
-  const commoditiesFooter =
-    assetClass === 'COMMODITIES' ? (
-      <div className="mako-label text-[10px] px-4 py-2 border-t-2 border-ink bg-signal text-ink">
-        DAILY CANDLES ONLY · INTRADAY PENDING PAID DATA TIER
-      </div>
-    ) : null;
+  // Commodities now have intraday via Yahoo futures, so the old
+  // "DAILY CANDLES ONLY" caveat doesn't apply. Keeping the slot
+  // null and reserved in case we add per-class disclosures later.
+  const commoditiesFooter = null;
 
   if (expanded) {
     // Portal to document.body so the overlay escapes every parent

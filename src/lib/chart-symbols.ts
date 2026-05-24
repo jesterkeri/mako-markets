@@ -63,10 +63,14 @@ export const CHART_SYMBOLS: readonly ChartSymbol[] = [
   { oracleSymbol: 'GBPJPY', providerSymbol: 'GBP/JPY', assetClass: 'FOREX' },
 
   // ── COMMODITIES (3) ─────────────────────────────────────────────
-  // Verified against price-feed-assets.ts:95-97. Stooq lowercase.
-  { oracleSymbol: 'XAUUSD', providerSymbol: 'xauusd', assetClass: 'COMMODITIES' },
-  { oracleSymbol: 'XAGUSD', providerSymbol: 'xagusd', assetClass: 'COMMODITIES' },
-  { oracleSymbol: 'XPTUSD', providerSymbol: 'xptusd', assetClass: 'COMMODITIES' },
+  // Verified against price-feed-assets.ts:95-97. Yahoo Finance maps
+  // spot precious metals → COMEX futures: gold = GC=F, silver = SI=F,
+  // platinum = PL=F. (Switched from Stooq in #166 polish r5 — Stooq
+  // added API-key auth to their free CSV endpoint.) Spot-on-spot
+  // delta vs futures is small and the chart is illustrative anyway.
+  { oracleSymbol: 'XAUUSD', providerSymbol: 'GC=F', assetClass: 'COMMODITIES' },
+  { oracleSymbol: 'XAGUSD', providerSymbol: 'SI=F', assetClass: 'COMMODITIES' },
+  { oracleSymbol: 'XPTUSD', providerSymbol: 'PL=F', assetClass: 'COMMODITIES' },
 
   // ── STOCKS (20) ─────────────────────────────────────────────────
   // Verified against price-feed-assets.ts:103-122. Oracle === provider

@@ -29,13 +29,13 @@ vi.mock('@/lib/chart-providers/twelvedata', async () => {
   };
 });
 
-vi.mock('@/lib/chart-providers/stooq', async () => {
-  const actual = await vi.importActual<typeof import('../chart-providers/stooq')>(
-    '../chart-providers/stooq',
+vi.mock('@/lib/chart-providers/yahoo', async () => {
+  const actual = await vi.importActual<typeof import('../chart-providers/yahoo')>(
+    '../chart-providers/yahoo',
   );
   return {
     ...actual,
-    fetchStooqDailyCandles: vi.fn(),
+    fetchYahooCandles: vi.fn(),
   };
 });
 
@@ -47,9 +47,9 @@ import {
   TwelveDataRateLimitError,
 } from '@/lib/chart-providers/twelvedata';
 import {
-  fetchStooqDailyCandles,
-  StooqApiError,
-} from '@/lib/chart-providers/stooq';
+  fetchYahooCandles,
+  YahooApiError,
+} from '@/lib/chart-providers/yahoo';
 
 const KEY_BEFORE = process.env.TWELVEDATA_API_KEY;
 
@@ -64,7 +64,7 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.mocked(fetchTwelveDataCandles).mockReset();
-  vi.mocked(fetchStooqDailyCandles).mockReset();
+  vi.mocked(fetchYahooCandles).mockReset();
 });
 
 function mkReq(qs: string) {
@@ -94,11 +94,15 @@ describe('GET /api/charts', () => {
     expect(await res.json()).toEqual({ error: 'unknown_symbol' });
   });
 
-  it('400 commodity + non-1d (XAUUSD with tf=1h)', async () => {
-    const res = await GET(mkReq('s=XAUUSD&tf=1h'));
+  it('400 commodity + non-Yahoo-supported tf (XAUUSD with tf=2h)', async () => {
+    // Yahoo natively supports 15m / 1h / 1d for commodities futures.
+    // 2h and 4h aren't real intervals upstream, so the route rejects
+    // them up front rather than burning a cache slot on an empty
+    // fetch. Same gate now applies to 4h.
+    const res = await GET(mkReq('s=XAUUSD&tf=2h'));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'timeframe_not_supported' });
-    expect(fetchStooqDailyCandles).not.toHaveBeenCalled();
+    expect(fetchYahooCandles).not.toHaveBeenCalled();
     expect(fetchTwelveDataCandles).not.toHaveBeenCalled();
   });
 
@@ -133,12 +137,25 @@ describe('GET /api/charts', () => {
     });
   });
 
-  it('200 COMMODITIES via Stooq (1d only)', async () => {
-    vi.mocked(fetchStooqDailyCandles).mockResolvedValue(SAMPLE_CANDLES);
+  it('200 COMMODITIES via Yahoo (1d)', async () => {
+    vi.mocked(fetchYahooCandles).mockResolvedValue(SAMPLE_CANDLES);
     const res = await GET(mkReq('s=XAUUSD&tf=1d'));
     expect(res.status).toBe(200);
-    expect(fetchStooqDailyCandles).toHaveBeenCalledWith({ providerSymbol: 'xauusd' });
+    expect(fetchYahooCandles).toHaveBeenCalledWith({
+      providerSymbol: 'GC=F',
+      timeframe: '1d',
+    });
     expect(fetchTwelveDataCandles).not.toHaveBeenCalled();
+  });
+
+  it('200 COMMODITIES via Yahoo (1h intraday — previously unsupported on Stooq)', async () => {
+    vi.mocked(fetchYahooCandles).mockResolvedValue(SAMPLE_CANDLES);
+    const res = await GET(mkReq('s=XAGUSD&tf=1h'));
+    expect(res.status).toBe(200);
+    expect(fetchYahooCandles).toHaveBeenCalledWith({
+      providerSymbol: 'SI=F',
+      timeframe: '1h',
+    });
   });
 
   it('default tf=1h when omitted', async () => {
@@ -171,11 +188,11 @@ describe('GET /api/charts', () => {
     expect(await res.json()).toEqual({ error: 'upstream_failed', provider: 'twelvedata' });
   });
 
-  it('502 on StooqApiError', async () => {
-    vi.mocked(fetchStooqDailyCandles).mockRejectedValue(new StooqApiError('throttled'));
+  it('502 on YahooApiError', async () => {
+    vi.mocked(fetchYahooCandles).mockRejectedValue(new YahooApiError('throttled'));
     const res = await GET(mkReq('s=XAUUSD&tf=1d'));
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({ error: 'upstream_failed', provider: 'stooq' });
+    expect(await res.json()).toEqual({ error: 'upstream_failed', provider: 'yahoo' });
   });
 
   it('cache-control header set on success', async () => {
