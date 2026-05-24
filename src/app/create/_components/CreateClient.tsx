@@ -40,6 +40,7 @@ import {
 import { getAssetsByClass } from '@/lib/price-feed-assets';
 import { MarketChart } from '@/components/MarketChart';
 import { getChartSymbolByOracle, type ChartAssetClass } from '@/lib/chart-symbols';
+import { AssetSelect } from '@/components/AssetSelect';
 
 /**
  * /create -- six-tab market creation form (one per publicly-creatable
@@ -1869,21 +1870,13 @@ function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit
         <label htmlFor="pf-symbol" className="mako-label text-muted mb-3 block">
           {copy.symbolLabel}
         </label>
-        <div className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-paper">
-          <select
-            id="pf-symbol"
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            disabled={isBusy}
-            className="flex-1 min-w-0 bg-transparent border-0 outline-none mako-display text-2xl uppercase tabular-nums disabled:opacity-50 cursor-pointer"
-          >
-            {assets.map((a) => (
-              <option key={a.symbol} value={a.symbol}>
-                {a.symbol} — {a.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <AssetSelect
+          id="pf-symbol"
+          value={symbol}
+          onChange={setSymbol}
+          options={assets}
+          disabled={isBusy}
+        />
         {kind === 'stocks' ? (
           <div className="mako-label text-muted mt-2">
             US market hours: NYSE / NASDAQ. Off-hours markets settle
