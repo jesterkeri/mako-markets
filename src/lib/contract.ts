@@ -1,6 +1,28 @@
-import { decodeEventLog, type TransactionReceipt } from 'viem';
+import { decodeEventLog, getAddress, type TransactionReceipt } from 'viem';
 import { makoAbi } from './MakoMarkets.abi';
 import { usdcContract } from './usdc';
+
+/**
+ * Normalize an env-derived address: strip surrounding whitespace
+ * (Vercel env UI silently preserves trailing newlines pasted from
+ * multi-line sources — bit Mako once when prod had `0xbC5A...26195\n`
+ * inlined, which viem rejected as malformed, collapsing all chain
+ * reads to undefined and rendering the home feed as "No open markets
+ * yet."), then run through viem's `getAddress` for EIP-55 checksum
+ * validation. Throws at MODULE LOAD time on bad env — far better
+ * than silent runtime failures deep inside wagmi.
+ */
+function normalizeAddress(raw: string, label: string): `0x${string}` {
+  const trimmed = raw.trim();
+  try {
+    return getAddress(trimmed) as `0x${string}`;
+  } catch (err) {
+    throw new Error(
+      `${label} is not a valid address: ${JSON.stringify(raw)} (trimmed: ${JSON.stringify(trimmed)})`,
+      { cause: err },
+    );
+  }
+}
 
 /**
  * Deployed address of MakoMarketsV4 on Monad testnet.
@@ -11,8 +33,11 @@ import { usdcContract } from './usdc';
  * Defaults to the live v4 deploy so the app still compiles and renders
  * if the env var is unset.
  */
-export const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS
-  || '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195') as `0x${string}`;
+export const MAKO_ADDRESS = normalizeAddress(
+  process.env.NEXT_PUBLIC_MAKO_ADDRESS
+    || '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195',
+  'NEXT_PUBLIC_MAKO_ADDRESS',
+);
 
 /**
  * Deployed address of MakoPrivateMarketsV1 on Monad testnet.
@@ -25,8 +50,11 @@ export const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS
  * Used by Phase 2C-1 (createMarket sponsor + send dispatch) and by
  * the existing 2B-2 indexer routes.
  */
-export const PM_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS
-  || '0xc9c6575a14d0e84afd5ab21c506916fd2864bb8f') as `0x${string}`;
+export const PM_CONTRACT_ADDRESS = normalizeAddress(
+  process.env.NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS
+    || '0xc9c6575a14d0e84afd5ab21c506916fd2864bb8f',
+  'NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS',
+);
 
 /**
  * Pre-composed contract object for wagmi's useReadContract / useWriteContract.
