@@ -41,6 +41,7 @@ const TimeSeriesResponse = z.object({
 const TF_TO_INTERVAL: Record<Timeframe, string> = {
   '15m': '15min',
   '1h':  '1h',
+  '2h':  '2h',
   '4h':  '4h',
   '1d':  '1day',
 };

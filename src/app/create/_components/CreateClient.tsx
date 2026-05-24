@@ -38,6 +38,8 @@ import {
   type CryptoSymbol,
 } from '@/lib/crypto-assets';
 import { getAssetsByClass } from '@/lib/price-feed-assets';
+import { MarketChart } from '@/components/MarketChart';
+import { getChartSymbolByOracle, type ChartAssetClass } from '@/lib/chart-symbols';
 
 /**
  * /create -- six-tab market creation form (one per publicly-creatable
@@ -830,8 +832,18 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit }: TabPr
   const disabled =
     isBusy || effectiveStrike <= 0 || drifted || dailyCapHit || parseCreatorSeed(seedInput) === null;
 
+  const chartAvailable = getChartSymbolByOracle(selectedSymbol) !== null;
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
+      {/* Live price chart preview — only when symbol is in the chart
+          allowlist. MON has no chart (testnet-only); the rest do. */}
+      {chartAvailable ? (
+        <div className="px-6 pt-6 pb-2">
+          <MarketChart oracleSymbol={selectedSymbol} assetClass="CRYPTO" />
+        </div>
+      ) : null}
+
       {/* Live prices */}
       <div className="border-b-2 border-ink">
         <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
@@ -1798,8 +1810,24 @@ function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit
     || dailyCapHit
     || parseCreatorSeed(seedInput) === null;
 
+  const chartAssetClass: ChartAssetClass | null =
+    kind === 'forex' ? 'FOREX' :
+    kind === 'commodities' ? 'COMMODITIES' :
+    kind === 'stocks' ? 'STOCKS' : null;
+  const chartAvailable =
+    chartAssetClass !== null && getChartSymbolByOracle(normalizedSymbol) !== null;
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
+      {/* Live price chart preview — only when symbol is in the chart
+          allowlist. Hidden gracefully when the selected ticker has no
+          chart data feed. */}
+      {chartAvailable && chartAssetClass ? (
+        <div className="px-6 pt-6 pb-2">
+          <MarketChart oracleSymbol={normalizedSymbol} assetClass={chartAssetClass} />
+        </div>
+      ) : null}
+
       {/* Symbol */}
       <div className="px-6 py-5 border-b-2 border-ink">
         <label htmlFor="pf-symbol" className="mako-label text-muted mb-3 block">

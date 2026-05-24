@@ -23,6 +23,7 @@ interface Props {
 const LABEL: Record<Timeframe, string> = {
   '15m': '15M',
   '1h':  '1H',
+  '2h':  '2H',
   '4h':  '4H',
   '1d':  '1D',
 };

@@ -49,12 +49,13 @@ import type { Timeframe } from '@/types/chart';
 
 const Query = z.object({
   s:  z.string().min(1).max(20),
-  tf: z.enum(['15m', '1h', '4h', '1d']).default('1h'),
+  tf: z.enum(['15m', '1h', '2h', '4h', '1d']).default('1h'),
 });
 
 const TTL: Record<Timeframe, number> = {
   '15m':  120,
   '1h':   300,
+  '2h':   450,
   '4h':   600,
   '1d':  1800,
 };

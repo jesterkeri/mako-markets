@@ -26,5 +26,6 @@ export interface Candle {
 }
 
 /** Mako chart timeframes. Subset of krait's superset; chosen to
- *  fit the TwelveData free-tier rate-limit budget (8 req/min). */
-export type Timeframe = '15m' | '1h' | '4h' | '1d';
+ *  fit the TwelveData free-tier rate-limit budget (8 req/min).
+ *  `2h` added in the polish pass after Joshua's Preview smoke. */
+export type Timeframe = '15m' | '1h' | '2h' | '4h' | '1d';
