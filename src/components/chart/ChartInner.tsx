@@ -4,30 +4,27 @@
 // lightweight-charts host. Lazy-loaded via `CandlestickChart` so
 // the ~50KB charting bundle stays out of the initial route chunk.
 //
-// Ported from krait `apps/web/src/components/chart/ChartInner.tsx`,
-// then trimmed and restyled for mako:
-//   - Removed: livePrice / replay / onBarClick / onRequestMoreData
-//     (out of scope for #166 v1)
-//   - Removed: krait-specific instrument-format table (mako asset
-//     classes follow a different precision rule, derived from the
-//     candle data itself)
-//   - Replaced: hard-coded hex colors → brand tokens read from CSS
-//     vars at mount, refreshed on `data-theme` change so the chart
-//     re-colors live without unmount
-//
-// Plan: %TEMP%/mako-166-charts-plan.md  Memory: [[mako-charts]]
+// Polish r6: added forwardRef + useImperativeHandle to expose
+// zoom controls (zoomIn / zoomOut / fitContent) to the parent
+// header strip. Also added togglable Volume histogram + MA20 /
+// EMA50 line overlays computed client-side from the candle data.
+// Drawing tools (trendlines / fib) are NOT included — lightweight-
+// charts has no drawing API; that needs a library swap to deliver.
 // ----------------------------------------------------------------------------
 
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import {
   createChart,
   CrosshairMode,
   ColorType,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
+  type HistogramData,
+  type LineData,
   type Time,
 } from 'lightweight-charts';
 
@@ -40,16 +37,22 @@ interface Props {
   assetClass: ChartAssetClass;
   timeframe: Timeframe;
   height?: number;
+  showVolume?: boolean;
+  showMA20?: boolean;
+  showEMA50?: boolean;
 }
 
-// Mako brand palette fallbacks. Used when `getComputedStyle` returns
-// '' (CSS not yet loaded on initial paint). Values mirror the light-
-// theme tokens in `src/app/globals.css`; dark-theme rendering kicks
-// in once the MutationObserver fires.
+export interface ChartInnerHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fit: () => void;
+}
+
 type BrandColors = {
   ink: string;
   paper: string;
   makoRed: string;
+  signal: string;
   divider: string;
   grid: string;
   muted: string;
@@ -59,6 +62,7 @@ const FALLBACK: BrandColors = {
   ink:     '#000000',
   paper:   '#EBE5D9',
   makoRed: '#D94A3D',
+  signal:  '#FACC15',
   divider: 'rgba(0, 0, 0, 0.10)',
   grid:    'rgba(0, 0, 0, 0.05)',
   muted:   '#79797A',
@@ -75,24 +79,13 @@ function readBrandColors(): BrandColors {
     ink:     pick('--color-ink',               FALLBACK.ink),
     paper:   pick('--color-paper',             FALLBACK.paper),
     makoRed: pick('--color-mako-red',          FALLBACK.makoRed),
+    signal:  pick('--color-signal',            FALLBACK.signal),
     divider: pick('--color-canvas-divider',    FALLBACK.divider),
     grid:    pick('--mako-grid',               FALLBACK.grid),
     muted:   pick('--color-muted',             FALLBACK.muted),
   };
 }
 
-/**
- * Price-axis precision rules per asset class.
- *
- * - FOREX: always 5 decimals (pipette resolution — EUR/USD trades
- *   in 0.00001 increments even though the spot value is ~1.10).
- *   The close-value heuristic alone would land on 4dp for EUR/USD
- *   which loses information codex r1 MINOR flagged.
- * - COMMODITIES: 2dp (XAU at $3400, XAG at $30, XPT at $1000).
- * - STOCKS: 2dp (US equities tick in pennies).
- * - CRYPTO: close-value heuristic — BTC at 1dp, ETH/SOL at 2dp,
- *   DOGE/etc at 4dp. Wide range of magnitudes inside the class.
- */
 function derivePrecision(
   candles: Candle[],
   assetClass: ChartAssetClass,
@@ -100,18 +93,17 @@ function derivePrecision(
   if (assetClass === 'FOREX')       return { precision: 5, minMove: 0.00001 };
   if (assetClass === 'COMMODITIES') return { precision: 2, minMove: 0.01 };
   if (assetClass === 'STOCKS')      return { precision: 2, minMove: 0.01 };
-  // CRYPTO: magnitude-based fallback
   if (candles.length === 0) return { precision: 2, minMove: 0.01 };
   const lastClose = candles[candles.length - 1].close;
-  if (lastClose >= 1000) return { precision: 1, minMove: 0.1 };    // BTC
-  if (lastClose >= 10)   return { precision: 2, minMove: 0.01 };   // ETH, SOL, AVAX
-  if (lastClose >= 1)    return { precision: 4, minMove: 0.0001 }; // LINK
-  return { precision: 5, minMove: 0.00001 };                       // DOGE et al.
+  if (lastClose >= 1000) return { precision: 1, minMove: 0.1 };
+  if (lastClose >= 10)   return { precision: 2, minMove: 0.01 };
+  if (lastClose >= 1)    return { precision: 4, minMove: 0.0001 };
+  return { precision: 5, minMove: 0.00001 };
 }
 
 function toChartData(candles: Candle[]): CandlestickData<Time>[] {
   return candles.map((c) => ({
-    time: (c.timestamp / 1000) as Time,  // krait stores ms; lightweight-charts wants seconds
+    time: (c.timestamp / 1000) as Time,
     open: c.open,
     high: c.high,
     low: c.low,
@@ -119,13 +111,100 @@ function toChartData(candles: Candle[]): CandlestickData<Time>[] {
   }));
 }
 
-export default function ChartInner({ candles, instrument: _instrument, assetClass, timeframe: _timeframe, height }: Props) {
+function toVolumeData(candles: Candle[], upColor: string, downColor: string): HistogramData<Time>[] {
+  return candles.map((c) => ({
+    time: (c.timestamp / 1000) as Time,
+    value: c.volume,
+    color: c.close >= c.open ? upColor : downColor,
+  }));
+}
+
+// Simple moving average of `period` closes. Returns same-length array
+// where indices [0, period-2] are skipped (no enough history yet).
+function computeMA(candles: Candle[], period: number): LineData<Time>[] {
+  if (candles.length < period) return [];
+  const out: LineData<Time>[] = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].close;
+    if (i >= period) sum -= candles[i - period].close;
+    if (i >= period - 1) {
+      out.push({
+        time: (candles[i].timestamp / 1000) as Time,
+        value: sum / period,
+      });
+    }
+  }
+  return out;
+}
+
+// Exponential moving average. k = 2/(period+1). First EMA value is
+// the SMA of the first `period` closes (standard seeding).
+function computeEMA(candles: Candle[], period: number): LineData<Time>[] {
+  if (candles.length < period) return [];
+  const k = 2 / (period + 1);
+  const out: LineData<Time>[] = [];
+  let ema = 0;
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    if (i < period) {
+      sum += candles[i].close;
+      if (i === period - 1) {
+        ema = sum / period;
+        out.push({
+          time: (candles[i].timestamp / 1000) as Time,
+          value: ema,
+        });
+      }
+      continue;
+    }
+    ema = candles[i].close * k + ema * (1 - k);
+    out.push({
+      time: (candles[i].timestamp / 1000) as Time,
+      value: ema,
+    });
+  }
+  return out;
+}
+
+const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
+  { candles, instrument: _instrument, assetClass, timeframe: _timeframe, height, showVolume, showMA20, showEMA50 },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null);
+  const ema50Ref = useRef<ISeriesApi<'Line'> | null>(null);
 
-  // Build options derived from current brand-color readout.
-  // Pure helper — exported here as a local for the theme effect's reuse.
+  // Imperative API exposed to parent (zoom buttons in header).
+  useImperativeHandle(ref, () => ({
+    zoomIn: () => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const ts = chart.timeScale();
+      const range = ts.getVisibleLogicalRange();
+      if (!range) return;
+      const span = range.to - range.from;
+      const shrink = span * 0.2;
+      ts.setVisibleLogicalRange({ from: range.from + shrink, to: range.to - shrink });
+    },
+    zoomOut: () => {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const ts = chart.timeScale();
+      const range = ts.getVisibleLogicalRange();
+      if (!range) return;
+      const span = range.to - range.from;
+      const grow = span * 0.25;
+      ts.setVisibleLogicalRange({ from: range.from - grow, to: range.to + grow });
+    },
+    fit: () => {
+      chartRef.current?.timeScale().fitContent();
+    },
+  }), []);
+
   const applyColors = (chart: IChartApi, series: ISeriesApi<'Candlestick'>, c: BrandColors) => {
     chart.applyOptions({
       layout: {
@@ -139,7 +218,6 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
       timeScale:       { borderColor: c.divider },
       rightPriceScale: { borderColor: c.divider },
     });
-    // Neobrutalist palette: ink-up (black) / mako-red-down (no green).
     series.applyOptions({
       upColor:         c.ink,
       downColor:       c.makoRed,
@@ -148,6 +226,14 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
       wickUpColor:     c.ink,
       wickDownColor:   c.makoRed,
     });
+    // Re-apply MA/EMA colors so they stay legible on theme flip.
+    ma20Ref.current?.applyOptions({ color: c.signal });
+    ema50Ref.current?.applyOptions({ color: c.makoRed });
+    if (volumeRef.current) {
+      // Histogram per-bar colors are baked into the data points; the
+      // setData below in the candles effect refreshes them. Nothing
+      // to apply here directly.
+    }
   };
 
   // Initialise chart on mount. Re-init on height change (rare).
@@ -193,7 +279,6 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // Resize on container width changes.
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         chart.applyOptions({ width: entry.contentRect.width });
@@ -206,21 +291,20 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      volumeRef.current = null;
+      ma20Ref.current = null;
+      ema50Ref.current = null;
     };
-    // Intentional: re-init only on height change. Color/candle updates
-    // flow through separate effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height]);
 
-  // Theme-aware recolor. Listens for `data-theme` attribute changes
-  // on <html> and re-reads CSS vars without remounting the chart.
   useEffect(() => {
     const chart = chartRef.current;
     const series = seriesRef.current;
     if (!chart || !series) return;
 
     const refresh = () => applyColors(chart, series, readBrandColors());
-    refresh(); // first paint may have run with FALLBACK if CSS was late
+    refresh();
 
     const observer = new MutationObserver(refresh);
     observer.observe(document.documentElement, {
@@ -233,11 +317,6 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refresh price-axis precision when the asset class changes OR
-  // when crypto candles cross a magnitude bucket. The init effect
-  // only runs on mount (deps = [height]), so when App Router keeps
-  // this component mounted across `/market/[id]` navigations the
-  // series would otherwise hold the previous market's priceFormat.
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
@@ -245,9 +324,74 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
     series.applyOptions({ priceFormat: { type: 'price', precision, minMove } });
   }, [candles, assetClass]);
 
-  // Push candle data. Dedupe by timestamp + sort ascending (the
-  // backend already does this but defense-in-depth is cheap and
-  // catches future client-side concat bugs).
+  // Volume histogram series — created on demand. Lives on its own
+  // price scale ('') stacked below the main candles via scaleMargins.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    if (showVolume) {
+      if (!volumeRef.current) {
+        const colors = readBrandColors();
+        const vol = chart.addHistogramSeries({
+          priceFormat: { type: 'volume' },
+          priceScaleId: 'volume',
+          color: colors.muted,
+        });
+        chart.priceScale('volume').applyOptions({
+          scaleMargins: { top: 0.8, bottom: 0 },
+        });
+        volumeRef.current = vol;
+      }
+    } else if (volumeRef.current) {
+      chart.removeSeries(volumeRef.current);
+      volumeRef.current = null;
+    }
+  }, [showVolume]);
+
+  // MA(20) line overlay — created on demand.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    if (showMA20) {
+      if (!ma20Ref.current) {
+        const colors = readBrandColors();
+        ma20Ref.current = chart.addLineSeries({
+          color: colors.signal,
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+      }
+    } else if (ma20Ref.current) {
+      chart.removeSeries(ma20Ref.current);
+      ma20Ref.current = null;
+    }
+  }, [showMA20]);
+
+  // EMA(50) line overlay — created on demand.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    if (showEMA50) {
+      if (!ema50Ref.current) {
+        const colors = readBrandColors();
+        ema50Ref.current = chart.addLineSeries({
+          color: colors.makoRed,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+      }
+    } else if (ema50Ref.current) {
+      chart.removeSeries(ema50Ref.current);
+      ema50Ref.current = null;
+    }
+  }, [showEMA50]);
+
+  // Push candle data + derived overlays. Dedupe + sort.
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
@@ -261,9 +405,19 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
     });
     unique.sort((a, b) => a.timestamp - b.timestamp);
 
+    const colors = readBrandColors();
     series.setData(toChartData(unique));
+    if (volumeRef.current) {
+      volumeRef.current.setData(toVolumeData(unique, colors.ink, colors.makoRed));
+    }
+    if (ma20Ref.current) {
+      ma20Ref.current.setData(computeMA(unique, 20));
+    }
+    if (ema50Ref.current) {
+      ema50Ref.current.setData(computeEMA(unique, 50));
+    }
     chart?.timeScale().fitContent();
-  }, [candles]);
+  }, [candles, showVolume, showMA20, showEMA50]);
 
   return (
     <div
@@ -275,4 +429,6 @@ export default function ChartInner({ candles, instrument: _instrument, assetClas
       }}
     />
   );
-}
+});
+
+export default ChartInner;
