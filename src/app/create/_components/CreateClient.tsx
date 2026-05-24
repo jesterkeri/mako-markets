@@ -557,24 +557,25 @@ export default function CreateMarketClient() {
           </div>
         )}
 
+        {/* Chart preview — its OWN row above the 2-column flex grid so
+            the chart can claim the full content width (was cramped at
+            the 380px right-column width before). Sibling of the
+            form+spec grid, not a child of either column. Renders only
+            for chart-capable tabs whose symbol is in the allowlist. */}
+        {tab !== null && chartConfig && (
+          <div className="w-full mb-8">
+            <MarketChart
+              oracleSymbol={chartConfig.oracleSymbol}
+              assetClass={chartConfig.assetClass}
+            />
+          </div>
+        )}
+
         {tab !== null && (
           <div className="w-full flex flex-col lg:flex-row gap-8 lg:gap-12 mb-12 items-start justify-center">
 
             {/* EDITORIAL INFO BLOCK - NO BOXES */}
             <div className="w-full lg:w-[380px] shrink-0 flex flex-col order-1 lg:order-2 lg:sticky lg:top-24 mt-2 lg:mt-0">
-              {/* Chart preview — only renders when the active tab is
-                  chart-capable AND the selected symbol is in the
-                  allowlist. Sits ABOVE MARKET SPEC per Joshua's
-                  placement (chart on the right column, above the
-                  editorial block). */}
-              {chartConfig && (
-                <div className="mb-8">
-                  <MarketChart
-                    oracleSymbol={chartConfig.oracleSymbol}
-                    assetClass={chartConfig.assetClass}
-                  />
-                </div>
-              )}
               <div className="mb-12">
                 <Link
                   href="/create"

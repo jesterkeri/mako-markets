@@ -186,9 +186,22 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
           if (e.target === e.currentTarget) setExpanded(false);
         }}
       >
-        <div className={`${cardClass} w-full max-w-[1600px] max-h-[calc(100vh-2rem)] flex flex-col`}>
+        <div
+          className={`${cardClass} w-full max-w-[1600px] flex flex-col`}
+          style={{ height: 'calc(100vh - 4rem)' }}
+        >
           {header}
-          <div className="flex-1 min-h-0" style={{ position: 'relative' }}>
+          {/* Explicit pixel height on the chart body — `flex-1` alone
+              gives lightweight-charts a 0-height container because its
+              clientHeight read can't resolve against an auto-sized flex
+              parent. Using calc relative to the overlay height ensures
+              the canvas has a concrete number to size against. The
+              80px subtracted is header (~52px) + breathing room +
+              optional commodities footer. */}
+          <div
+            className="flex-1"
+            style={{ position: 'relative', minHeight: 0, height: 'calc(100vh - 4rem - 80px)' }}
+          >
             <CandlestickChart
               candles={data.candles}
               instrument={oracleSymbol}
