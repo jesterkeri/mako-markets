@@ -99,6 +99,12 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     setPast((p) => [...p, drawings]);
     setFuture([]);
     setDrawings((curr) => [...curr, { ...d, id }]);
+    // Auto-select the new drawing + switch to cursor so the user can
+    // immediately tweak color / width / style via the DrawingEditor
+    // popover. Without this they have to manually flip to cursor and
+    // click the drawing — friction Joshua flagged.
+    setSelectedId(id);
+    setActiveTool('cursor');
     return id;
   }, [drawings]);
 
@@ -398,7 +404,10 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
       {selectedDrawing && (
         <DrawingEditor
           drawing={selectedDrawing}
-          position={{ x: 16, y: 16 }}
+          /* Position below the toolbar (y:60, height ~44) and offset
+             a touch right so the two floating cards don't visually
+             collide. Both are draggable, so user can rearrange. */
+          position={{ x: 12, y: 116 }}
           onUpdate={updateDrawing}
           onDelete={removeDrawing}
           onClose={() => setSelectedId(null)}

@@ -84,13 +84,13 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
       />
       {open && (
         <div
-          className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-3"
+          className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-4"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2 px-0.5">
+          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2.5 px-0.5">
             COLOR
           </div>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-4 gap-3">
             {DRAWING_COLORS.map((color) => {
               const active = activeColor === color;
               return (
@@ -98,12 +98,12 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
                   key={color}
                   onClick={() => { onChange(color); setOpen(false); }}
                   title={color}
-                  className="w-7 h-7 rounded-md cursor-pointer p-0 border-2 transition-transform hover:scale-110"
-                  style={{
-                    background: color,
-                    borderColor: active ? '#EBE5D9' : '#000000',
-                    boxShadow: active ? '0 0 0 2px #000000 inset' : 'none',
-                  }}
+                  className={`w-7 h-7 rounded-md cursor-pointer p-0 transition-shadow ${
+                    active
+                      ? 'ring-2 ring-paper ring-offset-2 ring-offset-ink'
+                      : 'hover:ring-2 hover:ring-paper/60 hover:ring-offset-2 hover:ring-offset-ink'
+                  }`}
+                  style={{ background: color }}
                 />
               );
             })}
