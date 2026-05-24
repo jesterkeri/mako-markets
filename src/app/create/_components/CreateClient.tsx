@@ -342,6 +342,20 @@ export default function CreateMarketClient() {
   const { address: connectedWallet } = useAccount();
   const drifted = isWalletDrifted(user ?? null, connectedWallet);
 
+  // Chart preview surfaced by chart-capable tabs (CRYPTO / FOREX /
+  // COMMODITIES / STOCKS). Rendered above the right-column MARKET SPEC
+  // panel so creators see what they're staking against. Sports tabs
+  // leave this null and the slot collapses.
+  const [chartConfig, setChartConfig] = useState<ChartConfig | null>(null);
+  // Render-phase reset on tab switch — last tab's symbol shouldn't leak
+  // into next. (CI lint rejects setState-in-effect on prop-driven
+  // resets; same pattern used in CreatePrivateClient + MarketChart.)
+  const [prevTab, setPrevTab] = useState<Tab | null>(tab);
+  if (tab !== prevTab) {
+    setPrevTab(tab);
+    setChartConfig(null);
+  }
+
   // Daily creator-create cap (slice 4f). The on-chain contract caps
   // public `createMarket` calls at 10 per UTC day per wallet. Mirror
   // it here so the submit button can disable and a counter can render
@@ -548,6 +562,19 @@ export default function CreateMarketClient() {
 
             {/* EDITORIAL INFO BLOCK - NO BOXES */}
             <div className="w-full lg:w-[380px] shrink-0 flex flex-col order-1 lg:order-2 lg:sticky lg:top-24 mt-2 lg:mt-0">
+              {/* Chart preview — only renders when the active tab is
+                  chart-capable AND the selected symbol is in the
+                  allowlist. Sits ABOVE MARKET SPEC per Joshua's
+                  placement (chart on the right column, above the
+                  editorial block). */}
+              {chartConfig && (
+                <div className="mb-8">
+                  <MarketChart
+                    oracleSymbol={chartConfig.oracleSymbol}
+                    assetClass={chartConfig.assetClass}
+                  />
+                </div>
+              )}
               <div className="mb-12">
                 <Link
                   href="/create"
@@ -625,12 +652,12 @@ export default function CreateMarketClient() {
             {/* FORM CONTAINER */}
             <div className="w-full lg:max-w-2xl flex-1 flex flex-col order-2 lg:order-1">
               <div className="bg-paper border-2 border-ink rounded-2xl shadow-brutal overflow-hidden">
-                {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
+                {tab === 'crypto' && <CryptoTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} onChartConfigChange={setChartConfig} />}
                 {tab === 'football' && <FootballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
                 {tab === 'basketball' && <BasketballTab onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
-                {tab === 'forex' && <PriceFeedTab kind="forex" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
-                {tab === 'commodities' && <PriceFeedTab kind="commodities" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
-                {tab === 'stocks' && <PriceFeedTab kind="stocks" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} />}
+                {tab === 'forex' && <PriceFeedTab kind="forex" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} onChartConfigChange={setChartConfig} />}
+                {tab === 'commodities' && <PriceFeedTab kind="commodities" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} onChartConfigChange={setChartConfig} />}
+                {tab === 'stocks' && <PriceFeedTab kind="stocks" onSubmit={handleCreate} isBusy={isBusy} statusText={statusText} drifted={drifted} dailyCapHit={dailyCapHit} onChartConfigChange={setChartConfig} />}
               </div>
 
               {/* Non-busy status line below the submit button */}
@@ -658,6 +685,8 @@ export default function CreateMarketClient() {
 // CRYPTO TAB -- live CoinGecko prices + strike/direction/duration form
 // ======================================================================
 
+type ChartConfig = { oracleSymbol: string; assetClass: ChartAssetClass };
+
 type TabProps = {
   onSubmit: (args: CreateArgs) => Promise<void>;
   isBusy: boolean;
@@ -673,9 +702,14 @@ type TabProps = {
   // greyed out when the wallet has already hit 10 creates today. MAKO
   // is contract-exempt and lives on /admin/create-mako instead.
   dailyCapHit: boolean;
+  // Optional: chart-capable tabs (CRYPTO / FOREX / COMMODITIES /
+  // STOCKS) call this when the user picks a new symbol so the parent
+  // can render the chart preview above MARKET SPEC. Sports tabs never
+  // wire this up.
+  onChartConfigChange?: (config: ChartConfig | null) => void;
 };
 
-function CryptoTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit }: TabProps) {
+function CryptoTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit, onChartConfigChange }: TabProps) {
   const [prices, setPrices] = useState<CryptoPrices | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<CryptoSymbol>('BTC');
   const [direction, setDirection] = useState<Direction>('above');
@@ -832,18 +866,17 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit }: TabPr
   const disabled =
     isBusy || effectiveStrike <= 0 || drifted || dailyCapHit || parseCreatorSeed(seedInput) === null;
 
-  const chartAvailable = getChartSymbolByOracle(selectedSymbol) !== null;
+  // Surface the chart config up to the parent so the chart can render
+  // ABOVE the MARKET SPEC panel on the right column (Joshua: chart
+  // doesn't belong inside the form).
+  useEffect(() => {
+    if (!onChartConfigChange) return;
+    const entry = getChartSymbolByOracle(selectedSymbol);
+    onChartConfigChange(entry ? { oracleSymbol: selectedSymbol, assetClass: 'CRYPTO' } : null);
+  }, [selectedSymbol, onChartConfigChange]);
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
-      {/* Live price chart preview — only when symbol is in the chart
-          allowlist. MON has no chart (testnet-only); the rest do. */}
-      {chartAvailable ? (
-        <div className="px-6 pt-6 pb-2">
-          <MarketChart oracleSymbol={selectedSymbol} assetClass="CRYPTO" />
-        </div>
-      ) : null}
-
       {/* Live prices */}
       <div className="border-b-2 border-ink">
         <div className="px-6 py-3 flex justify-between items-center bg-surface-elevated">
@@ -1704,7 +1737,7 @@ const PRICE_FEED_COPY: Record<PriceFeedKind, {
   },
 };
 
-function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit }: PriceFeedTabProps) {
+function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit, onChartConfigChange }: PriceFeedTabProps) {
   const copy = PRICE_FEED_COPY[kind];
   // #180: symbol comes from the price-feed allowlist (closed set per
   // class). Default to the first asset by priority (the canonical
@@ -1814,20 +1847,22 @@ function PriceFeedTab({ kind, onSubmit, isBusy, statusText, drifted, dailyCapHit
     kind === 'forex' ? 'FOREX' :
     kind === 'commodities' ? 'COMMODITIES' :
     kind === 'stocks' ? 'STOCKS' : null;
-  const chartAvailable =
-    chartAssetClass !== null && getChartSymbolByOracle(normalizedSymbol) !== null;
+
+  // Surface the chart config up to the parent so the chart can render
+  // ABOVE the MARKET SPEC panel on the right column.
+  useEffect(() => {
+    if (!onChartConfigChange) return;
+    const entry =
+      chartAssetClass !== null ? getChartSymbolByOracle(normalizedSymbol) : null;
+    onChartConfigChange(
+      entry && chartAssetClass
+        ? { oracleSymbol: normalizedSymbol, assetClass: chartAssetClass }
+        : null,
+    );
+  }, [normalizedSymbol, chartAssetClass, onChartConfigChange]);
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col">
-      {/* Live price chart preview — only when symbol is in the chart
-          allowlist. Hidden gracefully when the selected ticker has no
-          chart data feed. */}
-      {chartAvailable && chartAssetClass ? (
-        <div className="px-6 pt-6 pb-2">
-          <MarketChart oracleSymbol={normalizedSymbol} assetClass={chartAssetClass} />
-        </div>
-      ) : null}
-
       {/* Symbol */}
       <div className="px-6 py-5 border-b-2 border-ink">
         <label htmlFor="pf-symbol" className="mako-label text-muted mb-3 block">

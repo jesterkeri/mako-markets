@@ -18,6 +18,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import { CandlestickChart } from '@/components/chart/CandlestickChart';
@@ -133,10 +134,6 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     );
   }
 
-  const chartHeight = expanded
-    ? 'calc(100vh - 180px)'
-    : `${CHART_HEIGHT}px`;
-
   const header = (
     <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-3 border-b-2 border-ink">
       <span className="mako-mono text-xs tracking-widest text-muted">
@@ -166,18 +163,6 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     </div>
   );
 
-  const chartBody = (
-    <div style={{ height: chartHeight, position: 'relative' }}>
-      <CandlestickChart
-        candles={data.candles}
-        instrument={oracleSymbol}
-        assetClass={assetClass}
-        timeframe={tf}
-        height={undefined}
-      />
-    </div>
-  );
-
   const commoditiesFooter =
     assetClass === 'COMMODITIES' ? (
       <div className="mako-label text-[10px] px-4 py-2 border-t-2 border-ink bg-signal text-ink">
@@ -186,6 +171,37 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     ) : null;
 
   if (expanded) {
+    // Portal to document.body so the overlay escapes every parent
+    // stacking context — sidebar (z-40+), sticky headers, mobile
+    // betsheet wrapper, etc. all live deeper in the tree. Without
+    // the portal `fixed inset-0` is still trapped behind a 50px
+    // sidebar on `/market/[id]`. z-[200] beats anything mako sets.
+    const overlay = (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6 bg-ink/80 backdrop-blur-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Expanded price chart"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setExpanded(false);
+        }}
+      >
+        <div className={`${cardClass} w-full max-w-[1600px] max-h-[calc(100vh-2rem)] flex flex-col`}>
+          {header}
+          <div className="flex-1 min-h-0" style={{ position: 'relative' }}>
+            <CandlestickChart
+              candles={data.candles}
+              instrument={oracleSymbol}
+              assetClass={assetClass}
+              timeframe={tf}
+              height={undefined}
+            />
+          </div>
+          {commoditiesFooter}
+        </div>
+      </div>
+    );
+
     return (
       <>
         {/* Inline placeholder so the page layout doesn't collapse while
@@ -198,21 +214,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
         >
           <span className="mako-label text-muted text-xs">CHART EXPANDED · PRESS ESC TO CLOSE</span>
         </div>
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-ink/70 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Expanded price chart"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setExpanded(false);
-          }}
-        >
-          <div className={`${cardClass} w-full max-w-[1600px]`}>
-            {header}
-            {chartBody}
-            {commoditiesFooter}
-          </div>
-        </div>
+        {typeof document !== 'undefined' ? createPortal(overlay, document.body) : null}
       </>
     );
   }
