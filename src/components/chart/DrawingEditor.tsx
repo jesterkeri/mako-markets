@@ -105,7 +105,7 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
       {/* Color */}
       <div>
         <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2">COLOR</div>
-        <div className="flex flex-wrap gap-2.5">
+        <div className="grid grid-cols-8 gap-2 justify-items-center">
           {DRAWING_COLORS.map((c) => {
             const active = drawing.color === c;
             return (

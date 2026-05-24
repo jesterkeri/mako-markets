@@ -87,14 +87,14 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
           className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-4"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-3 px-0.5">
+          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-3 text-center">
             COLOR
           </div>
-          {/* Inline-flex with wrap + generous gap so each swatch is
-              clearly an independent circle — no rings spilling into
-              neighbours. Active state uses a tight 2px paper ring
-              that hugs the circle (no offset). */}
-          <div className="flex flex-wrap gap-3 max-w-[176px]">
+          {/* 4-column grid centered under the trigger button. Each
+              cell holds one circle swatch; gap-3 keeps neighbours
+              from touching. Active state is a tight 2px paper ring
+              on the circle itself (no offset, no scale). */}
+          <div className="grid grid-cols-4 gap-3 justify-items-center">
             {DRAWING_COLORS.map((color) => {
               const active = activeColor === color;
               return (
