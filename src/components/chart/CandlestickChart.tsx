@@ -13,6 +13,7 @@
 
 import { forwardRef, lazy, Suspense } from 'react';
 
+import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
 import type { Candle, Timeframe } from '@/types/chart';
 import type { ChartInnerHandle } from './ChartInner';
@@ -28,6 +29,7 @@ interface Props {
   showVolume?: boolean;
   showMA20?: boolean;
   showEMA50?: boolean;
+  onChartReady?: (chart: IChartApi | null, series: ISeriesApi<'Candlestick'> | null) => void;
 }
 
 export const CandlestickChart = forwardRef<ChartInnerHandle, Props>(

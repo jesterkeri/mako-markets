@@ -40,6 +40,10 @@ interface Props {
   showVolume?: boolean;
   showMA20?: boolean;
   showEMA50?: boolean;
+  /** Fires once the chart + candle series are constructed, so a
+   *  parent overlay (e.g. DrawingCanvas) can subscribe to the same
+   *  instances. Called with (null, null) on teardown. */
+  onChartReady?: (chart: IChartApi | null, series: ISeriesApi<'Candlestick'> | null) => void;
 }
 
 export interface ChartInnerHandle {
@@ -168,7 +172,7 @@ function computeEMA(candles: Candle[], period: number): LineData<Time>[] {
 }
 
 const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
-  { candles, instrument: _instrument, assetClass, timeframe: _timeframe, height, showVolume, showMA20, showEMA50 },
+  { candles, instrument: _instrument, assetClass, timeframe: _timeframe, height, showVolume, showMA20, showEMA50, onChartReady },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -278,6 +282,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
 
     chartRef.current = chart;
     seriesRef.current = series;
+    onChartReady?.(chart, series);
 
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -288,6 +293,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
 
     return () => {
       ro.disconnect();
+      onChartReady?.(null, null);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;

@@ -1,31 +1,35 @@
 // ----------------------------------------------------------------------------
 // src/components/MarketChart.tsx
 //
-// Detail-page chart slot. Props are the dual-symbol pair from
-// `marketToChartConfig()`. Renders a `<TimeframeSelector>` over a
-// lazy-loaded `<CandlestickChart>` fed by `/api/charts`.
+// Detail-page chart slot. Renders header controls (instrument label,
+// timeframe pills, zoom cluster, indicators dropdown, drawing-tools
+// toggle, expand button) over a lazy-loaded `<CandlestickChart>` fed
+// by `/api/charts`.
 //
-// Polish r6: header strip now hosts an "INDICATORS" dropdown
-// (Volume / MA20 / EMA50 toggles) and a zoom cluster
-// (zoom in / out / fit). Chart instance is reached via a ref +
-// useImperativeHandle so the buttons can call timeScale methods
-// without lifting all chart internals into this component.
-//
-// Drawing tools (trendlines / fib) are NOT included — they need
-// a library swap. Joshua's separate decision.
+// Polish r8: krait drawing tools ported. PEN icon in header toggles
+// a draggable toolbar with 9 tools (cursor, h-line, trend, ray,
+// rectangle, fib, text, measure, eraser) + color picker + undo/redo
+// + clear. DrawingCanvas overlays the chart with mouse interaction;
+// DrawingEditor pops up when a drawing is selected.
 // ----------------------------------------------------------------------------
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
+import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 
 import { CandlestickChart } from '@/components/chart/CandlestickChart';
 import { TimeframeSelector } from '@/components/chart/TimeframeSelector';
+import { DrawingCanvas } from '@/components/chart/DrawingCanvas';
+import { DrawingToolbar } from '@/components/chart/DrawingToolbar';
+import { DrawingEditor } from '@/components/chart/DrawingEditor';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
 import type { Candle, Timeframe } from '@/types/chart';
 import type { ChartInnerHandle } from '@/components/chart/ChartInner';
+import type { Drawing, DrawingTool } from '@/types/drawing';
+import { DEFAULT_DRAWING_COLOR } from '@/types/drawing';
 
 interface Props {
   oracleSymbol: string;
@@ -49,6 +53,12 @@ interface ChartsResponse {
   candles: Candle[];
 }
 
+let drawingIdCounter = 0;
+function newDrawingId(): string {
+  drawingIdCounter += 1;
+  return `d-${Date.now()}-${drawingIdCounter}`;
+}
+
 export function MarketChart({ oracleSymbol, assetClass }: Props) {
   const options = TIMEFRAMES_BY_CLASS[assetClass];
   const [tf, setTf] = useState<Timeframe>(defaultTimeframe(assetClass));
@@ -60,25 +70,108 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
   const chartRef = useRef<ChartInnerHandle>(null);
   const toolsRef = useRef<HTMLDivElement>(null);
 
-  // Render-phase reset on assetClass change.
+  // Drawing tools state (krait port)
+  const [drawingsOpen, setDrawingsOpen] = useState(false);
+  const [chartInstance, setChartInstance] = useState<IChartApi | null>(null);
+  const [seriesInstance, setSeriesInstance] = useState<ISeriesApi<'Candlestick'> | null>(null);
+  const [drawings, setDrawings] = useState<Drawing[]>([]);
+  const [activeTool, setActiveTool] = useState<DrawingTool>('cursor');
+  const [activeColor, setActiveColor] = useState(DEFAULT_DRAWING_COLOR);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [past, setPast] = useState<Drawing[][]>([]);
+  const [future, setFuture] = useState<Drawing[][]>([]);
+
+  const handleChartReady = useCallback(
+    (chart: IChartApi | null, series: ISeriesApi<'Candlestick'> | null) => {
+      setChartInstance(chart);
+      setSeriesInstance(series);
+    },
+    [],
+  );
+
+  const snapshotForUndo = useCallback(() => {
+    setPast((p) => [...p, drawings]);
+    setFuture([]);
+  }, [drawings]);
+
+  const addDrawing = useCallback((d: Omit<Drawing, 'id'>) => {
+    const id = newDrawingId();
+    setPast((p) => [...p, drawings]);
+    setFuture([]);
+    setDrawings((curr) => [...curr, { ...d, id }]);
+    return id;
+  }, [drawings]);
+
+  const updateDrawing = useCallback((id: string, updates: Partial<Drawing>) => {
+    setDrawings((curr) => curr.map((d) => (d.id === id ? { ...d, ...updates } : d)));
+  }, []);
+
+  const removeDrawing = useCallback((id: string) => {
+    setPast((p) => [...p, drawings]);
+    setFuture([]);
+    setDrawings((curr) => curr.filter((d) => d.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  }, [drawings, selectedId]);
+
+  const undo = useCallback(() => {
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const prev = p[p.length - 1];
+      setFuture((f) => [drawings, ...f]);
+      setDrawings(prev);
+      return p.slice(0, -1);
+    });
+  }, [drawings]);
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const next = f[0];
+      setPast((p) => [...p, drawings]);
+      setDrawings(next);
+      return f.slice(1);
+    });
+  }, [drawings]);
+
+  const clearAll = useCallback(() => {
+    if (drawings.length === 0) return;
+    snapshotForUndo();
+    setDrawings([]);
+    setSelectedId(null);
+  }, [drawings.length, snapshotForUndo]);
+
+  // Render-phase reset on assetClass change. Drawings carry symbol-
+  // specific price coordinates that don't map to a different asset,
+  // so wipe them on symbol switch.
   const [prevAssetClass, setPrevAssetClass] = useState(assetClass);
+  const [prevSymbol, setPrevSymbol] = useState(oracleSymbol);
   if (assetClass !== prevAssetClass) {
     setPrevAssetClass(assetClass);
     setTf(defaultTimeframe(assetClass));
   }
+  if (oracleSymbol !== prevSymbol) {
+    setPrevSymbol(oracleSymbol);
+    setDrawings([]);
+    setSelectedId(null);
+    setPast([]);
+    setFuture([]);
+  }
 
-  // ESC closes the expanded overlay AND the tools dropdown.
+  // ESC handling: tools dropdown → editor → drawings selection →
+  // pending point → expanded overlay. Each layer consumes its own
+  // dismissal so users can back out cleanly.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (toolsOpen) setToolsOpen(false);
+      else if (selectedId) setSelectedId(null);
+      else if (activeTool !== 'cursor') setActiveTool('cursor');
       else if (expanded) setExpanded(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expanded, toolsOpen]);
+  }, [expanded, toolsOpen, selectedId, activeTool]);
 
-  // Close tools dropdown on outside click.
   useEffect(() => {
     if (!toolsOpen) return;
     const onClick = (e: MouseEvent) => {
@@ -174,7 +267,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
       <div className="flex items-center gap-2 flex-wrap">
         <TimeframeSelector value={tf} onChange={setTf} options={options} />
 
-        {/* Zoom cluster — wired to ChartInner's imperative handle */}
+        {/* Zoom cluster */}
         <div className="inline-flex items-stretch rounded-full border-2 border-ink overflow-hidden bg-paper">
           <button
             type="button"
@@ -202,6 +295,24 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
           </button>
         </div>
 
+        {/* Drawing tools toggle */}
+        <button
+          type="button"
+          onClick={() => {
+            setDrawingsOpen((v) => !v);
+            if (drawingsOpen) setActiveTool('cursor');
+          }}
+          aria-label={drawingsOpen ? 'Close drawing tools' : 'Open drawing tools'}
+          aria-pressed={drawingsOpen}
+          className={`${iconBtnClass} ${drawingsOpen ? 'bg-ink text-paper' : ''}`}
+          title="Drawing tools"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
+            <path d="M3 21l3-6 12-12 3 3-12 12-6 3z" />
+            <path d="M14 6l4 4" />
+          </svg>
+        </button>
+
         {/* Indicators dropdown */}
         <div ref={toolsRef} className="relative">
           <button
@@ -220,11 +331,6 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
               <div className="mako-label text-[9px] text-muted px-4 py-2 border-b-2 border-ink bg-surface-elevated">
                 INDICATORS
               </div>
-              {/* Volume only makes sense for asset classes that have
-                  real volume data upstream. FOREX (spot) and the
-                  Yahoo COMEX futures we use for COMMODITIES return
-                  0 volume from the provider, so the histogram would
-                  just be empty bars. */}
               {assetClass !== 'FOREX' &&
                 toggleRow('VOLUME', showVolume, () => setShowVolume((v) => !v))}
               {toggleRow('MA (20)', showMA20, () => setShowMA20((v) => !v))}
@@ -253,6 +359,54 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     </div>
   );
 
+  // Drawing layer + editor pop-up. Shared between collapsed + expanded
+  // forms so toggle state survives the transition.
+  const selectedDrawing = selectedId
+    ? drawings.find((d) => d.id === selectedId) ?? null
+    : null;
+
+  const drawingLayer = (
+    <>
+      <DrawingCanvas
+        chart={chartInstance}
+        series={seriesInstance}
+        drawings={drawings}
+        activeTool={activeTool}
+        activeColor={activeColor}
+        selectedId={selectedId}
+        onAddDrawing={addDrawing}
+        onUpdateDrawing={updateDrawing}
+        onRemoveDrawing={removeDrawing}
+        onSelectDrawing={setSelectedId}
+      />
+      <DrawingToolbar
+        visible={drawingsOpen}
+        activeTool={activeTool}
+        activeColor={activeColor}
+        canUndo={past.length > 0}
+        canRedo={future.length > 0}
+        onToolChange={setActiveTool}
+        onColorChange={setActiveColor}
+        onUndo={undo}
+        onRedo={redo}
+        onClearAll={clearAll}
+        onClose={() => {
+          setDrawingsOpen(false);
+          setActiveTool('cursor');
+        }}
+      />
+      {selectedDrawing && (
+        <DrawingEditor
+          drawing={selectedDrawing}
+          position={{ x: 16, y: 16 }}
+          onUpdate={updateDrawing}
+          onDelete={removeDrawing}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
+    </>
+  );
+
   if (expanded) {
     const overlay = (
       <div
@@ -270,8 +424,8 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
         >
           {header}
           <div
-            className="flex-1"
-            style={{ position: 'relative', minHeight: 0, height: 'calc(100vh - 4rem - 80px)' }}
+            className="flex-1 relative"
+            style={{ minHeight: 0, height: 'calc(100vh - 4rem - 80px)' }}
           >
             <CandlestickChart
               ref={chartRef}
@@ -283,7 +437,9 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
               showVolume={showVolume}
               showMA20={showMA20}
               showEMA50={showEMA50}
+              onChartReady={handleChartReady}
             />
+            {drawingLayer}
           </div>
         </div>
       </div>
@@ -306,7 +462,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
   return (
     <div className={`${cardClass} rotate-[-1deg]`}>
       {header}
-      <div style={{ height: CHART_HEIGHT, position: 'relative' }}>
+      <div className="relative" style={{ height: CHART_HEIGHT }}>
         <CandlestickChart
           ref={chartRef}
           candles={data.candles}
@@ -317,7 +473,9 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
           showVolume={showVolume}
           showMA20={showMA20}
           showEMA50={showEMA50}
+          onChartReady={handleChartReady}
         />
+        {drawingLayer}
       </div>
     </div>
   );
