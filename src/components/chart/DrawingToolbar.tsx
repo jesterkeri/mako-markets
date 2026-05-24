@@ -87,10 +87,14 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
           className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-4"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2.5 px-0.5">
+          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-3 px-0.5">
             COLOR
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          {/* Inline-flex with wrap + generous gap so each swatch is
+              clearly an independent circle — no rings spilling into
+              neighbours. Active state uses a tight 2px paper ring
+              that hugs the circle (no offset). */}
+          <div className="flex flex-wrap gap-3 max-w-[176px]">
             {DRAWING_COLORS.map((color) => {
               const active = activeColor === color;
               return (
@@ -98,12 +102,19 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
                   key={color}
                   onClick={() => { onChange(color); setOpen(false); }}
                   title={color}
-                  className={`w-7 h-7 rounded-md cursor-pointer p-0 transition-shadow ${
-                    active
-                      ? 'ring-2 ring-paper ring-offset-2 ring-offset-ink'
-                      : 'hover:ring-2 hover:ring-paper/60 hover:ring-offset-2 hover:ring-offset-ink'
-                  }`}
-                  style={{ background: color }}
+                  className="w-7 h-7 rounded-full p-0 cursor-pointer transition-shadow"
+                  style={{
+                    background: color,
+                    boxShadow: active
+                      ? '0 0 0 2px #EBE5D9'
+                      : undefined,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active) e.currentTarget.style.boxShadow = '0 0 0 2px rgba(235,229,217,0.5)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active) e.currentTarget.style.boxShadow = '';
+                  }}
                 />
               );
             })}
