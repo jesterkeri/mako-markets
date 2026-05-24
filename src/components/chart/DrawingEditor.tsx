@@ -80,7 +80,7 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
       ref={ref}
       data-drawing-editor
       onMouseDown={(e) => e.stopPropagation()}
-      className="absolute z-40 flex flex-col gap-3 p-3.5 bg-ink border-2 border-ink rounded-xl shadow-brutal min-w-[260px] text-paper"
+      className="absolute z-40 flex flex-col gap-2.5 p-3 bg-ink border-2 border-ink rounded-xl shadow-brutal w-[224px] text-paper"
       style={{ top: pos.y, left: pos.x }}
     >
       {/* Drag header */}
@@ -105,23 +105,27 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
       {/* Color */}
       <div>
         <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2">COLOR</div>
-        <div className="grid grid-cols-8 gap-2 justify-items-center">
+        <div className="grid grid-cols-8 gap-1.5 justify-items-center">
           {DRAWING_COLORS.map((c) => {
             const active = drawing.color === c;
             return (
               <button
                 key={c}
                 onClick={() => onUpdate(drawing.id, { color: c })}
-                className="w-6 h-6 rounded-full p-0 cursor-pointer transition-shadow"
+                className="w-5 h-5 rounded-full p-0 cursor-pointer transition-shadow"
                 style={{
                   background: c,
-                  boxShadow: active ? '0 0 0 2px #EBE5D9' : undefined,
+                  /* Same paper outline trick as the toolbar picker
+                     so the ink swatch stays visible on ink bg. */
+                  boxShadow: active
+                    ? '0 0 0 2px #EBE5D9'
+                    : '0 0 0 1px rgba(235,229,217,0.35)',
                 }}
                 onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.boxShadow = '0 0 0 2px rgba(235,229,217,0.5)';
+                  if (!active) e.currentTarget.style.boxShadow = '0 0 0 2px rgba(235,229,217,0.55)';
                 }}
                 onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.boxShadow = '';
+                  if (!active) e.currentTarget.style.boxShadow = '0 0 0 1px rgba(235,229,217,0.35)';
                 }}
               />
             );
@@ -131,20 +135,20 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
 
       {/* Width */}
       <div>
-        <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2">WIDTH</div>
+        <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-1.5">WIDTH</div>
         <div className="flex gap-1.5">
           {LINE_WIDTHS.map((w) => (
             <button
               key={w}
               onClick={() => onUpdate(drawing.id, { lineWidth: w })}
-              className={`w-9 h-8 flex items-center justify-center border-2 rounded-md cursor-pointer transition-colors ${
+              className={`w-8 h-7 flex items-center justify-center border-2 rounded-md cursor-pointer transition-colors ${
                 drawing.lineWidth === w
                   ? 'bg-paper border-paper'
                   : 'bg-transparent border-paper/30 hover:border-paper/70'
               }`}
             >
               <div
-                className="w-5 rounded-sm"
+                className="w-4 rounded-sm"
                 style={{
                   height: w,
                   background: drawing.lineWidth === w ? 'var(--mako-ink)' : '#EBE5D9',
@@ -157,7 +161,7 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
 
       {/* Style */}
       <div>
-        <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2">STYLE</div>
+        <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-1.5">STYLE</div>
         <div className="flex gap-1.5">
           {LINE_STYLES.map((s) => {
             const active = drawing.lineStyle === s.value;
@@ -165,15 +169,15 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
               <button
                 key={s.value}
                 onClick={() => onUpdate(drawing.id, { lineStyle: s.value })}
-                className={`flex-1 h-8 flex items-center justify-center border-2 rounded-md cursor-pointer transition-colors ${
+                className={`flex-1 h-7 flex items-center justify-center border-2 rounded-md cursor-pointer transition-colors ${
                   active
                     ? 'bg-paper border-paper'
                     : 'bg-transparent border-paper/30 hover:border-paper/70'
                 }`}
               >
-                <svg width="32" height="2" viewBox="0 0 32 2">
+                <svg width="26" height="2" viewBox="0 0 26 2">
                   <line
-                    x1="0" y1="1" x2="32" y2="1"
+                    x1="0" y1="1" x2="26" y2="1"
                     stroke={active ? '#000000' : '#EBE5D9'}
                     strokeWidth="1.5"
                     strokeDasharray={s.dash}
@@ -188,10 +192,10 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
       <div className="h-px bg-paper/15" />
 
       {/* Actions */}
-      <div className="flex gap-2">
+      <div className="flex gap-1.5">
         <button
           onClick={() => onUpdate(drawing.id, { locked: !drawing.locked })}
-          className={`flex-1 h-8 flex items-center justify-center gap-1.5 border-2 rounded-md mako-label text-[10px] cursor-pointer transition-colors ${
+          className={`flex-1 h-7 flex items-center justify-center gap-1 border-2 rounded-md mako-label text-[9px] cursor-pointer transition-colors ${
             drawing.locked
               ? 'bg-signal text-ink border-signal'
               : 'bg-transparent text-paper border-paper/40 hover:border-paper'
@@ -202,7 +206,7 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
         </button>
         <button
           onClick={() => { onDelete(drawing.id); onClose(); }}
-          className="flex-1 h-8 flex items-center justify-center gap-1.5 border-2 border-mako-red rounded-md mako-label text-[10px] cursor-pointer bg-mako-red/20 text-mako-red hover:bg-mako-red/30"
+          className="flex-1 h-7 flex items-center justify-center gap-1 border-2 border-mako-red rounded-md mako-label text-[9px] cursor-pointer bg-mako-red/20 text-mako-red hover:bg-mako-red/30"
         >
           <IconTrash /> DELETE
         </button>

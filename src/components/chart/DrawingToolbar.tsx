@@ -84,17 +84,17 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
       />
       {open && (
         <div
-          className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-4"
+          /* Explicit panel width so the inner grid has a definite
+             box to lay 4 columns into. Absolute-positioned parents
+             default to content width, but grid-cols-4 with no width
+             reads 4×0 and collapses to a stack of 1-col cells. */
+          className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-3 w-[152px]"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-3 text-center">
+          <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2 text-center">
             COLOR
           </div>
-          {/* 4-column grid centered under the trigger button. Each
-              cell holds one circle swatch; gap-3 keeps neighbours
-              from touching. Active state is a tight 2px paper ring
-              on the circle itself (no offset, no scale). */}
-          <div className="grid grid-cols-4 gap-3 justify-items-center">
+          <div className="grid grid-cols-4 gap-2 justify-items-center">
             {DRAWING_COLORS.map((color) => {
               const active = activeColor === color;
               return (
@@ -102,18 +102,20 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
                   key={color}
                   onClick={() => { onChange(color); setOpen(false); }}
                   title={color}
-                  className="w-7 h-7 rounded-full p-0 cursor-pointer transition-shadow"
+                  /* 1px paper outline always present so dark colors
+                     (ink, navy) stay visible against the ink panel. */
+                  className="w-6 h-6 rounded-full p-0 cursor-pointer transition-shadow"
                   style={{
                     background: color,
                     boxShadow: active
                       ? '0 0 0 2px #EBE5D9'
-                      : undefined,
+                      : '0 0 0 1px rgba(235,229,217,0.35)',
                   }}
                   onMouseEnter={(e) => {
-                    if (!active) e.currentTarget.style.boxShadow = '0 0 0 2px rgba(235,229,217,0.5)';
+                    if (!active) e.currentTarget.style.boxShadow = '0 0 0 2px rgba(235,229,217,0.55)';
                   }}
                   onMouseLeave={(e) => {
-                    if (!active) e.currentTarget.style.boxShadow = '';
+                    if (!active) e.currentTarget.style.boxShadow = '0 0 0 1px rgba(235,229,217,0.35)';
                   }}
                 />
               );
