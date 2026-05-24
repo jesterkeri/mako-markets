@@ -79,11 +79,11 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
       <button
         onClick={() => setOpen(!open)}
         title="Drawing color"
-        className="w-6 h-6 rounded-full border-2 border-ink cursor-pointer p-0"
+        className="w-6 h-6 rounded-full border-2 border-paper cursor-pointer p-0"
         style={{ background: activeColor }}
       />
       {open && (
-        <div className="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 grid grid-cols-4 gap-1.5 p-2 bg-paper border-2 border-ink rounded-xl shadow-brutal-sm z-40">
+        <div className="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 grid grid-cols-4 gap-1.5 p-2 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm z-40">
           {DRAWING_COLORS.map((color) => (
             <button
               key={color}
@@ -91,7 +91,7 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
               className="w-6 h-6 rounded-full border-2 cursor-pointer p-0"
               style={{
                 background: color,
-                borderColor: activeColor === color ? 'var(--mako-ink)' : 'transparent',
+                borderColor: activeColor === color ? '#EBE5D9' : 'transparent',
               }}
             />
           ))}
@@ -102,7 +102,7 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
 }
 
 function Divider() {
-  return <div className="w-px h-5 bg-ink/30 mx-0.5 shrink-0" />;
+  return <div className="w-px h-5 bg-paper/30 mx-0.5 shrink-0" />;
 }
 
 function useDraggable(initialPos: { x: number; y: number }) {
@@ -147,12 +147,12 @@ export function DrawingToolbar({
       ref={ref}
       data-drawing-toolbar
       onMouseDown={(e) => e.stopPropagation()}
-      className="absolute z-30 flex items-center gap-1 px-2 py-1.5 bg-paper border-2 border-ink rounded-xl shadow-brutal"
+      className="absolute z-30 flex items-center gap-1 px-2 py-1.5 bg-ink border-2 border-ink rounded-xl shadow-brutal text-paper"
       style={{ top: pos.y, left: pos.x }}
     >
       <div
         onMouseDown={onMouseDown}
-        className="cursor-grab px-1 flex items-center shrink-0 text-ink"
+        className="cursor-grab px-1 flex items-center shrink-0 text-paper"
         title="Drag to move"
       >
         <IconGrip />
@@ -171,8 +171,8 @@ export function DrawingToolbar({
                 title={`${label}${shortcut ? ` (${shortcut})` : ''}`}
                 className={`w-8 h-8 flex items-center justify-center border-2 rounded-md transition-colors ${
                   active
-                    ? 'bg-ink text-paper border-ink'
-                    : 'bg-paper text-ink border-transparent hover:border-ink/50'
+                    ? 'bg-paper text-ink border-paper'
+                    : 'bg-ink text-paper border-transparent hover:bg-paper/10'
                 }`}
               >
                 <Icon />
@@ -190,7 +190,7 @@ export function DrawingToolbar({
         onClick={onUndo}
         disabled={!canUndo}
         title="Undo"
-        className="w-7 h-8 flex items-center justify-center text-ink rounded-md hover:bg-ink/5 disabled:opacity-30 disabled:cursor-default"
+        className="w-7 h-8 flex items-center justify-center text-paper rounded-md hover:bg-paper/10 disabled:opacity-30 disabled:cursor-default"
       >
         <IconUndo />
       </button>
@@ -198,14 +198,14 @@ export function DrawingToolbar({
         onClick={onRedo}
         disabled={!canRedo}
         title="Redo"
-        className="w-7 h-8 flex items-center justify-center text-ink rounded-md hover:bg-ink/5 disabled:opacity-30 disabled:cursor-default"
+        className="w-7 h-8 flex items-center justify-center text-paper rounded-md hover:bg-paper/10 disabled:opacity-30 disabled:cursor-default"
       >
         <IconRedo />
       </button>
       <button
         onClick={onClearAll}
         title="Clear all"
-        className="w-7 h-8 flex items-center justify-center text-mako-red rounded-md hover:bg-mako-red/10"
+        className="w-7 h-8 flex items-center justify-center text-mako-red rounded-md hover:bg-mako-red/15"
       >
         <IconTrash />
       </button>
@@ -215,7 +215,7 @@ export function DrawingToolbar({
       <button
         onClick={onClose}
         title="Close toolbar"
-        className="w-7 h-8 flex items-center justify-center text-ink rounded-md hover:bg-ink/5"
+        className="w-7 h-8 flex items-center justify-center text-paper rounded-md hover:bg-paper/10"
       >
         <IconClose />
       </button>
