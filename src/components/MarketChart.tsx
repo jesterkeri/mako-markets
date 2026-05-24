@@ -77,11 +77,16 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     retry: 1,
   });
 
+  // Shared neobrutal card chrome. Shadow + corner radius match the
+  // YES/NO probability bar and the AdminPanel sitting on the same page.
+  const cardClass =
+    'bg-paper border-2 border-ink rounded-2xl shadow-[8px_8px_0_0_var(--mako-ink)] overflow-hidden';
+
   if (isLoading) {
     return (
       <div
-        className="border-2 border-ink bg-paper animate-pulse"
-        style={{ height: CHART_HEIGHT }}
+        className={`${cardClass} animate-pulse`}
+        style={{ height: CHART_HEIGHT + 64 }}
         aria-label="Loading chart"
       />
     );
@@ -90,15 +95,14 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
   if (error || !data?.candles?.length) {
     return (
       <div
-        className="border-2 border-ink bg-paper flex flex-col items-center justify-center gap-3 p-4"
-        style={{ height: CHART_HEIGHT }}
+        className={`${cardClass} flex flex-col items-center justify-center gap-4 p-8 min-h-[200px]`}
       >
         <div className="mako-label text-sm">CHART UNAVAILABLE</div>
         <button
           type="button"
           onClick={() => refetch()}
           disabled={isFetching}
-          className="border-2 border-ink px-4 py-2 mako-label text-xs bg-paper hover:bg-surface-elevated disabled:opacity-50"
+          className="mako-button mako-label text-xs disabled:opacity-50"
         >
           {isFetching ? 'RETRYING' : 'RETRY'}
         </button>
@@ -107,8 +111,13 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
   }
 
   return (
-    <div className="border-2 border-ink bg-paper overflow-hidden">
-      <TimeframeSelector value={tf} onChange={setTf} options={options} />
+    <div className={cardClass}>
+      <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-3 border-b-2 border-ink">
+        <span className="mako-mono text-xs tracking-widest text-muted">
+          {oracleSymbol}
+        </span>
+        <TimeframeSelector value={tf} onChange={setTf} options={options} />
+      </div>
       <div style={{ height: CHART_HEIGHT, position: 'relative' }}>
         <CandlestickChart
           candles={data.candles}
@@ -119,8 +128,8 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
         />
       </div>
       {assetClass === 'COMMODITIES' && (
-        <div className="mako-label text-[10px] px-3 py-2 border-t-2 border-ink text-muted">
-          DAILY CANDLES ONLY * INTRADAY PENDING PAID DATA TIER
+        <div className="mako-label text-[10px] px-4 py-2 border-t-2 border-ink bg-signal text-ink">
+          DAILY CANDLES ONLY · INTRADAY PENDING PAID DATA TIER
         </div>
       )}
     </div>

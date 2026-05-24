@@ -168,6 +168,24 @@ export function MarketDetailClient({ id }: { id: string }) {
             {market.question}
           </h1>
 
+          {/* Price chart — top placement, immediately under the
+              question. Only rendered for CRYPTO / FOREX / COMMODITIES /
+              STOCKS markets whose oracleRef symbol is in the chart
+              allowlist. Sports / MAKO / MON markets return null and
+              the slot disappears entirely. */}
+          {(() => {
+            const chartConfig = marketToChartConfig(market);
+            if (!chartConfig) return null;
+            return (
+              <section className="min-w-0" aria-label="Price chart">
+                <MarketChart
+                  oracleSymbol={chartConfig.oracleSymbol}
+                  assetClass={chartConfig.assetClass}
+                />
+              </section>
+            );
+          })()}
+
           {/* Tug of War Probability Bar */}
           <div className="flex flex-col gap-3">
             <div className="flex justify-between items-end px-2">
@@ -228,23 +246,6 @@ export function MarketDetailClient({ id }: { id: string }) {
               NEW MARKET
             </Link>
           </div>
-
-          {/* Price chart — only rendered for CRYPTO / FOREX /
-              COMMODITIES / STOCKS markets whose oracleRef symbol is
-              in the chart allowlist. Sports / MAKO / MON markets
-              return null and the slot disappears entirely. */}
-          {(() => {
-            const chartConfig = marketToChartConfig(market);
-            if (!chartConfig) return null;
-            return (
-              <section className="mt-8 min-w-0" aria-label="Price chart">
-                <MarketChart
-                  oracleSymbol={chartConfig.oracleSymbol}
-                  assetClass={chartConfig.assetClass}
-                />
-              </section>
-            );
-          })()}
 
           {/* Awaiting resolution banner */}
           {awaitingResolution && (

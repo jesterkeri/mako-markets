@@ -1,14 +1,13 @@
 // ----------------------------------------------------------------------------
 // src/components/chart/TimeframeSelector.tsx
 //
-// Neobrutalist 4-button row. Ported from krait
-// `apps/web/src/components/chart/TimeframeSelector.tsx` with:
-//   - Re-typed against mako's `Timeframe` ('15m'|'1h'|'4h'|'1d')
-//     rather than krait's M1/M5/H1/D1 enum
-//   - `options` prop so commodity markets can pass `['1d']` only
-//   - Inline-style hex → mako brand classes (border-ink etc.)
+// Rounded-pill segmented control. Sits in the chart card header strip
+// next to the instrument label. Active button swaps to ink/paper; the
+// whole group is a single pill that visually rhymes with the YES/NO
+// probability bar and admin RESOLVE row on the same page.
 //
-// Plan: %TEMP%/mako-166-charts-plan.md  Memory: [[mako-charts]]
+// `role="tab"` + `aria-selected` preserved so the RTL test in
+// `market-chart-component.test.tsx` ('1D' tab query) keeps passing.
 // ----------------------------------------------------------------------------
 
 'use client';
@@ -33,10 +32,11 @@ export function TimeframeSelector({ value, onChange, options }: Props) {
     <div
       role="tablist"
       aria-label="Chart timeframe"
-      className="flex gap-0 border-b-2 border-ink"
+      className="inline-flex items-stretch rounded-full border-2 border-ink overflow-hidden bg-paper"
     >
-      {options.map((tf) => {
+      {options.map((tf, idx) => {
         const active = value === tf;
+        const notLast = idx < options.length - 1;
         return (
           <button
             key={tf}
@@ -44,11 +44,12 @@ export function TimeframeSelector({ value, onChange, options }: Props) {
             aria-selected={active}
             onClick={() => onChange(tf)}
             className={[
-              'mako-label px-3 py-2 text-xs border-r-2 border-ink last:border-r-0',
+              'mako-label text-[11px] tracking-widest px-3.5 py-1.5 min-w-[44px]',
               'transition-colors',
+              notLast ? 'border-r-2 border-ink' : '',
               active
                 ? 'bg-ink text-paper'
-                : 'bg-paper text-ink hover:bg-surface-elevated',
+                : 'bg-paper text-ink hover:bg-ink/5',
             ].join(' ')}
           >
             {LABEL[tf]}
