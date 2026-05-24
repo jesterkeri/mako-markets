@@ -10,25 +10,23 @@ import { AuthMenu } from '@/components/AuthMenu';
 import { MobileChromeHeader } from '@/components/MobileChromeHeader';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
-type Tab = 'all' | 'crypto' | 'football' | 'nba';
+type Tab = 'all' | 'mako' | 'football' | 'nba' | 'crypto' | 'forex' | 'commodities' | 'stocks';
 
 const TAB_TO_MTYPE: Partial<Record<Tab, MarketType>> = {
-  crypto: MarketType.CRYPTO,
-  football: MarketType.FOOTBALL,
-  nba: MarketType.BASKETBALL,
+  mako:        MarketType.MAKO,
+  football:    MarketType.FOOTBALL,
+  nba:         MarketType.BASKETBALL,
+  crypto:      MarketType.CRYPTO,
+  forex:       MarketType.FOREX,
+  commodities: MarketType.COMMODITIES,
+  stocks:      MarketType.STOCKS,
 };
 
 /**
- * Each category pill gets its own base fill so the row reads as a palette,
- * not a wall of identical buttons. Active state presses 1px up/left with a
- * 4×4 contrasting shadow to pop. Idle state has a 2px flat shadow so the
- * chips still feel three-dimensional.
- *
- * Color assignment:
- *  - ALL      → paper (neutral anchor)       · red active shadow
- *  - FOOTBALL → signal (yellow)              · ink active shadow
- *  - CRYPTO   → mako-red (destructive accent)· ink active shadow
- *  - NBA      → ink (negative space)         · signal active shadow
+ * Each category pill gets its own base fill so the row reads as a
+ * palette, not a wall of identical buttons. Order: ALL anchor first,
+ * MAKO immediately after (admin-curated marquee markets), then the
+ * sports duo, then the four price-feed classes.
  */
 const TABS: Array<{
   key: Tab;
@@ -46,10 +44,25 @@ const TABS: Array<{
     activeShadow: 'shadow-[4px_4px_0_0_#D94A3D]',
   },
   {
+    key: 'mako',
+    label: 'MAKO',
+    bg: 'bg-ink',
+    text: 'text-paper',
+    activeShadow: 'shadow-[4px_4px_0_0_#FACC15]',
+    borderClass: 'border-paper',
+  },
+  {
     key: 'football',
     label: 'FOOTBALL',
     bg: 'bg-signal',
     text: 'text-ink',
+    activeShadow: 'shadow-brutal',
+  },
+  {
+    key: 'nba',
+    label: 'NBA',
+    bg: 'bg-mako-orange',
+    text: 'text-paper',
     activeShadow: 'shadow-brutal',
   },
   {
@@ -60,20 +73,37 @@ const TABS: Array<{
     activeShadow: 'shadow-brutal',
   },
   {
-    key: 'nba',
-    label: 'NBA',
-    bg: 'bg-ink',
+    key: 'forex',
+    label: 'FOREX',
+    bg: 'bg-mako-teal',
     text: 'text-paper',
-    activeShadow: 'shadow-[4px_4px_0_0_#FACC15]',
-    borderClass: 'border-paper',
+    activeShadow: 'shadow-brutal',
+  },
+  {
+    key: 'commodities',
+    label: 'COMMODITIES',
+    bg: 'bg-mako-gold',
+    text: 'text-ink',
+    activeShadow: 'shadow-brutal',
+  },
+  {
+    key: 'stocks',
+    label: 'STOCKS',
+    bg: 'bg-mako-blue',
+    text: 'text-paper',
+    activeShadow: 'shadow-brutal',
   },
 ];
 
 const EMPTY_COPY: Record<Tab, string> = {
   all: 'No open markets yet.',
+  mako: 'No MAKO markets open.',
   crypto: 'No crypto markets open.',
   football: 'No football markets open.',
   nba: 'No NBA markets open.',
+  forex: 'No forex markets open.',
+  commodities: 'No commodities markets open.',
+  stocks: 'No stocks markets open.',
 };
 
 

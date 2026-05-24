@@ -3,32 +3,21 @@
 //
 // Public chart-data endpoint. GET /api/charts?s=BTC&tf=1h
 //
+// Single provider: Pyth Benchmarks (TradingView shim). Free, no key,
+// region-stable, same source as the cf-worker resolver. Replaced the
+// TwelveData (CRYPTO/FOREX/STOCKS) + Yahoo Finance (COMMODITIES) split
+// in #166 polish r15. The dual-provider stack had a Lagos-IP region
+// block on Yahoo and the TwelveData free tier excluded commodities.
+//
 // Query schema (zod):
 //   - s: oracleSymbol (canonical on-chain form, case-insensitive)
-//   - tf: '15m' | '1h' | '4h' | '1d' (default '1h')
+//   - tf: '15m' | '1h' | '2h' | '4h' | '1d' (default '1h')
 //
 // Responses:
 //   200 { candles: Candle[] }
-//   400 { error: 'bad_params' | 'timeframe_not_supported' }
+//   400 { error: 'bad_params' }
 //   404 { error: 'unknown_symbol' }
-//   502 { error: 'upstream_failed', provider?: 'stooq' }
-//   503 { error: 'rate_limited' }                  // TwelveData 429
-//
-// Asset-class routing (exhaustive switch with `assertNever`):
-//   CRYPTO / FOREX / STOCKS → TwelveData
-//   COMMODITIES             → Stooq (daily-only; tf=1d required)
-//
-// Server-side cache: Next 16 `unstable_cache` keyed by
-// [providerSymbol, tf] with tiered TTL so the daily budget fits
-// within TwelveData's 8 req/min free-tier ceiling. See plan
-// rate-limit budget table.
-//
-// KNOWN OPERATIONAL RISKS (documented in plan, accepted for v1):
-//   - Cache stampede on TTL expiry (concurrent misses hit upstream)
-//   - Daily-cap exhaustion under sustained scraper traffic
-//
-// Plan: %TEMP%/mako-166-charts-plan.md
-// Memory: [[mako-charts]]
+//   502 { error: 'upstream_failed', provider?: 'pyth' }
 // ----------------------------------------------------------------------------
 
 import { NextRequest } from 'next/server';
@@ -37,14 +26,9 @@ import { z } from 'zod';
 
 import { getChartSymbolByOracle } from '@/lib/chart-symbols';
 import {
-  fetchTwelveDataCandles,
-  TwelveDataRateLimitError,
-  TwelveDataApiError,
-} from '@/lib/chart-providers/twelvedata';
-import {
-  fetchYahooCandles,
-  YahooApiError,
-} from '@/lib/chart-providers/yahoo';
+  fetchPythCandles,
+  PythApiError,
+} from '@/lib/chart-providers/pyth';
 import type { Timeframe } from '@/types/chart';
 
 const Query = z.object({
@@ -59,10 +43,6 @@ const TTL: Record<Timeframe, number> = {
   '4h':   600,
   '1d':  1800,
 };
-
-function assertNever(x: never): never {
-  throw new Error(`unhandled asset class: ${String(x)}`);
-}
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -82,37 +62,11 @@ export async function GET(req: NextRequest) {
 
   const tf = parsed.data.tf;
 
-  // Yahoo natively supports 15m / 60m / 1d for COMMODITIES futures;
-  // 2h and 4h aren't real intervals at the upstream so we reject
-  // them up front instead of burning a cache slot on a known-empty
-  // fetch. CRYPTO / FOREX / STOCKS run through TwelveData and get
-  // the full 15m/1h/2h/4h/1d range.
-  if (
-    entry.assetClass === 'COMMODITIES' &&
-    tf !== '15m' && tf !== '1h' && tf !== '1d'
-  ) {
-    return Response.json({ error: 'timeframe_not_supported' }, { status: 400 });
-  }
-
   const fetcher = unstable_cache(
-    async () => {
-      switch (entry.assetClass) {
-        case 'CRYPTO':
-        case 'FOREX':
-        case 'STOCKS':
-          return fetchTwelveDataCandles({
-            providerSymbol: entry.providerSymbol,
-            timeframe: tf,
-          });
-        case 'COMMODITIES':
-          return fetchYahooCandles({
-            providerSymbol: entry.providerSymbol,
-            timeframe: tf,
-          });
-        default:
-          return assertNever(entry.assetClass);
-      }
-    },
+    async () => fetchPythCandles({
+      providerSymbol: entry.providerSymbol,
+      timeframe: tf,
+    }),
     ['charts', entry.providerSymbol, tf],
     { revalidate: TTL[tf] },
   );
@@ -124,14 +78,8 @@ export async function GET(req: NextRequest) {
       { headers: { 'cache-control': `public, max-age=${TTL[tf]}` } },
     );
   } catch (err) {
-    if (err instanceof TwelveDataRateLimitError) {
-      return Response.json({ error: 'rate_limited' }, { status: 503 });
-    }
-    if (err instanceof YahooApiError) {
-      return Response.json({ error: 'upstream_failed', provider: 'yahoo' }, { status: 502 });
-    }
-    if (err instanceof TwelveDataApiError) {
-      return Response.json({ error: 'upstream_failed', provider: 'twelvedata' }, { status: 502 });
+    if (err instanceof PythApiError) {
+      return Response.json({ error: 'upstream_failed', provider: 'pyth' }, { status: 502 });
     }
     return Response.json({ error: 'upstream_failed' }, { status: 502 });
   }

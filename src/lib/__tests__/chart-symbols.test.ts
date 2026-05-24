@@ -12,7 +12,7 @@ describe('chart-symbols', () => {
       const e = getChartSymbolByOracle('BTC');
       expect(e).toEqual({
         oracleSymbol: 'BTC',
-        providerSymbol: 'BTC/USD',
+        providerSymbol: 'Crypto.BTC/USD',
         assetClass: 'CRYPTO',
       });
     });
@@ -21,7 +21,7 @@ describe('chart-symbols', () => {
       const e = getChartSymbolByOracle('EURUSD');
       expect(e).toEqual({
         oracleSymbol: 'EURUSD',
-        providerSymbol: 'EUR/USD',
+        providerSymbol: 'FX.EUR/USD',
         assetClass: 'FOREX',
       });
     });
@@ -29,10 +29,11 @@ describe('chart-symbols', () => {
     it('returns COMMODITIES entry for XAUUSD', () => {
       const e = getChartSymbolByOracle('XAUUSD');
       expect(e).toEqual({
-        // Stooq → Yahoo migration (#166 polish r5): commodities now
-        // route to Yahoo Finance COMEX futures symbols.
+        // Pyth Benchmarks migration (#166 polish r15): all asset
+        // classes now route through Pyth Benchmarks for region-stable
+        // OHLC data.
         oracleSymbol: 'XAUUSD',
-        providerSymbol: 'GC=F',
+        providerSymbol: 'Metal.XAU/USD',
         assetClass: 'COMMODITIES',
       });
     });
@@ -41,7 +42,7 @@ describe('chart-symbols', () => {
       const e = getChartSymbolByOracle('AAPL');
       expect(e).toEqual({
         oracleSymbol: 'AAPL',
-        providerSymbol: 'AAPL',
+        providerSymbol: 'Equity.US.AAPL/USD',
         assetClass: 'STOCKS',
       });
     });

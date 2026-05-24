@@ -20,7 +20,7 @@ describe('marketToChartConfig', () => {
     });
     expect(marketToChartConfig(m)).toEqual({
       oracleSymbol: 'BTC',
-      providerSymbol: 'BTC/USD',
+      providerSymbol: 'Crypto.BTC/USD',
       assetClass: 'CRYPTO',
     });
   });
@@ -32,7 +32,7 @@ describe('marketToChartConfig', () => {
     });
     expect(marketToChartConfig(m)).toEqual({
       oracleSymbol: 'EURUSD',
-      providerSymbol: 'EUR/USD',
+      providerSymbol: 'FX.EUR/USD',
       assetClass: 'FOREX',
     });
   });
@@ -44,7 +44,7 @@ describe('marketToChartConfig', () => {
     });
     expect(marketToChartConfig(m)).toEqual({
       oracleSymbol: 'XAUUSD',
-      providerSymbol: 'GC=F',
+      providerSymbol: 'Metal.XAU/USD',
       assetClass: 'COMMODITIES',
     });
   });
@@ -56,7 +56,7 @@ describe('marketToChartConfig', () => {
     });
     expect(marketToChartConfig(m)).toEqual({
       oracleSymbol: 'AAPL',
-      providerSymbol: 'AAPL',
+      providerSymbol: 'Equity.US.AAPL/USD',
       assetClass: 'STOCKS',
     });
   });
@@ -117,7 +117,7 @@ describe('marketToChartConfig', () => {
     });
     expect(marketToChartConfig(m)).toEqual({
       oracleSymbol: 'BTC',
-      providerSymbol: 'BTC/USD',
+      providerSymbol: 'Crypto.BTC/USD',
       assetClass: 'CRYPTO',
     });
   });
@@ -131,7 +131,7 @@ describe('marketToChartConfig', () => {
     });
     expect(marketToChartConfig(m)).toEqual({
       oracleSymbol: 'BTC',
-      providerSymbol: 'BTC/USD',
+      providerSymbol: 'Crypto.BTC/USD',
       assetClass: 'CRYPTO',
     });
   });

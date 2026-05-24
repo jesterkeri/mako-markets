@@ -98,7 +98,7 @@ export function AssetSelect({ id, value, onChange, options, disabled }: Props) {
       {open && (
         <div
           role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 bg-paper border-2 border-ink rounded-xl shadow-brutal max-h-[320px] overflow-y-auto"
+          className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 bg-paper border-2 border-ink rounded-xl shadow-brutal max-h-[320px] overflow-y-auto no-scrollbar"
         >
           <div className="flex items-center justify-between px-4 py-2 border-b-2 border-ink bg-surface-elevated mako-label text-[9px] tracking-widest text-muted">
             <span>SYMBOL</span>
