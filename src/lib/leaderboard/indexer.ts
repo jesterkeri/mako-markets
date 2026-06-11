@@ -162,7 +162,11 @@ export interface RunLeaderboardIndexerArgs {
 
 export interface LeaderboardContractScanResult {
   contractAddress: `0x${string}`;
-  mutex: 'acquired' | 'stale-recovered' | 'busy';
+  /// 'error' = this contract's scan threw mid-run; committed chunks
+  /// persist (per-chunk atomicity), the lock was released, and the
+  /// REMAINING contracts still ran (review MINOR-5 — one contract's
+  /// RPC blip must not starve the rest of the list).
+  mutex: 'acquired' | 'stale-recovered' | 'busy' | 'error';
   /// First block this run scanned (null when busy or already at head).
   fromBlock: number | null;
   /// Last block the cursor advanced to (null when busy; unchanged
@@ -170,6 +174,9 @@ export interface LeaderboardContractScanResult {
   scannedTo: number | null;
   /// head − confirmations at run entry; the scan target.
   scanTarget: number | null;
+  /// Rows that actually landed (onConflictDoNothing survivors via
+  /// RETURNING — a re-scan of already-ingested ranges reports 0, not
+  /// the decoded count; review NIT-6).
   eventsInserted: number;
   /// True when the cursor reached scanTarget this run.
   upToDate: boolean;
@@ -178,6 +185,8 @@ export interface LeaderboardContractScanResult {
   /// Non-empty when the success-path lock release failed (lock then
   /// self-heals via stale recovery). Mirrors the PM pattern.
   releaseWarning?: string;
+  /// Present iff mutex === 'error'.
+  error?: string;
 }
 
 export interface RunLeaderboardIndexerResult {
@@ -303,13 +312,20 @@ async function advanceCursorOrThrow(
   contractAddressLower: string,
   acquiredLockedAt: Date,
   endOfChunk: number,
+  scanTarget: number,
 ): Promise<void> {
   // Ownership-gated advance inside the chunk transaction: if the lock
   // was stale-recovered out from under us this matches 0 rows and the
   // whole chunk (event inserts + advance) rolls back together.
+  // last_scan_target rides in the same UPDATE so the read API can
+  // derive `syncing` (scanned < target) without an RPC (MAJOR-1).
   const advanced = await chunkTx
     .update(makoLeaderboardIndexerState)
-    .set({ lastScannedBlock: endOfChunk, updatedAt: new Date() })
+    .set({
+      lastScannedBlock: endOfChunk,
+      lastScanTarget: scanTarget,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(makoLeaderboardIndexerState.chainId, chainId),
@@ -447,20 +463,30 @@ function decodeToRows(
   return rows;
 }
 
+/// Concurrency cap for getBlock prefetches. Steady-state chunks carry
+/// a handful of event blocks; the SEED path (LEADERBOARD_LOG_CHUNK
+/// 1000+, no time budget) can carry hundreds — unbounded Promise.all
+/// there hammers the RPC exactly on the long-pole path (review
+/// MINOR-4; mirrors the PM indexer's prefetchBatchSize discipline).
+const TIMESTAMP_PREFETCH_BATCH = 15;
+
 async function prefetchBlockTimestamps(
   publicClient: PublicClient,
   logs: LedgerLog[],
 ): Promise<Map<string, Date>> {
   const hashes = [...new Set(logs.map((l) => l.blockHash as string))];
   const out = new Map<string, Date>();
-  await Promise.all(
-    hashes.map(async (hash) => {
-      const block = await publicClient.getBlock({
-        blockHash: hash as `0x${string}`,
-      });
-      out.set(hash, new Date(Number(block.timestamp) * 1000));
-    }),
-  );
+  for (let i = 0; i < hashes.length; i += TIMESTAMP_PREFETCH_BATCH) {
+    const batch = hashes.slice(i, i + TIMESTAMP_PREFETCH_BATCH);
+    await Promise.all(
+      batch.map(async (hash) => {
+        const block = await publicClient.getBlock({
+          blockHash: hash as `0x${string}`,
+        });
+        out.set(hash, new Date(Number(block.timestamp) * 1000));
+      }),
+    );
+  }
   return out;
 }
 
@@ -496,35 +522,42 @@ export async function runLeaderboardIndexerOnce(
   for (const contract of contracts) {
     const contractAddressLower = normalizeAddressLower(contract.address);
 
-    const acquired = await acquireContractMutex(
-      db,
-      chainId,
-      contractAddressLower,
-      staleLockMs,
-    );
-    if (acquired === null) {
-      results.push({
-        contractAddress: contractAddressLower,
-        mutex: 'busy',
-        fromBlock: null,
-        scannedTo: null,
-        scanTarget: null,
-        eventsInserted: 0,
-        upToDate: false,
-        budgetExhausted: false,
-      });
-      continue;
-    }
-
-    const { lastScannedBlock, acquiredLockedAt, mutexOutcome } = acquired;
+    // Everything per-contract lives inside try/catch/finally: a throw
+    // for THIS contract records an 'error' result and the loop moves
+    // on — one contract's RPC blip must not starve the rest (MINOR-5).
+    let acquiredLockedAt: Date | null = null;
+    let lastScannedBlock = 0;
+    let mutexOutcome: 'acquired' | 'stale-recovered' = 'acquired';
     let eventsInserted = 0;
     let budgetExhausted = false;
-    let releaseWarning: string | undefined;
     let scannedTo: number | null = null;
     let fromBlock: number | null = null;
     let scanTarget: number | null = null;
 
     try {
+      const acquired = await acquireContractMutex(
+        db,
+        chainId,
+        contractAddressLower,
+        staleLockMs,
+      );
+      if (acquired === null) {
+        results.push({
+          contractAddress: contractAddressLower,
+          mutex: 'busy',
+          fromBlock: null,
+          scannedTo: null,
+          scanTarget: null,
+          eventsInserted: 0,
+          upToDate: false,
+          budgetExhausted: false,
+        });
+        continue;
+      }
+      acquiredLockedAt = acquired.acquiredLockedAt;
+      lastScannedBlock = acquired.lastScannedBlock;
+      mutexOutcome = acquired.mutexOutcome;
+
       const head = bigintToNumber(await publicClient.getBlockNumber());
       scanTarget = head - confirmations;
       // Resume at cursor + 1 — no overlap re-scan; see divergence (1).
@@ -553,37 +586,45 @@ export async function runLeaderboardIndexerOnce(
           timestamps,
         );
 
-        // Per-chunk transaction: inserts + cursor advance are atomic.
-        // onConflictDoNothing makes seed/cron overlap and crash-replay
-        // idempotent against the (tx_hash, log_index) PK.
+        // Per-chunk transaction: inserts + cursor/target advance are
+        // atomic. onConflictDoNothing makes seed/cron overlap and
+        // crash-replay idempotent against the (tx_hash, log_index) PK;
+        // RETURNING gives the count of rows that actually landed
+        // (NIT-6 — re-scans report 0, not the decoded count).
+        const lockToken = acquiredLockedAt;
+        const target = scanTarget;
+        let insertedInChunk = 0;
         await (db as DbOrTx & {
           transaction: <T>(fn: (tx: DbOrTx) => Promise<T>) => Promise<T>;
         }).transaction(async (chunkTx) => {
           if (rows.length > 0) {
-            await chunkTx
+            const landed = await chunkTx
               .insert(makoMarketEvents)
               .values(rows)
               .onConflictDoNothing({
                 target: [makoMarketEvents.txHash, makoMarketEvents.logIndex],
-              });
+              })
+              .returning({ txHash: makoMarketEvents.txHash });
+            insertedInChunk = landed.length;
           }
           await advanceCursorOrThrow(
             chunkTx,
             chainId,
             contractAddressLower,
-            acquiredLockedAt,
+            lockToken,
             chunkEnd,
+            target,
           );
         });
 
-        eventsInserted += rows.length;
+        eventsInserted += insertedInChunk;
         scannedTo = chunkEnd;
         cursor = chunkEnd + 1;
         args.onChunk?.({
           contractAddress: contractAddressLower,
           chunkEnd,
           scanTarget,
-          rowsInChunk: rows.length,
+          rowsInChunk: insertedInChunk,
         });
       }
 
@@ -596,25 +637,42 @@ export async function runLeaderboardIndexerOnce(
         eventsInserted,
         upToDate: (scannedTo ?? lastScannedBlock) >= scanTarget,
         budgetExhausted,
-        releaseWarning,
       });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      results.push({
+        contractAddress: contractAddressLower,
+        mutex: 'error',
+        fromBlock,
+        scannedTo,
+        scanTarget,
+        eventsInserted, // committed chunks persisted before the throw
+        upToDate: false,
+        budgetExhausted: false,
+        error: message,
+      });
+      console.warn(
+        `[leaderboard-indexer] ${contractAddressLower} scan failed: ${message}; continuing with remaining contracts`,
+      );
     } finally {
-      try {
-        await releaseContractMutex(
-          db,
-          chainId,
-          contractAddressLower,
-          acquiredLockedAt,
-        );
-      } catch (err) {
-        releaseWarning = `lock release failed for ${contractAddressLower}: ${
-          err instanceof Error ? err.message : String(err)
-        } (self-heals via stale recovery after ${staleLockMs}ms)`;
-        const last = results[results.length - 1];
-        if (last && last.contractAddress === contractAddressLower) {
-          last.releaseWarning = releaseWarning;
+      if (acquiredLockedAt !== null) {
+        try {
+          await releaseContractMutex(
+            db,
+            chainId,
+            contractAddressLower,
+            acquiredLockedAt,
+          );
+        } catch (err) {
+          const releaseWarning = `lock release failed for ${contractAddressLower}: ${
+            err instanceof Error ? err.message : String(err)
+          } (self-heals via stale recovery after ${staleLockMs}ms)`;
+          const last = results[results.length - 1];
+          if (last && last.contractAddress === contractAddressLower) {
+            last.releaseWarning = releaseWarning;
+          }
+          console.warn(`[leaderboard-indexer] ${releaseWarning}`);
         }
-        console.warn(`[leaderboard-indexer] ${releaseWarning}`);
       }
     }
   }

@@ -72,6 +72,15 @@ interface Board {
   /// Lowest last_scanned_block across indexed contracts — the block
   /// height the board is complete up to. Null until the seed has run.
   indexedThrough: number | null;
+  /// True while ANY contract is mid-backfill: no cursor rows yet, a
+  /// cursor that never completed a scan (target 0), or a cursor behind
+  /// its own last scan target. `indexedThrough === null` alone only
+  /// covers the seconds between migration and the first lock acquire —
+  /// the cursor row is born at acquire with last_scanned_block = 0 and
+  /// then climbs for hours during the backfill, so keying the UI's
+  /// SYNCING banner off null would present a partial, oldest-events-
+  /// first board as authoritative (review MAJOR-1).
+  syncing: boolean;
   generatedAt: string;
 }
 
@@ -92,10 +101,20 @@ async function buildBoard(window: LeaderboardWindow): Promise<Board> {
     cursors.length === 0
       ? null
       : Math.min(...cursors.map((c) => c.lastScannedBlock));
+  // A completed tick ends with scanned === target exactly (the target
+  // is written in the same UPDATE as the final cursor advance), so no
+  // slack threshold is needed: behind-target means mid-backfill or a
+  // budget-exhausted tick still catching up.
+  const syncing =
+    cursors.length === 0 ||
+    cursors.some(
+      (c) => c.lastScanTarget === 0 || c.lastScannedBlock < c.lastScanTarget,
+    );
 
   return {
     rows: boardRows,
     indexedThrough,
+    syncing,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -146,6 +165,7 @@ export async function GET(req: Request) {
       rows: board.rows,
       ...(viewer !== undefined ? { viewer } : {}),
       indexedThrough: board.indexedThrough,
+      syncing: board.syncing,
       generatedAt: board.generatedAt,
     });
   } catch (err) {

@@ -921,6 +921,15 @@ export const makoLeaderboardIndexerState = pgTable(
     chainId: integer('chain_id').notNull(),
     contractAddress: varchar('contract_address', { length: 42 }).notNull(),
     lastScannedBlock: bigint('last_scanned_block', { mode: 'number' }).notNull().default(0),
+    /// The scan target (head − CONFIRMATIONS) of the most recent tick,
+    /// written in the same ownership-gated UPDATE as the cursor
+    /// advance. 0 = never completed a scan computation. The read API
+    /// derives `syncing` from `last_scanned_block < last_scan_target`
+    /// (or target = 0) so the UI can distinguish a mid-backfill board
+    /// from a genuinely caught-up one — `indexedThrough === null` only
+    /// covers the seconds between migration and first acquire (code
+    /// review MAJOR-1).
+    lastScanTarget: bigint('last_scan_target', { mode: 'number' }).notNull().default(0),
     lockedAt: timestamp('locked_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

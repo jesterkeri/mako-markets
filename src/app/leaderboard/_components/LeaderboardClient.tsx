@@ -144,16 +144,16 @@ export default function LeaderboardClient() {
 
       {data ? (
         <>
-          {data.indexedThrough === null ? (
+          {data.syncing ? (
             <div className="border-2 border-ink rounded-2xl bg-signal text-ink p-4 shadow-brutal-sm mb-4">
               <p className="mako-label text-sm">
-                SYNCING MARKET HISTORY — the board fills in once indexing
-                completes.
+                SYNCING MARKET HISTORY — standings below are partial until
+                indexing completes.
               </p>
             </div>
           ) : null}
 
-          {data.rows.length === 0 && data.indexedThrough !== null ? (
+          {data.rows.length === 0 && !data.syncing ? (
             <div className="border-2 border-ink rounded-2xl bg-paper text-ink p-6 shadow-brutal">
               <p className="mako-label">
                 {window === 'week'

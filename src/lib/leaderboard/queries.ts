@@ -20,9 +20,11 @@
 //
 // Weekly window buckets each event by its own block_timestamp. Weekly
 // NET is therefore cash-flow, not performance (a user claiming an old
-// win shows stake-less profit) — which is why the route/UI rank the
-// weekly tab by VOLUME (orderBy: 'staked') with the NET column hidden,
-// per plan open-Q2 option (b).
+// win shows stake-less profit). SHIPPED BEHAVIOR (Joshua's open-Q2
+// call, option a): BOTH windows rank by NET; the weekly tab shows NET
+// with an explanatory cash-flow caption in the UI. The
+// orderBy: 'staked' branch below is RETAINED for the deferred
+// volume-ranked alternative (option b) — production never passes it.
 // ----------------------------------------------------------------------------
 
 import { sql } from 'drizzle-orm';
@@ -47,8 +49,10 @@ export interface LeaderboardRow {
 
 export interface CallerRank {
   row: LeaderboardRow;
-  /// 1-based dense position by NET within the window: 1 + count of
-  /// actors with strictly greater net. Ties share a rank.
+  /// 1-based position under the SAME total order the board renders
+  /// (net DESC, actor ASC) — ties are broken by actor exactly like the
+  /// board's ordinal numbering, so a pinned "YOUR RANK #N" can never
+  /// contradict the board (review MINOR-2).
   rank: number;
 }
 
@@ -99,8 +103,9 @@ function aggregateCte(window: LeaderboardWindow) {
 
 export interface GetLeaderboardRowsArgs {
   window: LeaderboardWindow;
-  /// 'net' for the all-time board; 'staked' (volume) for the weekly
-  /// tab per open-Q2 option (b). Defaults to 'net'.
+  /// Defaults to 'net' — what production uses for BOTH windows.
+  /// 'staked' (volume) is unused in production, retained for the
+  /// deferred option-(b) weekly alternative.
   orderBy?: LeaderboardOrderBy;
   /// Board cap. Plan: top-100.
   limit?: number;
@@ -158,7 +163,9 @@ export async function getCallerRank(
       a.net::text          AS "net",
       a.bets::int          AS "bets",
       a.creator_fees::text AS "creatorFees",
-      (SELECT COUNT(*) + 1 FROM agg b WHERE b.net > a.net)::int AS "rank"
+      (SELECT COUNT(*) + 1 FROM agg b
+        WHERE b.net > a.net
+           OR (b.net = a.net AND b.actor < a.actor))::int AS "rank"
     FROM agg a
     WHERE a.actor = ${addressLower}
   `);

@@ -135,9 +135,10 @@ describe('getLeaderboardRows', () => {
   it('weekly window buckets by event timestamp — including the documented cash-flow distortion', async () => {
     const { db } = await freshDb();
     // Bet 8 days ago, claim yesterday: the weekly tab sees stake-less
-    // profit. This is the distortion plan open-Q2 names; the route/UI
-    // compensate by ranking weekly by VOLUME with NET hidden. Pinned
-    // here so the semantics never drift silently.
+    // profit. This is the distortion plan open-Q2 names; the SHIPPED
+    // decision (Joshua, option a) keeps weekly NET-ranked and explains
+    // it with a cash-flow caption in the UI. Pinned here so the
+    // semantics never drift silently.
     await insertEvent(db, {
       actor: A,
       kind: 'bet',
@@ -206,6 +207,29 @@ describe('getCallerRank', () => {
     expect(c?.rank).toBe(2);
     expect(b?.rank).toBe(3);
     expect(b?.row.net).toBe('-5000000');
+  });
+
+  it('breaks rank ties exactly like the board order (net DESC, actor ASC) — review MINOR-2', async () => {
+    const { db } = await freshDb();
+    // A and B tie at net −5; C leads at +10. Board ordinals: C #1,
+    // A #2 (actor ASC), B #3. Caller rank must match those ordinals.
+    await insertEvent(db, { actor: A, kind: 'bet', amount: '5000000' });
+    await insertEvent(db, { actor: B, kind: 'bet', amount: '5000000' });
+    await insertEvent(db, { actor: C, kind: 'bet', amount: '1000000' });
+    await insertEvent(db, { actor: C, kind: 'claim', amount: '11000000' });
+
+    const board = await getLeaderboardRows(db as never, { window: 'all' });
+    expect(board.map((r) => r.actor)).toEqual([C, A, B]);
+
+    expect(
+      (await getCallerRank(db as never, { window: 'all', address: C }))?.rank,
+    ).toBe(1);
+    expect(
+      (await getCallerRank(db as never, { window: 'all', address: A }))?.rank,
+    ).toBe(2);
+    expect(
+      (await getCallerRank(db as never, { window: 'all', address: B }))?.rank,
+    ).toBe(3);
   });
 
   it('normalizes checksummed input addresses', async () => {

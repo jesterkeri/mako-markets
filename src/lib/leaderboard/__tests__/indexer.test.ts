@@ -109,6 +109,9 @@ interface MockClientOpts {
   /// Throw on getLogs spans wider than this (simulates the public
   /// RPC's range cap). Infinity = never throw.
   maxSpan?: number;
+  /// Always throw getLogs for this address (simulates a per-contract
+  /// RPC failure for the error-isolation test).
+  failAddress?: string;
 }
 
 interface GetLogsCall {
@@ -133,6 +136,9 @@ function mockClient(opts: MockClientOpts): {
       const fromBlock = Number(args.fromBlock);
       const toBlock = Number(args.toBlock);
       calls.push({ address: args.address, fromBlock, toBlock });
+      if (opts.failAddress && args.address === opts.failAddress) {
+        throw new Error(`mock RPC: hard failure for ${args.address}`);
+      }
       const span = toBlock - fromBlock + 1;
       if (span > maxSpan) {
         throw new Error(`mock RPC: range too wide (${span} > ${maxSpan})`);
@@ -231,9 +237,11 @@ describe('runLeaderboardIndexerOnce', () => {
     expect(fee.actor).toBe(BETTOR_LOWER);
     expect(fee.isYes).toBeNull();
 
-    // Cursor advanced + lock released.
+    // Cursor advanced + scan target persisted (the read API derives
+    // `syncing` from scanned < target — review MAJOR-1) + lock released.
     const [state] = await db.select().from(makoLeaderboardIndexerState);
     expect(state.lastScannedBlock).toBe(1000 - LEADERBOARD_CONFIRMATIONS);
+    expect(state.lastScanTarget).toBe(1000 - LEADERBOARD_CONFIRMATIONS);
     expect(state.lockedAt).toBeNull();
   });
 
@@ -263,8 +271,11 @@ describe('runLeaderboardIndexerOnce', () => {
       .set({ lastScannedBlock: 0 });
     const second = await runLeaderboardIndexerOnce(argsBase);
 
-    // Re-scan re-encountered all 3 logs but the PK swallowed them.
+    // Re-scan re-encountered all 3 logs but the PK swallowed them —
+    // and eventsInserted reports the SURVIVORS (0), not the decoded
+    // count (review NIT-6).
     expect(second.contracts[0].mutex).toBe('acquired');
+    expect(second.contracts[0].eventsInserted).toBe(0);
     const rows = await db.select().from(makoMarketEvents);
     expect(rows).toHaveLength(3);
     const [state] = await db.select().from(makoLeaderboardIndexerState);
@@ -365,6 +376,48 @@ describe('runLeaderboardIndexerOnce', () => {
     expect(aRows).toHaveLength(1);
     expect(bRows).toHaveLength(1);
     expect(bRows[0].isYes).toBe(false);
+  });
+
+  it("isolates one contract's failure: records error, releases its lock, scans the rest", async () => {
+    const { db } = await freshDb();
+    const { client } = mockClient({
+      head: 1000,
+      logs: [
+        betLog({
+          address: CONTRACT_B.address,
+          blockNumber: 400n,
+          blockHash: hex32(400),
+          transactionHash: hex32(9100),
+        }),
+      ],
+      failAddress: CONTRACT_A.address, // A's RPC always fails
+    });
+
+    const result = await runLeaderboardIndexerOnce({
+      db: db as never,
+      publicClient: client,
+      chainId: CHAIN,
+      contracts: [CONTRACT_A, CONTRACT_B],
+      chunkSize: 1000,
+    });
+
+    expect(result.contracts).toHaveLength(2);
+    const [a, b] = result.contracts;
+    expect(a.mutex).toBe('error');
+    expect(a.error).toContain('hard failure');
+    expect(a.eventsInserted).toBe(0);
+    // B still ran to completion despite A's failure (review MINOR-5).
+    expect(b.mutex).toBe('acquired');
+    expect(b.eventsInserted).toBe(1);
+    expect(b.upToDate).toBe(true);
+
+    // A's lock was released on the error path; cursor untouched.
+    const states = await db.select().from(makoLeaderboardIndexerState);
+    const aState = states.find(
+      (s) => s.contractAddress === CONTRACT_A.address,
+    )!;
+    expect(aState.lockedAt).toBeNull();
+    expect(aState.lastScannedBlock).toBe(0);
   });
 
   it('short-circuits busy when another worker holds a fresh lock', async () => {

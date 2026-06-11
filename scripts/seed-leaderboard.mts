@@ -22,6 +22,14 @@
 // one transaction against the (tx_hash, log_index) PK, so Ctrl+C and
 // re-run is always safe.
 //
+// LOCK CAVEAT (review NIT-7): a multi-hour pass holds one locked_at for
+// its whole duration — well past LEADERBOARD_STALE_LOCK_MS (5 min). If
+// a cron is accidentally live, it will stale-reclaim the seed's lock
+// mid-pass and the seed aborts with LeaderboardStaleLockLostError (the
+// ordering hazard, via the other direction). That abort is SAFE
+// (committed chunks persist; re-run resumes), but it's another reason
+// the ship order is seed-first, wrangler-deploy-second.
+//
 // RPC note: the PUBLIC Monad RPC caps eth_getLogs at 100 blocks and
 // rate-limits aggressively — a full backfill against it takes hours.
 // Set MONAD_RPC_URL to a private endpoint (Alchemy/dRPC/Ankr) and bump

@@ -42,6 +42,10 @@ export interface LeaderboardWire {
   /// Block height the board is complete up to; null until the one-time
   /// seed backfill has run.
   indexedThrough: number | null;
+  /// True while any contract is mid-backfill — the board may be built
+  /// from oldest events only and must NOT be presented as
+  /// authoritative (drives the SYNCING banner).
+  syncing: boolean;
   generatedAt: string;
 }
 

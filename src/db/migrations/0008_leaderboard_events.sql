@@ -85,6 +85,10 @@ CREATE TABLE IF NOT EXISTS "mako_leaderboard_indexer_state" (
   "chain_id"           integer     NOT NULL,
   "contract_address"   varchar(42) NOT NULL,
   "last_scanned_block" bigint      NOT NULL DEFAULT 0,
+  -- Scan target (head − CONFIRMATIONS) of the most recent tick; 0 =
+  -- never scanned. last_scanned_block < last_scan_target ⇒ the board
+  -- is mid-backfill and the UI must say SYNCING (review MAJOR-1).
+  "last_scan_target"   bigint      NOT NULL DEFAULT 0,
   "locked_at"          timestamptz,
   "updated_at"         timestamptz NOT NULL DEFAULT now(),
 

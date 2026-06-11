@@ -131,6 +131,7 @@ describe('GET /api/leaderboard', () => {
       chainId: CHAIN,
       contractAddress: CONTRACT as `0x${string}`,
       lastScannedBlock: 32700000,
+      lastScanTarget: 32700000, // caught up — scanned === target
     });
 
     const resp = await GET(request('?window=all'));
@@ -144,8 +145,46 @@ describe('GET /api/leaderboard', () => {
     expect(body.rows[0].net).toBe('15000000');
     expect(body.rows[1].displayName).toBeNull(); // anon falls back
     expect(body.indexedThrough).toBe(32700000);
+    expect(body.syncing).toBe(false); // caught-up cursor
     expect(typeof body.generatedAt).toBe('string');
     expect(body.viewer).toBeUndefined(); // no me param
+  });
+
+  it('reports syncing through every mid-backfill state, not just pre-cursor (review MAJOR-1)', async () => {
+    const t = await freshDb();
+    await insertEvent(t, { actor: ANON, kind: 'bet', amount: '1000000' });
+
+    // 1. No cursor rows at all (pre-first-acquire sliver).
+    let body = await (await GET(request(''))).json();
+    expect(body.syncing).toBe(true);
+
+    // 2. Cursor exists but never completed a scan (target still 0) —
+    //    the state acquireContractMutex creates on the very first tick.
+    await t.db.insert(makoLeaderboardIndexerState).values({
+      chainId: CHAIN,
+      contractAddress: CONTRACT as `0x${string}`,
+      lastScannedBlock: 0,
+      lastScanTarget: 0,
+    });
+    body = await (await GET(request(''))).json();
+    expect(body.syncing).toBe(true);
+
+    // 3. Mid-backfill: cursor climbing but behind its scan target —
+    //    the multi-hour window where keying off indexedThrough===null
+    //    showed a partial board as authoritative.
+    await t.db
+      .update(makoLeaderboardIndexerState)
+      .set({ lastScannedBlock: 32650000, lastScanTarget: 32700000 });
+    body = await (await GET(request(''))).json();
+    expect(body.indexedThrough).toBe(32650000); // real number...
+    expect(body.syncing).toBe(true); // ...but still honestly syncing
+
+    // 4. Caught up.
+    await t.db
+      .update(makoLeaderboardIndexerState)
+      .set({ lastScannedBlock: 32700000, lastScanTarget: 32700000 });
+    body = await (await GET(request(''))).json();
+    expect(body.syncing).toBe(false);
   });
 
   it('the shared cache key carries the window and never the caller', async () => {
@@ -220,11 +259,12 @@ describe('GET /api/leaderboard', () => {
     expect('viewer' in allTime).toBe(false);
   });
 
-  it('indexedThrough is null before the seed has ever run', async () => {
+  it('indexedThrough is null and syncing true before any cursor exists', async () => {
     const t = await freshDb();
     await insertEvent(t, { actor: ANON, kind: 'bet', amount: '1000000' });
 
     const body = await (await GET(request(''))).json();
     expect(body.indexedThrough).toBeNull();
+    expect(body.syncing).toBe(true);
   });
 });
