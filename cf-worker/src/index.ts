@@ -1306,7 +1306,8 @@ type VercelCronPath =
   | '/api/cron/aa-fast'
   | '/api/cron/aa-slow'
   | '/api/cron/pm-indexer'
-  | '/api/cron/pm-maintenance';
+  | '/api/cron/pm-maintenance'
+  | '/api/cron/leaderboard';
 
 /// Fire one HTTP cron tick against the Vercel app. Runs as a
 /// "fire and forget" inside ctx.waitUntil so a slow Vercel response
@@ -1346,7 +1347,7 @@ export default {
   // ctx.waitUntil keeps the Worker alive until runResolver finishes
   // (otherwise the event ends when scheduled() returns synchronously).
   //
-  // Five jobs share this single per-minute tick:
+  // Six jobs share this single per-minute tick:
   //   1. Market resolver (always — sports/crypto market lifecycle).
   //   2. AA fast cron (every minute — drains aa_pending_user_ops rows
   //      whose receipt poll died on the request path).
@@ -1357,6 +1358,10 @@ export default {
   //      create/stake/resolution handlers under mutex).
   //   5. Private-markets maintenance (every 5 minutes — stale-pending
   //      sweep + resnapshot reconciliation for the PM indexer).
+  //   6. Leaderboard indexer (every 5 minutes — appends main-market
+  //      BetPlaced/Claimed/CreatorFeePaid rows to the #186 event
+  //      ledger; cold-start backfill is the seed script's job, not
+  //      this cron's).
   //
   // The Vercel pings live HERE (not in vercel.json) because Vercel
   // Hobby plan rejects sub-daily crons. The Worker fires them via
@@ -1387,6 +1392,14 @@ export default {
     if (minute % 5 === 0) {
       ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-slow'));
       ctx.waitUntil(pingVercelCron(env, '/api/cron/pm-maintenance'));
+      // #186: main-market event ledger for /leaderboard. 5-min gate is
+      // deliberate — the read API caches 30-60s over a board that only
+      // shifts when bets/claims land; ~300 Monad blocks per tick is
+      // well under one getLogs chunk. NOTE: first-ever population is
+      // NOT this cron's job — scripts/seed-leaderboard.mts backfills
+      // from the deploy block BEFORE this ping ships (seed first, then
+      // wrangler deploy).
+      ctx.waitUntil(pingVercelCron(env, '/api/cron/leaderboard'));
     }
   },
 
