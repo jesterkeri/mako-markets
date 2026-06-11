@@ -18,11 +18,7 @@ import { createTestDb, type TestDb } from './test-db';
 const cacheKeysSeen: string[][] = [];
 
 vi.mock('next/cache', () => ({
-  unstable_cache: (
-    fn: () => Promise<unknown>,
-    keyParts: string[],
-    _opts: unknown,
-  ) => {
+  unstable_cache: (fn: () => Promise<unknown>, keyParts: string[]) => {
     cacheKeysSeen.push(keyParts);
     return fn; // passthrough — caching behavior itself is Next's, not ours
   },

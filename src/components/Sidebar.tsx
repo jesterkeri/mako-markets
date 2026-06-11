@@ -63,8 +63,19 @@ function CreateIcon() {
   );
 }
 
+function LeaderboardIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" {...STROKE}>
+      <path d="M8 21h8M12 17v4" />
+      <path d="M7 4h10v5a5 5 0 0 1-10 0z" />
+      <path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4" />
+    </svg>
+  );
+}
+
 const items: NavItem[] = [
   { label: 'Markets', path: '/', icon: <MarketsIcon /> },
+  { label: 'Leaderboard', path: '/leaderboard', icon: <LeaderboardIcon /> },
   { label: 'Portfolio', path: '/me', icon: <PortfolioIcon /> },
   { label: 'Create', path: '/create', icon: <CreateIcon /> },
 ];
