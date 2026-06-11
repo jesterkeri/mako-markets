@@ -852,6 +852,84 @@ export const makoMarketOutcomeLabels = pgTable('mako_market_outcome_labels', {
 });
 
 // ----------------------------------------------------------------------------
+// #186 Leaderboard — main-market event ledger.
+//
+// Two tables that mirror the MAIN MakoMarketsV4 contract's per-user events
+// (BetPlaced / Claimed / CreatorFeePaid) into Postgres so /api/leaderboard
+// can aggregate Net PnL without enumerating bettors on-chain (impossible:
+// `getUserBet` needs an address input). Raw event rows, aggregated at read
+// time — NOT running per-address aggregates — so weekly windowing is a
+// timestamp filter and re-ingest is idempotent by construction.
+//
+// Invariants (CHECK constraints live in 0008, Drizzle mirrors column shape
+// only, same pattern as 0006/0007):
+//   - actor / contract_address / tx_hash stored LOWERCASE (ingest
+//     normalizes; the DB enforces). The identity join in
+//     src/lib/leaderboard/identity.ts must still lower() its own side —
+//     user_safes.safe_address is stored CHECKSUMMED (safe.ts:154).
+//   - kind ∈ ('bet','claim','creator_fee'). Text + CHECK, not a pg enum:
+//     the v2 win% metric adds kind='resolution' by swapping one
+//     constraint instead of altering an enum type.
+//   - is_yes is NOT NULL exactly when kind='bet'.
+//   - PK (tx_hash, log_index) — repo precedent (pm_stakes / pm_claims);
+//     strictly stronger than the (contract, tx, log) uniqueness the
+//     reorg/idempotency model requires.
+//   - market_id is TEXT (uint256-safe), unlike mako_market_outcome_labels'
+//     bigint — the ledger only groups/equates on it, never arithmetic;
+//     cast at the join if the two are ever correlated.
+//
+// Reorg safety comes from the indexer's CONFIRMATIONS horizon, NOT from
+// the PK — there is deliberately no deletion path (see
+// src/lib/leaderboard/indexer.ts).
+// ----------------------------------------------------------------------------
+export type MakoMarketEventKind = 'bet' | 'claim' | 'creator_fee';
+
+export const makoMarketEvents = pgTable(
+  'mako_market_events',
+  {
+    chainId: integer('chain_id').notNull(),
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    version: text('version').notNull(),
+    marketId: text('market_id').notNull(),
+    kind: text('kind').$type<MakoMarketEventKind>().notNull(),
+    actor: varchar('actor', { length: 42 }).notNull(),
+    isYes: boolean('is_yes'),
+    amount: numeric('amount', { precision: 78, scale: 0 }).notNull(),
+    blockNumber: bigint('block_number', { mode: 'number' }).notNull(),
+    blockTimestamp: timestamp('block_timestamp', { withTimezone: true }).notNull(),
+    txHash: varchar('tx_hash', { length: 66 }).notNull(),
+    logIndex: integer('log_index').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.txHash, t.logIndex] }),
+    actorIdx: index('mako_market_events_actor').on(t.actor),
+    kindIdx: index('mako_market_events_kind').on(t.kind),
+    timestampIdx: index('mako_market_events_block_timestamp').on(t.blockTimestamp),
+    contractIdx: index('mako_market_events_contract').on(t.chainId, t.contractAddress),
+  }),
+);
+
+// One cursor row per (chain, contract) in LEADERBOARD_CONTRACTS. The
+// indexer scans (last_scanned_block, head − CONFIRMATIONS] in chunks;
+// each chunk's event inserts + cursor advance commit in one transaction.
+// locked_at is the worker lock (stale-recovery threshold MUST exceed the
+// cron route's maxDuration — see the constant-relationship test).
+export const makoLeaderboardIndexerState = pgTable(
+  'mako_leaderboard_indexer_state',
+  {
+    chainId: integer('chain_id').notNull(),
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    lastScannedBlock: bigint('last_scanned_block', { mode: 'number' }).notNull().default(0),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.chainId, t.contractAddress] }),
+  }),
+);
+
+// ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
 // ----------------------------------------------------------------------------
@@ -899,3 +977,7 @@ export type PmIndexerState = typeof pmIndexerState.$inferSelect;
 export type NewPmIndexerState = typeof pmIndexerState.$inferInsert;
 export type MakoMarketOutcomeLabel = typeof makoMarketOutcomeLabels.$inferSelect;
 export type NewMakoMarketOutcomeLabel = typeof makoMarketOutcomeLabels.$inferInsert;
+export type MakoMarketEvent = typeof makoMarketEvents.$inferSelect;
+export type NewMakoMarketEvent = typeof makoMarketEvents.$inferInsert;
+export type MakoLeaderboardIndexerState = typeof makoLeaderboardIndexerState.$inferSelect;
+export type NewMakoLeaderboardIndexerState = typeof makoLeaderboardIndexerState.$inferInsert;
