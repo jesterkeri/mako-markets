@@ -32,6 +32,20 @@ vi.mock('@/db/client', () => ({
   },
 }));
 
+// The route scopes syncing to the CONFIGURED contract set; pin the
+// config to the test fixture contract so cursor-row assertions are
+// deterministic (the real config carries the live v4 address).
+// Literal address: vi.mock factories are hoisted above const bindings.
+vi.mock('@/lib/leaderboard/contracts', () => ({
+  LEADERBOARD_CONTRACTS: [
+    {
+      address: '0x00000000000000000000000000000000000000aa',
+      deployBlock: 100,
+      version: 'v4',
+    },
+  ],
+}));
+
 // Import AFTER mocks bind.
 const { GET } = await import('@/app/api/leaderboard/route');
 
@@ -185,6 +199,46 @@ describe('GET /api/leaderboard', () => {
       .set({ lastScannedBlock: 32700000, lastScanTarget: 32700000 });
     body = await (await GET(request(''))).json();
     expect(body.syncing).toBe(false);
+  });
+
+  it('configured-but-uncursored contracts force syncing; foreign rows cannot vouch (re-review gap)', async () => {
+    const t = await freshDb();
+    await insertEvent(t, { actor: ANON, kind: 'bet', amount: '1000000' });
+
+    // A caught-up cursor for a contract that is NOT in the configured
+    // list must not make the board look synced — the CONFIGURED
+    // contract still has no cursor at all.
+    await t.db.insert(makoLeaderboardIndexerState).values({
+      chainId: CHAIN,
+      contractAddress: '0x00000000000000000000000000000000000000bb',
+      lastScannedBlock: 32700000,
+      lastScanTarget: 32700000,
+    });
+    let body = await (await GET(request(''))).json();
+    expect(body.syncing).toBe(true);
+
+    // Same address as configured but on the WRONG chain: still no
+    // vouching.
+    await t.db.insert(makoLeaderboardIndexerState).values({
+      chainId: 999999,
+      contractAddress: CONTRACT as `0x${string}`,
+      lastScannedBlock: 32700000,
+      lastScanTarget: 32700000,
+    });
+    body = await (await GET(request(''))).json();
+    expect(body.syncing).toBe(true);
+
+    // The CONFIGURED contract's own caught-up cursor flips it.
+    await t.db.insert(makoLeaderboardIndexerState).values({
+      chainId: CHAIN,
+      contractAddress: CONTRACT as `0x${string}`,
+      lastScannedBlock: 32700000,
+      lastScanTarget: 32700000,
+    });
+    body = await (await GET(request(''))).json();
+    expect(body.syncing).toBe(false);
+    // indexedThrough comes from the configured contract only.
+    expect(body.indexedThrough).toBe(32700000);
   });
 
   it('the shared cache key carries the window and never the caller', async () => {

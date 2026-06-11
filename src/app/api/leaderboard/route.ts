@@ -11,6 +11,7 @@ import {
   type LeaderboardWindow,
 } from '@/lib/leaderboard/queries';
 import { resolveLabels } from '@/lib/leaderboard/identity';
+import { LEADERBOARD_CONTRACTS } from '@/lib/leaderboard/contracts';
 
 // ----------------------------------------------------------------------------
 // GET /api/leaderboard?window=all|week[&me=0x…]
@@ -96,18 +97,35 @@ async function buildBoard(window: LeaderboardWindow): Promise<Board> {
     displayName: labels.get(r.actor)?.displayName ?? null,
   }));
 
+  // Scope cursor rows to the CONFIGURED contract set on the active
+  // chain (re-review, post-fix MAJOR-1 gap): a contract added to
+  // LEADERBOARD_CONTRACTS with no cursor row yet means its data is
+  // entirely absent — the board must say syncing even though every
+  // EXISTING row looks caught up. Symmetrically, rows from removed
+  // contracts or other chains must not vouch for this board.
+  // Addresses match exactly: contracts.ts lowercases at the boundary
+  // and the DB CHECK enforces lowercase on contract_address.
   const cursors = await db.select().from(makoLeaderboardIndexerState);
+  const byAddress = new Map(
+    cursors
+      .filter((c) => c.chainId === MONAD_TESTNET_ID)
+      .map((c) => [c.contractAddress, c] as const),
+  );
+  const tracked = LEADERBOARD_CONTRACTS.map((c) => byAddress.get(c.address));
+  const present = tracked.filter(
+    (c): c is NonNullable<typeof c> => c !== undefined,
+  );
   const indexedThrough =
-    cursors.length === 0
+    present.length === 0
       ? null
-      : Math.min(...cursors.map((c) => c.lastScannedBlock));
+      : Math.min(...present.map((c) => c.lastScannedBlock));
   // A completed tick ends with scanned === target exactly (the target
   // is written in the same UPDATE as the final cursor advance), so no
   // slack threshold is needed: behind-target means mid-backfill or a
   // budget-exhausted tick still catching up.
   const syncing =
-    cursors.length === 0 ||
-    cursors.some(
+    present.length < LEADERBOARD_CONTRACTS.length ||
+    present.some(
       (c) => c.lastScanTarget === 0 || c.lastScannedBlock < c.lastScanTarget,
     );
 
