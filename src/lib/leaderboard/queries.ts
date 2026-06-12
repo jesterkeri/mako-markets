@@ -120,8 +120,16 @@ export async function getLeaderboardRows(
   }
   // ORDER BY runs on the numeric aggregate (exact), with actor as a
   // deterministic tiebreak so pagination/snapshots are stable.
+  //
+  // The references MUST be table-qualified (agg.net, not net): the
+  // outer SELECT aliases the ::text casts to the SAME names, and
+  // Postgres resolves a bare identifier in ORDER BY against the OUTPUT
+  // column first — which silently sorted the board LEXICOGRAPHICALLY
+  // ("-4" after "-30"…). Found live on the smoke board (jester at
+  // -0.30 ranked below -4.00); the original tests passed by
+  // coincidence because their fixtures sorted identically both ways.
   const orderExpr =
-    orderBy === 'staked' ? sql`staked DESC` : sql`net DESC`;
+    orderBy === 'staked' ? sql`agg.staked DESC` : sql`agg.net DESC`;
   const result = await db.execute(sql`
     WITH agg AS (${aggregateCte(window)})
     SELECT
@@ -132,7 +140,7 @@ export async function getLeaderboardRows(
       bets::int           AS "bets",
       creator_fees::text  AS "creatorFees"
     FROM agg
-    ORDER BY ${orderExpr}, actor ASC
+    ORDER BY ${orderExpr}, agg.actor ASC
     LIMIT ${limit}
   `);
   return unwrapRows(result).map(toRow);

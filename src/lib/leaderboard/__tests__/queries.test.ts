@@ -25,6 +25,8 @@ const CONTRACT = '0x00000000000000000000000000000000000000aa' as const;
 const A = '0x000000000000000000000000000000000000a11c' as const;
 const B = '0x000000000000000000000000000000000000b22d' as const;
 const C = '0x000000000000000000000000000000000000c33e' as const;
+const D = '0x000000000000000000000000000000000000d44f' as const;
+const E = '0x000000000000000000000000000000000000e55a' as const;
 
 let testDb: TestDb | null = null;
 let txCounter = 0;
@@ -207,6 +209,64 @@ describe('getCallerRank', () => {
     expect(c?.rank).toBe(2);
     expect(b?.rank).toBe(3);
     expect(b?.row.net).toBe('-5000000');
+  });
+
+  it('orders NUMERICALLY, never lexicographically (live-board regression)', async () => {
+    const { db } = await freshDb();
+    // Reproduces the production board that shipped the bug: mixed-
+    // magnitude NEGATIVE nets order differently as text than as
+    // numbers (text DESC puts "-4…" above "-3…" above "-20…"). A bare
+    // `ORDER BY net` bound to the ::text OUTPUT alias instead of the
+    // numeric CTE column; the fix table-qualifies (agg.net). The
+    // original fixtures passed both ways by coincidence — these don't.
+    const book: Array<[string, string, string]> = [
+      // [actor, staked, won] → net
+      [A, '5000000', '1000000'], //  -4.00
+      [B, '24400000', '24100000'], // -0.30  ← must be #1
+      [C, '20000000', '0'], //       -20.00 ← must be LAST
+      [D, '2000000', '0'], //         -2.00
+      [E, '10000000', '0'], //       -10.00
+    ];
+    for (const [actor, staked, won] of book) {
+      await insertEvent(db, { actor, kind: 'bet', amount: staked });
+      if (won !== '0') {
+        await insertEvent(db, { actor, kind: 'claim', amount: won });
+      }
+    }
+
+    const rows = await getLeaderboardRows(db as never, { window: 'all' });
+    expect(rows.map((r) => r.net)).toEqual([
+      '-300000', // B
+      '-2000000', // D
+      '-4000000', // A
+      '-10000000', // E
+      '-20000000', // C
+    ]);
+
+    // Rank and board MUST agree position-for-position — the bug's
+    // visible symptom was rank computing numerically while the board
+    // sorted as text, so the same user held two different ranks.
+    for (let i = 0; i < rows.length; i++) {
+      const r = await getCallerRank(db as never, {
+        window: 'all',
+        address: rows[i].actor,
+      });
+      expect(r?.rank).toBe(i + 1);
+    }
+
+    // Volume ordering has the same text-vs-number hazard ('5…' sorts
+    // above '22…' as text).
+    const byVolume = await getLeaderboardRows(db as never, {
+      window: 'all',
+      orderBy: 'staked',
+    });
+    expect(byVolume.map((r) => r.staked)).toEqual([
+      '24400000',
+      '20000000',
+      '10000000',
+      '5000000',
+      '2000000',
+    ]);
   });
 
   it('breaks rank ties exactly like the board order (net DESC, actor ASC) — review MINOR-2', async () => {
