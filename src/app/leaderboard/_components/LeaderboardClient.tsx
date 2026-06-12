@@ -22,8 +22,12 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useAccount } from 'wagmi';
 
+import { AuthMenu } from '@/components/AuthMenu';
+import { MobileChromeHeader } from '@/components/MobileChromeHeader';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useUser } from '@/lib/use-user';
 import {
   useLeaderboard,
@@ -93,8 +97,34 @@ export default function LeaderboardClient() {
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
-      <h1 className="mako-display text-3xl md:text-4xl mb-2">LEADERBOARD</h1>
+    // Same page chrome as the home feed (HomeClient): `main.flex-1`
+    // claims the layout's flex column (a bare div shrinks to content
+    // width — the original "squished" bug), the sticky h-12 header bar
+    // lines up with the Sidebar brand row + MarketIntelAside header,
+    // and the content wrapper matches home's max-w-6xl mx-auto w-full.
+    <main className="flex-1 flex flex-col min-h-screen">
+      <MobileChromeHeader />
+
+      <div className="flex-1 w-full flex flex-col">
+        <header className="hidden md:flex items-center justify-between px-6 lg:px-8 h-12 border-b-2 border-chrome-divider bg-chrome text-chrome-fg sticky top-0 z-30">
+          <h1 className="mako-display text-sm lg:text-base text-chrome-fg">LEADERBOARD</h1>
+          <div className="flex items-center gap-2">
+            <AuthMenu className="px-3! py-1.5! text-[11px]!" />
+            <ThemeToggle />
+            <Link
+              href="/create"
+              className="mako-button mako-button--signal mako-label px-3! py-1.5! text-[11px]!"
+            >
+              + NEW MARKET
+            </Link>
+          </div>
+        </header>
+
+        <div className="px-4 sm:px-6 lg:px-8 py-5 md:py-6 max-w-6xl mx-auto w-full">
+      {/* Mobile heading — the desktop title lives in the flush header bar above */}
+      <div className="flex items-baseline justify-between mb-2 md:hidden">
+        <h1 className="mako-display text-[clamp(1.875rem,3vw,2.25rem)] text-canvas-fg">LEADERBOARD</h1>
+      </div>
       <p className="mako-body text-sm opacity-70 mb-6">
         PnL counts claimed winnings and refunds. Unclaimed payouts aren&apos;t
         included yet.
@@ -227,7 +257,9 @@ export default function LeaderboardClient() {
           </p>
         </>
       ) : null}
-    </div>
+        </div>
+      </div>
+    </main>
   );
 }
 
