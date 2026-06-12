@@ -217,7 +217,22 @@ type BasketballGameResult = {
 type NbaFetchState = {
   attempted: boolean;
   ok: boolean;
+  /// Per-gameId direct lookups already attempted this tick. The batched
+  /// window fetch only covers the last 2 days; markets that stall longer
+  /// (key outage, worker downtime) reference games the window can never
+  /// see again, so misses fall back to GET /v1/games/<id>.
+  byIdAttempted: Set<number>;
+  /// gameIds the per-id endpoint answered 404 for — the ONLY evidence
+  /// strong enough to orphan-refund. Absence from the 2-day window
+  /// proves nothing about an old game, and refunding a game that
+  /// actually happened robs the winning side.
+  byIdNotFound: Set<number>;
+  /// Remaining per-id lookups this tick. balldontlie's free tier allows
+  /// 5 req/min; the window fetch spends 1, this budget caps the rest.
+  byIdBudget: number;
 };
+
+const NBA_BY_ID_BUDGET_PER_TICK = 4;
 
 function decodeOracleRefString(ref: Hex): string | null {
   try {
@@ -853,6 +868,59 @@ async function fetchNbaGameCache(
   }
 }
 
+/// Budgeted per-game fallback for gameIds outside the 2-day window
+/// fetch. A 404 is recorded as definitive not-found (orphan-refund
+/// eligible); every other failure is treated as transient so a stale
+/// market keeps waiting instead of being wrongly refunded.
+async function fetchNbaGameById(
+  cache: Map<number, BasketballGameResult>,
+  state: NbaFetchState,
+  apiKey: string,
+  gameId: number,
+): Promise<void> {
+  if (cache.has(gameId) || state.byIdAttempted.has(gameId)) return;
+  if (state.byIdBudget <= 0) return;
+  state.byIdAttempted.add(gameId);
+  state.byIdBudget--;
+  try {
+    const res = await fetch(`https://api.balldontlie.io/v1/games/${gameId}`, {
+      headers: { Authorization: apiKey, Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT },
+    });
+    if (res.status === 404) {
+      state.byIdNotFound.add(gameId);
+      return;
+    }
+    if (res.status === 429) {
+      // Free tier is 5 req/min — stop spending lookups this tick; the
+      // next tick gets a fresh budget.
+      state.byIdBudget = 0;
+      console.warn(`[resolver] balldontlie game ${gameId}: rate limited — pausing by-id lookups this tick`);
+      return;
+    }
+    if (!res.ok) {
+      console.warn(`[resolver] balldontlie game ${gameId}: upstream ${res.status}`);
+      return;
+    }
+    const data = (await res.json()) as {
+      data?: {
+        id: number;
+        status?: string;
+        home_team_score?: number | null;
+        visitor_team_score?: number | null;
+      };
+    };
+    const g = data.data;
+    if (!g || typeof g.id !== 'number') return;
+    cache.set(g.id, {
+      status: g.status ?? 'UNKNOWN',
+      homeScore: g.home_team_score ?? null,
+      visitorScore: g.visitor_team_score ?? null,
+    });
+  } catch (err) {
+    console.warn(`[resolver] balldontlie game ${gameId} fetch failed: ${(err as Error).message}`);
+  }
+}
+
 // --------------------------------------------------------------------------
 // Main tick
 // --------------------------------------------------------------------------
@@ -997,7 +1065,13 @@ export async function runResolver(env: Env): Promise<void> {
   const footballCache = new Map<string, FootballFetchResult>();
   const footballSearchCache = new Map<string, FootballSearchMatch[]>();
   const nbaGameCache = new Map<number, BasketballGameResult>();
-  const nbaFetchState: NbaFetchState = { attempted: false, ok: false };
+  const nbaFetchState: NbaFetchState = {
+    attempted: false,
+    ok: false,
+    byIdAttempted: new Set(),
+    byIdNotFound: new Set(),
+    byIdBudget: NBA_BY_ID_BUDGET_PER_TICK,
+  };
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
 
   // Pre-fetch markets in small parallel chunks, pausing between each. viem's
@@ -1149,19 +1223,31 @@ export async function runResolver(env: Env): Promise<void> {
       }
 
       await fetchNbaGameCache(nbaGameCache, nbaFetchState, cfg.balldontlieKey);
+      // The window fetch only sees the last 2 days; a market that
+      // stalled longer (key outage, worker downtime) references a game
+      // the window can never see again. Fall back to a budgeted
+      // per-game lookup so stale games RESOLVE with real scores.
+      if (!nbaGameCache.has(parsed.gameId)) {
+        await fetchNbaGameById(nbaGameCache, nbaFetchState, cfg.balldontlieKey, parsed.gameId);
+      }
       const result = nbaGameCache.get(parsed.gameId);
       if (!result) {
-        if (!nbaFetchState.ok) {
-          console.log(`[${ts}] market ${i}: nba game ${parsed.gameId} upstream error — pending (transient, will retry)`);
-          skipped++;
-          continue;
-        }
-        const pastClose = nowSec - market.closeTime;
-        if (pastClose > ORPHAN_REFUND_DELAY_SEC) {
-          outcome = Outcome.REFUND;
-          reason = `nba ${parsed.gameId} not found upstream · orphan refund (${pastClose}s past close)`;
+        // Orphan-refund requires DEFINITIVE evidence: a 404 from the
+        // per-game endpoint. Window absence or transient upstream
+        // errors keep the market pending — never refund a game that
+        // may simply not have been fetched yet.
+        if (nbaFetchState.byIdNotFound.has(parsed.gameId)) {
+          const pastClose = nowSec - market.closeTime;
+          if (pastClose > ORPHAN_REFUND_DELAY_SEC) {
+            outcome = Outcome.REFUND;
+            reason = `nba ${parsed.gameId} 404 upstream · orphan refund (${pastClose}s past close)`;
+          } else {
+            console.log(`[${ts}] market ${i}: nba game ${parsed.gameId} 404 upstream — pending (${pastClose}s / ${ORPHAN_REFUND_DELAY_SEC}s orphan grace)`);
+            skipped++;
+            continue;
+          }
         } else {
-          console.log(`[${ts}] market ${i}: no balldontlie result for game ${parsed.gameId} — pending (${pastClose}s / ${ORPHAN_REFUND_DELAY_SEC}s orphan grace)`);
+          console.log(`[${ts}] market ${i}: no balldontlie result for game ${parsed.gameId} yet — pending (will retry)`);
           skipped++;
           continue;
         }
