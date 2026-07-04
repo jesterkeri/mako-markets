@@ -64,6 +64,13 @@
       "when": 1781206878031,
       "tag": "0008_leaderboard_events",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783091210332,
+      "tag": "0009_comments",
+      "breakpoints": true
     }
   ]
 }

@@ -23,6 +23,8 @@
     "test:pm:watch": "vitest src/lib/private-markets",
     "test:lb": "vitest run src/lib/leaderboard",
     "test:lb:watch": "vitest src/lib/leaderboard",
+    "test:comments": "vitest run src/lib/comments src/app/api/comments",
+    "test:comments:watch": "vitest src/lib/comments src/app/api/comments",
     "smoke:pm-indexer": "tsx --conditions=react-server scripts/run-pm-indexer-once.mts",
     "smoke:pm-maintenance": "tsx --conditions=react-server scripts/run-pm-maintenance-once.mts",
     "db:generate": "tsx scripts/db-generate-guard.mts",

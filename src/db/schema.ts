@@ -713,6 +713,11 @@ export const pmMarkets = pgTable(
     frozenAt: timestamp('frozen_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    /// #182 Comments: PM creator's on/off toggle for this market's comment
+    /// thread. Added by 0009. Default ON; the whole PM comment surface ships
+    /// dark behind isPmEnabled(). Set false → the POST handler 403s
+    /// `comments_disabled` but existing comments stay readable by slug-holders.
+    commentsEnabled: boolean('comments_enabled').notNull().default(true),
   },
   // All indexes (partial uniques + supporting btrees) live in the SQL
   // migration — see 0006 for the full set.
@@ -939,6 +944,65 @@ export const makoLeaderboardIndexerState = pgTable(
 );
 
 // ----------------------------------------------------------------------------
+// #182 Comments. One table for BOTH scopes — 'main' (MakoMarketsV4 markets,
+// keyed by the on-chain (chain_id, contract_address, market_id) the SERVER
+// stamps from env; the client only supplies the market id) and 'pm' (private
+// markets, keyed by the pm_markets row id). Shape invariants + the octet-length
+// body bound + lowercase contract live as CHECKs in 0009_comments.sql (Drizzle
+// can't emit them). Soft-delete only: deleted_at/deleted_by set via UPDATE,
+// body stripped from the wire on read. One-level reply depth is enforced in the
+// POST handler (a cross-row rule; not expressible as a column CHECK).
+// ----------------------------------------------------------------------------
+export const marketComments = pgTable(
+  'market_comments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    scope: text('scope').notNull(), // 'main' | 'pm' (CHECK in 0009)
+    // main-market target — all three present iff scope='main'.
+    chainId: integer('chain_id'),
+    contractAddress: varchar('contract_address', { length: 42 }),
+    marketId: text('market_id'),
+    // PM target — present iff scope='pm'.
+    pmMarketDbId: uuid('pm_market_db_id').references(() => pmMarkets.id, {
+      onDelete: 'cascade',
+    }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Self-reference: a reply points at its top-level parent. Depth-1 is an
+    // app-layer rule (the POST handler rejects a parent that itself has a
+    // parent). ON DELETE CASCADE is correct-by-construction; the live path
+    // is soft-delete, so it never fires.
+    parentId: uuid('parent_id'),
+    body: text('body').notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedBy: text('deleted_by'), // 'owner' | 'admin' | null (CHECK in 0009)
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // Partial + supporting indexes live in 0009_comments.sql (Drizzle's index
+  // DSL doesn't reliably emit the WHERE clauses — same pattern as 0006/0008).
+);
+
+// #182 Comments: per-(user, window) ATTEMPT counter. Incremented atomically
+// BEFORE the getMarket RPC in the POST handler (incrementOrReject shape, cf.
+// aaSponsorLimits) so it throttles ATTEMPTS — including 404s — not just
+// successful inserts, hard-bounding RPC burn. window_key = 'm:<floor(epoch/60)>'
+// (60s, cap 4) or 'd:<yyyy-mm-dd UTC>' (per UTC calendar day, cap 100).
+export const commentRateLimits = pgTable(
+  'comment_rate_limits',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    windowKey: text('window_key').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.windowKey] }),
+  }),
+);
+
+// ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
 // ----------------------------------------------------------------------------
@@ -990,3 +1054,8 @@ export type MakoMarketEvent = typeof makoMarketEvents.$inferSelect;
 export type NewMakoMarketEvent = typeof makoMarketEvents.$inferInsert;
 export type MakoLeaderboardIndexerState = typeof makoLeaderboardIndexerState.$inferSelect;
 export type NewMakoLeaderboardIndexerState = typeof makoLeaderboardIndexerState.$inferInsert;
+export type MarketComment = typeof marketComments.$inferSelect;
+export type NewMarketComment = typeof marketComments.$inferInsert;
+export type CommentScope = MarketComment['scope'];
+export type CommentRateLimit = typeof commentRateLimits.$inferSelect;
+export type NewCommentRateLimit = typeof commentRateLimits.$inferInsert;

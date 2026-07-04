@@ -53,6 +53,14 @@ export async function createTestDb(): Promise<TestDb> {
     if (!trimmed) continue;
     await client.exec(trimmed);
   }
+  // #182 (0009) adds pm_markets.comments_enabled. The shared Drizzle schema now
+  // declares that column, so db.insert(pmMarkets) emits it — this harness must
+  // carry it even though the PM tests never touch comments. Applying just the
+  // ALTER (not all of 0009, which FKs to a users table this harness lacks)
+  // keeps the harness minimal while matching the Drizzle model.
+  await client.exec(
+    `ALTER TABLE "pm_markets" ADD COLUMN IF NOT EXISTS "comments_enabled" boolean NOT NULL DEFAULT true;`,
+  );
   const db = drizzle(client, { schema });
   return {
     client,
