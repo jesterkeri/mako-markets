@@ -32,6 +32,7 @@ const POST_ERROR_COPY: Record<string, string> = {
   rate_limited: 'Slow down a moment, then try again.',
   comments_disabled: 'Comments are turned off for this market.',
   market_not_found: 'This market could not be found.',
+  market_check_unavailable: "Couldn't reach the chain. Try again shortly.",
   parent_deleted: 'That comment was deleted.',
   parent_not_top_level: 'You can only reply to a top-level comment.',
   unauthorized: 'Sign in to comment.',

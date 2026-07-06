@@ -25,7 +25,7 @@ import { isPmEnabled } from '@/lib/pm-enabled';
 
 import { decodeCursor, type Cursor } from '@/lib/comments/cursor';
 import {
-  mainMarketExists,
+  checkMainMarket,
   resolveMainTarget,
   resolvePmTarget,
 } from '@/lib/comments/market-target';
@@ -139,8 +139,13 @@ export async function POST(req: Request) {
 
   let target: CommentTarget;
   if (parsed.scope === 'main') {
-    if (!(await mainMarketExists(parsed.marketId))) {
-      return json({ error: 'market_not_found' }, 404);
+    // Tri-state: 'absent' is a real 404; 'unverifiable' means the RPC read
+    // threw (provider down / rate-limited) — still fail closed (no write),
+    // but 503 so the UI says "try again" instead of a misleading "not found".
+    const check = await checkMainMarket(parsed.marketId);
+    if (check === 'absent') return json({ error: 'market_not_found' }, 404);
+    if (check === 'unverifiable') {
+      return json({ error: 'market_check_unavailable' }, 503);
     }
     target = resolveMainTarget(parsed.marketId);
   } else {

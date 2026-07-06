@@ -29,8 +29,10 @@ const state = vi.hoisted(() => ({
   existsMarkets: new Set<string>(),
   pmMap: new Map<string, { target: unknown; commentsEnabled: boolean }>(),
   // A spy so a test can prove the throttle short-circuits BEFORE this RPC.
-  mainMarketExists: vi.fn((marketId: string) =>
-    Promise.resolve(state.existsMarkets.has(marketId)),
+  // Tri-state: 'exists' when the id is in existsMarkets, else 'absent';
+  // tests force 'unverifiable' via mockResolvedValueOnce.
+  checkMainMarket: vi.fn((marketId: string) =>
+    Promise.resolve(state.existsMarkets.has(marketId) ? 'exists' : 'absent'),
   ),
 }));
 
@@ -49,7 +51,7 @@ vi.mock('@/lib/admin-session', () => ({
 vi.mock('@/lib/pm-enabled', () => ({ isPmEnabled: () => state.pmEnabled }));
 vi.mock('@/lib/comments/market-target', () => ({
   resolveMainTarget: (marketId: string) => ({ ...MAIN_TARGET, marketId }),
-  mainMarketExists: (marketId: string) => state.mainMarketExists(marketId),
+  checkMainMarket: (marketId: string) => state.checkMainMarket(marketId),
   resolvePmTarget: (slug: string) => Promise.resolve(state.pmMap.get(slug) ?? null),
 }));
 
@@ -68,7 +70,7 @@ beforeEach(async () => {
   state.pmEnabled = false;
   state.existsMarkets = new Set();
   state.pmMap = new Map();
-  state.mainMarketExists.mockClear();
+  state.checkMainMarket.mockClear();
 });
 afterEach(async () => {
   await tdb.close();
@@ -111,9 +113,17 @@ describe('POST /api/comments — gate order', () => {
   });
   it('404 when the market does not exist on-chain', async () => {
     state.session = { userId: await makeUser() };
-    // existsMarkets empty → mainMarketExists false
+    // existsMarkets empty → checkMainMarket resolves 'absent' → 404
     const res = await POST(postReq({ scope: 'main', marketId: '5', body: 'hi' }));
     expect(res.status).toBe(404);
+  });
+  it('503 (not 404) when the existence RPC is unverifiable (chain unreachable)', async () => {
+    state.session = { userId: await makeUser() };
+    // Simulate the getMarket read throwing (provider down / rate-limited).
+    state.checkMainMarket.mockResolvedValueOnce('unverifiable');
+    const res = await POST(postReq({ scope: 'main', marketId: '5', body: 'hi' }));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe('market_check_unavailable');
   });
   it('201 on a valid main comment; then GET returns it', async () => {
     state.session = { userId: await makeUser('Ann') };
@@ -134,12 +144,12 @@ describe('POST /api/comments — gate order', () => {
       expect((await POST(postReq({ scope: 'main', marketId: '5', body: `c${i}` }))).status).toBe(201);
     }
     // Reset the spy so we measure only the throttled attempt below.
-    state.mainMarketExists.mockClear();
+    state.checkMainMarket.mockClear();
     expect((await POST(postReq({ scope: 'main', marketId: '5', body: 'x' }))).status).toBe(429);
     // Gate-order proof: a throttled POST short-circuits at 429 and never calls
-    // mainMarketExists. A refactor that moved the RPC before the throttle would
+    // checkMainMarket. A refactor that moved the RPC before the throttle would
     // fail here even though the "429 on 5th attempt" assertion still passed.
-    expect(state.mainMarketExists).not.toHaveBeenCalled();
+    expect(state.checkMainMarket).not.toHaveBeenCalled();
   });
 });
 
@@ -224,7 +234,7 @@ describe('DELETE /api/comments/[id]', () => {
 
     state.session = { userId: other };
     expect((await DELETE(delReq(), delCtx(top.id))).status).toBe(404);
-    let page = await (await GET(getReq('scope=main&marketId=5'))).json();
+    const page = await (await GET(getReq('scope=main&marketId=5'))).json();
     expect(page.comments[0].deleted).toBe(false);
 
     state.session = { userId: owner };

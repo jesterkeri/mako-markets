@@ -8,8 +8,9 @@ import 'server-only';
 // marketId) so nobody can plant a comment on an arbitrary contract key. For PM
 // markets it resolves the slug → confirmed row + comments_enabled.
 //
-// mainMarketExists is the on-chain getMarket read the POST handler runs AFTER
-// the attempt throttle (so it can't be used to burn RPC).
+// checkMainMarket is the on-chain getMarket read the POST handler runs AFTER
+// the attempt throttle (so it can't be used to burn RPC). It returns a
+// tri-state so an unreachable RPC surfaces as 503, not a misleading 404.
 // ----------------------------------------------------------------------------
 
 import { and, eq } from 'drizzle-orm';
@@ -38,9 +39,22 @@ export function resolveMainTarget(marketId: string): MainTarget {
   };
 }
 
+/// Tri-state result of the on-chain existence check:
+///   - 'exists'       — getMarket returned a market with a non-empty question.
+///   - 'absent'       — getMarket returned but the market has no question
+///                      (nonexistent id) → the write should 404.
+///   - 'unverifiable' — the RPC read THREW (provider down / rate-limited /
+///                      capacity exceeded). We could NOT confirm existence, so
+///                      the gate still fails CLOSED (no write), but the route
+///                      surfaces a 503 "try again" instead of a misleading
+///                      "market not found". Keeps the reviewed fail-closed
+///                      control; only the reported cause becomes honest.
+export type MainMarketCheck = 'exists' | 'absent' | 'unverifiable';
+
 /// One getMarket read: a market exists iff its question is non-empty (same test
-/// as market/[id]/page.tsx:fetchMarket). Fails closed (false) on any RPC error.
-export async function mainMarketExists(marketId: string): Promise<boolean> {
+/// as market/[id]/page.tsx:fetchMarket). Never allows a write it couldn't
+/// verify — an RPC error resolves to 'unverifiable', not 'exists'.
+export async function checkMainMarket(marketId: string): Promise<MainMarketCheck> {
   try {
     const client = getAaPublicClient(MONAD_TESTNET_ID);
     const m = (await client.readContract({
@@ -49,9 +63,11 @@ export async function mainMarketExists(marketId: string): Promise<boolean> {
       functionName: 'getMarket',
       args: [BigInt(marketId)],
     })) as { question?: string } | null;
-    return !!(m && typeof m.question === 'string' && m.question.length > 0);
+    return m && typeof m.question === 'string' && m.question.length > 0
+      ? 'exists'
+      : 'absent';
   } catch {
-    return false;
+    return 'unverifiable';
   }
 }
 
