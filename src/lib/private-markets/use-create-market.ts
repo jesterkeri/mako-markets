@@ -228,6 +228,7 @@ export function usePmCreateMarket(): UsePmCreateMarket {
               contractAddress: PM_CONTRACT_ADDRESS,
               shape: formState.shape,
               clientNonce,
+              commentsEnabled: formState.commentsEnabled,
             }),
           });
           if (!draftResp.ok) {
@@ -334,6 +335,7 @@ export function usePmCreateMarket(): UsePmCreateMarket {
             chainId: MONAD_TESTNET_ID,
             magicEoa: user.magicEoa as Address,
             createParams: params,
+            commentsEnabled: formState.commentsEnabled,
           });
 
           // Codex r5 MAJ-1: every post-draft outcome carries pmDraft.

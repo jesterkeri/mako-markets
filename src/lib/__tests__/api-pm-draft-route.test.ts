@@ -98,6 +98,7 @@ function happyBody(overrides: Partial<Record<string, unknown>> = {}) {
     contractAddress: PM_CONTRACT_ADDRESS,
     shape: 'friendly',
     clientNonce: NONCE,
+    commentsEnabled: true,
     ...overrides,
   };
 }
@@ -188,6 +189,64 @@ describe('POST /api/pm/markets/draft — in-flight gate (Codex 2C-1 r3 MAJ-2)', 
       chainId: 10143,
       safeAddress: SAFE.toLowerCase(),
     });
+    // #182 Slice B: the comments toggle is forwarded verbatim to the
+    // draft allocator so it lands on the pending row.
+    expect(mocks.allocatePmDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ commentsEnabled: true }),
+    );
+  });
+
+  it('forwards commentsEnabled=false through to allocatePmDraft', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
+      userId: 'user-1',
+      magicEoa: '0x1111111111111111111111111111111111111111',
+    });
+    mocks.selectFromUserSafes.mockResolvedValue([{ safeAddress: SAFE }]);
+    mocks.loadInFlightForSafe.mockResolvedValue(null);
+    mocks.allocatePmDraft.mockResolvedValue({
+      ok: true,
+      value: { pendingDbId: 'row-1', slug: 'AB12CD34', clientNonce: NONCE },
+    });
+
+    const res = await POST(makeReq(happyBody({ commentsEnabled: false })));
+    expect(res.status).toBe(200);
+    expect(mocks.allocatePmDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ commentsEnabled: false }),
+    );
+  });
+});
+
+describe('POST /api/pm/markets/draft — commentsEnabled schema (#182 Slice B)', () => {
+  it('400s when commentsEnabled is missing (required field)', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
+      userId: 'user-1',
+      magicEoa: '0x1111111111111111111111111111111111111111',
+    });
+
+    const body = happyBody();
+    delete (body as Record<string, unknown>).commentsEnabled;
+    const res = await POST(makeReq(body));
+
+    expect(res.status).toBe(400);
+    // Schema rejected BEFORE any draft allocation.
+    expect(mocks.allocatePmDraft).not.toHaveBeenCalled();
+  });
+
+  it('400s when commentsEnabled is a non-boolean', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
+      userId: 'user-1',
+      magicEoa: '0x1111111111111111111111111111111111111111',
+    });
+
+    const res = await POST(makeReq(happyBody({ commentsEnabled: 'yes' })));
+    expect(res.status).toBe(400);
+    expect(mocks.allocatePmDraft).not.toHaveBeenCalled();
   });
 });
 

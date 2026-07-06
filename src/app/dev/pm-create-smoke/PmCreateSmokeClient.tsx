@@ -104,6 +104,8 @@ export default function PmCreateSmokeClient() {
         chainId: MONAD_TESTNET_ID,
         magicEoa,
         createParams,
+        // Dev smoke: exercise the default-ON comments path.
+        commentsEnabled: true,
       });
       logOutcome(outcome, append);
       if (outcome.kind === 'sent') {

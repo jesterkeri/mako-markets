@@ -192,6 +192,39 @@ export function CommonFields({ state, errors, onChange }: CommonFieldsProps) {
         </div>
       </div>
 
+      {/* COMMENTS (#182 Slice B) — off-chain toggle, editable later from
+          the market page. Two-button pattern mirrors VIEW/PARTICIPATION. */}
+      <div className="px-6 py-5">
+        <label className="mako-label text-muted mb-3 block">COMMENTS</label>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => onChange('commentsEnabled', true)}
+            className={`py-3 mako-label rounded-xl border-2 border-ink transition-all ${
+              state.commentsEnabled
+                ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
+                : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
+            }`}
+          >
+            ON
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange('commentsEnabled', false)}
+            className={`py-3 mako-label rounded-xl border-2 border-ink transition-all ${
+              !state.commentsEnabled
+                ? 'bg-ink text-paper shadow-brutal-red -translate-y-[2px] -translate-x-[2px]'
+                : 'bg-paper shadow-brutal-sm hover:-translate-y-[1px] hover:-translate-x-[1px]'
+            }`}
+          >
+            OFF
+          </button>
+        </div>
+        <div className="mako-label text-subtle text-[10px] mt-3">
+          LET STAKERS DISCUSS ON THE MARKET PAGE. YOU CAN CHANGE THIS LATER.
+        </div>
+      </div>
+
       {/* ALLOWLIST */}
       {state.participationMode === 'allowlisted' && (
         <div className="px-6 py-5">

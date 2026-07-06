@@ -1446,6 +1446,11 @@ export interface RunCreatePrivateMarketArgs {
   /// it into the params before encoding. This way callers can't
   /// accidentally collide nonces by reusing a constant.
   createParams: Omit<PmCreateParamsTuple, 'clientNonce'>;
+  /// #182 Slice B: off-chain comments toggle. NOT a contract field —
+  /// forwarded to the draft POST body only, where it lands on the
+  /// pending pm_markets row. Defaults are the caller's concern (the
+  /// form seeds `true`); this helper just relays it.
+  commentsEnabled: boolean;
 }
 
 /// Phase 2C-1: full PM create-market browser flow.
@@ -1504,6 +1509,7 @@ export async function runCreatePrivateMarket(
       contractAddress: PM_CONTRACT_ADDRESS,
       shape: shapeEnumToString(paramsWithNonce.shape),
       clientNonce,
+      commentsEnabled: args.commentsEnabled,
     });
   } catch (err) {
     return {

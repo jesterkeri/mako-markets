@@ -63,6 +63,12 @@ export interface PmCreateFormState {
   participationMode: ParticipationMode;
   allowlist: string[]; // one 0x-address per line; only required when allowlisted
 
+  // Comments (#182 Slice B) — OFF-CHAIN ONLY. Not part of the contract
+  // params tuple; persisted to pm_markets.comments_enabled at draft time
+  // and later editable by the creator via the comments-toggle route.
+  // Defaults ON. Blocks new comment WRITES when false; reads stay open.
+  commentsEnabled: boolean;
+
   // Per-shape
   optionLabels: string[]; // friendly: ['NO','YES'] locked; others: 2..PM_MAX_OPTIONS
   participantWallets: string[]; // prize_pool only; length must equal optionLabels
@@ -254,6 +260,7 @@ export function initialFormStateForShape(shape: PmShape): PmCreateFormState {
     viewMode: 'link_only',
     participationMode: 'open',
     allowlist: [],
+    commentsEnabled: true,
     perStakeMin: '0',
     perStakeMax: '0',
     perWalletCumulativeMax: '0',

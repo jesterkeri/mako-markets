@@ -337,6 +337,7 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
   const ARGS = {
     chainId: MONAD_TESTNET_ID,
     magicEoa: '0x2222222222222222222222222222222222222222' as Address,
+    commentsEnabled: true,
     createParams: {
       shape: 0 as const,
       stakingOpensAt: 1_800_000_060n,
@@ -391,6 +392,8 @@ describe('runCreatePrivateMarket — orchestrator with mocked fetch + Magic', ()
     expect(draftBody.shape).toBe('friendly'); // mapped from shape=0
     expect(typeof draftBody.clientNonce).toBe('string');
     expect(/^0x[0-9a-f]{64}$/.test(draftBody.clientNonce as string)).toBe(true);
+    // #182 Slice B: the off-chain comments toggle rides the draft body.
+    expect(draftBody.commentsEnabled).toBe(true);
 
     // Verify sponsor body shape — kind=pm_create_market.
     const sponsorBody = fetchCalls[1].body as Record<string, unknown>;

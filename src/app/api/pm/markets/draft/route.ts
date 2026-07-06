@@ -1,11 +1,10 @@
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
 import type { Address } from 'viem';
 
 import { db } from '@/db/client';
-import { userSafes } from '@/db/schema';
 import { getUserSession } from '@/lib/user-session';
 import { allocatePmDraft } from '@/lib/private-markets/draft';
+import { resolvePmActorAddress } from '@/lib/private-markets/actor';
 import { loadInFlightForSafe } from '@/lib/aa-pending-user-ops';
 import { checkSameOrigin } from '@/lib/csrf';
 import { isPmEnabled } from '@/lib/pm-enabled';
@@ -64,6 +63,9 @@ const RequestSchema = z
       ),
     shape: z.enum(['friendly', 'open_vote', 'prize_pool']),
     clientNonce: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+    // #182 Slice B: off-chain comments toggle chosen at create time.
+    // Persisted onto the pending row; the confirm-flip preserves it.
+    commentsEnabled: z.boolean(),
   })
   .strict();
 
@@ -107,52 +109,25 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { chainId, contractAddress, shape, clientNonce } = parsed.data;
+  const { chainId, contractAddress, shape, clientNonce, commentsEnabled } =
+    parsed.data;
 
-  // Step 3: resolve the `creator` address for this session.
+  // Step 3: resolve the `creator` address for this session via the
+  // shared PM actor helper (#182 Slice B) — the SINGLE source of truth
+  // that the sponsor/indexer + comments-toggle route + /m/[slug] all
+  // reuse, so nobody re-derives "who is the user" and drifts:
   //
-  // Phase 2C-2 step 5 — branch on session.authType:
+  //   - Magic session → user_safes.safeAddress for (userId, chainId).
+  //   - Wallet session → session.walletAddress (its EOA is tx.origin).
   //
-  //   - Magic session: look up user_safes.safeAddress for (userId,
-  //     chainId). Same as Phase 2C-1.
-  //
-  //   - Wallet session: use session.walletAddress directly. Wallet
-  //     users have no user_safes row by design — their EOA is the
-  //     msg.sender on chain. Codex 2C-2 plan v6 / wallet-parity
-  //     memory: the request body has NO walletAddress field
-  //     (RequestSchema.strict() rejects it), so a malicious wallet
-  //     can't forge a different creator. Source of truth is the
-  //     cookie-authed session ONLY.
-  //
-  // The `creator` stored at draft time becomes the address compared
-  // against msg.sender (Magic: Safe address) or tx.origin (wallet:
-  // EOA) at sponsor / indexer time, so the two routes must agree on
-  // which address represents "the user."
-  let sessionWallet: `0x${string}`;
-  if (session.authType === 'magic') {
-    const safeRows = await db
-      .select({ safeAddress: userSafes.safeAddress })
-      .from(userSafes)
-      .where(
-        and(eq(userSafes.userId, session.userId), eq(userSafes.chainId, chainId)),
-      )
-      .limit(1);
-    const userSafe = safeRows[0];
-    if (!userSafe) {
-      return Response.json({ error: 'no_user_safe' }, { status: 403 });
-    }
-    sessionWallet = userSafe.safeAddress as `0x${string}`;
-  } else if (session.authType === 'wallet') {
-    if (!session.walletAddress) {
-      return Response.json({ error: 'no_creator' }, { status: 403 });
-    }
-    sessionWallet = session.walletAddress as `0x${string}`;
-  } else {
-    // Defensive — UserSession is a discriminated union and TS should
-    // narrow this branch to never. If a future auth_type lands without
-    // a matching branch here, fail closed rather than allocate.
-    return Response.json({ error: 'unsupported_auth_type' }, { status: 403 });
+  // The request body carries NO address field (RequestSchema.strict()
+  // rejects extras), so the creator comes ONLY from the cookie-authed
+  // session — a malicious wallet can't forge a different creator.
+  const actor = await resolvePmActorAddress(session, chainId);
+  if (!actor.ok) {
+    return Response.json({ error: actor.error }, { status: 403 });
   }
+  const sessionWallet: `0x${string}` = actor.address;
 
   // Step 4: in-flight gate (Codex 2C-1 r3 MAJ-2). Reject if the Safe
   // already has any aa_pending_user_ops row in flight. Without this,
@@ -183,6 +158,7 @@ export async function POST(req: Request) {
       contractAddress: contractAddress as `0x${string}`,
       shape,
       clientNonce: clientNonce as `0x${string}`,
+      commentsEnabled,
     }),
   );
 

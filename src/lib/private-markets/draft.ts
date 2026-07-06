@@ -45,6 +45,13 @@ export interface AllocatePmDraftArgs {
   contractAddress: `0x${string}`;
   shape: PmShape;
   clientNonce: `0x${string}`;
+  /// #182 Slice B: off-chain comments toggle. Written onto the pending
+  /// row here; the confirm-flip UPDATE (indexer.ts) does NOT touch
+  /// comments_enabled, so this create-time choice survives confirmation.
+  /// (The rare insert-confirmed fallback — when the pending row was
+  /// swept before the event landed — has no draft to read and takes the
+  /// column DEFAULT true; the creator can re-toggle from /m/[slug].)
+  commentsEnabled: boolean;
 }
 
 export interface AllocatePmDraftResult {
@@ -148,7 +155,8 @@ export async function allocatePmDraft(
       visibility_view, visibility_participation,
       staking_opens_at, close_at,
       per_stake_min, per_stake_max, per_wallet_cumulative_max, fixed_stake,
-      winners_count, current_state, total_stake, fee_taken, dust
+      winners_count, current_state, total_stake, fee_taken, dust,
+      comments_enabled
     ) VALUES (
       ${args.chainId}, ${contractLower}, ${slug}, ${clientNonceLower},
       ${sessionLower}, ${args.shape}, 'pending', now(), NULL,
@@ -156,7 +164,8 @@ export async function allocatePmDraft(
       0, 0,
       to_timestamp(0), to_timestamp(1),
       '0', '0', '0', '0',
-      0, 'created', '0', '0', '0'
+      0, 'created', '0', '0', '0',
+      ${args.commentsEnabled}
     )
     ON CONFLICT (client_nonce)
       WHERE create_status = 'pending'

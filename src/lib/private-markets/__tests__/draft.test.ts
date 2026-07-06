@@ -47,6 +47,7 @@ describe('allocatePmDraft — happy path', () => {
   it('inserts a pending row with marketId=NULL and lowercased addresses', async () => {
     const r = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -79,6 +80,7 @@ describe('allocatePmDraft — lowercasing on input', () => {
   it('lowercases checksummed contractAddress + uppercase sessionWallet + uppercase clientNonce', async () => {
     const r = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_CHECKSUM,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_CHECKSUM,
@@ -101,10 +103,53 @@ describe('allocatePmDraft — lowercasing on input', () => {
   });
 });
 
+describe('allocatePmDraft — comments toggle (#182 Slice B)', () => {
+  it('persists comments_enabled=false onto the pending row', async () => {
+    const r = await allocatePmDraft({
+      tx: active!.db as never,
+      commentsEnabled: false,
+      sessionWallet: SESSION_A,
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT_A,
+      shape: 'friendly',
+      clientNonce: NONCE_1,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const rows = await active!.db
+      .select()
+      .from(pmMarkets)
+      .where(eq(pmMarkets.id, r.value.pendingDbId));
+    expect(rows[0].commentsEnabled).toBe(false);
+  });
+
+  it('persists comments_enabled=true onto the pending row', async () => {
+    const r = await allocatePmDraft({
+      tx: active!.db as never,
+      commentsEnabled: true,
+      sessionWallet: SESSION_A,
+      chainId: CHAIN_ID,
+      contractAddress: CONTRACT_A,
+      shape: 'friendly',
+      clientNonce: NONCE_1,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const rows = await active!.db
+      .select()
+      .from(pmMarkets)
+      .where(eq(pmMarkets.id, r.value.pendingDbId));
+    expect(rows[0].commentsEnabled).toBe(true);
+  });
+});
+
 describe('allocatePmDraft — duplicate clientNonce, both pending', () => {
   it('returns { ok: false, error: { kind: "duplicate" } }', async () => {
     const r1 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -115,6 +160,7 @@ describe('allocatePmDraft — duplicate clientNonce, both pending', () => {
 
     const r2 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -131,6 +177,7 @@ describe('allocatePmDraft — duplicate clientNonce, earlier row is failed', () 
   it('SUCCEEDS — the partial index only constrains pending rows', async () => {
     const r1 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -148,6 +195,7 @@ describe('allocatePmDraft — duplicate clientNonce, earlier row is failed', () 
 
     const r2 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -164,6 +212,7 @@ describe('allocatePmDraft — cross-(chain, contract) duplicate clientNonce (Cod
   it('STILL collides — the partial index is global on client_nonce', async () => {
     const r1 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -177,6 +226,7 @@ describe('allocatePmDraft — cross-(chain, contract) duplicate clientNonce (Cod
     // pins the constraint behaviour.
     const r2 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_B,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_B,
@@ -201,6 +251,7 @@ describe('allocatePmDraft — slug retry on collision', () => {
     // slugs prove the dedupe SELECT works.)
     const r1 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -209,6 +260,7 @@ describe('allocatePmDraft — slug retry on collision', () => {
     });
     const r2 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -234,6 +286,7 @@ describe('allocatePmDraft — slug_exhausted', () => {
 
     const r = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -295,6 +348,7 @@ describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MI
 
     const r = await allocatePmDraft({
       tx: fakeTx as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -320,6 +374,7 @@ describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MI
 
     const r = await allocatePmDraft({
       tx: fakeTx as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -345,6 +400,7 @@ describe('allocatePmDraft — postgres-js direct-array result shape (Codex r2 MI
 
     const r = await allocatePmDraft({
       tx: fakeTx as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -371,6 +427,7 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
       const nonce = `0x${'0'.repeat(63)}${(i + 1).toString(16)}` as const;
       const r = await allocatePmDraft({
         tx: active!.db as never,
+      commentsEnabled: true,
         sessionWallet: SESSION_A,
         chainId: CHAIN_ID,
         contractAddress: CONTRACT_A,
@@ -385,6 +442,7 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
       `0x${'0'.repeat(62)}ff` as const;
     const r4 = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -414,6 +472,7 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
       const nonce = `0x${'0'.repeat(63)}${(i + 1).toString(16)}` as const;
       const r = await allocatePmDraft({
         tx: active!.db as never,
+      commentsEnabled: true,
         sessionWallet: SESSION_A,
         chainId: CHAIN_ID,
         contractAddress: CONTRACT_A,
@@ -428,6 +487,7 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
       `0x${'0'.repeat(62)}b1` as const;
     const r = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_B,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -446,6 +506,7 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
       const nonce = `0x${'0'.repeat(63)}${(i + 1).toString(16)}` as const;
       const r = await allocatePmDraft({
         tx: active!.db as never,
+      commentsEnabled: true,
         sessionWallet: SESSION_A,
         chainId: CHAIN_ID,
         contractAddress: CONTRACT_A,
@@ -465,6 +526,7 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
       `0x${'0'.repeat(62)}ab` as const;
     const r = await allocatePmDraft({
       tx: active!.db as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -524,6 +586,7 @@ describe('allocatePmDraft — per-Safe pending cap (Codex 2C-1 r3 MAJ-2)', () =>
 
     const r = await allocatePmDraft({
       tx: fakeTx as never,
+      commentsEnabled: true,
       sessionWallet: SESSION_A,
       chainId: CHAIN_ID,
       contractAddress: CONTRACT_A,
@@ -552,6 +615,7 @@ describe('allocatePmDraft — concurrent duplicate (TOCTOU)', () => {
     const [r1, r2] = await Promise.all([
       allocatePmDraft({
         tx: active!.db as never,
+      commentsEnabled: true,
         sessionWallet: SESSION_A,
         chainId: CHAIN_ID,
         contractAddress: CONTRACT_A,
@@ -560,6 +624,7 @@ describe('allocatePmDraft — concurrent duplicate (TOCTOU)', () => {
       }),
       allocatePmDraft({
         tx: active!.db as never,
+      commentsEnabled: true,
         sessionWallet: SESSION_A,
         chainId: CHAIN_ID,
         contractAddress: CONTRACT_A,
