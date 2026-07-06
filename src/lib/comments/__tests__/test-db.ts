@@ -60,21 +60,14 @@ const USERS_STUB_SQL = `
   );
 `;
 
-let cachedPmSql: string | null = null;
-let cachedCommentsSql: string | null = null;
-
-function loadPmSql(): string {
-  if (cachedPmSql === null) {
-    cachedPmSql = readFileSync(resolve('src/db/migrations/0006_private_markets.sql'), 'utf-8');
+const sqlCache = new Map<string, string>();
+function loadSql(file: string): string {
+  let s = sqlCache.get(file);
+  if (s === undefined) {
+    s = readFileSync(resolve(`src/db/migrations/${file}`), 'utf-8');
+    sqlCache.set(file, s);
   }
-  return cachedPmSql;
-}
-
-function loadCommentsSql(): string {
-  if (cachedCommentsSql === null) {
-    cachedCommentsSql = readFileSync(resolve('src/db/migrations/0009_comments.sql'), 'utf-8');
-  }
-  return cachedCommentsSql;
+  return s;
 }
 
 async function execScript(client: PGlite, sql: string): Promise<void> {
@@ -93,8 +86,9 @@ export async function createTestDb(): Promise<TestDb> {
   const client = new PGlite();
   // pglite ships pgcrypto (gen_random_uuid); no extension setup needed.
   await client.exec(USERS_STUB_SQL);
-  await execScript(client, loadPmSql());
-  await execScript(client, loadCommentsSql());
+  await execScript(client, loadSql('0006_private_markets.sql')); // pm_markets
+  await execScript(client, loadSql('0008_leaderboard_events.sql')); // mako_market_events (badges)
+  await execScript(client, loadSql('0009_comments.sql'));
   const db = drizzle(client, { schema });
   return {
     client,
