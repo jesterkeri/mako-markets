@@ -17,6 +17,7 @@ import {
 import { formatUsdc } from '@/lib/usdc';
 import { BetSheet } from '@/components/BetSheet';
 import { ClaimButton } from '@/components/ClaimButton';
+import { CommentsSection } from '@/components/CommentsSection';
 import { MarketChart } from '@/components/MarketChart';
 import { marketToChartConfig } from '@/lib/market-chart';
 import { useMakoLabels } from '@/lib/use-mako-labels';
@@ -258,6 +259,12 @@ export function MarketDetailClient({ id }: { id: string }) {
               />
             </div>
           )}
+
+          {/* #182 Comments — full-width in the left column, below the market
+              content, so it never collides with the sticky BetSheet column. */}
+          <div className="mt-10">
+            <CommentsSection scope="main" marketId={market.id.toString()} />
+          </div>
         </div>
 
         {/* Right Sidebar for Desktop / Fixed bottom for Mobile */}
