@@ -38,6 +38,7 @@ export default defineConfig({
       'src/lib/comments/__tests__/**/*.test.ts',
       'src/lib/comments/__tests__/**/*.test.tsx',
       'src/app/api/comments/**/*.test.ts',
+      'src/app/api/pm/**/*.test.ts',
     ],
     environmentMatchGlobs: [
       ['src/lib/__tests__/**/*.test.tsx', 'happy-dom'],
