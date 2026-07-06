@@ -109,4 +109,14 @@ describe('CommentsSection rendering', () => {
     render(<CommentsSection scope="main" marketId="5" />);
     expect(screen.getByText(/No comments yet/i)).toBeTruthy();
   });
+
+  it('writable=false hides the composer and shows the comments-off note, even signed in', () => {
+    h.user = { authType: 'magic' };
+    setComments([]);
+    render(<CommentsSection scope="pm" slug="8x3k9p2v" writable={false} />);
+    expect(screen.getByText(/Comments are turned off/i)).toBeTruthy();
+    // Composer + SIGN IN cta are both absent when writes are disabled.
+    expect(screen.queryByPlaceholderText(/Add a comment/i)).toBeNull();
+    expect(screen.queryByText('SIGN IN')).toBeNull();
+  });
 });

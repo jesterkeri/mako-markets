@@ -83,6 +83,9 @@ export interface PrivateMarketView {
   streamUrl: string;
   visibilityView: number;
   visibilityParticipation: number;
+  /// #182 Slice B: off-chain comments toggle. Blocks new comment writes
+  /// when false; reads stay open. Editable by the creator post-create.
+  commentsEnabled: boolean;
   stakingOpensAt: Date;
   closeAt: Date;
   perStakeMin: string;
@@ -141,6 +144,7 @@ function rowToView(
     streamUrl: market.streamUrl,
     visibilityView: market.visibilityView,
     visibilityParticipation: market.visibilityParticipation,
+    commentsEnabled: market.commentsEnabled,
     stakingOpensAt: market.stakingOpensAt,
     closeAt: market.closeAt,
     perStakeMin: market.perStakeMin,

@@ -25,8 +25,12 @@ import { notFound } from 'next/navigation';
 
 import { isPmEnabled } from '@/lib/pm-enabled';
 import { getMarketBySlug } from '@/lib/private-markets/queries';
+import { getUserSession } from '@/lib/user-session';
+import { resolvePmActorAddress } from '@/lib/private-markets/actor';
+import { MONAD_TESTNET_ID } from '@/lib/chain';
 
 import { CopyLinkButton } from './_components/CopyLinkButton';
+import { PmCommentsPanel } from './_components/PmCommentsPanel';
 
 // Skip static prerender. Slug → DB lookup is inherently dynamic, and
 // the PM gate reads NEXT_PUBLIC_PM_ENABLED at request time; static
@@ -84,6 +88,19 @@ export default async function MarketStubPage({ params }: MarketPageProps) {
     (host.startsWith('localhost') ? 'http' : 'https');
   const origin = host ? `${proto}://${host}` : '';
   const shareUrl = origin ? `${origin}/m/${slug}` : `/m/${slug}`;
+
+  // #182 Slice B: is the current viewer this market's creator? Resolved
+  // server-side via the SAME actor derivation the draft/toggle routes use,
+  // so it can't be spoofed. Only decides whether to render the creator's
+  // comments toggle; the PATCH re-verifies creator ownership regardless.
+  let viewerIsCreator = false;
+  const session = await getUserSession();
+  if (session) {
+    const actor = await resolvePmActorAddress(session, MONAD_TESTNET_ID);
+    if (actor.ok && actor.address.toLowerCase() === market.creator.toLowerCase()) {
+      viewerIsCreator = true;
+    }
+  }
 
   return (
     <div className="bg-canvas text-canvas-fg min-h-screen py-12 px-4 sm:px-6 lg:px-8 flex flex-col items-center">
@@ -146,6 +163,20 @@ export default async function MarketStubPage({ params }: MarketPageProps) {
         <div className="pt-4">
           <CopyLinkButton url={shareUrl} />
         </div>
+
+        {/* Comments (#182 Slice B) — only on confirmed rows; a pending row
+            has no confirmed comment target yet. Whole /m/[slug] surface is
+            already dark behind isPmEnabled at the top of this component. */}
+        {market.createStatus === 'confirmed' && (
+          <div className="pt-8 border-t-2 border-ink">
+            <PmCommentsPanel
+              slug={slug}
+              dbId={market.id}
+              viewerIsCreator={viewerIsCreator}
+              initialCommentsEnabled={market.commentsEnabled}
+            />
+          </div>
+        )}
 
         <div className="pt-12">
           <Link

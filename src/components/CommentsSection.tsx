@@ -193,11 +193,13 @@ function CommentThread({
   target,
   signedIn,
   canModerate,
+  writable,
 }: {
   comment: CommentWire;
   target: CommentTargetParams;
   signedIn: boolean;
   canModerate: boolean;
+  writable: boolean;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const [extraReplies, setExtraReplies] = useState<CommentWire[]>([]);
@@ -227,11 +229,11 @@ function CommentThread({
         comment={comment}
         target={target}
         canModerate={canModerate}
-        viewerCanReply={signedIn}
+        viewerCanReply={signedIn && writable}
         onReply={() => setReplyOpen((v) => !v)}
       />
 
-      {replyOpen && signedIn && (
+      {replyOpen && signedIn && writable && (
         <div className="ml-9 mt-3">
           <Composer
             compact
@@ -269,11 +271,20 @@ function CommentThread({
 
 // ---- Section ----------------------------------------------------------------
 
-export function CommentsSection(props: { scope: 'main'; marketId: string } | { scope: 'pm'; slug: string }) {
+export function CommentsSection(
+  props: ({ scope: 'main'; marketId: string } | { scope: 'pm'; slug: string }) & {
+    /// #182 Slice B: when false (PM markets with comments turned off) the
+    /// composer + reply boxes are hidden and a muted note is shown —
+    /// existing comments still READ (comments_enabled blocks writes only).
+    /// Defaults true, so main markets are unchanged.
+    writable?: boolean;
+  },
+) {
   const target: CommentTargetParams =
     props.scope === 'main'
       ? { scope: 'main', marketId: props.marketId }
       : { scope: 'pm', slug: props.slug };
+  const writable = props.writable ?? true;
 
   const { user } = useUser();
   const signedIn = user !== null;
@@ -287,7 +298,13 @@ export function CommentsSection(props: { scope: 'main'; marketId: string } | { s
     <section aria-label="Comments" className="w-full mt-4">
       <h2 className="mako-display text-[clamp(1.5rem,3vw,2rem)] text-canvas-fg mb-4">COMMENTS</h2>
 
-      {signedIn ? (
+      {!writable ? (
+        <div className="bg-paper border-2 border-ink rounded-2xl p-5 mb-6">
+          <span className="mako-body text-[15px] text-muted">
+            Comments are turned off for this market.
+          </span>
+        </div>
+      ) : signedIn ? (
         <Composer
           pending={post.isPending}
           error={post.error}
@@ -318,6 +335,7 @@ export function CommentsSection(props: { scope: 'main'; marketId: string } | { s
               target={target}
               signedIn={signedIn}
               canModerate={isAdmin}
+              writable={writable}
             />
           ))}
           {query.hasNextPage && (
