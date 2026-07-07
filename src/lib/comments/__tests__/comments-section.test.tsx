@@ -45,6 +45,7 @@ const comment = (over: Partial<CommentWire> = {}): CommentWire => ({
   parentId: null,
   authorLabel: 'Ann',
   avatarSeed: 'abc12345',
+  avatarUrl: null,
   isOwn: false,
   position: null,
   body: 'hello world',
@@ -75,6 +76,30 @@ describe('CommentsSection XSS guard', () => {
     // …and NO <img> element was created (glyph avatar has none either).
     expect(container.querySelector('img')).toBeNull();
     expect(container.querySelector('img[onerror]')).toBeNull();
+  });
+});
+
+describe('CommentsSection avatars (real photo + glyph fallback)', () => {
+  const PHOTO = 'https://x.public.blob.vercel-storage.com/avatars/u1/a.webp';
+
+  it('renders the author photo as an <img> when avatarUrl is set', () => {
+    setComments([comment({ avatarUrl: PHOTO })]);
+    const { container } = render(<CommentsSection scope="main" marketId="5" />);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('src')).toBe(PHOTO);
+  });
+
+  it('falls back to the glyph (no <img>) when avatarUrl is null', () => {
+    setComments([comment({ avatarUrl: null })]);
+    const { container } = render(<CommentsSection scope="main" marketId="5" />);
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('hides the photo for a deleted comment even if a url is present', () => {
+    setComments([comment({ deleted: true, body: '', avatarUrl: PHOTO })]);
+    const { container } = render(<CommentsSection scope="main" marketId="5" />);
+    expect(container.querySelector('img')).toBeNull();
   });
 });
 

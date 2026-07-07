@@ -176,6 +176,9 @@ function toWire(
     parentId: row.parentId ?? null,
     authorLabel: author?.authorLabel ?? 'anon',
     avatarSeed: author?.avatarSeed ?? '',
+    // Real photo when the author uploaded one (else null → glyph fallback).
+    // Not shown for a deleted row (author identity is hidden there).
+    avatarUrl: deleted ? null : author?.avatarUrl ?? null,
     isOwn: viewerUserId !== null && viewerUserId === row.userId,
     position: addr ? badges.get(addr) ?? null : null,
     body: deleted ? '' : row.body,

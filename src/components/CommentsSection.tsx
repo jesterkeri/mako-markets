@@ -6,8 +6,9 @@
 // Comment thread for a market (main or PM). Reads are public; the composer
 // shows a SIGN IN CTA when signed out. Body + author label render as REACT
 // TEXT NODES only — no dangerouslySetInnerHTML, no markdown, no URL
-// auto-linkification (plan §6 MUST-1: the #1 comments XSS vector). Avatars are
-// glyph-only (avatarSeed, no <img>). Brand tokens only → correct in both themes.
+// auto-linkification (plan §6 MUST-1: the #1 comments XSS vector). Avatars show
+// the author's uploaded photo (single-origin Vercel Blob URL) with a glyph
+// fallback via <AvatarCircle>. Brand tokens only → correct in both themes.
 // ----------------------------------------------------------------------------
 
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -150,7 +151,7 @@ function Row({
         displayName={comment.deleted ? null : comment.authorLabel}
         initialSource={comment.authorLabel}
         seedKey={comment.avatarSeed}
-        avatarUrl={null}
+        avatarUrl={comment.deleted ? null : comment.avatarUrl}
         size={isReply ? 30 : 36}
       />
       <div className="flex-1 min-w-0">

@@ -102,6 +102,7 @@ describe('createComment + getCommentsPage — happy path', () => {
     expect(c.body).toBe('first!');
     expect(c.authorLabel).toBe('Ann');
     expect(c.avatarSeed).toBe(createHash('sha256').update(userId).digest('hex'));
+    expect(c.avatarUrl).toBeNull(); // this seeded user uploaded no photo
     expect(c.isOwn).toBe(true);
     expect(c.deleted).toBe(false);
     expect(c.position).toBeNull(); // no bet yet
@@ -162,6 +163,32 @@ describe('wire-shape privacy + avatarSeed non-reversibility', () => {
     expect(page.comments[0].avatarSeed).toBe(
       createHash('sha256').update(userId).digest('hex'),
     );
+    // No photo uploaded → avatarUrl is null → the internal user_id assertion
+    // above stays true. The user_id only rides along inside avatarUrl for
+    // users who HAVE a photo (accepted 2026-07-07), covered by the next test.
+    expect(page.comments[0].avatarUrl).toBeNull();
+  });
+
+  it('serializes the author photo URL when the user has uploaded one', async () => {
+    const PHOTO = 'https://x.public.blob.vercel-storage.com/avatars/u/a.webp';
+    const u = await tdb.db
+      .insert(users)
+      .values({
+        email: 'pho@x.co',
+        magicEoa: eoa(0x7ac),
+        authType: 'magic',
+        displayName: 'Pho',
+        avatarUrl: PHOTO,
+      })
+      .returning({ id: users.id });
+    await createComment(db(), {
+      target: MARKET_5,
+      userId: u[0].id,
+      parentId: null,
+      body: 'hi',
+    });
+    const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
+    expect(page.comments[0].avatarUrl).toBe(PHOTO);
   });
 
   it('shows the truncated address as the label when there is no display name', async () => {

@@ -36,8 +36,15 @@ export type CommentScope = 'main' | 'pm';
 export type CommentPosition = 'yes' | 'no' | 'both' | null;
 
 /// One comment as serialized to the client. Explicit allowlist — NO email,
-/// magic_eoa, user_id, or avatar_url. `avatarSeed` is sha256(user_id): stable
-/// + non-reversible, drives a glyph avatar (there is no uploaded image in v1).
+/// magic_eoa, or user_id in the scalar fields. `avatarSeed` is sha256(user_id):
+/// stable + non-reversible, drives the glyph fallback. `avatarUrl` is the
+/// author's uploaded profile photo when they have one (a single-origin Vercel
+/// Blob URL, else null); the UI renders it via <AvatarCircle>, falling back to
+/// the glyph. NOTE (Joshua, 2026-07-07): the blob path is `/avatars/<user_id>/…`,
+/// so a user WITH a photo does expose their internal user_id inside this URL —
+/// a consciously-accepted, low-marginal-risk relaxation of "no user_id in the
+/// wire" (name + betting-side badge are already public; user_id is an identifier,
+/// not a capability). Users without a photo leak nothing new.
 /// `body` is '' on a deleted row. `replies` + `repliesNextCursor` are populated
 /// on TOP-LEVEL comments only (empty / null on a reply).
 export interface CommentWire {
@@ -45,6 +52,7 @@ export interface CommentWire {
   parentId: string | null;
   authorLabel: string;
   avatarSeed: string;
+  avatarUrl: string | null;
   isOwn: boolean;
   position: CommentPosition;
   body: string;

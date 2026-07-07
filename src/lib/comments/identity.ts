@@ -33,6 +33,9 @@ import { formatAddress } from '@/lib/user-display';
 export interface CommentAuthor {
   authorLabel: string;
   avatarSeed: string;
+  /// The author's uploaded profile photo (single-origin Vercel Blob URL) or
+  /// null. Included in the wire per the 2026-07-07 decision; see CommentWire.
+  avatarUrl: string | null;
   addressLower: string | null;
 }
 
@@ -55,6 +58,7 @@ export async function resolveCommentAuthors(
       authType: users.authType,
       magicEoa: users.magicEoa,
       walletAddress: users.walletAddress,
+      avatarUrl: users.avatarUrl,
     })
     .from(users)
     .where(inArray(users.id, ids));
@@ -78,7 +82,12 @@ export async function resolveCommentAuthors(
         ? formatAddress(addressLower)
         : 'anon';
 
-    out.set(r.id, { authorLabel, avatarSeed: seedFor(r.id), addressLower });
+    out.set(r.id, {
+      authorLabel,
+      avatarSeed: seedFor(r.id),
+      avatarUrl: r.avatarUrl ?? null,
+      addressLower,
+    });
   }
   return out;
 }
