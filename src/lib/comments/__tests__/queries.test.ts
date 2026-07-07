@@ -44,11 +44,18 @@ let txSeq = 0;
 
 const db = () => tdb.db as never; // pglite db → DbOrTx (leaderboard convention)
 
+// The avatar filter pins to THIS app's exact Blob store host, derived from
+// BLOB_READ_WRITE_TOKEN. Set a token whose store id ("x") matches the
+// `x.public.blob.vercel-storage.com` host the avatar tests use below.
+const ORIGINAL_BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
 beforeEach(async () => {
+  process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_x_testsecret';
   tdb = await createTestDb();
   txSeq = 0;
 });
 afterEach(async () => {
+  if (ORIGINAL_BLOB_TOKEN === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+  else process.env.BLOB_READ_WRITE_TOKEN = ORIGINAL_BLOB_TOKEN;
   await tdb.close();
 });
 
@@ -212,6 +219,21 @@ describe('wire-shape privacy + avatarSeed non-reversibility', () => {
     await tdb.db.update(users).set({ avatarUrl: FOREIGN }).where(eq(users.id, u[0].id));
 
     await createComment(db(), { target: MARKET_5, userId: u[0].id, parentId: null, body: 'hi' });
+    const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
+    expect(page.comments[0].avatarUrl).toBeNull();
+  });
+
+  it("FILTERS an ATTACKER's own Vercel Blob store, own path (r2 MAJOR)", async () => {
+    const u = await tdb.db
+      .insert(users)
+      .values({ email: 'atk@x.co', magicEoa: eoa(0x7af), authType: 'magic', displayName: 'Atk' })
+      .returning({ id: users.id });
+    const userId = u[0].id;
+    // Wrong STORE host (not the app's "x" store), but valid own path → filtered.
+    const ATTACKER = `https://attacker.public.blob.vercel-storage.com/avatars/${userId}/track.webp`;
+    await tdb.db.update(users).set({ avatarUrl: ATTACKER }).where(eq(users.id, userId));
+
+    await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 'hi' });
     const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
     expect(page.comments[0].avatarUrl).toBeNull();
   });

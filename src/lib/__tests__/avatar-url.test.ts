@@ -5,9 +5,13 @@
 // reach a public <img src>, so the negative cases are the load-bearing ones.
 // ----------------------------------------------------------------------------
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
+import {
+  getAppBlobPublicHost,
+  isAppOwnedAvatarUrl,
+  isOwnedAvatarBlobUrl,
+} from '@/lib/avatar-url';
 
 const UID = '11111111-1111-4111-8111-111111111111';
 
@@ -57,5 +61,78 @@ describe('isOwnedAvatarBlobUrl', () => {
     ).toBe(false);
     expect(isOwnedAvatarBlobUrl('not a url', UID)).toBe(false);
     expect(isOwnedAvatarBlobUrl('', UID)).toBe(false);
+  });
+});
+
+describe('getAppBlobPublicHost (derived from BLOB_READ_WRITE_TOKEN)', () => {
+  const ORIGINAL = process.env.BLOB_READ_WRITE_TOKEN;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+    else process.env.BLOB_READ_WRITE_TOKEN = ORIGINAL;
+  });
+
+  it('parses the store id → <storeId>.public.blob.vercel-storage.com', () => {
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_Store123_thesecretpart';
+    // store id is lowercased (hostnames are case-insensitive).
+    expect(getAppBlobPublicHost()).toBe('store123.public.blob.vercel-storage.com');
+  });
+
+  it('returns null when the token is absent or not a rw token', () => {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect(getAppBlobPublicHost()).toBeNull();
+    process.env.BLOB_READ_WRITE_TOKEN = 'not-a-vercel-token';
+    expect(getAppBlobPublicHost()).toBeNull();
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_'; // no store id
+    expect(getAppBlobPublicHost()).toBeNull();
+  });
+});
+
+describe('isAppOwnedAvatarUrl (STRICT — exact app store host)', () => {
+  const ORIGINAL = process.env.BLOB_READ_WRITE_TOKEN;
+  beforeEach(() => {
+    // App store id = "appstore" → host appstore.public.blob.vercel-storage.com
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_appstore_secret';
+  });
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+    else process.env.BLOB_READ_WRITE_TOKEN = ORIGINAL;
+  });
+
+  it('accepts an avatar on THIS app store host under the user own path', () => {
+    expect(
+      isAppOwnedAvatarUrl(
+        `https://appstore.public.blob.vercel-storage.com/avatars/${UID}/x.webp`,
+        UID,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects an ATTACKER's own Vercel Blob store (the r2 MAJOR)", () => {
+    // Right suffix, right owner path, WRONG store host → rejected.
+    expect(
+      isAppOwnedAvatarUrl(
+        `https://attacker.public.blob.vercel-storage.com/avatars/${UID}/track.webp`,
+        UID,
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects a foreign owner path even on the app store', () => {
+    expect(
+      isAppOwnedAvatarUrl(
+        'https://appstore.public.blob.vercel-storage.com/avatars/someone-else/x.webp',
+        UID,
+      ),
+    ).toBe(false);
+  });
+
+  it('fails closed (false) when the app host cannot be resolved', () => {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect(
+      isAppOwnedAvatarUrl(
+        `https://appstore.public.blob.vercel-storage.com/avatars/${UID}/x.webp`,
+        UID,
+      ),
+    ).toBe(false);
   });
 });
