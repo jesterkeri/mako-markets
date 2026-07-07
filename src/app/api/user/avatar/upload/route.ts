@@ -5,6 +5,7 @@ import sharp from 'sharp';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
+import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
@@ -175,24 +176,4 @@ export async function POST(req: Request) {
     ...walletUserToWire(row, session.walletAddress),
     lastSignInAt,
   });
-}
-
-// Only delete blobs we know this user owns. The cleanup must NOT delete
-// arbitrary Vercel Blob URLs — a malicious caller could otherwise paste
-// another user's avatar URL through /api/user/profile/update, then
-// trigger an upload to delete that user's blob.
-//
-// Ownership is established by the path prefix `/avatars/<userId>/`,
-// which is the only shape this route ever writes to (see `path` above).
-function isOwnedAvatarBlobUrl(url: string, userId: string): boolean {
-  try {
-    const u = new URL(url);
-    const hostMatches =
-      u.hostname.endsWith('.public.blob.vercel-storage.com')
-      || u.hostname.endsWith('.blob.vercel-storage.com');
-    if (!hostMatches) return false;
-    return u.pathname.startsWith(`/avatars/${userId}/`);
-  } catch {
-    return false;
-  }
 }

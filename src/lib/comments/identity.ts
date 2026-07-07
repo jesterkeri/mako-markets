@@ -27,6 +27,7 @@ import type { Address } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
 import { users } from '@/db/schema';
+import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { deriveSafeAddress } from '@/lib/safe';
 import { formatAddress } from '@/lib/user-display';
 
@@ -82,10 +83,18 @@ export async function resolveCommentAuthors(
         ? formatAddress(addressLower)
         : 'anon';
 
+    // Codex MAJOR (avatar wire): avatar_url predates the upload infra
+    // (migration 0004 = "https-only paste"), so a LEGACY row can hold an
+    // arbitrary attacker host. Only serve it if it's a Vercel Blob URL under
+    // THIS user's own /avatars/<id>/ prefix; otherwise null → glyph fallback.
+    // Prevents the public comments JSON from beaconing third-party hosts.
+    const avatarUrl =
+      r.avatarUrl && isOwnedAvatarBlobUrl(r.avatarUrl, r.id) ? r.avatarUrl : null;
+
     out.set(r.id, {
       authorLabel,
       avatarSeed: seedFor(r.id),
-      avatarUrl: r.avatarUrl ?? null,
+      avatarUrl,
       addressLower,
     });
   }

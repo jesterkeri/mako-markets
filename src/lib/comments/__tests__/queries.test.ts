@@ -9,7 +9,7 @@
 // ----------------------------------------------------------------------------
 
 import { createHash } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
 
@@ -169,26 +169,51 @@ describe('wire-shape privacy + avatarSeed non-reversibility', () => {
     expect(page.comments[0].avatarUrl).toBeNull();
   });
 
-  it('serializes the author photo URL when the user has uploaded one', async () => {
-    const PHOTO = 'https://x.public.blob.vercel-storage.com/avatars/u/a.webp';
+  it('serializes the photo URL when it is an OWNED Vercel Blob URL', async () => {
+    const u = await tdb.db
+      .insert(users)
+      .values({ email: 'pho@x.co', magicEoa: eoa(0x7ac), authType: 'magic', displayName: 'Pho' })
+      .returning({ id: users.id });
+    const userId = u[0].id;
+    // Owned = Vercel Blob host + this user's own /avatars/<id>/ prefix.
+    const PHOTO = `https://x.public.blob.vercel-storage.com/avatars/${userId}/a.webp`;
+    await tdb.db.update(users).set({ avatarUrl: PHOTO }).where(eq(users.id, userId));
+
+    await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 'hi' });
+    const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
+    expect(page.comments[0].avatarUrl).toBe(PHOTO);
+  });
+
+  it('FILTERS a legacy non-owned avatar_url (arbitrary host) to null (Codex MAJOR)', async () => {
+    // migration 0004 allowed "https-only paste" before the upload infra, so a
+    // legacy row can hold an attacker host. It must NOT reach the public wire.
     const u = await tdb.db
       .insert(users)
       .values({
-        email: 'pho@x.co',
-        magicEoa: eoa(0x7ac),
+        email: 'evil@x.co',
+        magicEoa: eoa(0x7ad),
         authType: 'magic',
-        displayName: 'Pho',
-        avatarUrl: PHOTO,
+        displayName: 'Evil',
+        avatarUrl: 'https://attacker.example/track.webp',
       })
       .returning({ id: users.id });
-    await createComment(db(), {
-      target: MARKET_5,
-      userId: u[0].id,
-      parentId: null,
-      body: 'hi',
-    });
+    await createComment(db(), { target: MARKET_5, userId: u[0].id, parentId: null, body: 'hi' });
     const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
-    expect(page.comments[0].avatarUrl).toBe(PHOTO);
+    expect(page.comments[0].avatarUrl).toBeNull(); // filtered → glyph fallback
+  });
+
+  it("FILTERS a Vercel Blob URL under ANOTHER user's /avatars/ prefix", async () => {
+    const u = await tdb.db
+      .insert(users)
+      .values({ email: 'imp@x.co', magicEoa: eoa(0x7ae), authType: 'magic', displayName: 'Imp' })
+      .returning({ id: users.id });
+    // Right host, WRONG owner path → still filtered (no impersonation).
+    const FOREIGN = 'https://x.public.blob.vercel-storage.com/avatars/someone-else/a.webp';
+    await tdb.db.update(users).set({ avatarUrl: FOREIGN }).where(eq(users.id, u[0].id));
+
+    await createComment(db(), { target: MARKET_5, userId: u[0].id, parentId: null, body: 'hi' });
+    const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
+    expect(page.comments[0].avatarUrl).toBeNull();
   });
 
   it('shows the truncated address as the label when there is no display name', async () => {
