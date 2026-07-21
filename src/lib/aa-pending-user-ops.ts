@@ -468,14 +468,19 @@ export async function selectStaleSendingRows(args: {
   thresholdMs: number;
   limit: number;
 }): Promise<Array<AaPendingUserOp>> {
-  const cutoff = new Date(Date.now() - args.thresholdMs);
+  // #192: bind the cutoff as an ISO string, NOT a raw Date. postgres-js with
+  // `prepare: false` (Neon's pooled path) takes the simple-query route and
+  // throws `ERR_INVALID_ARG_TYPE` ("Received an instance of Date") on a raw
+  // Date bind. pglite accepts Dates, so integration tests miss it — only the
+  // real DB surfaces it. Mirrors the PM sweep fix (#163, `1cd7ca4`).
+  const cutoffIso = new Date(Date.now() - args.thresholdMs).toISOString();
   return db
     .select()
     .from(aaPendingUserOps)
     .where(
       and(
         eq(aaPendingUserOps.status, 'sending'),
-        sql`${aaPendingUserOps.sendingStartedAt} < ${cutoff}`,
+        sql`${aaPendingUserOps.sendingStartedAt} < ${cutoffIso}`,
       ),
     )
     .limit(args.limit);
@@ -485,14 +490,15 @@ export async function selectStaleSubmittedRows(args: {
   thresholdMs: number;
   limit: number;
 }): Promise<Array<AaPendingUserOp>> {
-  const cutoff = new Date(Date.now() - args.thresholdMs);
+  // #192: ISO-string cutoff, not a raw Date — see selectStaleSendingRows.
+  const cutoffIso = new Date(Date.now() - args.thresholdMs).toISOString();
   return db
     .select()
     .from(aaPendingUserOps)
     .where(
       and(
         eq(aaPendingUserOps.status, 'submitted'),
-        sql`${aaPendingUserOps.statusUpdatedAt} < ${cutoff}`,
+        sql`${aaPendingUserOps.statusUpdatedAt} < ${cutoffIso}`,
       ),
     )
     .limit(args.limit);

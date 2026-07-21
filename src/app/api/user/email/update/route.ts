@@ -1,8 +1,9 @@
 import { type Address } from 'viem';
-import { and, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
+import { emailChangeCooldownWhere } from './cooldown-where';
 import { type MagicWireUser } from '@/lib/users-wire';
 
 /// Email-change cooldown in milliseconds. Mako policy: at most one
@@ -190,18 +191,7 @@ export async function POST(req: Request) {
     const updated = await db
       .update(users)
       .set({ email: newEmail, lastEmailChangedAt: new Date() })
-      .where(
-        and(
-          eq(users.id, session.userId),
-          sql`lower(${users.magicEoa}) = lower(${didEoa})`,
-          // Defense in depth: this catches a race between the read
-          // above and the write here. If two concurrent change requests
-          // raced past the read-side check, only one of them lands
-          // because Postgres serializes writes and the loser sees
-          // last_email_changed_at already updated within the cooldown.
-          sql`(${users.lastEmailChangedAt} IS NULL OR ${users.lastEmailChangedAt} < ${oneYearAgo})`,
-        ),
-      )
+      .where(emailChangeCooldownWhere(session.userId, didEoa, oneYearAgo))
       .returning({ id: users.id });
 
     if (updated.length === 0) {
