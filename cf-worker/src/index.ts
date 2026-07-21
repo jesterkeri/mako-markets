@@ -1433,18 +1433,21 @@ export default {
   // ctx.waitUntil keeps the Worker alive until runResolver finishes
   // (otherwise the event ends when scheduled() returns synchronously).
   //
-  // Six jobs share this single per-minute tick:
-  //   1. Market resolver (always — sports/crypto market lifecycle).
-  //   2. AA fast cron (every minute — drains aa_pending_user_ops rows
-  //      whose receipt poll died on the request path).
-  //   3. AA slow cron (every 5 minutes — sweeps stale rows + emits
+  // Jobs on this per-minute tick (cadences tuned for Neon autosuspend —
+  // #191; the 2 PM jobs are PAUSED):
+  //   1. Market resolver (every minute — sports/crypto market lifecycle;
+  //      chain-only, never touches Neon).
+  //   2. AA fast cron (every 15 min — expires timed-out `pending` rows +
+  //      recovers `sending` rows already stuck past the 5-min threshold;
+  //      live bets/claims resolve inline in /api/aa/send).
+  //   3. AA slow cron (every 30 min — sweeps stale rows + emits
   //      ambiguous-row alerts).
-  //   4. Private-markets indexer (every minute — runIndexerOnce
-  //      against MakoPrivateMarketsV1: pulls new logs, applies
-  //      create/stake/resolution handlers under mutex).
-  //   5. Private-markets maintenance (every 5 minutes — stale-pending
-  //      sweep + resnapshot reconciliation for the PM indexer).
-  //   6. Leaderboard indexer (every 5 minutes — appends main-market
+  //   4. PAUSED 2026-07-20 (#191) — Private-markets indexer (was every
+  //      minute — runIndexerOnce against MakoPrivateMarketsV1). PM is
+  //      dark; the per-minute DB wake burned Neon compute for nothing.
+  //   5. PAUSED 2026-07-20 (#191) — Private-markets maintenance (was
+  //      every 5 minutes — stale-pending sweep + resnapshot).
+  //   6. Leaderboard indexer (every 30 min — appends main-market
   //      BetPlaced/Claimed/CreatorFeePaid rows to the #186 event
   //      ledger; cold-start backfill is the seed script's job, not
   //      this cron's).
@@ -1454,10 +1457,11 @@ export default {
   // pingVercelCron with Bearer CRON_SECRET; the routes themselves
   // still gate via cron-auth.ts.
   //
-  // Five-minute jobs are gated by minute % 5 === 0 against the CF
+  // Cron pings are gated by minute % 15 / minute % 30 against the CF
   // scheduledTime (epoch ms), not the Worker's wall clock at handler
   // entry, so behaviour is deterministic against CF's scheduled time
-  // even under handler-entry skew.
+  // even under handler-entry skew. The 30-min jobs land on a subset of
+  // the 15-min ticks (minute 0/30), so they never add a DB wakeup.
   async scheduled(
     event: ScheduledController,
     env: Env,
@@ -1469,24 +1473,44 @@ export default {
       }),
     );
 
-    // Per-minute Vercel pings.
-    ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-fast'));
-    ctx.waitUntil(pingVercelCron(env, '/api/cron/pm-indexer'));
-
-    // Five-minute Vercel pings.
+    // Vercel cron pings — cadence tuned so Neon can autosuspend (#191,
+    // 2026-07-20). Neon Free suspends after ~5 min idle and includes
+    // 100 CU-hours/mo, so anything hitting the DB more often than the
+    // suspend window keeps it resident 24/7 and drains the quota. The
+    // DB-touching crons are therefore gated to intervals that leave real
+    // idle gaps, and the 30-min jobs are ALIGNED onto an aa-fast tick so
+    // they add no extra wakeups. (runResolver above is every-minute but
+    // chain-only — it never touches Neon — so it's unaffected.)
     const minute = new Date(event.scheduledTime).getUTCMinutes();
-    if (minute % 5 === 0) {
+
+    // aa-fast — every 15 min (was every minute). Janitor only: expires
+    // timed-out `pending` rows + recovers `sending` rows already stuck past
+    // SENDING_RECOVERY_THRESHOLD_MS (5 min). Live bets/claims resolve inline
+    // in /api/aa/send, so a 15-min cadence only delays cleanup of an
+    // ABANDONED op; a user retry recovers it sooner.
+    if (minute % 15 === 0) {
+      ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-fast'));
+    }
+
+    // aa-slow + leaderboard — every 30 min (both were every 5 min), ALIGNED
+    // with an aa-fast tick (minute 0/30 is a subset of the 15-min ticks) so
+    // they piggyback an existing DB wakeup instead of creating new ones.
+    // aa-slow = stale-row sweep + ambiguous-row alerts. leaderboard = #186
+    // main-market event ledger; its read API caches 30-60s and the board
+    // only shifts when bets/claims land, so 30-min indexing is fine.
+    // (Cold-start population is scripts/seed-leaderboard.mts's job.)
+    if (minute % 30 === 0) {
       ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-slow'));
-      ctx.waitUntil(pingVercelCron(env, '/api/cron/pm-maintenance'));
-      // #186: main-market event ledger for /leaderboard. 5-min gate is
-      // deliberate — the read API caches 30-60s over a board that only
-      // shifts when bets/claims land; ~300 Monad blocks per tick is
-      // well under one getLogs chunk. NOTE: first-ever population is
-      // NOT this cron's job — scripts/seed-leaderboard.mts backfills
-      // from the deploy block BEFORE this ping ships (seed first, then
-      // wrangler deploy).
       ctx.waitUntil(pingVercelCron(env, '/api/cron/leaderboard'));
     }
+
+    // PAUSED 2026-07-20 (#191): Private Markets is dark
+    // (NEXT_PUBLIC_PM_ENABLED=false), so its indexer/maintenance crons were
+    // waking Neon for a feature no user can reach. Re-enable both when PM
+    // ships (#165/#168) — on a sleep-friendly cadence, not the old
+    // every-minute / every-5-min.
+    // if (minute % 15 === 0) ctx.waitUntil(pingVercelCron(env, '/api/cron/pm-indexer'));
+    // if (minute % 30 === 0) ctx.waitUntil(pingVercelCron(env, '/api/cron/pm-maintenance'));
   },
 
   // No HTTP triggers — a public /tick endpoint would let anyone drain the

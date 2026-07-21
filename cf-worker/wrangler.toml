@@ -19,9 +19,16 @@ MAKO_APP_URL = "https://mako-markets.vercel.app"
 # Cron: every minute. CF cron is reliable to the minute (unlike GitHub
 # Actions cron which drifts to 1-2 hours under load). Markets with
 # closeTime ≥ 60s will resolve within ~1 tick of close. Each tick also
-# fires Vercel cron routes:
-#   every minute  → /api/cron/aa-fast + /api/cron/pm-indexer
-#   every 5 min   → /api/cron/aa-slow + /api/cron/pm-maintenance
+# fires Vercel cron routes, at cadences tuned so Neon can autosuspend
+# (#191 — the DB-touching crons must not poke more often than Neon's
+# ~5-min suspend window, or it never sleeps and drains the free quota):
+#   every 15 min  → /api/cron/aa-fast
+#   every 30 min  → /api/cron/aa-slow + /api/cron/leaderboard
+#                   (aligned onto a 15-min aa-fast tick — no extra wakeups)
+# PAUSED 2026-07-20 (#191): /api/cron/pm-indexer + /api/cron/pm-maintenance.
+#   Private Markets is dark (NEXT_PUBLIC_PM_ENABLED=false); the per-minute
+#   PM indexer was waking Neon for nothing. Re-enable both in
+#   cf-worker/src/index.ts when PM launches.
 # Routes are gated by Bearer CRON_SECRET on the Vercel side.
 [triggers]
 crons = ["*/1 * * * *"]
