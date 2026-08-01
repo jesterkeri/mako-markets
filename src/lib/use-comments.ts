@@ -4,9 +4,10 @@
 // src/lib/use-comments.ts
 //
 // TanStack hooks over /api/comments. The list is an infinite query (keyset
-// pagination) that polls every 30s so comments feel live without websockets.
-// Post + delete invalidate the list (optimistic-free — the plan's choice; the
-// refetch shows the server's canonical assembly incl. position badges).
+// pagination) that polls every 60s while the tab is visible (paused when
+// hidden) so comments feel live without websockets. Post + delete invalidate
+// the list (optimistic-free — the plan's choice; the refetch shows the
+// server's canonical assembly incl. position badges).
 //
 // Wire types come from the browser-safe @/lib/comments/types (no server-only
 // imports), so this stays client-safe.
@@ -20,7 +21,18 @@ import {
 
 import type { CommentsPage, CommentScope } from '@/lib/comments/types';
 
-const REFETCH_MS = 30_000;
+// #191-4 poll hardening: 60s (was 30s) halves the visible-tab query rate.
+// This is a LOAD cut, not a compute-residency win — one visible tab still
+// polls well inside Neon's ~5min autosuspend, so the DB stays awake during
+// active use regardless. The guaranteed effect is less query work while awake;
+// it may also ease autoscaling pressure (a min-size compute bills the same
+// CU/s while awake either way, so lighter load only lowers CU when it avoids
+// scaling UP). The poll refreshes new comments AND viewer-dependent fields
+// (isOwn, author name, position badges) on existing rows; a user's own
+// top-level post/delete invalidates the list at once, but replies pulled via
+// "load more" live in local component state and reconcile only on remount
+// (tracked in #193).
+const REFETCH_MS = 60_000;
 
 export interface CommentTargetParams {
   scope: CommentScope;
@@ -58,6 +70,12 @@ export function useComments(t: CommentTargetParams, enabled = true) {
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     refetchInterval: REFETCH_MS,
+    // #191-4: pin TanStack's EXISTING default (hidden tabs already skip
+    // interval refetch) so a future global QueryClient override can't silently
+    // re-enable background polling. This preserves — does not create — the idle
+    // path: when every tab is hidden/closed nothing polls, so the DB can reach
+    // autosuspend.
+    refetchIntervalInBackground: false,
     enabled,
   });
 }

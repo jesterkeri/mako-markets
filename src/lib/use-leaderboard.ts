@@ -49,9 +49,18 @@ export interface LeaderboardWire {
   generatedAt: string;
 }
 
-/// Matches the server's board revalidation window (45s) so the client
-/// re-pulls roughly when a fresh board can exist.
-const REFETCH_MS = 45_000;
+/// #191-4 poll hardening: 90s (was 45s). The shared board is an
+/// unstable_cache(revalidate: 45s) — Next's request-driven
+/// stale-while-revalidate, NOT proactive: the poll that crosses the window
+/// serves the STALE board and only triggers background regeneration, so the
+/// refreshed board is not shown until a LATER poll observes it. Displayed rows
+/// can therefore stay stale across multiple polls (worst case on the order of
+/// revalidate + 2× interval in low traffic); generatedAt exposes the true age
+/// and the UI surfaces staleness. What 90s actually cuts is the per-viewer
+/// `viewer`-block query rate — that block is computed LIVE outside the cache,
+/// so it scales with poll frequency under concurrency. A net-PnL board on a
+/// 30-min recompute cron does not need sub-minute polls.
+const REFETCH_MS = 90_000;
 
 export function useLeaderboard(window: LeaderboardWindow, me?: string) {
   return useQuery<LeaderboardWire>({
@@ -66,5 +75,10 @@ export function useLeaderboard(window: LeaderboardWindow, me?: string) {
       return (await res.json()) as LeaderboardWire;
     },
     refetchInterval: REFETCH_MS,
+    // #191-4: pin TanStack's existing default (hidden tabs already skip
+    // interval refetch) as a guard against a global QueryClient override.
+    // Preserves the idle path — a board nobody is viewing issues no live
+    // `viewer` queries.
+    refetchIntervalInBackground: false,
   });
 }
