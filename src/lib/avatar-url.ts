@@ -54,14 +54,19 @@ export function getAppBlobPublicHost(): string | null {
   return `${m[1].toLowerCase()}.public.blob.vercel-storage.com`;
 }
 
-/// STRICT — is `url` an avatar THIS app uploaded for `userId`? Requires the
-/// EXACT app store host (not merely any *.blob.vercel-storage.com tenant — an
-/// attacker can create their own Blob store) AND this user's own
-/// `/avatars/<userId>/` path. Used for the PUBLIC comments wire. Fails closed
-/// when the app host can't be resolved.
-export function isAppOwnedAvatarUrl(url: string, userId: string): boolean {
-  const appHost = getAppBlobPublicHost();
-  if (!appHost) return false;
+/// STRICT core with the app host supplied explicitly — is `url` an avatar THIS
+/// app uploaded for `userId` on `appHost`? Requires the EXACT app store host
+/// (not merely any *.blob.vercel-storage.com tenant — an attacker can create
+/// their own Blob store), this user's own `/avatars/<userId>/` path, and https.
+/// The env-reading wrapper below is the normal entry point; this parameterized
+/// form lets batch tooling (the #189 avatar scrub) resolve the host ONCE and
+/// stay unit-testable without env — both share this exact rule so they can't
+/// drift.
+export function isAppOwnedAvatarUrlForHost(
+  url: string,
+  userId: string,
+  appHost: string,
+): boolean {
   try {
     const u = new URL(url);
     if (u.protocol !== 'https:') return false;
@@ -70,4 +75,14 @@ export function isAppOwnedAvatarUrl(url: string, userId: string): boolean {
   } catch {
     return false;
   }
+}
+
+/// STRICT — is `url` an avatar THIS app uploaded for `userId`? Resolves the app
+/// store host from BLOB_READ_WRITE_TOKEN and delegates to
+/// isAppOwnedAvatarUrlForHost. Used for the PUBLIC comments wire. Fails closed
+/// (false) when the app host can't be resolved.
+export function isAppOwnedAvatarUrl(url: string, userId: string): boolean {
+  const appHost = getAppBlobPublicHost();
+  if (!appHost) return false;
+  return isAppOwnedAvatarUrlForHost(url, userId, appHost);
 }
