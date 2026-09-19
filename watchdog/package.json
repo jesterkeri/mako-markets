@@ -1,0 +1,32 @@
+{
+  "name": "mako-watchdog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Alert-only Cloudflare Worker that watches Mako V4 markets and the resolver, and reports on Telegram with Healthchecks as the independent path. Holds no private key.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail --format pretty",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "vitest run",
+    "bundle": "wrangler deploy --dry-run --outdir dist",
+    "assert-bundle": "node scripts/assert-bundle.mjs dist"
+  },
+  "dependencies": {
+    "viem": "^2.47.12"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.13",
+    "@cloudflare/workers-types": "^5.20260919.1",
+    "typescript": "^5.9.3",
+    "vitest": "~4.1.11",
+    "wrangler": "^4.135.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}

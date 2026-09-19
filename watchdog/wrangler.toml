@@ -1,0 +1,45 @@
+name = "mako-watchdog"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Alert-only watchdog for Mako V4 (mako-design/WATCHDOG_PLAN.md r15, slice 1).
+# It reads the chain and a few public pages, then reports on Telegram, with
+# Healthchecks as the independent path. It holds no private key and sends no
+# transactions; CI builds this bundle and fails if signing code appears.
+
+# Every 5 minutes. Schedule decisions use event.scheduledTime.
+[triggers]
+crons = ["*/5 * * * *"]
+
+# CPU ceiling per run, and the subrequest cap. A completed slice-1 run makes at
+# most 24 requests; the cap leaves room for slice 2's audit (worst case 48).
+[limits]
+cpu_ms = 5000
+subrequests = 100
+
+# One SQLite-backed Durable Object instance holds the run lease and all state.
+[[durable_objects.bindings]]
+name = "WATCHDOG_STATE"
+class_name = "WatchdogState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WatchdogState"]
+
+[observability]
+enabled = true
+
+# Non-secret config. MAKO_ADDRESS and RESOLVER_ADDRESS are public on-chain
+# values; PUBLIC_RPC_URL is the endpoint the resolver itself uses.
+[vars]
+MAKO_ADDRESS = "0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195"
+RESOLVER_ADDRESS = "0xC8BF886f73E4371CBd8160EEA7683b8Da98190F1"
+PUBLIC_RPC_URL = "https://testnet-rpc.monad.xyz/"
+APP_URL = "https://makomarket.xyz"
+
+# Secrets (set with mako-design/scripts/bw-secret-to-worker.sh, never in this file):
+#   PROVIDER_B_URL         Alchemy Monad-testnet URL with its key, used only by the watchdog
+#   TELEGRAM_BOT_TOKEN     bot token from @BotFather
+#   TELEGRAM_CHAT_ID       Joshua's chat id (mako-design/scripts/tg-chat-id.sh)
+#   HEALTHCHECKS_PING_URL  https://hc-ping.com/<uuid> for the mako-watchdog check
+# Optional var DRY_RUN = "1" prints messages instead of sending them.
