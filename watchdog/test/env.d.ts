@@ -3,6 +3,7 @@ import type { Env as WatchdogEnv } from '../src/index';
 
 declare global {
   namespace Cloudflare {
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- declaration merging needs an empty extension
     interface Env extends WatchdogEnv {}
   }
 }
