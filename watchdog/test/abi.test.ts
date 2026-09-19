@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { encodeAbiParameters, encodeFunctionData, parseAbi, stringToHex } from 'viem';
+import { decodeAbiParameters, encodeAbiParameters, encodeFunctionData, parseAbi, stringToHex } from 'viem';
 import { aggregate3GetMarkets, decodeAggregate3, decodeMarketHead, getMarketCalldata } from '../src/abi';
 import { MULTICALL3 } from '../src/config';
 import markets from './fixtures/markets.json';
@@ -78,5 +78,107 @@ describe('aggregate3', () => {
   });
   it('points at Multicall3', () => {
     expect(MULTICALL3).toBe('0xcA11bde05977b3631167028862bE2a173976CA11');
+  });
+});
+
+// Review r1 finding 2: the decoder must reject any ABI-invalid or
+// non-canonical return, not only validate the fields it uses.
+describe('strict decoding: mutations of a real getMarket return', () => {
+  const good = M['74'].slice(2); // 640 bytes: 32 + 16 words + length + 2 words of question
+  const w = (k: number) => 64 + 64 * k; // hex index of tuple word k
+  const setWord = (h: string, hexIdx: number, v: bigint) => h.slice(0, hexIdx) + v.toString(16).padStart(64, '0') + h.slice(hexIdx + 64);
+  const reject = (h: string) => expect(() => decodeMarketHead(1, '0x' + h)).toThrow();
+
+  it('accepts the unmodified return', () => {
+    expect(decodeMarketHead(74, '0x' + good).closeTime).toBe(1786000193);
+  });
+  it('the 17-word prefix alone, question offset past the end', () => {
+    reject(good.slice(0, 2 * (32 + 16 * 32)));
+    reject(setWord(good.slice(0, 2 * (32 + 17 * 32)), w(3), 10_000n));
+  });
+  it('question tail missing, truncated or with nonzero padding', () => {
+    reject(good.slice(0, 2 * (32 + 17 * 32))); // length word only
+    reject(good.slice(0, good.length - 64)); // last padded word cut
+    reject(good.slice(0, good.length - 2) + '01'); // padding not zero
+  });
+  it('non-canonical, unaligned or overlapping question offset', () => {
+    reject(setWord(good, w(3), 0x220n) + '0'.repeat(64)); // shifted, tail present
+    reject(setWord(good, w(3), 0x201n));
+    reject(setWord(good, w(3), 0x1e0n)); // points into the head
+  });
+  it('trailing data', () => {
+    reject(good + '0'.repeat(64));
+  });
+  it('fields outside their Solidity widths', () => {
+    reject(setWord(good, w(0), 1n << 160n)); // address
+    reject(setWord(good, w(1), 256n)); // uint8 enum
+    reject(setWord(good, w(4), 1n << 53n)); // time beyond a safe integer
+    reject(setWord(good, w(9), 1n << 32n)); // uint32
+    reject(setWord(good, w(11), 4n)); // Outcome enum
+    reject(setWord(good, w(12), 2n)); // bool resolved
+    reject(setWord(good, w(13), 2n)); // bool creatorFeeClaimed
+    reject(setWord(good, w(15), 1n << 16n)); // uint16
+    reject(setWord(good, 64 + 64 * 16, 201n)); // question longer than V4 allows
+  });
+});
+
+describe('strict decoding: mutations of a real aggregate3 return', () => {
+  const good = agg.result.slice(2);
+  const setWord = (h: string, byte: number, v: bigint) => h.slice(0, byte * 2) + v.toString(16).padStart(64, '0') + h.slice(byte * 2 + 64);
+  const reject = (h: string, n = agg.ids.length) => expect(() => decodeAggregate3('0x' + h, n)).toThrow();
+  const off0 = Number(BigInt('0x' + good.slice(128, 192)));
+
+  it('entry 1 aliased to entry 0', () => {
+    reject(setWord(good, 64 + 32, BigInt(off0)));
+  });
+  it('bytes member not at 0x40', () => {
+    reject(setWord(good, 64 + off0 + 32, 0x60n));
+  });
+  it('trailing data and nonzero padding', () => {
+    reject(good + '0'.repeat(64));
+    const t = 64 + off0;
+    const len = Number(BigInt('0x' + good.slice((t + 64) * 2, (t + 96) * 2)));
+    // Shorten entry 0 by one byte and make that byte, now padding, nonzero.
+    const lastByte = (t + 96 + len - 1) * 2;
+    const shortened = setWord(good, t + 64, BigInt(len - 1));
+    reject(shortened.slice(0, lastByte) + '01' + shortened.slice(lastByte + 2));
+    // Shortened with zero padding is a valid aggregate3 encoding, but the
+    // market inside it is no longer a valid getMarket return.
+    const valid = decodeAggregate3('0x' + shortened, agg.ids.length);
+    expect(() => decodeMarketHead(agg.ids[0], valid[0]!)).toThrow();
+  });
+  it('array offset not 0x20', () => {
+    reject(setWord(good, 0, 0x40n));
+  });
+});
+
+describe('strict decoding agrees with viem on valid encodings', () => {
+  it('200 random markets decode to the same fields', () => {
+    const tuple = [{ type: 'tuple', components: [
+      { name: 'creator', type: 'address' }, { name: 'mType', type: 'uint8' }, { name: 'oracleRef', type: 'bytes32' },
+      { name: 'question', type: 'string' }, { name: 'createdAt', type: 'uint64' }, { name: 'closeTime', type: 'uint64' },
+      { name: 'bettingCloseTime', type: 'uint64' }, { name: 'totalYes', type: 'uint256' }, { name: 'totalNo', type: 'uint256' },
+      { name: 'yesBettorCount', type: 'uint32' }, { name: 'noBettorCount', type: 'uint32' }, { name: 'outcome', type: 'uint8' },
+      { name: 'resolved', type: 'bool' }, { name: 'creatorFeeClaimed', type: 'bool' },
+      { name: 'protocolFeeBpsSnapshot', type: 'uint16' }, { name: 'creatorFeeBpsSnapshot', type: 'uint16' },
+    ] }] as const;
+    let seed = 7;
+    const r = (k: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % k);
+    for (let i = 0; i < 200; i++) {
+      const v = {
+        creator: `0x${r(1 << 30).toString(16).padStart(40, '0')}` as `0x${string}`,
+        mType: r(7), oracleRef: stringToHex(`BTC:gt:${r(99999)}`, { size: 32 }), question: 'q'.repeat(1 + r(200)),
+        createdAt: BigInt(1_700_000_000 + r(1e8)), closeTime: BigInt(1_700_000_000 + r(1e8)), bettingCloseTime: BigInt(1_700_000_000 + r(1e8)),
+        totalYes: BigInt(r(1e9)) * 10n ** 12n, totalNo: BigInt(r(1e9)), yesBettorCount: r(1000), noBettorCount: r(1000), outcome: r(4),
+        resolved: r(2) === 1, creatorFeeClaimed: r(2) === 1, protocolFeeBpsSnapshot: r(500), creatorFeeBpsSnapshot: r(500),
+      };
+      const enc = encodeAbiParameters(tuple, [v]);
+      const [back] = decodeAbiParameters(tuple, enc);
+      const h = decodeMarketHead(i, enc);
+      expect(h).toEqual({
+        id: i, mType: back.mType, oracleRef: back.oracleRef, createdAt: Number(back.createdAt), closeTime: Number(back.closeTime),
+        bettingCloseTime: Number(back.bettingCloseTime), totalYes: back.totalYes, totalNo: back.totalNo, resolved: back.resolved,
+      });
+    }
   });
 });

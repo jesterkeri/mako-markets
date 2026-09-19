@@ -46,36 +46,68 @@ export function aggregate3GetMarkets(target: string, ids: number[]): string {
 
 function word(hex: string, byteOffset: number): string {
   const start = byteOffset * 2;
-  if (start < 0 || start + WORD > hex.length) throw new Error('abi: out of range');
+  if (!Number.isSafeInteger(byteOffset) || start < 0 || start + WORD > hex.length) throw new Error('abi: out of range');
   return hex.slice(start, start + WORD);
 }
 
+function wordBig(hex: string, byteOffset: number): bigint {
+  return BigInt('0x' + word(hex, byteOffset));
+}
+
+/// A word as a number, rejected unless below 2^maxBits (and always a safe integer).
 function wordNum(hex: string, byteOffset: number, maxBits = 53): number {
-  const w = BigInt('0x' + word(hex, byteOffset));
-  if (w >= 1n << BigInt(maxBits)) throw new Error('abi: value too large');
+  const w = wordBig(hex, byteOffset);
+  if (w >= 1n << BigInt(Math.min(maxBits, 53))) throw new Error('abi: value too large');
   return Number(w);
 }
 
+function ceil32(n: number): number {
+  return Math.ceil(n / 32) * 32;
+}
+
+/// Bytes [from, to) must all be zero (ABI padding).
+function zeroPadding(hex: string, from: number, to: number): void {
+  if (/[^0]/.test(hex.slice(from * 2, to * 2))) throw new Error('abi: nonzero padding');
+}
+
+function hexBody(v: string): string {
+  if (typeof v !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(v)) throw new Error('abi: not hex');
+  return v.slice(2).toLowerCase();
+}
+
+/// Largest returnData accepted per call: a getMarket result with a 200-byte
+/// question is 800 bytes; anything much larger is not a V4 answer.
+const MAX_RETURN_BYTES = 4_096;
+
 /// Decodes aggregate3's (bool success, bytes returnData)[] into per-call
-/// return data, or null for a call that failed.
+/// return data, or null for a call that failed. Only the canonical encoding
+/// Solidity produces is accepted: offsets in order and contiguous, each bytes
+/// member at 0x40, zero padding, and no trailing data. Anything else throws.
 export function decodeAggregate3(resultHex: string, expected: number): (string | null)[] {
-  if (typeof resultHex !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(resultHex)) throw new Error('abi: not hex');
-  const h = resultHex.slice(2).toLowerCase();
-  const arr = wordNum(h, 0);
-  const n = wordNum(h, arr);
+  const h = hexBody(resultHex);
+  const total = h.length / 2;
+  if (wordNum(h, 0) !== 32) throw new Error('abi: bad array offset');
+  const n = wordNum(h, 32);
   if (n !== expected) throw new Error('abi: length mismatch');
-  const base = arr + 32;
+  const base = 64; // offsets are relative to the start of the offset table
+  let next = n * 32;
   const out: (string | null)[] = [];
   for (let i = 0; i < n; i++) {
-    const tuple = base + wordNum(h, base + i * 32);
+    const off = wordNum(h, base + i * 32);
+    if (off !== next) throw new Error('abi: non-canonical tuple offset');
+    const tuple = base + off;
     const success = wordNum(h, tuple);
     if (success !== 0 && success !== 1) throw new Error('abi: bad bool');
-    const dataAt = tuple + wordNum(h, tuple + 32);
-    const len = wordNum(h, dataAt);
-    const start = (dataAt + 32) * 2;
-    if (start + len * 2 > h.length) throw new Error('abi: bytes out of range');
-    out.push(success === 1 ? h.slice(start, start + len * 2) : null);
+    if (wordNum(h, tuple + 32) !== 64) throw new Error('abi: non-canonical bytes offset');
+    const len = wordNum(h, tuple + 64);
+    if (len > MAX_RETURN_BYTES) throw new Error('abi: return data too long');
+    const dataAt = tuple + 96;
+    if (dataAt + ceil32(len) > total) throw new Error('abi: bytes out of range');
+    zeroPadding(h, dataAt + len, dataAt + ceil32(len));
+    out.push(success === 1 ? '0x' + h.slice(dataAt * 2, (dataAt + len) * 2) : null);
+    next = off + 96 + ceil32(len);
   }
+  if (base + next !== total) throw new Error('abi: trailing data');
   return out;
 }
 
@@ -91,29 +123,54 @@ export interface MarketHead {
   resolved: boolean;
 }
 
-/// Head words of getMarket's returned Market tuple (d088ced L76-108):
-/// 1 mType, 2 oracleRef, 4 createdAt, 5 closeTime, 6 bettingCloseTime,
-/// 7 totalYes, 8 totalNo, 12 resolved. Word k sits at byte 32 + 32k because
-/// word 0 of the return data is the tuple offset (0x20).
+/// V4 limits `question` to 1-200 bytes (d088ced L356); a missing market has 0.
+const MAX_QUESTION_BYTES = 200;
+
+/// Decodes getMarket's returned Market tuple (d088ced L76-108) and projects
+/// the head words slice 1 uses: 1 mType, 2 oracleRef, 4 createdAt,
+/// 5 closeTime, 6 bettingCloseTime, 7 totalYes, 8 totalNo, 12 resolved.
+/// The whole return is validated first, including the fields that are then
+/// discarded: only the canonical encoding Solidity produces is accepted
+/// (tuple at 0x20, question at tuple + 0x200 with its full padded tail, no
+/// trailing data) and every field must fit its declared Solidity width.
 export function decodeMarketHead(id: number, dataHex: string): MarketHead {
-  const h = dataHex.replace(/^0x/, '').toLowerCase();
-  if (h.length < (32 + 16 * 32) * 2) throw new Error('abi: market too short');
+  const h = hexBody(dataHex);
+  const total = h.length / 2;
   if (wordNum(h, 0) !== 32) throw new Error('abi: bad tuple offset');
-  const at = (k: number) => 32 + 32 * k;
-  const mTypeWord = BigInt('0x' + word(h, at(1)));
-  if (mTypeWord > 255n) throw new Error('abi: bad enum');
-  const resolved = wordNum(h, at(12));
-  if (resolved !== 0 && resolved !== 1) throw new Error('abi: bad bool');
+  const T = 32;
+  const at = (k: number) => T + 32 * k;
+  const fits = (k: number, bits: number) => {
+    if (wordBig(h, at(k)) >> BigInt(bits) !== 0n) throw new Error(`abi: word ${k} exceeds ${bits} bits`);
+  };
+  fits(0, 160); // creator address
+  fits(1, 8); // mType (uint8 enum)
+  if (wordNum(h, at(3)) !== 16 * 32) throw new Error('abi: non-canonical question offset');
+  fits(9, 32); // yesBettorCount
+  fits(10, 32); // noBettorCount
+  if (wordNum(h, at(11)) > 3) throw new Error('abi: bad outcome'); // Outcome enum 0-3
+  for (const k of [12, 13]) {
+    const b = wordNum(h, at(k));
+    if (b !== 0 && b !== 1) throw new Error('abi: bad bool');
+  }
+  fits(14, 16); // protocolFeeBpsSnapshot
+  fits(15, 16); // creatorFeeBpsSnapshot
+  const qAt = T + 16 * 32;
+  const qLen = wordNum(h, qAt);
+  if (qLen > MAX_QUESTION_BYTES) throw new Error('abi: question too long');
+  const end = qAt + 32 + ceil32(qLen);
+  if (end !== total) throw new Error('abi: length mismatch');
+  zeroPadding(h, qAt + 32 + qLen, end);
   return {
     id,
-    mType: Number(mTypeWord),
+    mType: wordNum(h, at(1)),
     oracleRef: '0x' + word(h, at(2)),
+    // uint64 in Solidity; safe integers here (the contract bounds them to real times).
     createdAt: wordNum(h, at(4)),
     closeTime: wordNum(h, at(5)),
     bettingCloseTime: wordNum(h, at(6)),
-    totalYes: BigInt('0x' + word(h, at(7))),
-    totalNo: BigInt('0x' + word(h, at(8))),
-    resolved: resolved === 1,
+    totalYes: wordBig(h, at(7)),
+    totalNo: wordBig(h, at(8)),
+    resolved: wordNum(h, at(12)) === 1,
   };
 }
 

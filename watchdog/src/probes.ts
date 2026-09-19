@@ -3,7 +3,7 @@
 
 import { CHAIN_ID, PROBE_CHART_SYMBOL, PROBE_MARKET_ID, PROBE_MARKET_TITLE, RR_MAX_LAG_BLOCKS } from './config';
 import { send, type Net } from './net';
-import { hexQuantity, rpcBatch } from './rpc';
+import { rpcBatch, safeQuantity } from './rpc';
 import type { DiscoveryResult } from './scan';
 import type { Obs } from './classify';
 
@@ -47,19 +47,21 @@ export async function readPublicRpc(net: Net, url: string): Promise<PublicRpc> {
   ]);
   if (!b.ok) return { ok: false, chainId: null, latestBlock: null, reason: b.kind };
   const [c, n] = b.items;
-  const chainId = c.ok ? hexQuantity(c.result) : null;
-  const latest = n.ok ? hexQuantity(n.result) : null;
+  const chainId = c.ok ? safeQuantity(c.result) : null;
+  const latest = n.ok ? safeQuantity(n.result) : null;
   if (chainId === null || latest === null) return { ok: false, chainId: null, latestBlock: null, reason: 'call_failed' };
-  return { ok: true, chainId: Number(chainId), latestBlock: Number(latest), reason: '' };
+  return { ok: true, chainId, latestBlock: latest, reason: '' };
 }
 
 /// rr: the resolver's RPC answers on chain 10143 and is within 30 blocks of
-/// provider B's latest block.
+/// provider B's latest block, in either direction (review r1: a public RPC far
+/// ahead is as wrong as one far behind).
 export function probeResolverRpc(p: PublicRpc, providerLatest: number | null): ProbeResult {
   if (!p.ok) return { code: 'rr', obs: 'fail', detail: `resolver RPC: ${p.reason}` };
   if (p.chainId !== CHAIN_ID) return { code: 'rr', obs: 'fail', detail: `resolver RPC: chain id ${p.chainId}` };
-  if (providerLatest !== null && p.latestBlock !== null && providerLatest - p.latestBlock > RR_MAX_LAG_BLOCKS) {
-    return { code: 'rr', obs: 'fail', detail: `resolver RPC: ${providerLatest - p.latestBlock} blocks behind provider B` };
+  if (providerLatest !== null && p.latestBlock !== null && Math.abs(providerLatest - p.latestBlock) > RR_MAX_LAG_BLOCKS) {
+    const diff = providerLatest - p.latestBlock;
+    return { code: 'rr', obs: 'fail', detail: `resolver RPC: ${Math.abs(diff)} blocks ${diff > 0 ? 'behind' : 'ahead of'} provider B` };
   }
   return { code: 'rr', obs: 'ok', detail: '' };
 }

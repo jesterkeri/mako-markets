@@ -49,3 +49,9 @@ export function hexQuantity(v: unknown): bigint | null {
   if (typeof v !== 'string' || !/^0x[0-9a-fA-F]{1,64}$/.test(v)) return null;
   return BigInt(v);
 }
+
+/// A hex quantity that is a safe integer, or null.
+export function safeQuantity(v: unknown): number | null {
+  const q = hexQuantity(v);
+  return q !== null && q <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(q) : null;
+}

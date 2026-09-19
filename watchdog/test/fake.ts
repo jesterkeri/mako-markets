@@ -87,6 +87,17 @@ export interface World {
   providerDown: boolean;
   publicDown: boolean;
   publicLatest?: number;
+  /// The public RPC's own view, when it should disagree with provider B.
+  publicMarkets?: FakeMarket[];
+  publicBlockHash?: string;
+  publicChainId?: number;
+  /// Provider B's view of the chain, when it should lie.
+  providerChainId?: number;
+  providerTimestampOffsetS?: number;
+  providerLatestOverride?: number;
+  providerFinalizedOverride?: number;
+  /// Finalized block time for this run; tick() fixes it so both providers agree.
+  finalizedTs?: number;
   telegram: { mode: 'ok' | 'fail' | '429'; retryAfter: number; sent: string[]; fail429Once?: boolean };
   hc: { mode: 'ok' | 'not_found' | 'rate_limited' | 'no_header' | 'small_header' | '500' | 'timeout'; pings: { url: string; body: string }[] };
   app: { comments: boolean; market: boolean; charts: boolean };
@@ -133,15 +144,21 @@ function word(v: bigint | number | string): Hex {
 
 function answerRpc(w: World, calls: { id: number; method: string; params: unknown[] }[], isProviderB: boolean): unknown {
   const n = w.reportedN ?? w.markets.length;
-  const finTs = Math.floor(w.clock.t / 1000);
+  const baseTs = w.finalizedTs ?? Math.floor(w.clock.t / 1000);
+  const finTs = isProviderB ? baseTs + (w.providerTimestampOffsetS ?? 0) : baseTs;
+  const markets = isProviderB ? w.markets : (w.publicMarkets ?? w.markets);
+  const chainId = isProviderB ? (w.providerChainId ?? CHAIN_ID) : (w.publicChainId ?? CHAIN_ID);
+  const latest = isProviderB ? (w.providerLatestOverride ?? w.latestBlock) : (w.publicLatest ?? w.latestBlock);
+  const finalized = isProviderB ? (w.providerFinalizedOverride ?? w.finalizedBlock) : w.finalizedBlock;
+  const hash = isProviderB ? '0x' + '11'.repeat(32) : (w.publicBlockHash ?? '0x' + '11'.repeat(32));
   return calls.map((c) => {
     switch (c.method) {
       case 'eth_chainId':
-        return rpcResult(c.id, `0x${CHAIN_ID.toString(16)}`);
+        return rpcResult(c.id, `0x${chainId.toString(16)}`);
       case 'eth_blockNumber':
-        return rpcResult(c.id, `0x${(isProviderB ? w.latestBlock : (w.publicLatest ?? w.latestBlock)).toString(16)}`);
+        return rpcResult(c.id, `0x${latest.toString(16)}`);
       case 'eth_getBlockByNumber':
-        return rpcResult(c.id, { number: `0x${w.finalizedBlock.toString(16)}`, timestamp: `0x${finTs.toString(16)}`, hash: '0x' + '11'.repeat(32) });
+        return rpcResult(c.id, { number: `0x${finalized.toString(16)}`, timestamp: `0x${finTs.toString(16)}`, hash });
       case 'eth_getBalance':
         return rpcResult(c.id, `0x${w.balanceWei.toString(16)}`);
       case 'eth_call': {
@@ -155,7 +172,7 @@ function answerRpc(w: World, calls: { id: number; method: string; params: unknow
           const results = (args[0] as readonly { callData: Hex }[]).map((call) => {
             const id = Number(BigInt('0x' + call.callData.slice(10)));
             if (w.failIds.has(id)) return { success: false, returnData: '0x' as Hex };
-            return { success: true, returnData: encodeMarket(w.markets[id] ?? null) };
+            return { success: true, returnData: encodeMarket(markets[id] ?? null) };
           });
           return rpcResult(c.id, encodeAbiParameters([{ type: 'tuple[]', components: [{ type: 'bool', name: 'success' }, { type: 'bytes', name: 'returnData' }] }], [results]));
         }

@@ -29,6 +29,9 @@ on:
     branches:
       - main
       - v4-onboarding
+      # The watchdog is deployed from its own branch by hand (wrangler), so its
+      # CI must run on pushes there too, not only on PRs.
+      - 'feat/watchdog-*'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
@@ -125,6 +128,12 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Test the dependency assertion itself
+        run: pnpm test:assert
+
+      - name: Feed-status table matches its source (skips where mako-design is absent)
+        run: pnpm check:feed-status
 
       - name: Build bundle and assert no signing capability
         run: pnpm bundle && pnpm assert-bundle

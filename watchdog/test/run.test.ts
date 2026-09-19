@@ -17,6 +17,7 @@ async function tick(w: World, state: Deps['state'], logs: string[] = []) {
   w.pageRequestIndex = 0;
   w.latestBlock += 600;
   w.finalizedBlock += 600;
+  w.finalizedTs = Math.floor(w.clock.t / 1000);
   const r = await runOnce(makeDeps(w, state, logs), scheduled);
   w.clock.t = scheduled + FIVE_MIN + 1_000;
   return r;
@@ -391,5 +392,109 @@ describe('secrets never reach alerts or Healthchecks', () => {
     expect(everything).not.toContain('SECRET-KEY');
     expect(everything).not.toContain('TELEGRAM-TOKEN');
     expect(everything).not.toContain('0000-uuid');
+  });
+});
+
+// Review r1 finding 1: provider B's identity and clock are validity gates.
+describe('provider B identity and time gate (fail closed)', () => {
+  /// A market that looks refundable to provider B.
+  function refundableWorld(partial: Partial<World> = {}) {
+    const w = makeWorld(partial);
+    w.markets = [closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n)];
+    return w;
+  }
+  async function expectRejected(w: World, reason: RegExp) {
+    const state = freshState();
+    const r = await tick(w, state);
+    expect(r.failed).toContain('S1'); // at once, not after flap control
+    expect(r.plan).toBeNull(); // no pages read
+    expect(r.payload!.criticals).toEqual([]);
+    expect(r.payload!.meta).toMatchObject({ creationCursor: 0, bootstrapN: null, resolvedBootstrapped: false, lastLatestBlock: null });
+    expect(r.payload!.resolvedBits).toBe('');
+    expect(w.telegram.sent.join('\n')).not.toContain('cast send');
+    expect(w.log.filter((l) => l.endsWith(' page'))).toEqual([]);
+    expect(r.healthchecksBody).toMatch(reason);
+    expect(r.ping).toBe('log');
+  }
+  it('wrong chain id on the first observation', async () => {
+    await expectRejected(refundableWorld({ providerChainId: 1 }), /provider B: wrong chain 1/);
+  });
+  it('finalized time an hour in the future', async () => {
+    await expectRejected(refundableWorld({ providerTimestampOffsetS: 3600 }), /in the future/);
+  });
+  it('finalized time an hour old (chain halted or provider behind)', async () => {
+    await expectRejected(refundableWorld({ providerTimestampOffsetS: -3600 }), /stale/);
+  });
+  it('finalized block ahead of latest', async () => {
+    await expectRejected(refundableWorld({ providerFinalizedOverride: 63_900_000, providerLatestOverride: 63_000_000 }), /ahead of latest/);
+  });
+  it('a block number beyond a safe integer', async () => {
+    await expectRejected(refundableWorld({ providerLatestOverride: 2 ** 60 }), /bad_response/);
+  });
+  it('a second inside each bound (60 s ahead, 15 min behind) is accepted; a second outside is not', async () => {
+    for (const [offset, ok] of [[59, true], [61, false], [-899, true], [-901, false]] as const) {
+      const w = refundableWorld({ providerTimestampOffsetS: offset });
+      const r = await tick(w, freshState());
+      expect(r.plan !== null).toBe(ok);
+    }
+  });
+  it('one huge-but-plausible block number does not pin the advancing check', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    await tick(w, state);
+    w.providerLatestOverride = 900_000_000;
+    w.providerFinalizedOverride = 899_999_998;
+    await tick(w, state);
+    w.providerLatestOverride = undefined;
+    w.providerFinalizedOverride = undefined;
+    const r3 = await tick(w, state); // one "not advancing" observation
+    expect(r3.payload!.meta.lastLatestBlock).toBe(w.latestBlock);
+    const r4 = await tick(w, state);
+    const r5 = await tick(w, state);
+    expect(r4.payload!.checks.find((c) => c.code === 'pb')!.state).toBe('ok');
+    expect(r5.payload!.criticals).toEqual([]);
+  });
+});
+
+describe('refund commands need the public RPC to confirm at the same block (I7)', () => {
+  function world(partial: Partial<World> = {}) {
+    const w = makeWorld(partial);
+    w.markets = [closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n)];
+    return w;
+  }
+  it('confirmed: the command is printed', async () => {
+    const w = world();
+    const r = await tick(w, freshState());
+    expect(w.telegram.sent.join('\n')).toContain('for id in 0; do cast send');
+    expect(r.healthchecksBody).toContain('refund commands: 1/1 confirmed');
+  });
+  it.each([
+    ['public RPC down', { publicDown: true }, /public RPC http/],
+    ['public RPC on another chain', { publicChainId: 1 }, /public RPC chain id/],
+    ['public RPC reports another block', { publicBlockHash: '0x' + '22'.repeat(32) }, /public RPC block differs/],
+  ] as [string, Partial<World>, RegExp][])('%s: withheld', async (_label, partial, reason) => {
+    const w = world(partial);
+    const r = await tick(w, freshState());
+    const text = w.telegram.sent.join('\n');
+    expect(text).not.toContain('cast send');
+    expect(text).toContain('#0 CRYPTO one-sided');
+    expect(text).toContain('refund command withheld');
+    expect(r.healthchecksBody).toMatch(reason);
+  });
+  it('public RPC sees different pools, another close time, or an already resolved market: withheld', async () => {
+    const w0 = world();
+    for (const pub of [
+      { yes: 1_000_000n, no: 5n, resolved: false },
+      { yes: 1_000_000n, no: 0n, resolved: true },
+      // Still one-sided and past +24h on the public RPC, but not the same market state:
+      { yes: 2_000_000n, no: 0n, resolved: false },
+      { closeTime: nowS(w0) - 3 * 86_400, resolved: false },
+    ]) {
+      const w = world();
+      w.publicMarkets = [{ ...w.markets[0], ...pub }];
+      await tick(w, freshState());
+      expect(w.telegram.sent.join('\n')).not.toContain('cast send');
+      expect(w.telegram.sent.join('\n')).toContain('refund command withheld');
+    }
   });
 });

@@ -1,3 +1,5 @@
+import feedStatus from './feed-status.json';
+
 // Asset tables copied from the resolver and the feed map. A drift test
 // (test/assets-drift.test.ts) compares them with cf-worker/src/price-feed-assets.ts
 // and src/lib/crypto-assets.ts, so a change there fails CI until this copy
@@ -19,12 +21,13 @@ export const PRICE_FEED_CLASS: ReadonlyMap<string, PriceFeedClass> = new Map<str
   ['DIS', 'stocks'], ['KO', 'stocks'], ['PEP', 'stocks'], ['BA', 'stocks'], ['GS', 'stocks'],
 ]);
 
-/// Symbols with no verified Chainlink Data Streams feed on Monad testnet
-/// (mako-design/bench/datastreams-probe/mako-feed-map.json, status "paused";
-/// RESOLVER_PRICE_PLAN.md). A new market on one of them gets a creation alert.
-export const PAUSED_SYMBOLS: ReadonlySet<string> = new Set([
-  'EURGBP', 'EURJPY', 'GBPJPY', 'AMD', 'DIS', 'KO', 'PEP', 'BA', 'GS',
-]);
+/// Symbols with no verified Chainlink Data Streams feed on Monad testnet. The
+/// status table is generated from mako-design's feed map by
+/// scripts/gen-feed-status.mjs, which records the map's sha256; run it with
+/// --check before committing. A new market on a paused symbol gets a creation
+/// alert.
+export const FEED_STATUS: Readonly<Record<string, 'verified' | 'paused'>> = feedStatus.symbols as Record<string, 'verified' | 'paused'>;
+export const PAUSED_SYMBOLS: ReadonlySet<string> = new Set(Object.keys(FEED_STATUS).filter((s) => FEED_STATUS[s] === 'paused'));
 
 export const MARKET_TYPE = {
   FOOTBALL: 0,

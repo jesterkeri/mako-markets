@@ -20,12 +20,13 @@ import type { MarketHead } from './abi';
 import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges } from './discovery';
 import { inGroups, makeNet } from './net';
 import { dueProbes, probeCharts, probeComments, probeMarketPage, probeProviderB, probeResolverRpc, readPublicRpc, type ProbeResult } from './probes';
-import { advanceCursor, discover, planScan, readPages, type DiscoveryResult, type PageOutcome, type ScanPlan } from './scan';
+import { advanceCursor, confirmCommands, discover, planScan, readPages, type Confirmation, type DiscoveryResult, type PageOutcome, type ScanPlan } from './scan';
 import type { AcquireResult, CommitPayload, CommitResult, CriticalRow, NoteRow, WarningRow } from './state';
 
-/// HTTP requests a slice-1 run may make: provider B 11, resolver RPC 1,
-/// probes 3, Telegram 4, Healthchecks 1. With the two Durable Object calls
-/// the run stays within the plan's 24.
+/// HTTP requests a slice-1 run may make: provider B 11, resolver RPC 2 (the
+/// rr probe and the refund-command confirmation), probes 3, Telegram 4,
+/// Healthchecks 1 = 21. With the two Durable Object calls a run stays within
+/// the plan's 24.
 export const MAX_HTTP_REQUESTS = 22;
 
 export interface RunEnv {
@@ -176,12 +177,19 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     const id = w.key.startsWith('w:') ? Number(w.key.slice(2)) : null;
     if (id !== null && !reads.get(id)) warn.set(w.key, w);
   }
+  // Refund-command candidates are re-read on the public RPC at the same
+  // finalized block before any command is printed (I7; review r1 finding 1).
+  const candidates = [...reads.values()].filter((m): m is MarketHead => !!m && commandAllowed(m, nowS));
+  const confirmation: Confirmation =
+    d && candidates.length
+      ? await confirmCommands(net, env.publicRpcUrl, env.makoAddress, d, candidates, commandAllowed)
+      : { confirmed: new Set(), reason: '' };
   const commandCritical: number[] = [];
   const commandWarn: number[] = [];
   const digestLines: string[] = [];
   for (const [id, m] of reads) {
     if (!m) continue;
-    const v = classifyStuck(m, nowS);
+    const v = classifyStuck(m, nowS, confirmation.confirmed.has(id));
     if (v.severity === 'critical') {
       keepCrit(`m:${id}`, v.line, id, null);
       if (v.command) commandCritical.push(id);
@@ -193,10 +201,11 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     const uo = unsupportedOracle(m, nowS);
     if (uo) keepCrit(`u:${id}`, uo, id, null);
   }
-  // Commands only ever for one-sided markets past close + 24h (I7).
+  // Commands only ever for one-sided markets past close + 24h, confirmed by
+  // the public RPC at the same block (I7).
   for (const id of [...commandCritical, ...commandWarn]) {
     const m = reads.get(id);
-    if (!m || !commandAllowed(m, nowS)) throw new Error('invariant I7: command for a market that does not qualify');
+    if (!m || !commandAllowed(m, nowS) || !confirmation.confirmed.has(id)) throw new Error('invariant I7: command for a market that does not qualify');
   }
 
   // Check-level criticals and warnings.
@@ -345,7 +354,9 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     bootstrapN,
     resolvedBootstrapped: disc?.bootstrapped ?? meta.resolvedBootstrapped,
     snapshotBlock: disc?.bootstrapResolved && d ? d.finalizedBlock : meta.snapshotBlock,
-    lastLatestBlock: d ? Math.max(d.latestBlock, meta.lastLatestBlock ?? 0) : meta.lastLatestBlock,
+    // The last validated value, not a maximum: one bad answer must not pin the
+    // advancing-block check forever (review r1 finding 1).
+    lastLatestBlock: d ? d.latestBlock : meta.lastLatestBlock,
     lastDigestDate: digestDue && placedNonCrit.has('digest') ? today : meta.lastDigestDate,
     creationPendingSince: stopAt !== null ? (meta.creationPendingSince ?? scheduledTime) : null,
   };
@@ -413,6 +424,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       ? `block ${d.finalizedBlock} (latest ${d.latestBlock}), markets ${d.nextMarketId}, read ${countRead(reads)}/${plan?.ids.length ?? 0}, cursor ${meta.creationCursor}->${newCursor}, audit queue ${snap.auditQueueSize + payload.auditAppend.length}`
       : `provider B: ${scan.d.ok ? '' : scan.d.reason}`,
     `telegram ${confirmed.filter(Boolean).length}/${texts.length} confirmed, requests ${net.requests + report.doCalls}, ${deps.now() - start} ms${report.reason ? ', ' + report.reason : ''}`,
+    ...(candidates.length ? [`refund commands: ${confirmation.confirmed.size}/${candidates.length} confirmed${confirmation.reason ? ' (' + confirmation.reason + ')' : ''}`] : []),
     ...[...critList].sort(critOrder).map((c) => c.line),
   ].join('\n');
   const kind: PingKind = report.effective ? 'success' : !criticalsDelivered ? 'fail' : 'log';

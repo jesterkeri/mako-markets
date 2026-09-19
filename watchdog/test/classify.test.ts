@@ -38,7 +38,7 @@ describe('§5.2 thresholds, ±1 s per type', () => {
   });
   it('every two-sided market, MAKO included, is critical from +24h with no safe refund path', () => {
     for (const t of Object.values(T)) {
-      const v = classifyStuck(m(t, ...two), CLOSE + 86_400);
+      const v = classifyStuck(m(t, ...two), CLOSE + 86_400, true);
       expect(v.severity).toBe('critical');
       expect(v.command).toBe(false);
       expect(v.line).toContain('no safe refund path on V4');
@@ -61,11 +61,15 @@ describe('commands (I7): one-sided only, from close + 24h, every type', () => {
     expect(commandAllowed(m(t, 1n, 1n), CLOSE + 86_400)).toBe(false);
     expect(commandAllowed(m(t, 1n, 0n), CLOSE + 86_400 - 1)).toBe(false);
     expect(commandAllowed(m(t, 1n, 0n, { resolved: true }), CLOSE + 86_400)).toBe(false);
-    expect(classifyStuck(m(t, 1n, 1n), CLOSE + 999_999).command).toBe(false);
+    expect(classifyStuck(m(t, 1n, 1n), CLOSE + 999_999, true).command).toBe(false);
   });
-  it('one-sided before +24h says when refund opens', () => {
-    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 7200).line).toContain('refund opens');
-    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400).line).toContain('refund command below');
+  it('one-sided before +24h says when refund opens; after, a command only once a second provider confirmed', () => {
+    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 7200, true).line).toContain('refund opens');
+    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, true)).toMatchObject({ command: true });
+    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, true).line).toContain('refund command below');
+    const unconfirmed = classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400);
+    expect(unconfirmed.command).toBe(false);
+    expect(unconfirmed.line).toContain('refund command withheld: a second provider did not confirm');
   });
 });
 
@@ -116,5 +120,18 @@ describe('flap control', () => {
     c = applyFlap(c, 'nc', 'ok', '', 7);
     c = applyFlap(c, 'nc', 'ok', '', 8);
     expect(c).toMatchObject({ state: 'ok', since: 8 });
+  });
+});
+
+describe('rr: within 30 blocks either way (review r1)', async () => {
+  const { probeResolverRpc } = await import('../src/probes');
+  const pub = (latest: number) => ({ ok: true, chainId: 10143, latestBlock: latest, reason: '' });
+  it.each([
+    [1000, 970, 'ok'], [1000, 969, 'fail'], [1000, 1030, 'ok'], [1000, 1031, 'fail'], [1000, 1_001_000, 'fail'],
+  ])('provider %i, public %i: %s', (provider, publicLatest, obs) => {
+    expect(probeResolverRpc(pub(publicLatest), provider).obs).toBe(obs);
+  });
+  it('the wrong chain fails', () => {
+    expect(probeResolverRpc({ ok: true, chainId: 1, latestBlock: 1000, reason: '' }, 1000).obs).toBe('fail');
   });
 });

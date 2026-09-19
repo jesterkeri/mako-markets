@@ -36,7 +36,18 @@ export const HEALTHCHECKS_BODY_MAX = 20_000;
 export const REMINDER_MS = 6 * 3600_000;
 export const NONCRITICAL_MAX_WAIT_MS = 30 * 60_000;
 
-/// Resolver RPC may lag provider B by at most this many blocks (r4 §5.4).
+/// Provider B's answer is only used if it is plausible (review r1, finding 1):
+/// the finalized block's time must be within these bounds of the Worker's
+/// clock, and the finalized block at most this far behind latest.
+export const FINALIZED_MAX_AHEAD_MS = 60_000;
+export const FINALIZED_MAX_BEHIND_MS = 15 * 60_000;
+export const FINALIZED_MAX_LAG_BLOCKS = 1_000;
+
+/// Refund commands are printed only for ids the public RPC re-reads and
+/// confirms at the same finalized block: one request of 4 x 50 ids per run.
+export const MAX_COMMAND_CONFIRMATIONS = 200;
+
+/// Resolver RPC must be within this many blocks of provider B, either way (r4 §5.4).
 export const RR_MAX_LAG_BLOCKS = 30;
 
 /// Resolver gas balance warning (wei). resolveMarket costs about 0.01 MON.

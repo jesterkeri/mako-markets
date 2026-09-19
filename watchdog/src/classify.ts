@@ -46,20 +46,25 @@ export interface MarketVerdict {
 }
 
 /// The §5.2 table. `nowS` is the finalized block's timestamp, the same clock
-/// the contract uses.
-export function classifyStuck(m: MarketHead, nowS: number): MarketVerdict {
+/// the contract uses. `commandConfirmed` says whether a second provider
+/// confirmed this market at the same block (scan.ts confirmCommands); without
+/// it no command is offered, whatever the table says (fail closed).
+export function classifyStuck(m: MarketHead, nowS: number, commandConfirmed = false): MarketVerdict {
   const none: MarketVerdict = { severity: 'none', line: '', command: false };
   if (m.resolved || m.closeTime === 0 || nowS < m.closeTime) return none;
   const age = nowS - m.closeTime;
   const oneSided = isOneSided(m);
-  const command = commandAllowed(m, nowS);
+  const allowed = commandAllowed(m, nowS);
+  const command = allowed && commandConfirmed;
   const pools = `YES ${fmtUsdc(m.totalYes)} / NO ${fmtUsdc(m.totalNo)}`;
   const head = `#${m.id} ${typeName(m.mType)} ${oneSided ? 'one-sided' : 'two-sided'}, unresolved ${fmtAge(age)} after close (${pools})`;
   const pastGrace = age >= RESOLUTION_GRACE_S;
   const refundNote = oneSided
     ? command
       ? 'refund command below'
-      : `refund opens ${fmtUtc(m.closeTime + RESOLUTION_GRACE_S)}`
+      : allowed
+        ? 'refund command withheld: a second provider did not confirm this market at the same block'
+        : `refund opens ${fmtUtc(m.closeTime + RESOLUTION_GRACE_S)}`
     : pastGrace
       ? m.mType === MARKET_TYPE.MAKO
         ? 'no safe refund path on V4; resolve it from /admin/resolve'

@@ -10,4 +10,7 @@ export default defineConfig({
       wrangler: { configPath: './wrangler.toml' },
     }),
   ],
+  // Whole-run tests encode thousands of markets in the fake chain; the default
+  // 5 s timed out once on a loaded machine (review r1, verification notes).
+  test: { include: ['test/**/*.test.ts'], testTimeout: 30_000 },
 });
