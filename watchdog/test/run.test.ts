@@ -54,7 +54,7 @@ describe('first run (bootstrap)', () => {
     expect(r.payload!.meta).toMatchObject({ creationCursor: 3, bootstrapN: 3, resolvedBootstrapped: true });
     expect(r.payload!.auditAppend).toEqual([]);
     expect(w.telegram.sent.join('\n')).toContain('Resolved before the watchdog, not audited (2): 0-1');
-    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(24);
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(32); // the bootstrap run's ceiling
 
     // Second run: nothing new to say.
     w.telegram.sent = [];
@@ -385,7 +385,7 @@ describe('timing and budget', () => {
     const r = await runOnce(makeDeps(w, state, logs), Math.floor(t0 / FIVE_MIN) * FIVE_MIN);
     expect(r.kind).toBe('completed');
     expect(r.committed).toBe(true);
-    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(24);
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(32); // the bootstrap run's ceiling
     expect(w.log.filter((l) => l.startsWith('providerb')).length).toBe(11);
     expect(w.clock.t - t0).toBeLessThan(200_000);
     expect(r.telegramMessages.length).toBeLessThanOrEqual(4);
@@ -806,6 +806,116 @@ describe('sustained load and budgets (review r4)', () => {
     expect(w.clock.t - t0).toBeLessThan(200_000);
     // Provider B and the public RPC run as separate lanes, about 110 s each.
     expect(w.clock.t - t0).toBeGreaterThan(110_000);
+  });
+});
+
+describe('command delivery accounting (review r5)', () => {
+  /// 50 one-sided markets past +24h: their lines fill message 1, so the
+  /// refund command lands in message 2.
+  async function fifty(partial?: number) {
+    const w = makeWorld({ telegram: { mode: 'ok', retryAfter: 1, sent: [], okMessages: partial } });
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 50 }, () => oneSided);
+    return { w, state };
+  }
+
+  it('the command is not counted as served when its own message failed', async () => {
+    const { w, state } = await fifty(1); // only message 1 is accepted
+    const r = await tick(w, state);
+    expect(r.telegramMessages.length).toBeGreaterThan(1);
+    const commandMessage = r.telegramMessages.findIndex((m) => m.includes('cast send'));
+    expect(commandMessage).toBeGreaterThan(0); // it is not in message 1
+    // Capped at 50 ids, the command always fits one message, so "every message
+    // carrying it" is that one message.
+    expect(r.telegramMessages.filter((m) => m.includes('cast send'))).toHaveLength(1);
+    expect(r.telegramConfirmed[0]).toBe(true);
+    expect(r.telegramConfirmed[commandMessage]).toBe(false);
+    expect(r.payload!.criticals.every((c) => c.lastCommandAt === null)).toBe(true);
+    expect(r.payload!.criticals.some((c) => c.lastDeliveredAt !== null)).toBe(true); // the accepted lines count
+    expect(r.failed).toContain('S3');
+    // The very next run offers the commands again, although those alerts were delivered.
+    w.telegram.okMessages = undefined;
+    w.telegram.sent = [];
+    const r2 = await tick(w, state);
+    expect(commandIdsIn(w.telegram.sent.join('\n'))).toHaveLength(50);
+    expect(r2.payload!.criticals.filter((c) => c.lastCommandAt !== null)).toHaveLength(50);
+  });
+
+  it('with every message accepted, the commands are served once and then wait a reminder', async () => {
+    const { w, state } = await fifty();
+    const r = await tick(w, state);
+    expect(commandIdsIn(r.telegramMessages.join('\n'))).toHaveLength(50);
+    expect(r.payload!.criticals.filter((c) => c.lastCommandAt !== null)).toHaveLength(50);
+    w.telegram.sent = [];
+    await tick(w, state);
+    expect(commandIdsIn(w.telegram.sent.join('\n'))).toHaveLength(0); // nothing to say
+    w.clock.t += 6 * 3600_000;
+    w.telegram.sent = [];
+    await tick(w, state);
+    expect(commandIdsIn(w.telegram.sent.join('\n'))).toHaveLength(50); // reminder
+  });
+
+  it('a MAKO command left out of the notices message is not counted, and comes later', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    w.markets = [closedMarket(6, 'house market', nowS(w), 2 * 86_400, 300_000n, 0n)];
+    const r1 = await tick(w, state);
+    expect(r1.telegramMessages.join('\n')).toContain('cast send');
+    const servedFirst = r1.payload!.warnings.find((x) => x.key === 'w:0')!.lastCommandAt;
+    expect(servedFirst).not.toBeNull();
+    // 80 new paused-symbol markets fill the notices message before the command line.
+    w.clock.t += 6 * 3600_000;
+    for (let i = 0; i < 80; i++) w.markets.push(openMarket(5, 'KO:gt:60', w));
+    w.telegram.sent = [];
+    const r2 = await tick(w, state);
+    expect(r2.telegramMessages.join('\n')).not.toContain('cast send'); // the command did not fit
+    // Not served: the timestamp is still the first run's, so it stays due.
+    expect(r2.payload!.warnings.find((x) => x.key === 'w:0')!.lastCommandAt).toBe(servedFirst);
+    // Once the backlog of notices drains, the command arrives.
+    let served = servedFirst;
+    for (let i = 0; i < 4 && served === servedFirst; i++) {
+      const r = await tick(w, state);
+      served = r.payload!.warnings.find((x) => x.key === 'w:0')!.lastCommandAt;
+    }
+    expect(served).not.toBe(servedFirst);
+  });
+});
+
+describe('budget and category overlap (review r5)', () => {
+  it('an ordinary minute-zero run makes 21 HTTP requests: 11 provider B, 1 rr, 1 confirmation, 3 probes, 4 Telegram, 1 Healthchecks', async () => {
+    const w = makeWorld({ clock: { t: Date.UTC(2026, 8, 19, 12, 55, 1) } });
+    const state = freshState();
+    const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 2000 }, () => base);
+    await tick(w, state); // bootstrap
+    w.clock.t = Date.UTC(2026, 8, 19, 14, 0, 1); // minute 0: every probe is due, reminders due
+    w.log = [];
+    const r = await tick(w, state);
+    const count = (h: string) => w.log.filter((l) => l.startsWith(h)).length;
+    expect(count('providerb')).toBe(11);
+    expect(count('publicrpc')).toBe(2); // rr probe + one confirmation
+    expect(count('app.test')).toBe(3);
+    expect(count('api.telegram.org')).toBeLessThanOrEqual(4);
+    expect(count('hc-ping.test')).toBe(1);
+    expect(r.httpRequests).toBeLessThanOrEqual(21);
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(23);
+  });
+
+  it('an id that is both a new resolution and a cursor id takes one slot, not two', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    w.markets = [openMarket(1, 'BTC:gt:1', w)];
+    await tick(w, state); // bootstrap at N = 1
+    // 200 new markets, all created and resolved before the next run: each is
+    // both a transition and a cursor id.
+    for (let i = 0; i < 200; i++) w.markets.push({ ...openMarket(1, 'BTC:gt:1', w), resolved: true, outcome: 1 });
+    w.log = [];
+    const r = await tick(w, state);
+    expect(w.log.filter((l) => l.startsWith('publicrpc')).length).toBe(2); // rr + ONE confirmation request
+    expect(r.payload!.auditAppend).toHaveLength(200); // all 200 confirmed in one run
+    expect(r.payload!.meta.creationCursor).toBe(201);
+    expect(r.effective).toBe(true);
   });
 });
 

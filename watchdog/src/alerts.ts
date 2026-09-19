@@ -37,11 +37,12 @@ function cutToFit(s: string, room: number): number {
 }
 
 /// Greedy packing of lines into messages of at most `limit` characters.
-/// Returns the messages and, for each input line, the message holding its
-/// last piece.
-export function pack(lines: string[], limit: number): { messages: string[]; where: number[] } {
+/// Returns the messages and, for each input line, the first and last message
+/// its pieces landed in (a long line can span messages).
+export function pack(lines: string[], limit: number): { messages: string[]; where: number[]; spans: { first: number; last: number }[] } {
   const messages: string[] = [];
   const where: number[] = [];
+  const spans: { first: number; last: number }[] = [];
   let cur = '';
   const flush = () => {
     if (cur) messages.push(cur);
@@ -50,6 +51,7 @@ export function pack(lines: string[], limit: number): { messages: string[]; wher
   const room = () => (cur ? limit - cur.length - 1 : limit);
   for (const line of lines) {
     let rest = line;
+    const first = messages.length;
     while (rest.length > room()) {
       if (rest.length < SPLIT_AT && rest.length <= limit) {
         flush();
@@ -67,13 +69,18 @@ export function pack(lines: string[], limit: number): { messages: string[]; wher
     }
     if (rest) cur = cur ? `${cur}\n${rest}` : rest;
     where.push(messages.length);
+    spans.push({ first: Math.min(first, messages.length), last: messages.length });
   }
   flush();
-  return { messages, where };
+  return { messages, where, spans };
 }
 
 export interface CriticalPack {
   messages: string[];
+  /// Messages holding the refund command (it can span more than one). A
+  /// command counts as delivered only when every one of them is confirmed
+  /// (review r5).
+  commandMessages: number[];
   /// True when the manifest could not fit and was replaced by a count; the
   /// run is then ineffective (only possible outside the 2,000-market envelope).
   manifestTruncated: boolean;
@@ -93,10 +100,11 @@ export function packCriticals(
   manifestCount = 0,
 ): CriticalPack {
   let manifest = fullManifest;
+  let commandLine = -1;
   const build = (k: number) => {
     const lines = [header, ...due.slice(0, k).map((d) => d.line)];
     if (k < due.length) lines.push(`+${due.length - k} more critical (ids in the manifest)`);
-    if (command) lines.push(command);
+    commandLine = command ? lines.push(command) - 1 : -1;
     lines.push(manifest);
     return pack(lines, limit);
   };
@@ -112,9 +120,11 @@ export function packCriticals(
     if (build(mid).messages.length <= maxMessages) lo = mid;
     else hi = mid - 1;
   }
-  const { messages, where } = build(lo);
+  const { messages, where, spans } = build(lo);
   const placed = due.slice(0, lo).map((d, i) => ({ key: d.key, message: where[i + 1] }));
-  return { messages, placed, manifestTruncated };
+  const span = commandLine >= 0 ? spans[commandLine] : null;
+  const commandMessages = span ? Array.from({ length: span.last - span.first + 1 }, (_, i) => span.first + i) : [];
+  return { messages, placed, manifestTruncated, commandMessages };
 }
 
 /// Message 4: non-critical lines in priority order, stopping at the first

@@ -98,7 +98,14 @@ export interface World {
   providerFinalizedOverride?: number;
   /// Finalized block time for this run; tick() fixes it so both providers agree.
   finalizedTs?: number;
-  telegram: { mode: 'ok' | 'fail' | '429'; retryAfter: number; sent: string[]; fail429Once?: boolean };
+  telegram: {
+    mode: 'ok' | 'fail' | '429';
+    retryAfter: number;
+    sent: string[];
+    fail429Once?: boolean;
+    /// Accept only this many messages in a run, then fail (partial delivery).
+    okMessages?: number;
+  };
   hc: { mode: 'ok' | 'not_found' | 'rate_limited' | 'no_header' | 'small_header' | '500' | 'timeout'; pings: { url: string; body: string }[] };
   app: { comments: boolean; market: boolean; charts: boolean };
   /// Every request, as "<host> <what>".
@@ -230,6 +237,9 @@ export function makeFetch(w: World): typeof fetch {
       const text = (JSON.parse(body) as { text: string }).text;
       w.log.push(`${host} send`);
       if (w.telegram.mode === 'fail') return new Response('{"ok":false}', { status: 500 });
+      if (w.telegram.okMessages !== undefined && w.telegram.sent.length >= w.telegram.okMessages) {
+        return new Response('{"ok":false}', { status: 500 });
+      }
       if (w.telegram.mode === '429') {
         if (w.telegram.fail429Once) w.telegram.mode = 'ok';
         return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: w.telegram.retryAfter } }), { status: 429 });

@@ -19,7 +19,6 @@ import {
   RUN_DEADLINE_MS,
 } from './config';
 import type { MarketHead } from './abi';
-import { MARKET_TYPE } from './assets';
 import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges, transitionCandidates } from './discovery';
 import { inGroups, makeNet } from './net';
 import { dueProbes, probeCharts, probeComments, probeMarketPage, probeProviderB, probeResolverRpc, readPublicRpc, type ProbeResult } from './probes';
@@ -28,9 +27,9 @@ import type { AcquireResult, CommitPayload, CommitResult, CriticalRow, NoteRow, 
 
 /// HTTP requests an ordinary slice-1 run may make: provider B 11, resolver
 /// RPC 2 (the rr probe and one second-source confirmation), probes 3,
-/// Telegram 4, Healthchecks 1 = 21. With the two Durable Object calls a run
-/// stays within the plan's 24.
-export const MAX_HTTP_REQUESTS = 22;
+/// Telegram 4, Healthchecks 1 = 21, so 23 with the two Durable Object calls
+/// (review r5: the ceiling enforced is the one documented).
+export const MAX_HTTP_REQUESTS = 21;
 /// The bootstrap run (review r3) reads every id below N from the public RPC
 /// at the snapshot block, up to 10 requests instead of 1: 30 HTTP + 2 Durable
 /// Object = 32, still below r15's worst case of 48 and the 100 cap.
@@ -166,11 +165,6 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   /// When this market was last offered a refund command (0 = never), so the
   /// longest unserved goes first (review r4: no starvation under a cap).
   const lastCommandAt = (id: number) => prevCrit.get(`m:${id}`)?.lastCommandAt ?? prevWarn.get(`w:${id}`)?.lastCommandAt ?? 0;
-  const critDue = (key: string) => {
-    const p = prevCrit.get(key);
-    return !p || p.lastDeliveredAt === null || scheduledTime - p.lastDeliveredAt >= REMINDER_MS;
-  };
-
   // Second-source confirmation (reviews r1 to r3). Before any one-way
   // transition (a resolved bit, the creation cursor crossing an id) and before
   // any refund command, the public RPC re-reads those markets at the same
@@ -181,9 +175,15 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const bitsBefore = bitsFromHex(snap.resolvedBits);
   // Due refund commands, longest-waiting first: a command deferred for budget
   // keeps its alert due, so it sorts ahead of the ones just delivered (r4).
+  // A command is due on its own schedule, never because its alert line was
+  // delivered (review r5): a market waits for a command until one actually
+  // reached Telegram, then waits a reminder period.
   const dueCommandIds = [...reads.values()]
     .filter((m): m is MarketHead => !!m && commandAllowed(m, nowS))
-    .filter((m) => (m.mType === MARKET_TYPE.MAKO ? prevWarn.get(`w:${m.id}`)?.deliveredAt == null || digestDue : critDue(`m:${m.id}`)))
+    .filter((m) => {
+      const served = lastCommandAt(m.id);
+      return served === 0 || scheduledTime - served >= REMINDER_MS;
+    })
     .map((m) => m.id)
     .sort((a, b) => lastCommandAt(a) - lastCommandAt(b) || a - b);
   // At most MAX_COMMANDS_PER_RUN commands are offered in one run; the rest keep
@@ -194,11 +194,15 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const transitionIds = transitionCandidates(bitsBefore, reads);
   const cursorIds: number[] = [];
   if (plan) for (let id = plan.prefixStart; id < plan.prefixEnd && reads.get(id); id++) cursorIds.push(id);
-  const oneWay = new Set([...transitionIds, ...cursorIds]);
-  const toConfirm = [...new Set([...transitionIds, ...cursorIds, ...commandIds])];
+  // One-way work (a resolved bit, a cursor id) is one category: an id that is
+  // both must not take two slots (review r5). Commands are the other.
+  const oneWayIds = [...new Set([...transitionIds, ...cursorIds])];
+  const oneWay = new Set(oneWayIds);
+  const commandOnlyIds = commandIds.filter((id) => !oneWay.has(id));
+  const toConfirm = [...oneWayIds, ...commandOnlyIds];
   // Reserved shares per category, so sustained creation cannot starve commands
   // and a command backlog cannot stall discovery or the cursor (review r4).
-  const selected = allocateConfirmations([transitionIds, cursorIds, commandIds.filter((id) => !oneWay.has(id))]);
+  const selected = allocateConfirmations([oneWayIds, commandOnlyIds]);
   const emptyConfirmation: Confirmation = { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
   let confirmation: Confirmation = emptyConfirmation;
   if (d && bootstrapping) {
@@ -380,10 +384,10 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const texts: string[] = [];
   let critPack: ReturnType<typeof packCriticals> | null = null;
   const manifest = manifestLine(critMarketIds, critCodes);
-  if (dueCrit.length) {
-    const cmdIds = commandCritical.filter((id) => crit.has(`m:${id}`));
+  const cmdIds = commandCritical.filter((id) => crit.has(`m:${id}`));
+  if (dueCrit.length || cmdIds.length) {
     critPack = packCriticals(
-      `MAKO WATCHDOG: ${dueCrit.length} critical due, ${critList.length} open (block ${d?.finalizedBlock ?? '?'})`,
+      `MAKO WATCHDOG: ${dueCrit.length} critical due, ${critList.length} open${cmdIds.length ? `, ${cmdIds.length} refund command${cmdIds.length > 1 ? 's' : ''}` : ''} (block ${d?.finalizedBlock ?? '?'})`,
       dueCrit.map((c) => ({ key: c.key, line: c.line })),
       cmdIds.length ? refundCommand(env.makoAddress, cmdIds) : null,
       manifest,
@@ -408,27 +412,27 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const nonCritConfirmed = nc.message !== null && confirmed[critMsgCount] === true;
   const placedNonCrit = new Set(nonCritConfirmed ? nc.placedKeys : []);
 
-  // Delivery bookkeeping. A market counts as served a command only when the
-  // message carrying the command block was confirmed.
-  const commandMessageConfirmed = critPack ? confirmed.slice(0, critPack.messages.length).some(Boolean) : false;
+  // Delivery bookkeeping. A command counts as served only when every message
+  // carrying it was confirmed (review r5).
+  const commandDelivered = !!critPack && critPack.commandMessages.length > 0 && critPack.commandMessages.every((i) => confirmed[i]);
   if (critPack) {
     for (const p of critPack.placed) {
       const row = crit.get(p.key)!;
       // A refund command deferred for budget keeps its alert due, so the next
       // run confirms it first (no starvation, review r3).
-      const commandDeferred = row.marketId !== null && p.key.startsWith('m:') && commandStatus(row.marketId) === 'deferred';
-      if (confirmed[p.message] && !commandDeferred) crit.set(p.key, { ...row, lastDeliveredAt: scheduledTime });
+      if (confirmed[p.message]) crit.set(p.key, { ...row, lastDeliveredAt: scheduledTime });
     }
   }
   for (const [key, w] of warn) if (w.deliveredAt === null && placedNonCrit.has(key)) warn.set(key, { ...w, deliveredAt: scheduledTime });
   // Mark who was served a command this run, so the next run serves the others.
-  if (commandMessageConfirmed) {
-    for (const id of commandCritical) {
+  if (commandDelivered) {
+    for (const id of cmdIds) {
       const row = crit.get(`m:${id}`);
       if (row) crit.set(`m:${id}`, { ...row, lastCommandAt: scheduledTime });
     }
   }
-  if (nonCritConfirmed) {
+  // The non-critical command line counts only when it was actually placed.
+  if (placedNonCrit.has('cmd')) {
     for (const id of dueWarnCommand) {
       const row = warn.get(`w:${id}`);
       if (row) warn.set(`w:${id}`, { ...row, lastCommandAt: scheduledTime });
