@@ -308,11 +308,43 @@ export function compareHeads(ids: number[], providerHeads: Map<number, MarketHea
   return { confirmed, disagreed, deferred, unread, unavailable: false, reason };
 }
 
-/// Second-source confirmation for an ordinary run (reviews r1 to r3): one
-/// public request of up to CONFIRM_IDS_PER_RUN ids, in the order given; the
-/// rest are deferred. The caller orders one-way transitions first.
-export async function confirmAtBlock(net: Net, publicUrl: string, mako: string, d: Discovery, ids: number[], providerHeads: Map<number, MarketHead | null>): Promise<Confirmation> {
-  if (!ids.length) return { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
-  const pub = await readPublicAtBlock(net, publicUrl, mako, d, ids.slice(0, CONFIRM_IDS_PER_RUN), 1);
-  return compareHeads(ids, providerHeads, pub);
+/// Splits a run's confirmation budget over the categories that need it, so no
+/// category can be starved by another (review r4): every non-empty category is
+/// reserved an equal share, and capacity a category cannot use is handed on in
+/// the order given (one-way transitions first). Returns the ids to confirm.
+export function allocateConfirmations(categories: number[][], budget = CONFIRM_IDS_PER_RUN): number[] {
+  const wanted = categories.map((c) => c.length);
+  const live = wanted.filter((n) => n > 0).length;
+  if (!live) return [];
+  const take = categories.map(() => 0);
+  let left = budget;
+  // Equal reserved shares first, then leftovers in priority order.
+  const share = Math.max(1, Math.floor(budget / live));
+  for (let i = 0; i < categories.length && left > 0; i++) {
+    take[i] = Math.min(wanted[i], share, left);
+    left -= take[i];
+  }
+  for (let i = 0; i < categories.length && left > 0; i++) {
+    const more = Math.min(wanted[i] - take[i], left);
+    take[i] += more;
+    left -= more;
+  }
+  return categories.flatMap((c, i) => c.slice(0, take[i]));
+}
+
+/// Second-source confirmation for an ordinary run (reviews r1 to r4): one
+/// public request for `selected` (at most CONFIRM_IDS_PER_RUN ids, chosen by
+/// allocateConfirmations); every other id in `all` is reported deferred.
+export async function confirmAtBlock(
+  net: Net,
+  publicUrl: string,
+  mako: string,
+  d: Discovery,
+  selected: number[],
+  all: number[],
+  providerHeads: Map<number, MarketHead | null>,
+): Promise<Confirmation> {
+  if (!all.length) return { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
+  const pub = await readPublicAtBlock(net, publicUrl, mako, d, selected.slice(0, CONFIRM_IDS_PER_RUN), 1);
+  return compareHeads(all, providerHeads, pub);
 }

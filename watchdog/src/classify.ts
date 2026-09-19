@@ -72,7 +72,7 @@ export function classifyStuck(m: MarketHead, nowS: number, command: CommandStatu
         ? command === 'withheld'
           ? 'refund command withheld: a second provider did not confirm this market at the same block'
           : command === 'deferred'
-            ? 'refund command in the next run (second-source budget)'
+            ? 'refund command in a later run (commands are offered in batches)'
             : 'refund command with the next reminder'
         : `refund opens ${fmtUtc(m.closeTime + RESOLUTION_GRACE_S)}`
     : pastGrace

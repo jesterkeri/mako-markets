@@ -49,6 +49,11 @@ export const FINALIZED_MAX_LAG_BLOCKS = 1_000;
 /// deferred to later runs (a large bootstrap is staged this way).
 export const CONFIRM_IDS_PER_RUN = 200;
 
+/// Refund commands offered in one run. The command is meant to be copied and
+/// run, so the list stays short; the rest keep their alerts due and are
+/// offered in later runs (review r4).
+export const MAX_COMMANDS_PER_RUN = 50;
+
 /// Resolver RPC must be within this many blocks of provider B, either way (r4 §5.4).
 export const RR_MAX_LAG_BLOCKS = 30;
 

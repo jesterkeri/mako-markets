@@ -181,3 +181,17 @@ test('a bundle calling .sign( on anything but Math still fails', () => {
   writeFileSync(join(root, 'dist', 'index.js'), 'const s = key.sign(data);\n');
   failsWith(root, 'dist');
 });
+
+test('Math.sign split by a comment or newline is allowed in source (review r4)', () => {
+  const root = fixture();
+  edit(root, 'src/net.ts', (s) => `${s}\nexport const dir = (x: number) => Math /* arithmetic */\n  .sign(x);\n`);
+  const problems = check(join(root, 'dist'), root);
+  rmSync(root, { recursive: true, force: true });
+  assert.deepEqual(problems, []);
+});
+
+test('a non-Math .sign( split the same way is still rejected by the syntax tree', () => {
+  const root = fixture();
+  edit(root, 'src/net.ts', (s) => `${s}\nexport const f = (k: Record<string, (n: number) => number>) => k /* x */\n  .sign(1);\n`);
+  failsWith(root, 'references sign');
+});

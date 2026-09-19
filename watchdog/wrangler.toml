@@ -11,8 +11,10 @@ compatibility_date = "2026-09-01"
 [triggers]
 crons = ["*/5 * * * *"]
 
-# CPU ceiling per run, and the subrequest cap. A completed slice-1 run makes at
-# most 24 requests; the cap leaves room for slice 2's audit (worst case 48).
+# CPU ceiling per run, and the subrequest cap. An ordinary completed slice-1 run
+# makes at most 23 requests (21 HTTP + 2 Durable Object); the one bootstrap run
+# reads every market from the second source and makes at most 32. The cap leaves
+# room for slice 2's audit (worst case 48).
 [limits]
 cpu_ms = 5000
 subrequests = 100

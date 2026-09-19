@@ -53,7 +53,7 @@ export const FORBIDDEN = [
   // WebCrypto and node:crypto signing/key APIs (review r2), and global access to them.
   /\bsubtle\b/,
   /\bcrypto\s*[.[]/,
-  /(?<!\bMath)\.sign\s*\(/, // Math.sign is arithmetic, not signing (review r3 NIT)
+  /(?<!\bMath)\.sign\s*\(/, // bundle only: esbuild keeps `Math.sign(` adjacent (reviews r3, r4)
   /(import|export|generate|derive|wrap|unwrap)Key/,
   /deriveBits/,
   /create(Sign|Hmac|PrivateKey)/,
@@ -98,8 +98,16 @@ function files(d, re) {
   });
 }
 
-function scanTokens(label, text, problems) {
-  for (const re of FORBIDDEN) if (re.test(text)) problems.push(`${label} contains ${re}`);
+/// The `.sign(` token is checked in the bundle only: in source, comments and
+/// line breaks can separate `Math` from `.sign(` (review r4 NIT), so the
+/// syntax-tree pass below is the source rule for it.
+const SOURCE_EXEMPT = [/(?<!\bMath)\.sign\s*\(/];
+
+function scanTokens(label, text, problems, exempt = []) {
+  for (const re of FORBIDDEN) {
+    if (exempt.some((e) => e.source === re.source)) continue;
+    if (re.test(text)) problems.push(`${label} contains ${re}`);
+  }
 }
 
 /// Returns a list of problems; empty means the assertion holds.
@@ -121,7 +129,7 @@ export function check(distDir, root) {
   // 3. Source imports and tokens.
   for (const f of files(join(root, 'src'), /\.(ts|js|mjs)$/)) {
     const text = readFileSync(f, 'utf8');
-    scanTokens(f, text.replace(/^\s*\/\/.*$/gm, ''), problems);
+    scanTokens(f, text.replace(/^\s*\/\/.*$/gm, ''), problems, SOURCE_EXEMPT);
     if (/\brequire\s*\(/.test(text)) problems.push(`${f} uses require()`);
     if (/\bimport\s*\(/.test(text)) problems.push(`${f} uses dynamic import()`);
     const re = /^\s*(?:import|export)\s+(type\s+)?([^'"]*?)\s*from\s*['"]([^'"]+)['"]/gm;

@@ -108,6 +108,11 @@ export interface World {
   pageRequestIndex: number;
   /// Milliseconds of fake time each request takes.
   latencyMs: number;
+  /// Model the real concurrency: each host is its own lane (one request in
+  /// flight per provider), lanes run in parallel, and the clock is the latest
+  /// finish. Off by default, which serialises time and so overstates it.
+  concurrent?: boolean;
+  lanes?: Record<string, number>;
 }
 
 export function makeWorld(partial: Partial<World> = {}): World {
@@ -188,12 +193,22 @@ export function makeFetch(w: World): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const host = new URL(url).host;
+    const spend = (ms: number) => {
+      if (!w.concurrent) {
+        w.clock.t += ms;
+        return;
+      }
+      w.lanes ??= {};
+      const start = w.lanes[host] ?? w.clock.t;
+      w.lanes[host] = start + ms;
+      w.clock.t = Math.max(w.clock.t, w.lanes[host]);
+    };
     if (w.allTimeout) {
-      w.clock.t += 10_000;
+      spend(10_000);
       w.log.push(`${host} timeout`);
       throw new DOMException('timed out', 'TimeoutError');
     }
-    w.clock.t += w.latencyMs;
+    spend(w.latencyMs);
     const body = typeof init?.body === 'string' ? init.body : '';
     if (url.startsWith(PROVIDER_B)) {
       const calls = JSON.parse(body) as { id: number; method: string; params: unknown[] }[];

@@ -25,6 +25,12 @@ async function tick(w: World, state: Deps['state'], logs: string[] = []) {
 
 const nowS = (w: World) => Math.floor(w.clock.t / 1000);
 
+/// Market ids listed in a refund command, if any.
+function commandIdsIn(text: string): number[] {
+  const m = text.match(/for id in ([\d ]+); do/);
+  return m ? m[1].trim().split(' ').map(Number) : [];
+}
+
 function openMarket(mType: number, ref: string, w: World, yes = 1_000_000n, no = 0n): FakeMarket {
   const created = nowS(w) - 600;
   return { mType, ref, createdAt: created, closeTime: created + 86_400, bettingCloseTime: created + 43_200, yes, no, resolved: false };
@@ -370,10 +376,13 @@ describe('timing and budget', () => {
     const w = makeWorld({ clock: { t: Date.UTC(2026, 8, 19, 13, 0, 1) } });
     const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
     w.markets = Array.from({ length: 2000 }, () => base);
+    const state = freshState();
+    await tick(w, state); // bootstrap first: this measures an ordinary run
     w.latencyMs = 9_000;
+    w.log = [];
     const logs: string[] = [];
     const t0 = w.clock.t;
-    const r = await runOnce(makeDeps(w, freshState(), logs), Math.floor(t0 / FIVE_MIN) * FIVE_MIN);
+    const r = await runOnce(makeDeps(w, state, logs), Math.floor(t0 / FIVE_MIN) * FIVE_MIN);
     expect(r.kind).toBe('completed');
     expect(r.committed).toBe(true);
     expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(24);
@@ -655,27 +664,36 @@ describe('one-way state needs the second source (review r2)', () => {
     expect(w.telegram.sent.join('\n')).toContain('NEW #201 STOCKS KO');
   });
 
-  it('at a 6-hour reminder, one-way items still come first, and a deferred command is next in line', async () => {
+  it('at a 6-hour reminder, one-way work goes first and every command follows within a bounded number of runs', async () => {
     const w = makeWorld();
     const state = freshState();
     const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
     w.markets = Array.from({ length: 200 }, () => oneSided);
     w.markets.push(openMarket(1, 'BTC:gt:1', w));
+    const seen = new Set<number>();
     await tick(w, state);
-    w.clock.t += 6 * 3600_000; // all 200 reminders due
+    for (const id of commandIdsIn(w.telegram.sent.join('\n'))) seen.add(id); // the first 50, at bootstrap
+    w.clock.t += 6 * 3600_000; // all remaining reminders due
     w.markets[200] = { ...w.markets[200], resolved: true, outcome: 1 };
     const sched = Math.floor(w.clock.t / FIVE_MIN) * FIVE_MIN;
+    w.telegram.sent = []; // only this run's messages
     const r = await tick(w, state);
     expect(r.payload!.auditAppend.map((a) => a.marketId)).toEqual([200]); // the transition went first
     expect(r.effective).toBe(true); // only command deferral remains, which is allowed
-    const deferredLine = r.payload!.criticals.find((c) => c.key === 'm:199')!;
-    expect(deferredLine.line).toContain('refund command in the next run');
-    expect(deferredLine.lastDeliveredAt).not.toBe(sched); // not marked delivered: still due
-    w.telegram.sent = [];
-    const r2 = await tick(w, state);
-    const ids199 = w.telegram.sent.join('\n').match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
-    expect(ids199).toContain(199);
-    expect(r2.payload!.criticals.find((c) => c.key === 'm:199')!.line).toContain('refund command below');
+    const deferred = r.payload!.criticals.find((c) => c.key === 'm:199')!;
+    expect(deferred.line).toContain('refund command in a later run');
+    expect(deferred.lastDeliveredAt).not.toBe(sched); // not marked delivered: still due
+    // Every one of the 200 gets its command within a bounded number of runs,
+    // longest unserved first (review r4).
+    for (const id of commandIdsIn(w.telegram.sent.join('\n'))) seen.add(id);
+    let extra = 0;
+    for (; extra < 5 && seen.size < 200; extra++) {
+      w.telegram.sent = [];
+      await tick(w, state);
+      for (const id of commandIdsIn(w.telegram.sent.join('\n'))) seen.add(id);
+    }
+    expect(seen.size).toBe(200);
+    expect(extra).toBeLessThanOrEqual(3); // 50 a run after the two already served batches
   });
 
   it('a deferred command whose alert WAS delivered stays due and gets its command next run', async () => {
@@ -696,23 +714,98 @@ describe('one-way state needs the second source (review r2)', () => {
     expect(ids2).toEqual(Array.from({ length: 10 }, (_, i) => 50 + i));
   });
 
-  it('201 due refund commands: 200 now, the 201st in the next run, manifest intact', async () => {
+  it('201 due refund commands: at most 50 a run, all offered within 5 runs, manifest intact', async () => {
     const w = makeWorld();
     const state = freshState();
     const base = closedMarket(1, 'LINK:gt:20', nowS(w), 23 * 3600, 1_000_000n, 0n); // not refundable yet
     w.markets = Array.from({ length: 201 }, () => base);
     await tick(w, state); // bootstrap; criticals delivered without commands
-    w.clock.t += 6 * 3600_000; // now past +24h, and the 6-hour reminders are due
-    const r = await tick(w, state);
-    const text = r.telegramMessages.join('\n');
-    const cmd = text.match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
-    expect(cmd).toHaveLength(200);
-    expect(cmd).not.toContain(200);
-    expect(r.payload!.criticals.find((c) => c.key === 'm:200')!.line).toContain('refund command in the next run');
-    expect(text.replace(/\n/g, '')).toContain('manifest ids: 0-200');
+    w.clock.t += 6 * 3600_000; // now past +24h, and the reminders are due
+    const seen = new Set<number>();
+    let runs = 0;
+    while (seen.size < 201 && runs < 8) {
+      w.telegram.sent = [];
+      const r = await tick(w, state);
+      const ids = commandIdsIn(w.telegram.sent.join('\n'));
+      expect(ids.length).toBeLessThanOrEqual(50);
+      for (const id of ids) seen.add(id);
+      if (runs === 0) expect(r.telegramMessages.join('\n').replace(/\n/g, '')).toContain('manifest ids: 0-200');
+      runs++;
+    }
+    expect(seen.size).toBe(201);
+    expect(runs).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('sustained load and budgets (review r4)', () => {
+  it('200 new markets before every tick cannot starve refund commands, and the run says it is behind', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 200 }, () => oneSided);
+    w.telegram.sent = [];
+    await tick(w, state); // bootstrap: cursor 200, first 50 commands
+    const served = new Set<number>(commandIdsIn(w.telegram.sent.join('\n')));
+    let cursor = 200;
+    for (let run = 0; run < 3; run++) {
+      for (let i = 0; i < 200; i++) w.markets.push(openMarket(1, 'BTC:gt:1', w)); // sustained creation
+      w.clock.t += 6 * 3600_000; // every old reminder is due again
+      w.telegram.sent = [];
+      const r = await tick(w, state);
+      const ids = commandIdsIn(w.telegram.sent.join('\n'));
+      expect(ids.length).toBeGreaterThan(0); // commands keep their share
+      for (const id of ids) served.add(id);
+      expect(r.payload!.meta.creationCursor).toBeGreaterThan(cursor); // the cursor keeps moving
+      cursor = r.payload!.meta.creationCursor;
+      expect(r.failed).toContain('S1'); // deferred cursor ids: the run says it is behind
+      expect(r.s3Reasons).not.toContain('critical undelivered');
+    }
+    expect(served.size).toBeGreaterThanOrEqual(150);
+  });
+
+  it('a bootstrap that fails leaves no cursor, no bootstrapN and no creation alerts', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    // Both would raise a creation alert, so nothing may be said before the snapshot.
+    const a = openMarket(5, 'GS:gt:500', w);
+    const b = openMarket(5, 'KO:gt:60', w);
+    w.markets = [a, b];
+    w.publicMarkets = [a, { ...b, yes: 5n }]; // providers disagree on #1
+    const r1 = await tick(w, state);
+    expect(r1.payload!.meta).toMatchObject({ creationCursor: 0, bootstrapN: null, resolvedBootstrapped: false, creationPendingSince: null });
+    expect(w.telegram.sent.join('\n')).not.toContain('BEFORE WATCHDOG'); // not even for the confirmed #0
+    expect(r1.failed).toContain('S1');
+    w.publicMarkets = undefined;
     const r2 = await tick(w, state);
-    const ids2 = r2.telegramMessages.join('\n').match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
-    expect(ids2).toContain(200);
+    expect(r2.payload!.meta).toMatchObject({ creationCursor: 2, bootstrapN: 2, resolvedBootstrapped: true });
+    expect(w.telegram.sent.join('\n')).toContain('BEFORE WATCHDOG #0 STOCKS GS');
+    expect(w.telegram.sent.join('\n')).toContain('BEFORE WATCHDOG #1 STOCKS KO');
+  });
+
+  it('the bootstrap run stays inside its own ceiling of 32 requests', async () => {
+    const w = makeWorld({ clock: { t: Date.UTC(2026, 8, 19, 13, 0, 1) } });
+    const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 2000 }, () => base);
+    const r = await tick(w, freshState());
+    expect(r.payload!.meta.resolvedBootstrapped).toBe(true);
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(32);
+    expect(w.log.filter((l) => l.startsWith('providerb'))).toHaveLength(11); // 1 discovery + 10 pages
+    expect(w.log.filter((l) => l.startsWith('publicrpc'))).toHaveLength(11); // 1 rr probe + 10 snapshot reads
+  });
+
+  it('with providers in parallel, a 2,000-market bootstrap at 10 s a request finishes inside the 200 s deadline', async () => {
+    const w = makeWorld({ clock: { t: Date.UTC(2026, 8, 19, 13, 0, 1) }, concurrent: true, latencyMs: 10_000 });
+    const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 2000 }, () => base);
+    const t0 = w.clock.t;
+    w.finalizedTs = Math.floor(w.clock.t / 1000);
+    const r = await runOnce(makeDeps(w, freshState()), Math.floor(t0 / FIVE_MIN) * FIVE_MIN);
+    expect(r.kind).toBe('completed');
+    expect(r.committed).toBe(true);
+    expect(r.payload!.meta.resolvedBootstrapped).toBe(true);
+    expect(w.clock.t - t0).toBeLessThan(200_000);
+    // Provider B and the public RPC run as separate lanes, about 110 s each.
+    expect(w.clock.t - t0).toBeGreaterThan(110_000);
   });
 });
 

@@ -69,7 +69,7 @@ describe('commands (I7): one-sided only, from close + 24h, every type', () => {
     expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, 'confirmed').line).toContain('refund command below');
     for (const [status, text] of [
       ['withheld', 'refund command withheld: a second provider did not confirm'],
-      ['deferred', 'refund command in the next run'],
+      ['deferred', 'refund command in a later run'],
       ['unchecked', 'refund command with the next reminder'],
     ] as const) {
       const v = classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, status);

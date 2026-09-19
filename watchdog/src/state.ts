@@ -41,6 +41,10 @@ export interface CriticalRow {
   key: string;
   since: number;
   lastDeliveredAt: number | null;
+  /// When a refund command was last offered for this market, so the longest
+  /// unserved market goes first when more commands are due than a run offers
+  /// (review r4). Null means never.
+  lastCommandAt: number | null;
   line: string;
   marketId: number | null;
   code: string | null;
@@ -50,6 +54,7 @@ export interface WarningRow {
   key: string;
   since: number;
   deliveredAt: number | null;
+  lastCommandAt: number | null;
   line: string;
 }
 
@@ -112,9 +117,9 @@ export class WatchdogState extends DurableObject<Record<string, never>> {
         observed TEXT NOT NULL, streak INTEGER NOT NULL, detail TEXT NOT NULL)`);
       sql.exec(`CREATE TABLE IF NOT EXISTS criticals (
         key TEXT PRIMARY KEY, since INTEGER NOT NULL, last_delivered_at INTEGER,
-        line TEXT NOT NULL, market_id INTEGER, code TEXT)`);
+        line TEXT NOT NULL, market_id INTEGER, code TEXT, last_command_at INTEGER)`);
       sql.exec(`CREATE TABLE IF NOT EXISTS warnings (
-        key TEXT PRIMARY KEY, since INTEGER NOT NULL, delivered_at INTEGER, line TEXT NOT NULL)`);
+        key TEXT PRIMARY KEY, since INTEGER NOT NULL, delivered_at INTEGER, line TEXT NOT NULL, last_command_at INTEGER)`);
       sql.exec(`CREATE TABLE IF NOT EXISTS notes (key TEXT PRIMARY KEY, created_at INTEGER NOT NULL, text TEXT NOT NULL)`);
       sql.exec(`CREATE TABLE IF NOT EXISTS resolved_set (id INTEGER PRIMARY KEY CHECK (id = 1), bits TEXT NOT NULL)`);
       sql.exec(`CREATE TABLE IF NOT EXISTS audit_queue (
@@ -142,13 +147,13 @@ export class WatchdogState extends DurableObject<Record<string, never>> {
       .toArray()
       .map((r) => ({ code: r.code, state: r.state as CheckRow['state'], since: r.since, observed: r.observed as CheckRow['observed'], streak: r.streak, detail: r.detail }));
     const criticals = sql
-      .exec<{ key: string; since: number; last_delivered_at: number | null; line: string; market_id: number | null; code: string | null }>('SELECT * FROM criticals')
+      .exec<{ key: string; since: number; last_delivered_at: number | null; line: string; market_id: number | null; code: string | null; last_command_at: number | null }>('SELECT * FROM criticals')
       .toArray()
-      .map((r) => ({ key: r.key, since: r.since, lastDeliveredAt: r.last_delivered_at, line: r.line, marketId: r.market_id, code: r.code }));
+      .map((r) => ({ key: r.key, since: r.since, lastDeliveredAt: r.last_delivered_at, line: r.line, marketId: r.market_id, code: r.code, lastCommandAt: r.last_command_at }));
     const warnings = sql
-      .exec<{ key: string; since: number; delivered_at: number | null; line: string }>('SELECT * FROM warnings')
+      .exec<{ key: string; since: number; delivered_at: number | null; line: string; last_command_at: number | null }>('SELECT * FROM warnings')
       .toArray()
-      .map((r) => ({ key: r.key, since: r.since, deliveredAt: r.delivered_at, line: r.line }));
+      .map((r) => ({ key: r.key, since: r.since, deliveredAt: r.delivered_at, line: r.line, lastCommandAt: r.last_command_at }));
     const notes = sql
       .exec<{ key: string; created_at: number; text: string }>('SELECT * FROM notes')
       .toArray()
@@ -188,13 +193,13 @@ export class WatchdogState extends DurableObject<Record<string, never>> {
       sql.exec('DELETE FROM criticals');
       for (const c of p.criticals) {
         sql.exec(
-          'INSERT INTO criticals (key, since, last_delivered_at, line, market_id, code) VALUES (?, ?, ?, ?, ?, ?)',
-          c.key, c.since, c.lastDeliveredAt, c.line, c.marketId, c.code,
+          'INSERT INTO criticals (key, since, last_delivered_at, line, market_id, code, last_command_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          c.key, c.since, c.lastDeliveredAt, c.line, c.marketId, c.code, c.lastCommandAt,
         );
       }
       sql.exec('DELETE FROM warnings');
       for (const w of p.warnings) {
-        sql.exec('INSERT INTO warnings (key, since, delivered_at, line) VALUES (?, ?, ?, ?)', w.key, w.since, w.deliveredAt, w.line);
+        sql.exec('INSERT INTO warnings (key, since, delivered_at, line, last_command_at) VALUES (?, ?, ?, ?, ?)', w.key, w.since, w.deliveredAt, w.line, w.lastCommandAt);
       }
       sql.exec('DELETE FROM notes');
       for (const n of p.notes) sql.exec('INSERT INTO notes (key, created_at, text) VALUES (?, ?, ?)', n.key, n.createdAt, n.text);

@@ -12,6 +12,7 @@ import {
   ENVELOPE_N,
   MAX_PARALLEL,
   ENVELOPE_N as BOOTSTRAP_MAX_IDS,
+  MAX_COMMANDS_PER_RUN,
   NONCRITICAL_MAX_WAIT_MS,
   REMINDER_MS,
   RESOLVER_BALANCE_WARN_WEI,
@@ -22,7 +23,7 @@ import { MARKET_TYPE } from './assets';
 import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges, transitionCandidates } from './discovery';
 import { inGroups, makeNet } from './net';
 import { dueProbes, probeCharts, probeComments, probeMarketPage, probeProviderB, probeResolverRpc, readPublicRpc, type ProbeResult } from './probes';
-import { advanceCursor, compareHeads, confirmAtBlock, discover, planScan, readPages, readPublicAtBlock, type Confirmation, type DiscoveryResult, type PageOutcome, type PublicRead, type ScanPlan } from './scan';
+import { advanceCursor, allocateConfirmations, compareHeads, confirmAtBlock, discover, planScan, readPages, readPublicAtBlock, type Confirmation, type DiscoveryResult, type PageOutcome, type PublicRead, type ScanPlan } from './scan';
 import type { AcquireResult, CommitPayload, CommitResult, CriticalRow, NoteRow, WarningRow } from './state';
 
 /// HTTP requests an ordinary slice-1 run may make: provider B 11, resolver
@@ -162,6 +163,9 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const prevWarn = new Map(snap.warnings.map((w) => [w.key, w]));
   const today = iso.slice(0, 10);
   const digestDue = new Date(scheduledTime).getUTCHours() >= DIGEST_HOUR_UTC && meta.lastDigestDate !== today;
+  /// When this market was last offered a refund command (0 = never), so the
+  /// longest unserved goes first (review r4: no starvation under a cap).
+  const lastCommandAt = (id: number) => prevCrit.get(`m:${id}`)?.lastCommandAt ?? prevWarn.get(`w:${id}`)?.lastCommandAt ?? 0;
   const critDue = (key: string) => {
     const p = prevCrit.get(key);
     return !p || p.lastDeliveredAt === null || scheduledTime - p.lastDeliveredAt >= REMINDER_MS;
@@ -175,16 +179,26 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // command not due is not checked). The bootstrap run compares every id
   // below N from its parallel public read.
   const bitsBefore = bitsFromHex(snap.resolvedBits);
-  const commandIds = [...reads.values()]
+  // Due refund commands, longest-waiting first: a command deferred for budget
+  // keeps its alert due, so it sorts ahead of the ones just delivered (r4).
+  const dueCommandIds = [...reads.values()]
     .filter((m): m is MarketHead => !!m && commandAllowed(m, nowS))
     .filter((m) => (m.mType === MARKET_TYPE.MAKO ? prevWarn.get(`w:${m.id}`)?.deliveredAt == null || digestDue : critDue(`m:${m.id}`)))
     .map((m) => m.id)
-    .sort((a, b) => a - b);
+    .sort((a, b) => lastCommandAt(a) - lastCommandAt(b) || a - b);
+  // At most MAX_COMMANDS_PER_RUN commands are offered in one run; the rest keep
+  // their alerts due and come in later runs.
+  const commandIds = dueCommandIds.slice(0, MAX_COMMANDS_PER_RUN);
+  const overCap = new Set(dueCommandIds.slice(MAX_COMMANDS_PER_RUN));
+  const commandSlate = new Set(commandIds);
   const transitionIds = transitionCandidates(bitsBefore, reads);
   const cursorIds: number[] = [];
   if (plan) for (let id = plan.prefixStart; id < plan.prefixEnd && reads.get(id); id++) cursorIds.push(id);
   const oneWay = new Set([...transitionIds, ...cursorIds]);
   const toConfirm = [...new Set([...transitionIds, ...cursorIds, ...commandIds])];
+  // Reserved shares per category, so sustained creation cannot starve commands
+  // and a command backlog cannot stall discovery or the cursor (review r4).
+  const selected = allocateConfirmations([transitionIds, cursorIds, commandIds.filter((id) => !oneWay.has(id))]);
   const emptyConfirmation: Confirmation = { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
   let confirmation: Confirmation = emptyConfirmation;
   if (d && bootstrapping) {
@@ -192,16 +206,14 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       ? compareHeads(Array.from({ length: d.nextMarketId }, (_, i) => i), reads, publicSide.boot)
       : { ...emptyConfirmation, unavailable: true, reason: d.nextMarketId > BOOTSTRAP_MAX_IDS ? 'too many markets to bootstrap in one run' : 'public RPC not read' };
   } else if (d && toConfirm.length) {
-    confirmation = await confirmAtBlock(net, env.publicRpcUrl, env.makoAddress, d, toConfirm, reads);
+    confirmation = await confirmAtBlock(net, env.publicRpcUrl, env.makoAddress, d, selected, toConfirm, reads);
   }
-  const commandStatus = (id: number): 'confirmed' | 'withheld' | 'deferred' | 'unchecked' =>
-    confirmation.confirmed.has(id)
-      ? 'confirmed'
-      : confirmation.deferred.includes(id)
-        ? 'deferred'
-        : commandIds.includes(id)
-          ? 'withheld'
-          : 'unchecked';
+  const commandStatus = (id: number): 'confirmed' | 'withheld' | 'deferred' | 'unchecked' => {
+    if (overCap.has(id)) return 'deferred';
+    if (!commandSlate.has(id)) return 'unchecked';
+    if (confirmation.confirmed.has(id)) return 'confirmed';
+    return confirmation.deferred.includes(id) ? 'deferred' : 'withheld';
+  };
 
   // Probe checks, with flap control. Providers disagreeing at one block hash
   // is a provider-B failure observation (one of the two is wrong).
@@ -231,13 +243,13 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const crit = new Map<string, CriticalRow>();
   const keepCrit = (key: string, line: string, marketId: number | null, code: string | null) => {
     const p = prevCrit.get(key);
-    crit.set(key, { key, since: p?.since ?? scheduledTime, lastDeliveredAt: p?.lastDeliveredAt ?? null, line, marketId, code });
+    crit.set(key, { key, since: p?.since ?? scheduledTime, lastDeliveredAt: p?.lastDeliveredAt ?? null, line, marketId, code, lastCommandAt: p?.lastCommandAt ?? null });
   };
   const warn = new Map<string, WarningRow>();
   const keepWarn = (key: string, line: string) => {
     const p = prevWarn.get(key);
     // A warning is announced once; its text may change (the age grows) without a new message.
-    warn.set(key, { key, since: p?.since ?? scheduledTime, deliveredAt: p?.deliveredAt ?? null, line });
+    warn.set(key, { key, since: p?.since ?? scheduledTime, deliveredAt: p?.deliveredAt ?? null, line, lastCommandAt: p?.lastCommandAt ?? null });
   };
 
   // Market-level rows for markets not read this run are kept unchanged.
@@ -327,9 +339,12 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // Creation checks over the prefix, in id order.
   const bootstrapN = meta.bootstrapN ?? d?.nextMarketId ?? null;
   const creation: { id: number; key: string; line: string }[] = [];
-  // The cursor crosses an id only once the public RPC confirmed its read.
+  // The cursor crosses an id only once the public RPC confirmed its read, and
+  // only once the bootstrap snapshot exists: an incomplete snapshot leaves the
+  // cursor, bootstrapN and creation alerts untouched (review r4).
+  const snapshotReady = disc?.bootstrapped ?? meta.resolvedBootstrapped;
   let firstUnconfirmed: number | null = null;
-  if (plan && bootstrapN !== null) {
+  if (plan && bootstrapN !== null && snapshotReady) {
     for (let id = plan.prefixStart; id < plan.prefixEnd; id++) {
       const m = reads.get(id);
       if (!m) break; // the cursor stops here anyway
@@ -393,7 +408,9 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const nonCritConfirmed = nc.message !== null && confirmed[critMsgCount] === true;
   const placedNonCrit = new Set(nonCritConfirmed ? nc.placedKeys : []);
 
-  // Delivery bookkeeping.
+  // Delivery bookkeeping. A market counts as served a command only when the
+  // message carrying the command block was confirmed.
+  const commandMessageConfirmed = critPack ? confirmed.slice(0, critPack.messages.length).some(Boolean) : false;
   if (critPack) {
     for (const p of critPack.placed) {
       const row = crit.get(p.key)!;
@@ -404,6 +421,19 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     }
   }
   for (const [key, w] of warn) if (w.deliveredAt === null && placedNonCrit.has(key)) warn.set(key, { ...w, deliveredAt: scheduledTime });
+  // Mark who was served a command this run, so the next run serves the others.
+  if (commandMessageConfirmed) {
+    for (const id of commandCritical) {
+      const row = crit.get(`m:${id}`);
+      if (row) crit.set(`m:${id}`, { ...row, lastCommandAt: scheduledTime });
+    }
+  }
+  if (nonCritConfirmed) {
+    for (const id of dueWarnCommand) {
+      const row = warn.get(`w:${id}`);
+      if (row) warn.set(`w:${id}`, { ...row, lastCommandAt: scheduledTime });
+    }
+  }
   for (const key of [...notes.keys()]) if (placedNonCrit.has(key)) notes.delete(key);
 
   // Creation cursor: stops at the first unread prefix id, or at the first id
@@ -415,12 +445,13 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       break;
     }
   }
-  const newCursor = plan ? advanceCursor(plan, reads, stopAt) : meta.creationCursor;
+  const newCursor = plan && snapshotReady ? advanceCursor(plan, reads, stopAt) : meta.creationCursor;
 
   const nextMeta = {
     ...meta,
     creationCursor: newCursor,
-    bootstrapN,
+    // Recorded only with the snapshot it belongs to.
+    bootstrapN: snapshotReady ? bootstrapN : meta.bootstrapN,
     resolvedBootstrapped: disc?.bootstrapped ?? meta.resolvedBootstrapped,
     snapshotBlock: disc?.bootstrapResolved && d ? d.finalizedBlock : meta.snapshotBlock,
     // The last validated value, not a maximum: one bad answer must not pin the
@@ -429,7 +460,11 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     lastDigestDate: digestDue && placedNonCrit.has('digest') ? today : meta.lastDigestDate,
     // Pending only while a creation alert waits for Telegram (S3); waiting on
     // confirmation shows up in S1 instead.
-    creationPendingSince: stopAt !== null && stopAt !== firstUnconfirmed ? (meta.creationPendingSince ?? scheduledTime) : null,
+    creationPendingSince: !snapshotReady
+      ? meta.creationPendingSince
+      : stopAt !== null && stopAt !== firstUnconfirmed
+        ? (meta.creationPendingSince ?? scheduledTime)
+        : null,
   };
   const payload: CommitPayload = {
     meta: nextMeta,
