@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { runOnce, type Deps } from '../src/run';
-import { closedMarket, makeDeps, makeWorld, type FakeMarket, type World } from './fake';
+import { closedMarket, makeDeps, makeWorld, MAKO as MAKO_ADDR, RESOLVER as RES_ADDR, type FakeMarket, type World } from './fake';
 
 let n = 0;
 function freshState(): Deps['state'] {
@@ -158,7 +158,11 @@ describe('creation cursor over whole runs', () => {
     w.failPages = new Set();
     const r2 = await tick(w, state);
     expect(w.telegram.sent.join('\n')).toContain('NEW #300 FOREX EURJPY');
-    expect(r2.payload!.meta.creationCursor).toBe(460);
+    // 250 ids to cross; the second source confirms 200 a run.
+    expect(r2.payload!.meta.creationCursor).toBe(410);
+    expect(r2.effective).toBe(true);
+    const r3 = await tick(w, state);
+    expect(r3.payload!.meta.creationCursor).toBe(460);
   });
 
   it('one failed call inside aggregate3 stops the cursor at that id', async () => {
@@ -466,7 +470,7 @@ describe('refund commands need the public RPC to confirm at the same block (I7)'
     const w = world();
     const r = await tick(w, freshState());
     expect(w.telegram.sent.join('\n')).toContain('for id in 0; do cast send');
-    expect(r.healthchecksBody).toContain('refund commands: 1/1 confirmed');
+    expect(r.healthchecksBody).toContain('refund commands 1/1');
   });
   it.each([
     ['public RPC down', { publicDown: true }, /public RPC http/],
@@ -496,5 +500,125 @@ describe('refund commands need the public RPC to confirm at the same block (I7)'
       expect(w.telegram.sent.join('\n')).not.toContain('cast send');
       expect(w.telegram.sent.join('\n')).toContain('refund command withheld');
     }
+  });
+});
+
+// Review r2: one-way state (resolved bits, the creation cursor) needs the same
+// second source as a refund command.
+describe('one-way state needs the second source (review r2)', () => {
+  it('a fabricated "resolved" at bootstrap sets no bit; the later real resolution is still queued for audit', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const real = openMarket(1, 'BTC:gt:1', w);
+    w.markets = [{ ...real, resolved: true, outcome: 3 }]; // provider B lies
+    w.publicMarkets = [real]; // the public RPC tells the truth
+    const r1 = await tick(w, state);
+    expect(r1.payload!.resolvedBits).toBe('');
+    expect(r1.payload!.meta.resolvedBootstrapped).toBe(false);
+    expect(r1.payload!.meta.creationCursor).toBe(0);
+    expect(r1.failed).toContain('S1');
+    expect(r1.healthchecksBody).toContain('providers disagree at the same block');
+    // Provider B becomes honest: bootstrap completes without the market.
+    w.markets = [real];
+    w.publicMarkets = undefined;
+    const r2 = await tick(w, state);
+    expect(r2.payload!.meta.resolvedBootstrapped).toBe(true);
+    expect(r2.payload!.resolvedBits.replace(/0/g, '')).toBe('');
+    // The market really resolves: queued exactly once.
+    w.markets = [{ ...real, resolved: true, outcome: 1 }];
+    const r3 = await tick(w, state);
+    expect(r3.payload!.auditAppend.map((a) => a.marketId)).toEqual([0]);
+  });
+
+  it('a disagreement that persists for two runs becomes a pb critical naming the markets', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const real = openMarket(1, 'BTC:gt:1', w);
+    w.markets = [{ ...real, yes: 9_000_000n }];
+    w.publicMarkets = [real];
+    await tick(w, state);
+    const r2 = await tick(w, state);
+    const pb = r2.payload!.criticals.find((c) => c.key === 'c:pb');
+    expect(pb?.line).toMatch(/provider B and the resolver RPC disagree at block \d+ on #0/);
+  });
+
+  it('a new resolution is not queued while the second source is down, then queued once', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    w.markets = [openMarket(1, 'BTC:gt:1', w)];
+    await tick(w, state);
+    w.markets[0] = { ...w.markets[0], resolved: true, outcome: 2 };
+    w.publicDown = true;
+    const r1 = await tick(w, state);
+    expect(r1.payload!.auditAppend).toEqual([]);
+    expect(r1.failed).toContain('S1');
+    w.publicDown = false;
+    const r2 = await tick(w, state);
+    expect(r2.payload!.auditAppend.map((a) => a.marketId)).toEqual([0]);
+    const r3 = await tick(w, state);
+    expect(r3.payload!.auditAppend).toEqual([]);
+  });
+
+  it('fabricated creation fields cannot move the cursor past a paused-symbol market', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    w.markets = [openMarket(1, 'BTC:gt:1', w)];
+    await tick(w, state);
+    const realNew = openMarket(5, 'KO:gt:60', w);
+    w.markets.push({ ...realNew, ref: 'AAPL:gt:200' }); // provider B says a verified symbol
+    w.publicMarkets = [w.markets[0], realNew];
+    const r1 = await tick(w, state);
+    expect(r1.payload!.meta.creationCursor).toBe(1);
+    expect(r1.failed).toContain('S1');
+    expect(w.telegram.sent.join('\n')).not.toContain('NEW #1');
+    w.markets[1] = realNew;
+    w.publicMarkets = undefined;
+    const r2 = await tick(w, state);
+    expect(w.telegram.sent.join('\n')).toContain('NEW #1 STOCKS KO: paused symbol');
+    expect(r2.payload!.meta.creationCursor).toBe(2);
+  });
+
+  it('a large bootstrap is staged: 200 confirmations a run, nothing queued, effective throughout', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const base = closedMarket(1, 'BTC:gt:1', nowS(w), 30 * 86_400, 1_000_000n, 1_000_000n, true);
+    w.markets = Array.from({ length: 450 }, () => base);
+    const r1 = await tick(w, state);
+    expect(r1.payload!.meta).toMatchObject({ resolvedBootstrapped: false, creationCursor: 200 });
+    expect(r1.effective).toBe(true);
+    const r2 = await tick(w, state);
+    expect(r2.payload!.meta).toMatchObject({ resolvedBootstrapped: false, creationCursor: 400 });
+    const r3 = await tick(w, state);
+    expect(r3.payload!.meta).toMatchObject({ resolvedBootstrapped: true, creationCursor: 450 });
+    expect([r1, r2, r3].flatMap((r) => r.payload!.auditAppend)).toEqual([]);
+    expect(w.telegram.sent.join('\n')).toContain('Resolved before the watchdog, not audited (450): 0-449');
+  });
+
+  it('201 refund candidates: 200 commands, the 201st withheld, manifest intact', async () => {
+    const w = makeWorld();
+    const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 201 }, () => base);
+    const r = await tick(w, freshState());
+    const text = r.telegramMessages.join('\n');
+    const cmd = text.match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
+    expect(cmd).toHaveLength(200);
+    expect(cmd).not.toContain(200);
+    // 201 detail lines do not fit three messages; the stored line says why #200 has no command.
+    expect(r.payload!.criticals.find((c) => c.key === 'm:200')!.line).toContain('refund command withheld');
+    expect(r.payload!.criticals.find((c) => c.key === 'm:199')!.line).toContain('refund command below');
+    expect(text.replace(/\n/g, '')).toContain('manifest ids: 0-200');
+  });
+});
+
+describe('configuration', () => {
+  it('rejects provider B and the public RPC on the same origin, and non-HTTPS', async () => {
+    const { readEnv } = await import('../src/index');
+    const base = {
+      WATCHDOG_STATE: undefined as never, MAKO_ADDRESS: MAKO_ADDR, RESOLVER_ADDRESS: RES_ADDR, APP_URL: 'https://makomarket.xyz',
+      TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: '1', HEALTHCHECKS_PING_URL: 'https://hc-ping.com/x',
+    };
+    expect(() => readEnv({ ...base, PUBLIC_RPC_URL: 'https://testnet-rpc.monad.xyz/', PROVIDER_B_URL: 'https://TESTNET-RPC.monad.xyz/v2/key' })).toThrow(/same origin/);
+    expect(() => readEnv({ ...base, PUBLIC_RPC_URL: 'https://testnet-rpc.monad.xyz/', PROVIDER_B_URL: 'http://monad-testnet.g.alchemy.com/v2/k' })).toThrow(/HTTPS/);
+    expect(readEnv({ ...base, PUBLIC_RPC_URL: 'https://testnet-rpc.monad.xyz/', PROVIDER_B_URL: 'https://monad-testnet.g.alchemy.com/v2/k' }).providerBUrl).toContain('alchemy');
   });
 });

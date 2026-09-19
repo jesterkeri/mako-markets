@@ -38,7 +38,27 @@ function required(raw: string | undefined, label: string): string {
   return v;
 }
 
+/// Scheme, host and port, lowercased: the part that names an operator.
+export function origin(url: string): string {
+  const u = new URL(url);
+  return `${u.protocol}//${u.host}`.toLowerCase();
+}
+
 export function readEnv(env: Env): RunEnv {
+  const run = readEnvUnchecked(env);
+  // The second-source confirmation means nothing if both URLs reach the same
+  // endpoint (review r2). Distinct origins are necessary, not sufficient:
+  // operator independence is recorded before deploy (A6 evidence).
+  if (origin(run.providerBUrl) === origin(run.publicRpcUrl)) {
+    throw new Error('PROVIDER_B_URL and PUBLIC_RPC_URL have the same origin; provider B must be an independent operator');
+  }
+  if (!run.providerBUrl.startsWith('https://') || !run.publicRpcUrl.startsWith('https://')) {
+    throw new Error('PROVIDER_B_URL and PUBLIC_RPC_URL must be HTTPS');
+  }
+  return run;
+}
+
+function readEnvUnchecked(env: Env): RunEnv {
   return {
     makoAddress: address(env.MAKO_ADDRESS, 'MAKO_ADDRESS'),
     resolverAddress: address(env.RESOLVER_ADDRESS, 'RESOLVER_ADDRESS'),

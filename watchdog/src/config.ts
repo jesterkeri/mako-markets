@@ -43,9 +43,11 @@ export const FINALIZED_MAX_AHEAD_MS = 60_000;
 export const FINALIZED_MAX_BEHIND_MS = 15 * 60_000;
 export const FINALIZED_MAX_LAG_BLOCKS = 1_000;
 
-/// Refund commands are printed only for ids the public RPC re-reads and
-/// confirms at the same finalized block: one request of 4 x 50 ids per run.
-export const MAX_COMMAND_CONFIRMATIONS = 200;
+/// Second-source confirmation: the public RPC re-reads, at the same finalized
+/// block, every id before a one-way transition (resolved bit, creation cursor)
+/// and before any refund command. One request of 4 x 50 ids per run; more is
+/// deferred to later runs (a large bootstrap is staged this way).
+export const CONFIRM_IDS_PER_RUN = 200;
 
 /// Resolver RPC must be within this many blocks of provider B, either way (r4 §5.4).
 export const RR_MAX_LAG_BLOCKS = 30;

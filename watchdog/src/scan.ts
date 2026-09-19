@@ -14,7 +14,7 @@ import {
   FINALIZED_MAX_LAG_BLOCKS,
   ID_BUDGET,
   IDS_PER_CALL,
-  MAX_COMMAND_CONFIRMATIONS,
+  CONFIRM_IDS_PER_RUN,
   MAX_PAGE_REQUESTS,
   MULTICALL3,
 } from './config';
@@ -197,30 +197,56 @@ export function advanceCursor(plan: ScanPlan, reads: Map<number, MarketHead | nu
 }
 
 export interface Confirmation {
-  /// Ids whose refund command may be printed.
+  /// Ids whose full market head the public RPC returned identically at the
+  /// same finalized block.
   confirmed: Set<number>;
-  /// Why nothing (or not everything) was confirmed, for the withheld note.
+  /// Ids the two providers returned differently at the same block.
+  disagreed: number[];
+  /// Ids asked for but not checked this run (budget), in request order.
+  deferred: number[];
+  /// Ids in this run's batch the public RPC failed to read (call or decode).
+  unread: number[];
+  /// True when the public RPC could not be used at all (down, wrong chain,
+  /// another block); nothing is confirmed then.
+  unavailable: boolean;
   reason: string;
 }
 
-/// I7, strongest form (review r1, finding 1): before any refund command is
-/// printed, the public RPC (a different operator from provider B) re-reads
-/// the candidates at provider B's finalized block. A candidate is confirmed
-/// only if the public RPC is on chain 10143, reports the same block hash and
-/// timestamp, and its own read of the market has the same close time and
-/// pools, is unresolved, and still qualifies at that block's time.
-/// At most MAX_COMMAND_CONFIRMATIONS candidates per run, in id order.
-export async function confirmCommands(
-  net: Net,
-  publicUrl: string,
-  mako: string,
-  d: Discovery,
-  candidates: MarketHead[],
-  qualifies: (m: MarketHead, nowS: number) => boolean,
-): Promise<Confirmation> {
+function sameHead(a: MarketHead, b: MarketHead): boolean {
+  return (
+    a.mType === b.mType &&
+    a.oracleRef === b.oracleRef &&
+    a.createdAt === b.createdAt &&
+    a.closeTime === b.closeTime &&
+    a.bettingCloseTime === b.bettingCloseTime &&
+    a.totalYes === b.totalYes &&
+    a.totalNo === b.totalNo &&
+    a.resolved === b.resolved
+  );
+}
+
+/// Second-source confirmation (reviews r1 and r2): the public RPC, a
+/// different operator from provider B, re-reads the given markets at provider
+/// B's finalized block. An id is confirmed only if the public RPC is on chain
+/// 10143, reports the same block hash and time, and returns the same decoded
+/// head. Chain state at one block hash is deterministic, so any difference
+/// means one provider is wrong. Used before every one-way transition (a
+/// resolved bit, the creation cursor crossing an id) and before any refund
+/// command. At most CONFIRM_IDS_PER_RUN ids, in the order given; the rest are
+/// deferred to later runs.
+export async function confirmAtBlock(net: Net, publicUrl: string, mako: string, d: Discovery, heads: MarketHead[]): Promise<Confirmation> {
   const confirmed = new Set<number>();
-  const batch = [...candidates].sort((a, b) => a.id - b.id).slice(0, MAX_COMMAND_CONFIRMATIONS);
-  if (!batch.length) return { confirmed, reason: '' };
+  const batch = heads.slice(0, CONFIRM_IDS_PER_RUN);
+  const deferred = heads.slice(CONFIRM_IDS_PER_RUN).map((m) => m.id);
+  const out = (reason: string, unavailable: boolean, disagreed: number[] = [], unread: number[] = []): Confirmation => ({
+    confirmed,
+    disagreed,
+    deferred,
+    unread,
+    unavailable,
+    reason,
+  });
+  if (!batch.length) return out('', false);
   const blockTag = '0x' + d.finalizedBlock.toString(16);
   const chunks: MarketHead[][] = [];
   for (let i = 0; i < batch.length; i += IDS_PER_CALL) chunks.push(batch.slice(i, i + IDS_PER_CALL));
@@ -232,35 +258,41 @@ export async function confirmCommands(
       params: [{ to: MULTICALL3, data: aggregate3GetMarkets(mako, c.map((m) => m.id)) }, blockTag],
     })),
   ]);
-  if (!b.ok) return { confirmed, reason: `public RPC ${b.kind}` };
+  if (!b.ok) return out(`public RPC ${b.kind}`, true);
   const [chain, blk, ...pages] = b.items;
-  if (!chain.ok || safeQuantity(chain.result) !== CHAIN_ID) return { confirmed, reason: 'public RPC chain id' };
+  if (!chain.ok || safeQuantity(chain.result) !== CHAIN_ID) return out('public RPC chain id', true);
   const block = blk.ok ? (blk.result as { hash?: unknown; timestamp?: unknown } | null) : null;
-  if (typeof block?.hash !== 'string' || block.hash.toLowerCase() !== d.finalizedHash) return { confirmed, reason: 'public RPC block differs' };
-  const ts = safeQuantity(block.timestamp);
-  if (ts !== d.finalizedTimestamp) return { confirmed, reason: 'public RPC block time differs' };
+  if (typeof block?.hash !== 'string' || block.hash.toLowerCase() !== d.finalizedHash) return out('public RPC block differs', true);
+  if (safeQuantity(block.timestamp) !== d.finalizedTimestamp) return out('public RPC block time differs', true);
+  const disagreed: number[] = [];
+  const unread: number[] = [];
   chunks.forEach((chunk, i) => {
     const item = pages[i];
-    if (!item?.ok || typeof item.result !== 'string') return;
-    let datas: (string | null)[];
-    try {
-      datas = decodeAggregate3(item.result, chunk.length);
-    } catch {
-      return;
+    let datas: (string | null)[] | null = null;
+    if (item?.ok && typeof item.result === 'string') {
+      try {
+        datas = decodeAggregate3(item.result, chunk.length);
+      } catch {
+        datas = null;
+      }
     }
     chunk.forEach((mb, k) => {
-      const data = datas[k];
-      if (data === null) return;
+      const data = datas?.[k] ?? null;
+      if (data === null) {
+        unread.push(mb.id);
+        return;
+      }
       let mp: MarketHead;
       try {
         mp = decodeMarketHead(mb.id, data);
       } catch {
+        unread.push(mb.id);
         return;
       }
-      const same = !mp.resolved && mp.closeTime === mb.closeTime && mp.totalYes === mb.totalYes && mp.totalNo === mb.totalNo;
-      if (same && qualifies(mp, ts) && qualifies(mb, d.finalizedTimestamp)) confirmed.add(mb.id);
+      if (sameHead(mp, mb)) confirmed.add(mb.id);
+      else disagreed.push(mb.id);
     });
   });
-  const missing = batch.length - confirmed.size + (candidates.length - batch.length);
-  return { confirmed, reason: missing ? 'not confirmed by the public RPC at the same block' : '' };
+  const reason = disagreed.length ? 'providers disagree at the same block' : unread.length ? 'public RPC could not read every market' : '';
+  return out(reason, false, disagreed, unread);
 }

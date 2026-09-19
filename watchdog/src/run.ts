@@ -17,10 +17,10 @@ import {
   RUN_DEADLINE_MS,
 } from './config';
 import type { MarketHead } from './abi';
-import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges } from './discovery';
+import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges, transitionCandidates } from './discovery';
 import { inGroups, makeNet } from './net';
 import { dueProbes, probeCharts, probeComments, probeMarketPage, probeProviderB, probeResolverRpc, readPublicRpc, type ProbeResult } from './probes';
-import { advanceCursor, confirmCommands, discover, planScan, readPages, type Confirmation, type DiscoveryResult, type PageOutcome, type ScanPlan } from './scan';
+import { advanceCursor, confirmAtBlock, discover, planScan, readPages, type Confirmation, type DiscoveryResult, type PageOutcome, type ScanPlan } from './scan';
 import type { AcquireResult, CommitPayload, CommitResult, CriticalRow, NoteRow, WarningRow } from './state';
 
 /// HTTP requests a slice-1 run may make: provider B 11, resolver RPC 2 (the
@@ -139,17 +139,39 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const reads: Map<number, MarketHead | null> = scan.pages?.reads ?? new Map();
   const nowS = d?.finalizedTimestamp ?? Math.floor(scheduledTime / 1000);
 
-  // Probe checks, with flap control.
-  const observations: ProbeResult[] = [probeProviderB(scan.d, meta.lastLatestBlock), probeResolverRpc(pub, d?.latestBlock ?? null), ...probes];
+  // Second-source confirmation (reviews r1 and r2). Before any one-way
+  // transition (a resolved bit, the creation cursor crossing an id) and before
+  // any refund command, the public RPC re-reads those markets at the same
+  // finalized block. Order: command candidates, then new resolutions, then
+  // the prefix ids the cursor would cross; one request, the rest deferred.
+  const bitsBefore = bitsFromHex(snap.resolvedBits);
+  const commandIds = [...reads.values()].filter((m): m is MarketHead => !!m && commandAllowed(m, nowS)).map((m) => m.id).sort((a, b) => a - b);
+  const cursorIds: number[] = [];
+  if (plan) for (let id = plan.prefixStart; id < plan.prefixEnd && reads.get(id); id++) cursorIds.push(id);
+  const toConfirm = [...new Set([...commandIds, ...transitionCandidates(bitsBefore, reads), ...cursorIds])];
+  const confirmation: Confirmation =
+    d && toConfirm.length
+      ? await confirmAtBlock(net, env.publicRpcUrl, env.makoAddress, d, toConfirm.map((id) => reads.get(id)!))
+      : { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
+
+  // Probe checks, with flap control. Providers disagreeing at one block hash
+  // is a provider-B failure observation (one of the two is wrong).
+  const pbObs = probeProviderB(scan.d, meta.lastLatestBlock);
+  const pbFinal: ProbeResult =
+    confirmation.disagreed.length && d
+      ? { code: 'pb', obs: 'fail', detail: `provider B and the resolver RPC disagree at block ${d.finalizedBlock} on #${formatRanges(confirmation.disagreed)}` }
+      : pbObs;
+  const observations: ProbeResult[] = [pbFinal, probeResolverRpc(pub, d?.latestBlock ?? null), ...probes];
   const checks = new Map(snap.checks.map((c) => [c.code, c]));
   for (const o of observations) checks.set(o.code, applyFlap(checks.get(o.code), o.code, o.obs, o.detail, scheduledTime));
 
-  // 4. Discovery diff.
+  // 4. Discovery diff: bits only for confirmed resolutions.
   const disc = d
     ? applyDiscovery({
         bootstrapped: meta.resolvedBootstrapped,
-        bits: bitsFromHex(snap.resolvedBits),
+        bits: bitsBefore,
         reads,
+        confirmed: confirmation.confirmed,
         n: d.nextMarketId,
         block: d.finalizedBlock,
         scheduledTime,
@@ -177,13 +199,6 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     const id = w.key.startsWith('w:') ? Number(w.key.slice(2)) : null;
     if (id !== null && !reads.get(id)) warn.set(w.key, w);
   }
-  // Refund-command candidates are re-read on the public RPC at the same
-  // finalized block before any command is printed (I7; review r1 finding 1).
-  const candidates = [...reads.values()].filter((m): m is MarketHead => !!m && commandAllowed(m, nowS));
-  const confirmation: Confirmation =
-    d && candidates.length
-      ? await confirmCommands(net, env.publicRpcUrl, env.makoAddress, d, candidates, commandAllowed)
-      : { confirmed: new Set(), reason: '' };
   const commandCritical: number[] = [];
   const commandWarn: number[] = [];
   const digestLines: string[] = [];
@@ -265,10 +280,16 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // Creation checks over the prefix, in id order.
   const bootstrapN = meta.bootstrapN ?? d?.nextMarketId ?? null;
   const creation: { id: number; key: string; line: string }[] = [];
+  // The cursor crosses an id only once the public RPC confirmed its read.
+  let firstUnconfirmed: number | null = null;
   if (plan && bootstrapN !== null) {
     for (let id = plan.prefixStart; id < plan.prefixEnd; id++) {
       const m = reads.get(id);
       if (!m) break; // the cursor stops here anyway
+      if (!confirmation.confirmed.has(id)) {
+        firstUnconfirmed = id;
+        break;
+      }
       creationFindings(m, id < bootstrapN).forEach((line, k) => creation.push({ id, key: `n:${id}:${k}`, line }));
     }
   }
@@ -339,10 +360,10 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
 
   // Creation cursor: stops at the first unread prefix id, or at the first id
   // whose creation alert Telegram did not confirm.
-  let stopAt: number | null = null;
+  let stopAt: number | null = firstUnconfirmed;
   for (const c of creation) {
     if (!placedNonCrit.has(c.key)) {
-      stopAt = c.id;
+      stopAt = stopAt === null ? c.id : Math.min(stopAt, c.id);
       break;
     }
   }
@@ -358,7 +379,9 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     // advancing-block check forever (review r1 finding 1).
     lastLatestBlock: d ? d.latestBlock : meta.lastLatestBlock,
     lastDigestDate: digestDue && placedNonCrit.has('digest') ? today : meta.lastDigestDate,
-    creationPendingSince: stopAt !== null ? (meta.creationPendingSince ?? scheduledTime) : null,
+    // Pending only while a creation alert waits for Telegram (S3); waiting on
+    // confirmation shows up in S1 instead.
+    creationPendingSince: stopAt !== null && stopAt !== firstUnconfirmed ? (meta.creationPendingSince ?? scheduledTime) : null,
   };
   const payload: CommitPayload = {
     meta: nextMeta,
@@ -393,7 +416,10 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // Effective-run conditions (r15 §5.6; S9 and S10 wait for slice 2).
   const failed: string[] = [];
   const allRead = !!plan && plan.ids.every((id) => !!reads.get(id)) && !!d && d.resolver !== null && d.resolverBalanceWei !== null && d.nextMarketId >= meta.creationCursor;
-  if (!allRead) failed.push('S1');
+  // Every id that needed a second source this run got one (budget deferral of
+  // a large bootstrap is staged progress, not a failure).
+  const allConfirmed = !confirmation.unavailable && !confirmation.disagreed.length && !confirmation.unread.length;
+  if (!allRead || !allConfirmed) failed.push('S1');
   if (observations.some((o) => o.obs === 'fail' && PROBE_UNCLASSIFIED.test(o.detail))) failed.push('S2');
   const staleNonCrit =
     payload.warnings.some((w) => w.deliveredAt === null && scheduledTime - w.since > NONCRITICAL_MAX_WAIT_MS) ||
@@ -424,7 +450,15 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       ? `block ${d.finalizedBlock} (latest ${d.latestBlock}), markets ${d.nextMarketId}, read ${countRead(reads)}/${plan?.ids.length ?? 0}, cursor ${meta.creationCursor}->${newCursor}, audit queue ${snap.auditQueueSize + payload.auditAppend.length}`
       : `provider B: ${scan.d.ok ? '' : scan.d.reason}`,
     `telegram ${confirmed.filter(Boolean).length}/${texts.length} confirmed, requests ${net.requests + report.doCalls}, ${deps.now() - start} ms${report.reason ? ', ' + report.reason : ''}`,
-    ...(candidates.length ? [`refund commands: ${confirmation.confirmed.size}/${candidates.length} confirmed${confirmation.reason ? ' (' + confirmation.reason + ')' : ''}`] : []),
+    ...(toConfirm.length
+      ? [
+          `second source: ${confirmation.confirmed.size}/${toConfirm.length} confirmed at the same block` +
+            (confirmation.deferred.length ? `, ${confirmation.deferred.length} deferred` : '') +
+            (confirmation.reason ? ` (${confirmation.reason})` : '') +
+            (commandIds.length ? `; refund commands ${commandIds.filter((id) => confirmation.confirmed.has(id)).length}/${commandIds.length}` : '') +
+            (disc && !disc.bootstrapped ? `; bootstrap in progress, ${disc.pending.length} resolved ids to confirm` : ''),
+        ]
+      : []),
     ...[...critList].sort(critOrder).map((c) => c.line),
   ].join('\n');
   const kind: PingKind = report.effective ? 'success' : !criticalsDelivered ? 'fail' : 'log';

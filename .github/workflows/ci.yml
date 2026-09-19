@@ -129,10 +129,10 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - name: Test the dependency assertion itself
-        run: pnpm test:assert
+      - name: Test the dependency assertion and the feed-status check
+        run: pnpm test:scripts
 
-      - name: Feed-status table matches its source (skips where mako-design is absent)
+      - name: Feed-status table matches the vendored feed map (fails, never skips)
         run: pnpm check:feed-status
 
       - name: Build bundle and assert no signing capability

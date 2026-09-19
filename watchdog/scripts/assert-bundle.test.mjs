@@ -56,6 +56,10 @@ for (const token of [
   'secp256k1',
   'DATA_STREAMS_API_KEY',
   'api.testnet-dataengine.chain.link',
+  'crypto.subtle.sign("HMAC", k, d)',
+  'await crypto.subtle.importKey("raw", b, a, false, ["sign"])',
+  'globalThis.crypto',
+  'createHmac("sha256", k)',
 ]) {
   test(`bundle containing ${token} fails`, () => {
     const root = fixture();
@@ -125,4 +129,28 @@ test('a forbidden token in source (outside comments) fails', () => {
   const root = fixture();
   edit(root, 'src/net.ts', (s) => `${s}\nexport const m = 'eth_sendRawTransaction';\n`);
   failsWith(root, 'src');
+});
+
+// Review r2: WebCrypto needs no import, so the syntax-tree pass must catch it.
+for (const [label, code] of [
+  ['crypto.subtle.sign', "export async function mac(k: CryptoKey, d: Uint8Array) { return crypto.subtle.sign('HMAC', k, d); }"],
+  ['crypto.subtle.importKey', "export const k = () => crypto.subtle.importKey('raw', new Uint8Array(32), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);"],
+  ['globalThis.crypto', 'export const c = globalThis.crypto;'],
+  ['self.crypto', 'export const c = (self as unknown as { crypto: unknown }).crypto;'],
+  ["element access ['subtle']", "export const s = (crypto as unknown as Record<string, unknown>)['subtle'];"],
+  ['a local alias of crypto', 'const w = crypto; export const s = w;'],
+]) {
+  test(`source using ${label} fails the syntax-tree pass`, () => {
+    const root = fixture();
+    edit(root, 'src/net.ts', (s) => `${s}\n${code}\n`);
+    failsWith(root, 'references');
+  });
+}
+
+test('the syntax-tree pass ignores comments and the CRYPTO market type', () => {
+  const root = fixture();
+  edit(root, 'src/net.ts', (s) => `${s}\n// crypto.subtle.sign is banned here\nexport const CRYPTO_TYPE = 1;\n`);
+  const problems = check(join(root, 'dist'), root);
+  rmSync(root, { recursive: true, force: true });
+  assert.deepEqual(problems, []);
 });

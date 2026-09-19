@@ -12,8 +12,8 @@
     "test": "vitest run",
     "bundle": "wrangler deploy --dry-run --outdir dist",
     "assert-bundle": "node scripts/assert-bundle.mjs dist",
-    "test:assert": "node --test scripts/assert-bundle.test.mjs",
-    "check:feed-status": "node scripts/gen-feed-status.mjs --check"
+    "check:feed-status": "node scripts/gen-feed-status.mjs --check",
+    "test:scripts": "node --test scripts/assert-bundle.test.mjs scripts/gen-feed-status.test.mjs"
   },
   "dependencies": {
     "viem": "^2.47.12"

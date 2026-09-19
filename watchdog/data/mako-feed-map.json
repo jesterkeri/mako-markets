@@ -1,0 +1,342 @@
+[
+ {
+  "class": "crypto",
+  "symbol": "BTC",
+  "feedId": "0x00037da06d56d083fe599397a4769a042d63aa73dc4ef57709d31e9971a5b439",
+  "name": "BTC/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "ETH",
+  "feedId": "0x000359843a543ee2fe414dc14c7e7920ef10f4372990b79d6361cdc0dd1ba782",
+  "name": "ETH/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "SOL",
+  "feedId": "0x0003d338ea2ac3be9e026033b1aa601673c37bab5e13851c59966f9f820754d6",
+  "name": "SOL/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "AVAX",
+  "feedId": "0x0003735a076086936550bd316b18e5e27fc4f280ee5b6530ce68f5aad404c796",
+  "name": "AVAX/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "NEAR",
+  "feedId": "0x0003d64b0bdb0046a65e4ebb0a9866215044634524673c65bff4096a197fcff5",
+  "name": "NEAR/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "APT",
+  "feedId": "0x0003e78d7e9dc688cdc06620629fcd5ee7427f36f8740bea66588596e7dc085e",
+  "name": "APT/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "SUI",
+  "feedId": "0x00034881db604b551ff226aa414ba73dd5b2be0a06834124dafa9bf66871ce89",
+  "name": "SUI/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "DOGE",
+  "feedId": "0x00032057c7f224d0266b4311a81cdc3e38145e36442713350d3300fb12e85c99",
+  "name": "DOGE/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "LINK",
+  "feedId": "0x00036fe43f87884450b4c7e093cd5ed99cac6640d8c2000e6afc02c8838d0265",
+  "name": "LINK/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "crypto",
+  "symbol": "MON",
+  "feedId": "0x000381c8eef81ce25de70989747ed85f75cf383e91db61097bbe15b15cf2f60a",
+  "name": "MON/USD-Streams-CexPrice-testnet-production",
+  "status": "verified",
+  "schema": 3
+ },
+ {
+  "class": "forex",
+  "symbol": "EURUSD",
+  "feedId": "0x0008a5f1391bcc93839075abbbd2b10eaf17cbc278996e843a2e38352f60a7a5",
+  "name": "EUR/USD-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "forex",
+  "symbol": "USDJPY",
+  "feedId": "0x0008e10fbb69e00a36425b9a462b17a715fb374b4959e6177214c8c0dd4998ca",
+  "name": "USD/JPY-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "forex",
+  "symbol": "GBPUSD",
+  "feedId": "0x00080ca1eb3009703b00bfb3dd86ebae19a55631e20b18db633559e6175b1580",
+  "name": "GBP/USD-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "forex",
+  "symbol": "AUDUSD",
+  "feedId": "0x0008139350ae9f21eb58b366668549a0dcabc2be3b9b7f541ffdc182c8cdc50f",
+  "name": "AUD/USD-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "forex",
+  "symbol": "USDCAD",
+  "feedId": "0x0008c683d56e9e54b8526732b604f7c2b6577e9846cea0bb6dabf3f29b98dd9b",
+  "name": "USD/CAD-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "forex",
+  "symbol": "USDCHF",
+  "feedId": "0x00086ec40a2a84fd499aba489e04461ffcbff0829a692f4130fa3b4cb79576e4",
+  "name": "USD/CHF-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "forex",
+  "symbol": "NZDUSD",
+  "feedId": "0x0008c21c78e589536b6f4f37baeba375074da5b159623e626124a628fd07177a",
+  "name": "NZD/USD-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "forex",
+  "symbol": "EURGBP",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ },
+ {
+  "class": "forex",
+  "symbol": "EURJPY",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ },
+ {
+  "class": "forex",
+  "symbol": "GBPJPY",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ },
+ {
+  "class": "metal",
+  "symbol": "XAUUSD",
+  "feedId": "0x0008dc605e8fc3cd2e609da016af59e6e8aad20b672264949c5b99e1ca3b90fd",
+  "name": "XAU/USD-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "metal",
+  "symbol": "XAGUSD",
+  "feedId": "0x00083873a46c9ca7044cfe8a0f4c8dbe35c0122be1976a66ed83a6c8dfd8f2eb",
+  "name": "XAG/USD-RefPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "metal",
+  "symbol": "XPTUSD",
+  "feedId": "0x0008f9fd376b6fb4405d4126a1549660f5fe386446189ccf014d758b9f7773d1",
+  "name": "XPT/USD-Streams-ForexPrice-Timestamped-testnet-production",
+  "note": "v8; readable and verified in probe 3 (2026-09-18 13:29 UTC)",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "AAPL",
+  "feedId": "0x0008b8ad9dc4061d1064033c3abc8a4e3f056e5b61d8533e8190eb96ef3b330b",
+  "name": "AAPL/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "MSFT",
+  "feedId": "0x00085f6f8f6dcc8b0f5146c1247d962bbafadaa45d8dda59d25d7be139a14263",
+  "name": "MSFT/USD-RefPrice-Timestamped-testnet-production",
+  "note": "v8; readable and verified in probe 3 (2026-09-18 13:29 UTC)",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "NVDA",
+  "feedId": "0x0008c8544b8c4c833e2e84dc264838bcd4eaa13379df1531a74334ac26cf05cd",
+  "name": "NVDA/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "GOOGL",
+  "feedId": "0x0008ff76a15e47898fcdfbb3463c1f4c18ea24e83b8ad5ff8b25be4df5df4856",
+  "name": "GOOGL/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "AMZN",
+  "feedId": "0x0008b3b5edb969383980724bea9a7b18064631ae69f981964cd8abc335c32680",
+  "name": "AMZN/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "META",
+  "feedId": "0x000801f85d87bacb67c415efc7bb7efd7b642fe8d4edc0d331af8c33fd93eb13",
+  "name": "META/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "TSLA",
+  "feedId": "0x000890039996f52efbfa66e193d077fd4aa6fa12009688f7f6606a64cc0c25ad",
+  "name": "TSLA/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "NFLX",
+  "feedId": "0x0008a024a686a2558a0214497367764f6dddf41076c08ea98234e76a8be18f6e",
+  "name": "NFLX/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "AMD",
+  "feedId": null,
+  "name": "AMD/USD-Streams-RegularHoursEquityPrice-testnet-production",
+  "note": "only v11 feeds on testnet; paused until a v11 closed-market rule exists",
+  "status": "paused",
+  "schema": null,
+  "feedId_v11_not_used": "0x000be861dbeabeebefaed80cfeb55deeb2f3d7c20878550f6a3d3b97c811869d"
+ },
+ {
+  "class": "stock",
+  "symbol": "INTC",
+  "feedId": "0x000831e7f5653cc6d7a27df6eb23c380000c0f3252038885ae0e0997c3aabeca",
+  "name": "INTC/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "JPM",
+  "feedId": "0x000844cd43513b4bf6eed8210de30c1c1e3bffc0b1761196c7e055b48bed4ce8",
+  "name": "JPM/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "BAC",
+  "feedId": "0x0008b13825a0b58188d6ba04d79167831974a2db3cf88c80775825796f1ca65a",
+  "name": "BAC/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "V",
+  "feedId": "0x0008d99628e010586c546498beae24228be3267d96168961af4345613a297cc4",
+  "name": "V/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "MA",
+  "feedId": "0x000876d11e441faaac4a6248e249e8443b8ae52b19cbc6239f9c75cc7ea1fd15",
+  "name": "MA/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "WMT",
+  "feedId": "0x00086372eefcfb9c3f2fe0a6b46e823d49c39b381ebf2c5a9674a52250218f16",
+  "name": "WMT/USD-Streams-EquityPrice-Timestamped-testnet-production",
+  "status": "verified",
+  "schema": 8
+ },
+ {
+  "class": "stock",
+  "symbol": "DIS",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ },
+ {
+  "class": "stock",
+  "symbol": "KO",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ },
+ {
+  "class": "stock",
+  "symbol": "PEP",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ },
+ {
+  "class": "stock",
+  "symbol": "BA",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ },
+ {
+  "class": "stock",
+  "symbol": "GS",
+  "feedId": null,
+  "name": null,
+  "status": "paused"
+ }
+]

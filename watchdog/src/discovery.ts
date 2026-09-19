@@ -46,6 +46,10 @@ export interface DiscoveryInput {
   bootstrapped: boolean;
   bits: Uint8Array;
   reads: Map<number, MarketHead | null>;
+  /// Ids whose read the public RPC confirmed at the same block (review r2):
+  /// a bit is set only for these. An unconfirmed resolution is simply found
+  /// again by a later run, because V4 never clears `resolved` (F24).
+  confirmed: ReadonlySet<number>;
   n: number;
   block: number;
   scheduledTime: number;
@@ -55,35 +59,51 @@ export interface DiscoveryOutput {
   bootstrapped: boolean;
   bits: Uint8Array;
   auditAppend: AuditEntry[];
-  /// Set only on the bootstrap run: ids already resolved, which are never audited.
+  /// Set only on the run that completes the bootstrap: every id already
+  /// resolved, which is never audited.
   bootstrapResolved: number[] | null;
+  /// Resolved ids (by provider B) whose bit waits for confirmation.
+  pending: number[];
+}
+
+/// Ids whose bit would be set this run: resolved in this run's reads and not
+/// yet in the set. The caller has these confirmed first.
+export function transitionCandidates(bits: Uint8Array, reads: Map<number, MarketHead | null>): number[] {
+  const out: number[] = [];
+  for (const [id, m] of reads) if (m?.resolved && !hasBit(bits, id)) out.push(id);
+  return out.sort((a, b) => a - b);
 }
 
 export function applyDiscovery(input: DiscoveryInput): DiscoveryOutput {
   let bits: Uint8Array = new Uint8Array(input.bits);
+  const pending: number[] = [];
   if (!input.bootstrapped) {
-    // Bootstrap needs one full read below N; otherwise wait for a later run.
+    // Bootstrap: one full read below N is needed, and it may take several
+    // runs, since each resolved id must be confirmed first (at most
+    // CONFIRM_IDS_PER_RUN a run). Bits set so far are kept; nothing is queued.
     for (let id = 0; id < input.n; id++) {
-      if (!input.reads.get(id)) return { bootstrapped: false, bits: input.bits, auditAppend: [], bootstrapResolved: null };
+      if (!input.reads.get(id)) return { bootstrapped: false, bits: input.bits, auditAppend: [], bootstrapResolved: null, pending };
     }
+    for (let id = 0; id < input.n; id++) {
+      if (!input.reads.get(id)!.resolved || hasBit(bits, id)) continue;
+      if (input.confirmed.has(id)) bits = withBit(bits, id);
+      else pending.push(id);
+    }
+    if (pending.length) return { bootstrapped: false, bits, auditAppend: [], bootstrapResolved: null, pending };
     const resolved: number[] = [];
-    for (let id = 0; id < input.n; id++) {
-      if (input.reads.get(id)!.resolved) {
-        bits = withBit(bits, id);
-        resolved.push(id);
-      }
-    }
-    return { bootstrapped: true, bits, auditAppend: [], bootstrapResolved: resolved };
+    for (let id = 0; id < input.n; id++) if (hasBit(bits, id)) resolved.push(id);
+    return { bootstrapped: true, bits, auditAppend: [], bootstrapResolved: resolved, pending };
   }
   const auditAppend: AuditEntry[] = [];
-  const ids = [...input.reads.keys()].sort((a, b) => a - b);
-  for (const id of ids) {
-    const m = input.reads.get(id);
-    if (!m || !m.resolved || hasBit(bits, id)) continue;
+  for (const id of transitionCandidates(bits, input.reads)) {
+    if (!input.confirmed.has(id)) {
+      pending.push(id);
+      continue;
+    }
     bits = withBit(bits, id);
     auditAppend.push({ marketId: id, block: input.block, discoveredAt: input.scheduledTime });
   }
-  return { bootstrapped: true, bits, auditAppend, bootstrapResolved: null };
+  return { bootstrapped: true, bits, auditAppend, bootstrapResolved: null, pending };
 }
 
 /// Sorted ids as compact ranges: 7,9,78,80-81.
