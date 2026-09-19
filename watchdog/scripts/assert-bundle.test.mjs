@@ -154,3 +154,30 @@ test('the syntax-tree pass ignores comments and the CRYPTO market type', () => {
   rmSync(root, { recursive: true, force: true });
   assert.deepEqual(problems, []);
 });
+
+// Review r3 NIT: receiver-aware `sign`.
+test('Math.sign is allowed in source and bundle', () => {
+  const root = fixture();
+  edit(root, 'src/net.ts', (s) => `${s}\nexport const dir = (x: number) => Math.sign(x);\n`);
+  writeFileSync(join(root, 'dist', 'index.js'), 'const d = Math.sign(-3);\n');
+  const problems = check(join(root, 'dist'), root);
+  rmSync(root, { recursive: true, force: true });
+  assert.deepEqual(problems, []);
+});
+
+for (const [label, code] of [
+  ['a sign method on anything else', 'export const f = (k: Record<string, (n: number) => number>) => k.sign(1);'],
+  ['a destructured sign', 'export const f = ({ sign }: { sign: () => void }) => sign();'],
+]) {
+  test(`source using ${label} still fails`, () => {
+    const root = fixture();
+    edit(root, 'src/net.ts', (s) => `${s}\n${code}\n`);
+    failsWith(root, 'references sign');
+  });
+}
+
+test('a bundle calling .sign( on anything but Math still fails', () => {
+  const root = fixture();
+  writeFileSync(join(root, 'dist', 'index.js'), 'const s = key.sign(data);\n');
+  failsWith(root, 'dist');
+});

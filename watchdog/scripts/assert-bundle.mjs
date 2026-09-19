@@ -53,7 +53,7 @@ export const FORBIDDEN = [
   // WebCrypto and node:crypto signing/key APIs (review r2), and global access to them.
   /\bsubtle\b/,
   /\bcrypto\s*[.[]/,
-  /\.sign\s*\(/,
+  /(?<!\bMath)\.sign\s*\(/, // Math.sign is arithmetic, not signing (review r3 NIT)
   /(import|export|generate|derive|wrap|unwrap)Key/,
   /deriveBits/,
   /create(Sign|Hmac|PrivateKey)/,
@@ -150,7 +150,11 @@ export function check(distDir, root) {
   for (const f of files(join(root, 'src'), /\.ts$/)) {
     const sf = ts.createSourceFile(f, readFileSync(f, 'utf8'), ts.ScriptTarget.Latest, true);
     const visit = (node) => {
-      if ((ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) && DENY_NAMES.has(node.text)) {
+      // Math.sign is arithmetic, not signing (review r3 NIT); every other `sign` is denied.
+      const isMathSign =
+        ts.isIdentifier(node) && node.text === 'sign' && ts.isPropertyAccessExpression(node.parent) &&
+        node.parent.name === node && ts.isIdentifier(node.parent.expression) && node.parent.expression.text === 'Math';
+      if ((ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) && DENY_NAMES.has(node.text) && !isMathSign) {
         const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
         problems.push(`${f}:${line + 1} references ${node.text}`);
       }

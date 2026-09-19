@@ -52,7 +52,7 @@ export function readEnv(env: Env): RunEnv {
   if (origin(run.providerBUrl) === origin(run.publicRpcUrl)) {
     throw new Error('PROVIDER_B_URL and PUBLIC_RPC_URL have the same origin; provider B must be an independent operator');
   }
-  if (!run.providerBUrl.startsWith('https://') || !run.publicRpcUrl.startsWith('https://')) {
+  if (new URL(run.providerBUrl).protocol !== 'https:' || new URL(run.publicRpcUrl).protocol !== 'https:') {
     throw new Error('PROVIDER_B_URL and PUBLIC_RPC_URL must be HTTPS');
   }
   return run;

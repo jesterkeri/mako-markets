@@ -62,7 +62,7 @@ export interface DiscoveryOutput {
   /// Set only on the run that completes the bootstrap: every id already
   /// resolved, which is never audited.
   bootstrapResolved: number[] | null;
-  /// Resolved ids (by provider B) whose bit waits for confirmation.
+  /// After bootstrap: resolved ids (by provider B) whose bit waits for confirmation.
   pending: number[];
 }
 
@@ -78,20 +78,25 @@ export function applyDiscovery(input: DiscoveryInput): DiscoveryOutput {
   let bits: Uint8Array = new Uint8Array(input.bits);
   const pending: number[] = [];
   if (!input.bootstrapped) {
-    // Bootstrap: one full read below N is needed, and it may take several
-    // runs, since each resolved id must be confirmed first (at most
-    // CONFIRM_IDS_PER_RUN a run). Bits set so far are kept; nothing is queued.
+    // Bootstrap (review r3): one snapshot at ONE finalized block. Every id
+    // below N must be read by provider B and confirmed by the public RPC at
+    // that same block, in this run; otherwise nothing is kept and the next run
+    // tries again from scratch at its own block. No partial stages, so no
+    // resolution can fall between stages and be mislabelled "before the
+    // watchdog". Everything resolved at the snapshot block gets a bit and is
+    // never audited; everything after it is a transition.
     for (let id = 0; id < input.n; id++) {
-      if (!input.reads.get(id)) return { bootstrapped: false, bits: input.bits, auditAppend: [], bootstrapResolved: null, pending };
+      if (!input.reads.get(id) || !input.confirmed.has(id)) {
+        return { bootstrapped: false, bits: input.bits, auditAppend: [], bootstrapResolved: null, pending: [] };
+      }
     }
-    for (let id = 0; id < input.n; id++) {
-      if (!input.reads.get(id)!.resolved || hasBit(bits, id)) continue;
-      if (input.confirmed.has(id)) bits = withBit(bits, id);
-      else pending.push(id);
-    }
-    if (pending.length) return { bootstrapped: false, bits, auditAppend: [], bootstrapResolved: null, pending };
     const resolved: number[] = [];
-    for (let id = 0; id < input.n; id++) if (hasBit(bits, id)) resolved.push(id);
+    for (let id = 0; id < input.n; id++) {
+      if (input.reads.get(id)!.resolved) {
+        bits = withBit(bits, id);
+        resolved.push(id);
+      }
+    }
     return { bootstrapped: true, bits, auditAppend: [], bootstrapResolved: resolved, pending };
   }
   const auditAppend: AuditEntry[] = [];

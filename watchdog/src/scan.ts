@@ -225,74 +225,94 @@ function sameHead(a: MarketHead, b: MarketHead): boolean {
   );
 }
 
-/// Second-source confirmation (reviews r1 and r2): the public RPC, a
-/// different operator from provider B, re-reads the given markets at provider
-/// B's finalized block. An id is confirmed only if the public RPC is on chain
-/// 10143, reports the same block hash and time, and returns the same decoded
-/// head. Chain state at one block hash is deterministic, so any difference
-/// means one provider is wrong. Used before every one-way transition (a
-/// resolved bit, the creation cursor crossing an id) and before any refund
-/// command. At most CONFIRM_IDS_PER_RUN ids, in the order given; the rest are
-/// deferred to later runs.
-export async function confirmAtBlock(net: Net, publicUrl: string, mako: string, d: Discovery, heads: MarketHead[]): Promise<Confirmation> {
-  const confirmed = new Set<number>();
-  const batch = heads.slice(0, CONFIRM_IDS_PER_RUN);
-  const deferred = heads.slice(CONFIRM_IDS_PER_RUN).map((m) => m.id);
-  const out = (reason: string, unavailable: boolean, disagreed: number[] = [], unread: number[] = []): Confirmation => ({
-    confirmed,
-    disagreed,
-    deferred,
-    unread,
-    unavailable,
-    reason,
-  });
-  if (!batch.length) return out('', false);
+export interface PublicRead {
+  /// The public RPC could not be used at all (down, wrong chain, another block).
+  unavailable: boolean;
+  reason: string;
+  /// Ids read, with their head or null when that id could not be read.
+  heads: Map<number, MarketHead | null>;
+}
+
+/// Reads `ids` from the public RPC (a different operator from provider B) at
+/// provider B's finalized block: every request also checks chain 10143 and the
+/// block's hash and time. At most `maxRequests` requests of 200 ids, sent one
+/// at a time (one request in flight per provider).
+export async function readPublicAtBlock(net: Net, publicUrl: string, mako: string, d: Discovery, ids: number[], maxRequests: number): Promise<PublicRead> {
+  const heads = new Map<number, MarketHead | null>();
+  const perRequest = IDS_PER_CALL * CALLS_PER_REQUEST;
   const blockTag = '0x' + d.finalizedBlock.toString(16);
-  const chunks: MarketHead[][] = [];
-  for (let i = 0; i < batch.length; i += IDS_PER_CALL) chunks.push(batch.slice(i, i + IDS_PER_CALL));
-  const b = await rpcBatch(net, publicUrl, [
-    { method: 'eth_chainId', params: [] },
-    { method: 'eth_getBlockByNumber', params: [blockTag, false] },
-    ...chunks.map((c) => ({
-      method: 'eth_call',
-      params: [{ to: MULTICALL3, data: aggregate3GetMarkets(mako, c.map((m) => m.id)) }, blockTag],
-    })),
-  ]);
-  if (!b.ok) return out(`public RPC ${b.kind}`, true);
-  const [chain, blk, ...pages] = b.items;
-  if (!chain.ok || safeQuantity(chain.result) !== CHAIN_ID) return out('public RPC chain id', true);
-  const block = blk.ok ? (blk.result as { hash?: unknown; timestamp?: unknown } | null) : null;
-  if (typeof block?.hash !== 'string' || block.hash.toLowerCase() !== d.finalizedHash) return out('public RPC block differs', true);
-  if (safeQuantity(block.timestamp) !== d.finalizedTimestamp) return out('public RPC block time differs', true);
+  for (let r = 0; r * perRequest < ids.length; r++) {
+    if (r >= maxRequests) break;
+    const slice = ids.slice(r * perRequest, (r + 1) * perRequest);
+    const chunks: number[][] = [];
+    for (let i = 0; i < slice.length; i += IDS_PER_CALL) chunks.push(slice.slice(i, i + IDS_PER_CALL));
+    const b = await rpcBatch(net, publicUrl, [
+      { method: 'eth_chainId', params: [] },
+      { method: 'eth_getBlockByNumber', params: [blockTag, false] },
+      ...chunks.map((c) => ({ method: 'eth_call', params: [{ to: MULTICALL3, data: aggregate3GetMarkets(mako, c) }, blockTag] })),
+    ]);
+    if (!b.ok) return { unavailable: true, reason: `public RPC ${b.kind}`, heads };
+    const [chain, blk, ...pages] = b.items;
+    if (!chain.ok || safeQuantity(chain.result) !== CHAIN_ID) return { unavailable: true, reason: 'public RPC chain id', heads };
+    const block = blk.ok ? (blk.result as { hash?: unknown; timestamp?: unknown } | null) : null;
+    if (typeof block?.hash !== 'string' || block.hash.toLowerCase() !== d.finalizedHash) return { unavailable: true, reason: 'public RPC block differs', heads };
+    if (safeQuantity(block.timestamp) !== d.finalizedTimestamp) return { unavailable: true, reason: 'public RPC block time differs', heads };
+    chunks.forEach((chunk, i) => {
+      const item = pages[i];
+      let datas: (string | null)[] | null = null;
+      if (item?.ok && typeof item.result === 'string') {
+        try {
+          datas = decodeAggregate3(item.result, chunk.length);
+        } catch {
+          datas = null;
+        }
+      }
+      chunk.forEach((id, k) => {
+        const data = datas?.[k] ?? null;
+        let head: MarketHead | null = null;
+        if (data !== null) {
+          try {
+            head = decodeMarketHead(id, data);
+          } catch {
+            head = null;
+          }
+        }
+        heads.set(id, head);
+      });
+    });
+  }
+  return { unavailable: false, reason: '', heads };
+}
+
+/// Compares provider B's heads with the public RPC's for `ids`. Chain state at
+/// one block hash is deterministic, so any difference means a provider is
+/// wrong. Ids the public read did not cover are deferred.
+export function compareHeads(ids: number[], providerHeads: Map<number, MarketHead | null>, pub: PublicRead): Confirmation {
+  const confirmed = new Set<number>();
   const disagreed: number[] = [];
   const unread: number[] = [];
-  chunks.forEach((chunk, i) => {
-    const item = pages[i];
-    let datas: (string | null)[] | null = null;
-    if (item?.ok && typeof item.result === 'string') {
-      try {
-        datas = decodeAggregate3(item.result, chunk.length);
-      } catch {
-        datas = null;
-      }
+  const deferred: number[] = [];
+  if (pub.unavailable) return { confirmed, disagreed, deferred: [], unread: [], unavailable: true, reason: pub.reason };
+  for (const id of ids) {
+    const mb = providerHeads.get(id);
+    if (!pub.heads.has(id)) {
+      deferred.push(id);
+      continue;
     }
-    chunk.forEach((mb, k) => {
-      const data = datas?.[k] ?? null;
-      if (data === null) {
-        unread.push(mb.id);
-        return;
-      }
-      let mp: MarketHead;
-      try {
-        mp = decodeMarketHead(mb.id, data);
-      } catch {
-        unread.push(mb.id);
-        return;
-      }
-      if (sameHead(mp, mb)) confirmed.add(mb.id);
-      else disagreed.push(mb.id);
-    });
-  });
+    const mp = pub.heads.get(id);
+    if (!mb || !mp) unread.push(id);
+    else if (sameHead(mb, mp)) confirmed.add(id);
+    else disagreed.push(id);
+  }
   const reason = disagreed.length ? 'providers disagree at the same block' : unread.length ? 'public RPC could not read every market' : '';
-  return out(reason, false, disagreed, unread);
+  return { confirmed, disagreed, deferred, unread, unavailable: false, reason };
+}
+
+/// Second-source confirmation for an ordinary run (reviews r1 to r3): one
+/// public request of up to CONFIRM_IDS_PER_RUN ids, in the order given; the
+/// rest are deferred. The caller orders one-way transitions first.
+export async function confirmAtBlock(net: Net, publicUrl: string, mako: string, d: Discovery, ids: number[], providerHeads: Map<number, MarketHead | null>): Promise<Confirmation> {
+  if (!ids.length) return { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
+  const pub = await readPublicAtBlock(net, publicUrl, mako, d, ids.slice(0, CONFIRM_IDS_PER_RUN), 1);
+  return compareHeads(ids, providerHeads, pub);
 }

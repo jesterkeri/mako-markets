@@ -45,25 +45,35 @@ export interface MarketVerdict {
   command: boolean;
 }
 
+/// Where a refund command stands this run (run.ts):
+/// - `confirmed`: the public RPC returned this market identically at the same block;
+/// - `withheld`: it was checked and not confirmed (disagreement, unreadable, down);
+/// - `deferred`: not checked this run for budget; its alert stays due, so the next run checks it first;
+/// - `unchecked`: its alert is not due this run, so it was not checked.
+export type CommandStatus = 'confirmed' | 'withheld' | 'deferred' | 'unchecked';
+
 /// The §5.2 table. `nowS` is the finalized block's timestamp, the same clock
-/// the contract uses. `commandConfirmed` says whether a second provider
-/// confirmed this market at the same block (scan.ts confirmCommands); without
-/// it no command is offered, whatever the table says (fail closed).
-export function classifyStuck(m: MarketHead, nowS: number, commandConfirmed = false): MarketVerdict {
+/// the contract uses. A command is offered only when `command` is
+/// `confirmed`, whatever the table says (fail closed).
+export function classifyStuck(m: MarketHead, nowS: number, command: CommandStatus = 'unchecked'): MarketVerdict {
   const none: MarketVerdict = { severity: 'none', line: '', command: false };
   if (m.resolved || m.closeTime === 0 || nowS < m.closeTime) return none;
   const age = nowS - m.closeTime;
   const oneSided = isOneSided(m);
   const allowed = commandAllowed(m, nowS);
-  const command = allowed && commandConfirmed;
+  const offer = allowed && command === 'confirmed';
   const pools = `YES ${fmtUsdc(m.totalYes)} / NO ${fmtUsdc(m.totalNo)}`;
   const head = `#${m.id} ${typeName(m.mType)} ${oneSided ? 'one-sided' : 'two-sided'}, unresolved ${fmtAge(age)} after close (${pools})`;
   const pastGrace = age >= RESOLUTION_GRACE_S;
   const refundNote = oneSided
-    ? command
+    ? offer
       ? 'refund command below'
       : allowed
-        ? 'refund command withheld: a second provider did not confirm this market at the same block'
+        ? command === 'withheld'
+          ? 'refund command withheld: a second provider did not confirm this market at the same block'
+          : command === 'deferred'
+            ? 'refund command in the next run (second-source budget)'
+            : 'refund command with the next reminder'
         : `refund opens ${fmtUtc(m.closeTime + RESOLUTION_GRACE_S)}`
     : pastGrace
       ? m.mType === MARKET_TYPE.MAKO
@@ -76,16 +86,16 @@ export function classifyStuck(m: MarketHead, nowS: number, commandConfirmed = fa
   if (!oneSided && pastGrace) return { severity: 'critical', line, command: false };
 
   if (m.mType === MARKET_TYPE.MAKO) {
-    return age >= 24 * HOUR ? { severity: 'digest', line, command } : none;
+    return age >= 24 * HOUR ? { severity: 'digest', line, command: offer } : none;
   }
   if (isSportsType(m.mType)) {
-    if (age >= 24 * HOUR) return { severity: 'critical', line, command };
-    if (age >= 6 * HOUR) return { severity: 'warn', line, command };
+    if (age >= 24 * HOUR) return { severity: 'critical', line, command: offer };
+    if (age >= 6 * HOUR) return { severity: 'warn', line, command: offer };
     return none;
   }
   // Price types, and any unknown type (which is also UO).
-  if (age >= HOUR) return { severity: 'critical', line, command };
-  if (age >= 10 * MIN) return { severity: 'warn', line, command };
+  if (age >= HOUR) return { severity: 'critical', line, command: offer };
+  if (age >= 10 * MIN) return { severity: 'warn', line, command: offer };
   return none;
 }
 

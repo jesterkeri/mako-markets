@@ -11,23 +11,30 @@ import {
   DIGEST_HOUR_UTC,
   ENVELOPE_N,
   MAX_PARALLEL,
+  ENVELOPE_N as BOOTSTRAP_MAX_IDS,
   NONCRITICAL_MAX_WAIT_MS,
   REMINDER_MS,
   RESOLVER_BALANCE_WARN_WEI,
   RUN_DEADLINE_MS,
 } from './config';
 import type { MarketHead } from './abi';
+import { MARKET_TYPE } from './assets';
 import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges, transitionCandidates } from './discovery';
 import { inGroups, makeNet } from './net';
 import { dueProbes, probeCharts, probeComments, probeMarketPage, probeProviderB, probeResolverRpc, readPublicRpc, type ProbeResult } from './probes';
-import { advanceCursor, confirmAtBlock, discover, planScan, readPages, type Confirmation, type DiscoveryResult, type PageOutcome, type ScanPlan } from './scan';
+import { advanceCursor, compareHeads, confirmAtBlock, discover, planScan, readPages, readPublicAtBlock, type Confirmation, type DiscoveryResult, type PageOutcome, type PublicRead, type ScanPlan } from './scan';
 import type { AcquireResult, CommitPayload, CommitResult, CriticalRow, NoteRow, WarningRow } from './state';
 
-/// HTTP requests a slice-1 run may make: provider B 11, resolver RPC 2 (the
-/// rr probe and the refund-command confirmation), probes 3, Telegram 4,
-/// Healthchecks 1 = 21. With the two Durable Object calls a run stays within
-/// the plan's 24.
+/// HTTP requests an ordinary slice-1 run may make: provider B 11, resolver
+/// RPC 2 (the rr probe and one second-source confirmation), probes 3,
+/// Telegram 4, Healthchecks 1 = 21. With the two Durable Object calls a run
+/// stays within the plan's 24.
 export const MAX_HTTP_REQUESTS = 22;
+/// The bootstrap run (review r3) reads every id below N from the public RPC
+/// at the snapshot block, up to 10 requests instead of 1: 30 HTTP + 2 Durable
+/// Object = 32, still below r15's worst case of 48 and the 100 cap.
+export const BOOTSTRAP_PUBLIC_REQUESTS = 10;
+export const MAX_HTTP_REQUESTS_BOOTSTRAP = 30; // provider B 11, rr 1, public snapshot reads 10, probes 3, Telegram 4, Healthchecks 1
 
 export interface RunEnv {
   makoAddress: string;
@@ -77,6 +84,7 @@ const PROBE_UNCLASSIFIED = /: (deadline|budget)$/;
 
 export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunReport> {
   const start = deps.now();
+  // The request ceiling is raised for the bootstrap run once the snapshot is known to be pending.
   const net = makeNet(deps.fetch, deps.now, deps.sleep, start + RUN_DEADLINE_MS, MAX_HTTP_REQUESTS);
   const env = deps.env;
   const report: RunReport = {
@@ -117,42 +125,83 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // 2, 3, 6. Provider B (one request in flight), resolver RPC and due probes in parallel.
   const due = dueProbes(scheduledTime);
   const runIndex = Math.floor(scheduledTime / 300_000);
+  const bootstrapping = !meta.resolvedBootstrapped;
+  if (bootstrapping) net.maxRequests = MAX_HTTP_REQUESTS_BOOTSTRAP;
+  const discP = discover(net, env.providerBUrl, env.makoAddress, env.resolverAddress);
   const scanTask = async (): Promise<{ d: DiscoveryResult; plan: ScanPlan | null; pages: PageOutcome | null }> => {
-    const d = await discover(net, env.providerBUrl, env.makoAddress, env.resolverAddress);
+    const d = await discP;
     if (!d.ok) return { d, plan: null, pages: null };
     const plan = planScan(d.value.nextMarketId, meta.creationCursor, runIndex);
     const pages = await readPages(net, env.providerBUrl, env.makoAddress, d.value.finalizedBlock, d.value.nextMarketId, plan.ids);
     return { d, plan, pages };
   };
+  // The public RPC: the rr probe, then (bootstrap only) every id below N at the
+  // snapshot block, in parallel with provider B's pages; one request in flight.
+  const publicTask = async (): Promise<{ pub: Awaited<ReturnType<typeof readPublicRpc>>; boot: PublicRead | null }> => {
+    const pub = await readPublicRpc(net, env.publicRpcUrl);
+    if (!bootstrapping) return { pub, boot: null };
+    const d = await discP;
+    if (!d.ok || d.value.nextMarketId > BOOTSTRAP_MAX_IDS) return { pub, boot: null };
+    const ids = Array.from({ length: d.value.nextMarketId }, (_, i) => i);
+    return { pub, boot: await readPublicAtBlock(net, env.publicRpcUrl, env.makoAddress, d.value, ids, BOOTSTRAP_PUBLIC_REQUESTS) };
+  };
   const probeTasks: (() => Promise<ProbeResult>)[] = [];
   if (due.nc) probeTasks.push(() => probeComments(net, env.appUrl));
   if (due.mp) probeTasks.push(() => probeMarketPage(net, env.appUrl));
   if (due.ch) probeTasks.push(() => probeCharts(net, env.appUrl));
-  const [scan, pub, probes] = await Promise.all([
-    scanTask(),
-    readPublicRpc(net, env.publicRpcUrl),
-    inGroups(probeTasks, MAX_PARALLEL - 2),
-  ]);
+  const [scan, publicSide, probes] = await Promise.all([scanTask(), publicTask(), inGroups(probeTasks, MAX_PARALLEL - 2)]);
+  const pub = publicSide.pub;
   const d = scan.d.ok ? scan.d.value : null;
   const plan = scan.plan;
   report.plan = plan;
   const reads: Map<number, MarketHead | null> = scan.pages?.reads ?? new Map();
   const nowS = d?.finalizedTimestamp ?? Math.floor(scheduledTime / 1000);
 
-  // Second-source confirmation (reviews r1 and r2). Before any one-way
+  // Delivery state needed before confirmation (which commands are due).
+  const prevCrit = new Map(snap.criticals.map((c) => [c.key, c]));
+  const prevWarn = new Map(snap.warnings.map((w) => [w.key, w]));
+  const today = iso.slice(0, 10);
+  const digestDue = new Date(scheduledTime).getUTCHours() >= DIGEST_HOUR_UTC && meta.lastDigestDate !== today;
+  const critDue = (key: string) => {
+    const p = prevCrit.get(key);
+    return !p || p.lastDeliveredAt === null || scheduledTime - p.lastDeliveredAt >= REMINDER_MS;
+  };
+
+  // Second-source confirmation (reviews r1 to r3). Before any one-way
   // transition (a resolved bit, the creation cursor crossing an id) and before
   // any refund command, the public RPC re-reads those markets at the same
-  // finalized block. Order: command candidates, then new resolutions, then
-  // the prefix ids the cursor would cross; one request, the rest deferred.
+  // finalized block. Fair order: new resolutions, then the prefix ids the
+  // cursor would cross, then refund commands whose alert is due this run (a
+  // command not due is not checked). The bootstrap run compares every id
+  // below N from its parallel public read.
   const bitsBefore = bitsFromHex(snap.resolvedBits);
-  const commandIds = [...reads.values()].filter((m): m is MarketHead => !!m && commandAllowed(m, nowS)).map((m) => m.id).sort((a, b) => a - b);
+  const commandIds = [...reads.values()]
+    .filter((m): m is MarketHead => !!m && commandAllowed(m, nowS))
+    .filter((m) => (m.mType === MARKET_TYPE.MAKO ? prevWarn.get(`w:${m.id}`)?.deliveredAt == null || digestDue : critDue(`m:${m.id}`)))
+    .map((m) => m.id)
+    .sort((a, b) => a - b);
+  const transitionIds = transitionCandidates(bitsBefore, reads);
   const cursorIds: number[] = [];
   if (plan) for (let id = plan.prefixStart; id < plan.prefixEnd && reads.get(id); id++) cursorIds.push(id);
-  const toConfirm = [...new Set([...commandIds, ...transitionCandidates(bitsBefore, reads), ...cursorIds])];
-  const confirmation: Confirmation =
-    d && toConfirm.length
-      ? await confirmAtBlock(net, env.publicRpcUrl, env.makoAddress, d, toConfirm.map((id) => reads.get(id)!))
-      : { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
+  const oneWay = new Set([...transitionIds, ...cursorIds]);
+  const toConfirm = [...new Set([...transitionIds, ...cursorIds, ...commandIds])];
+  const emptyConfirmation: Confirmation = { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
+  let confirmation: Confirmation = emptyConfirmation;
+  if (d && bootstrapping) {
+    confirmation = publicSide.boot
+      ? compareHeads(Array.from({ length: d.nextMarketId }, (_, i) => i), reads, publicSide.boot)
+      : { ...emptyConfirmation, unavailable: true, reason: d.nextMarketId > BOOTSTRAP_MAX_IDS ? 'too many markets to bootstrap in one run' : 'public RPC not read' };
+  } else if (d && toConfirm.length) {
+    confirmation = await confirmAtBlock(net, env.publicRpcUrl, env.makoAddress, d, toConfirm, reads);
+  }
+  const commandStatus = (id: number): 'confirmed' | 'withheld' | 'deferred' | 'unchecked' =>
+    confirmation.confirmed.has(id)
+      ? 'confirmed'
+      : confirmation.deferred.includes(id)
+        ? 'deferred'
+        : commandIds.includes(id)
+          ? 'withheld'
+          : 'unchecked';
 
   // Probe checks, with flap control. Providers disagreeing at one block hash
   // is a provider-B failure observation (one of the two is wrong).
@@ -179,13 +228,11 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     : null;
 
   // 5. Classification.
-  const prevCrit = new Map(snap.criticals.map((c) => [c.key, c]));
   const crit = new Map<string, CriticalRow>();
   const keepCrit = (key: string, line: string, marketId: number | null, code: string | null) => {
     const p = prevCrit.get(key);
     crit.set(key, { key, since: p?.since ?? scheduledTime, lastDeliveredAt: p?.lastDeliveredAt ?? null, line, marketId, code });
   };
-  const prevWarn = new Map(snap.warnings.map((w) => [w.key, w]));
   const warn = new Map<string, WarningRow>();
   const keepWarn = (key: string, line: string) => {
     const p = prevWarn.get(key);
@@ -204,7 +251,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const digestLines: string[] = [];
   for (const [id, m] of reads) {
     if (!m) continue;
-    const v = classifyStuck(m, nowS, confirmation.confirmed.has(id));
+    const v = classifyStuck(m, nowS, commandAllowed(m, nowS) ? commandStatus(id) : 'unchecked');
     if (v.severity === 'critical') {
       keepCrit(`m:${id}`, v.line, id, null);
       if (v.command) commandCritical.push(id);
@@ -303,14 +350,14 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const critCodes = critList.filter((c) => c.code).map((c) => c.code as string);
   if (critList.some((c) => c.key.startsWith('u:'))) critCodes.push('uo');
 
-  const today = iso.slice(0, 10);
-  const digestDue = new Date(scheduledTime).getUTCHours() >= DIGEST_HOUR_UTC && meta.lastDigestDate !== today;
   const nonCrit: { key: string; line: string }[] = [
     ...creation.map((c) => ({ key: c.key, line: c.line })),
     ...[...notes.values()].sort((a, b) => a.createdAt - b.createdAt).map((n) => ({ key: n.key, line: n.text })),
     ...[...warn.values()].filter((w) => w.deliveredAt === null).map((w) => ({ key: w.key, line: `WARN ${w.line}` })),
   ];
-  const dueWarnCommand = commandWarn.filter((id) => warn.get(`w:${id}`)?.deliveredAt === null);
+  // commandWarn holds only confirmed commands, which were checked only when due
+  // (a new warning or today's digest).
+  const dueWarnCommand = commandWarn;
   if (dueWarnCommand.length) nonCrit.push({ key: 'cmd', line: refundCommand(env.makoAddress, dueWarnCommand) });
   if (digestDue) nonCrit.push({ key: 'digest', line: digestText(d, reads, crit.size, [...warn.values()], digestLines, snap.auditQueueSize + (disc?.auditAppend.length ?? 0)) });
 
@@ -349,10 +396,11 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // Delivery bookkeeping.
   if (critPack) {
     for (const p of critPack.placed) {
-      if (confirmed[p.message]) {
-        const row = crit.get(p.key)!;
-        crit.set(p.key, { ...row, lastDeliveredAt: scheduledTime });
-      }
+      const row = crit.get(p.key)!;
+      // A refund command deferred for budget keeps its alert due, so the next
+      // run confirms it first (no starvation, review r3).
+      const commandDeferred = row.marketId !== null && p.key.startsWith('m:') && commandStatus(row.marketId) === 'deferred';
+      if (confirmed[p.message] && !commandDeferred) crit.set(p.key, { ...row, lastDeliveredAt: scheduledTime });
     }
   }
   for (const [key, w] of warn) if (w.deliveredAt === null && placedNonCrit.has(key)) warn.set(key, { ...w, deliveredAt: scheduledTime });
@@ -419,7 +467,11 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // Every id that needed a second source this run got one (budget deferral of
   // a large bootstrap is staged progress, not a failure).
   const allConfirmed = !confirmation.unavailable && !confirmation.disagreed.length && !confirmation.unread.length;
-  if (!allRead || !allConfirmed) failed.push('S1');
+  // A deferred one-way transition or cursor id is unfinished required work
+  // (review r3); only refund-command deferral may leave a run effective.
+  const oneWayDeferred = confirmation.deferred.some((id) => oneWay.has(id));
+  const bootstrapDone = disc?.bootstrapped ?? meta.resolvedBootstrapped;
+  if (!allRead || !allConfirmed || oneWayDeferred || !bootstrapDone) failed.push('S1');
   if (observations.some((o) => o.obs === 'fail' && PROBE_UNCLASSIFIED.test(o.detail))) failed.push('S2');
   const staleNonCrit =
     payload.warnings.some((w) => w.deliveredAt === null && scheduledTime - w.since > NONCRITICAL_MAX_WAIT_MS) ||
@@ -433,7 +485,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   if (s3.length) failed.push('S3');
   report.s3Reasons = s3;
   if (!commitOk) failed.push('S4');
-  if (net.requests + report.doCalls > MAX_HTTP_REQUESTS + 2 || deps.now() - start >= RUN_DEADLINE_MS) failed.push('S6');
+  if (net.requests + report.doCalls > net.maxRequests + 2 || deps.now() - start >= RUN_DEADLINE_MS) failed.push('S6');
   if (d && d.nextMarketId > ENVELOPE_N) failed.push('S7');
   report.failed = failed;
   report.effective = failed.length === 0;
@@ -456,7 +508,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
             (confirmation.deferred.length ? `, ${confirmation.deferred.length} deferred` : '') +
             (confirmation.reason ? ` (${confirmation.reason})` : '') +
             (commandIds.length ? `; refund commands ${commandIds.filter((id) => confirmation.confirmed.has(id)).length}/${commandIds.length}` : '') +
-            (disc && !disc.bootstrapped ? `; bootstrap in progress, ${disc.pending.length} resolved ids to confirm` : ''),
+            (bootstrapping ? (disc?.bootstrapped ? `; bootstrap snapshot at block ${d?.finalizedBlock}` : '; bootstrap NOT complete (every id below N must match at one block)') : ''),
         ]
       : []),
     ...[...critList].sort(critOrder).map((c) => c.line),

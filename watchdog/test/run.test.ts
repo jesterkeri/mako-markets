@@ -158,11 +158,13 @@ describe('creation cursor over whole runs', () => {
     w.failPages = new Set();
     const r2 = await tick(w, state);
     expect(w.telegram.sent.join('\n')).toContain('NEW #300 FOREX EURJPY');
-    // 250 ids to cross; the second source confirms 200 a run.
+    // 250 ids to cross; the second source confirms 200 a run. Deferred cursor
+    // ids are unfinished required work: ineffective until caught up (review r3).
     expect(r2.payload!.meta.creationCursor).toBe(410);
-    expect(r2.effective).toBe(true);
+    expect(r2.failed).toContain('S1');
     const r3 = await tick(w, state);
     expect(r3.payload!.meta.creationCursor).toBe(460);
+    expect(r3.effective).toBe(true);
   });
 
   it('one failed call inside aggregate3 stops the cursor at that id', async () => {
@@ -578,35 +580,139 @@ describe('one-way state needs the second source (review r2)', () => {
     expect(r2.payload!.meta.creationCursor).toBe(2);
   });
 
-  it('a large bootstrap is staged: 200 confirmations a run, nothing queued, effective throughout', async () => {
+  it('bootstrap is one snapshot at one block, even for 450 markets (review r3)', async () => {
     const w = makeWorld();
     const state = freshState();
     const base = closedMarket(1, 'BTC:gt:1', nowS(w), 30 * 86_400, 1_000_000n, 1_000_000n, true);
     w.markets = Array.from({ length: 450 }, () => base);
+    w.markets[449] = openMarket(1, 'BTC:gt:1', w);
     const r1 = await tick(w, state);
-    expect(r1.payload!.meta).toMatchObject({ resolvedBootstrapped: false, creationCursor: 200 });
+    expect(r1.payload!.meta).toMatchObject({ resolvedBootstrapped: true, creationCursor: 450 });
     expect(r1.effective).toBe(true);
+    expect(r1.httpRequests + r1.doCalls).toBeLessThanOrEqual(32);
+    expect(w.telegram.sent.join('\n')).toContain('Resolved before the watchdog, not audited (449): 0-448');
+    // 449 resolves after the snapshot block: queued once.
+    w.markets[449] = { ...w.markets[449], resolved: true, outcome: 1 };
     const r2 = await tick(w, state);
-    expect(r2.payload!.meta).toMatchObject({ resolvedBootstrapped: false, creationCursor: 400 });
-    const r3 = await tick(w, state);
-    expect(r3.payload!.meta).toMatchObject({ resolvedBootstrapped: true, creationCursor: 450 });
-    expect([r1, r2, r3].flatMap((r) => r.payload!.auditAppend)).toEqual([]);
-    expect(w.telegram.sent.join('\n')).toContain('Resolved before the watchdog, not audited (450): 0-449');
+    expect(r2.payload!.auditAppend.map((a) => a.marketId)).toEqual([449]);
   });
 
-  it('201 refund candidates: 200 commands, the 201st withheld, manifest intact', async () => {
+  it('a bootstrap that cannot match every id keeps nothing; the snapshot is taken whole later', async () => {
     const w = makeWorld();
-    const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    const state = freshState();
+    const resolvedOld = closedMarket(1, 'BTC:gt:1', nowS(w), 30 * 86_400, 1_000_000n, 1_000_000n, true);
+    w.markets = [resolvedOld, openMarket(1, 'BTC:gt:1', w), openMarket(1, 'ETH:gt:1', w)];
+    w.publicMarkets = [resolvedOld, { ...w.markets[1], yes: 7n }, w.markets[2]]; // one disagreement
+    const r1 = await tick(w, state);
+    expect(r1.payload!.meta.resolvedBootstrapped).toBe(false);
+    expect(r1.payload!.resolvedBits).toBe(''); // nothing partial kept
+    expect(r1.failed).toContain('S1');
+    expect(r1.healthchecksBody).toContain('bootstrap NOT complete');
+    // Market 2 resolves while the bootstrap keeps failing: the snapshot is not
+    // taken yet, so it becomes pre-watchdog only because the snapshot is later.
+    w.publicMarkets = undefined;
+    w.markets[1] = { ...w.markets[1], resolved: true, outcome: 1 }; // resolves before the snapshot
+    const r2 = await tick(w, state);
+    expect(r2.payload!.meta.resolvedBootstrapped).toBe(true);
+    expect(r2.payload!.auditAppend).toEqual([]);
+    expect(w.telegram.sent.join('\n')).toContain('not audited (2): 0-1');
+    // After the snapshot, a resolution is a transition.
+    w.markets[2] = { ...w.markets[2], resolved: true, outcome: 2 };
+    const r3 = await tick(w, state);
+    expect(r3.payload!.auditAppend.map((a) => a.marketId)).toEqual([2]);
+  });
+
+  it('runs are ineffective until the bootstrap snapshot exists', async () => {
+    const w = makeWorld({ publicDown: true });
+    w.markets = [openMarket(1, 'BTC:gt:1', w)];
+    const state = freshState();
+    const r1 = await tick(w, state);
+    expect(r1.failed).toContain('S1');
+    expect(r1.payload!.meta.resolvedBootstrapped).toBe(false);
+    w.publicDown = false;
+    const r2 = await tick(w, state);
+    expect(r2.effective).toBe(true);
+  });
+
+  it('200 stable refund commands cannot starve a new resolution or the creation cursor (review r3)', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 200 }, () => oneSided);
+    w.markets.push(openMarket(1, 'BTC:gt:1', w)); // 200: will resolve
+    await tick(w, state); // bootstrap; the 200 commands are delivered
+    for (let i = 0; i < 3; i++) {
+      w.markets[200] = { ...w.markets[200], resolved: i > 0, outcome: i > 0 ? 1 : 0 };
+      if (i === 1) w.markets.push(openMarket(5, 'KO:gt:60', w)); // 201: new, paused symbol
+      const r = await tick(w, state);
+      if (i === 1) {
+        // Both one-way items were confirmed in the same run the commands were not due.
+        expect(r.payload!.auditAppend.map((a) => a.marketId)).toEqual([200]);
+        expect(r.payload!.meta.creationCursor).toBe(202);
+        expect(r.effective).toBe(true);
+      }
+    }
+    expect(w.telegram.sent.join('\n')).toContain('NEW #201 STOCKS KO');
+  });
+
+  it('at a 6-hour reminder, one-way items still come first, and a deferred command is next in line', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 200 }, () => oneSided);
+    w.markets.push(openMarket(1, 'BTC:gt:1', w));
+    await tick(w, state);
+    w.clock.t += 6 * 3600_000; // all 200 reminders due
+    w.markets[200] = { ...w.markets[200], resolved: true, outcome: 1 };
+    const sched = Math.floor(w.clock.t / FIVE_MIN) * FIVE_MIN;
+    const r = await tick(w, state);
+    expect(r.payload!.auditAppend.map((a) => a.marketId)).toEqual([200]); // the transition went first
+    expect(r.effective).toBe(true); // only command deferral remains, which is allowed
+    const deferredLine = r.payload!.criticals.find((c) => c.key === 'm:199')!;
+    expect(deferredLine.line).toContain('refund command in the next run');
+    expect(deferredLine.lastDeliveredAt).not.toBe(sched); // not marked delivered: still due
+    w.telegram.sent = [];
+    const r2 = await tick(w, state);
+    const ids199 = w.telegram.sent.join('\n').match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
+    expect(ids199).toContain(199);
+    expect(r2.payload!.criticals.find((c) => c.key === 'm:199')!.line).toContain('refund command below');
+  });
+
+  it('a deferred command whose alert WAS delivered stays due and gets its command next run', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const base = closedMarket(1, 'LINK:gt:20', nowS(w), 23 * 3600, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 60 }, () => base); // 60 short alert lines: all fit the messages
+    await tick(w, state);
+    w.clock.t += 6 * 3600_000; // reminders due, commands now allowed
+    for (let i = 0; i < 150; i++) w.markets.push(openMarket(1, 'BTC:gt:1', w)); // 150 cursor ids go first
+    const r = await tick(w, state);
+    expect(r.payload!.meta.creationCursor).toBe(210);
+    const ids = r.telegramMessages.join('\n').match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
+    expect(ids).toEqual(Array.from({ length: 50 }, (_, i) => i)); // 0-49 confirmed, 50-59 deferred
+    expect(r.telegramMessages.join('\n')).toContain('#59 CRYPTO one-sided'); // the deferred line was sent
+    const r2 = await tick(w, state);
+    const ids2 = r2.telegramMessages.join('\n').match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
+    expect(ids2).toEqual(Array.from({ length: 10 }, (_, i) => 50 + i));
+  });
+
+  it('201 due refund commands: 200 now, the 201st in the next run, manifest intact', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const base = closedMarket(1, 'LINK:gt:20', nowS(w), 23 * 3600, 1_000_000n, 0n); // not refundable yet
     w.markets = Array.from({ length: 201 }, () => base);
-    const r = await tick(w, freshState());
+    await tick(w, state); // bootstrap; criticals delivered without commands
+    w.clock.t += 6 * 3600_000; // now past +24h, and the 6-hour reminders are due
+    const r = await tick(w, state);
     const text = r.telegramMessages.join('\n');
     const cmd = text.match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
     expect(cmd).toHaveLength(200);
     expect(cmd).not.toContain(200);
-    // 201 detail lines do not fit three messages; the stored line says why #200 has no command.
-    expect(r.payload!.criticals.find((c) => c.key === 'm:200')!.line).toContain('refund command withheld');
-    expect(r.payload!.criticals.find((c) => c.key === 'm:199')!.line).toContain('refund command below');
+    expect(r.payload!.criticals.find((c) => c.key === 'm:200')!.line).toContain('refund command in the next run');
     expect(text.replace(/\n/g, '')).toContain('manifest ids: 0-200');
+    const r2 = await tick(w, state);
+    const ids2 = r2.telegramMessages.join('\n').match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
+    expect(ids2).toContain(200);
   });
 });
 

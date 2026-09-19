@@ -38,7 +38,7 @@ describe('§5.2 thresholds, ±1 s per type', () => {
   });
   it('every two-sided market, MAKO included, is critical from +24h with no safe refund path', () => {
     for (const t of Object.values(T)) {
-      const v = classifyStuck(m(t, ...two), CLOSE + 86_400, true);
+      const v = classifyStuck(m(t, ...two), CLOSE + 86_400, 'confirmed');
       expect(v.severity).toBe('critical');
       expect(v.command).toBe(false);
       expect(v.line).toContain('no safe refund path on V4');
@@ -61,15 +61,22 @@ describe('commands (I7): one-sided only, from close + 24h, every type', () => {
     expect(commandAllowed(m(t, 1n, 1n), CLOSE + 86_400)).toBe(false);
     expect(commandAllowed(m(t, 1n, 0n), CLOSE + 86_400 - 1)).toBe(false);
     expect(commandAllowed(m(t, 1n, 0n, { resolved: true }), CLOSE + 86_400)).toBe(false);
-    expect(classifyStuck(m(t, 1n, 1n), CLOSE + 999_999, true).command).toBe(false);
+    expect(classifyStuck(m(t, 1n, 1n), CLOSE + 999_999, 'confirmed').command).toBe(false);
   });
   it('one-sided before +24h says when refund opens; after, a command only once a second provider confirmed', () => {
-    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 7200, true).line).toContain('refund opens');
-    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, true)).toMatchObject({ command: true });
-    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, true).line).toContain('refund command below');
-    const unconfirmed = classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400);
-    expect(unconfirmed.command).toBe(false);
-    expect(unconfirmed.line).toContain('refund command withheld: a second provider did not confirm');
+    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 7200, 'confirmed').line).toContain('refund opens');
+    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, 'confirmed')).toMatchObject({ command: true });
+    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, 'confirmed').line).toContain('refund command below');
+    for (const [status, text] of [
+      ['withheld', 'refund command withheld: a second provider did not confirm'],
+      ['deferred', 'refund command in the next run'],
+      ['unchecked', 'refund command with the next reminder'],
+    ] as const) {
+      const v = classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400, status);
+      expect(v.command).toBe(false);
+      expect(v.line).toContain(text);
+    }
+    expect(classifyStuck(m(T.CRYPTO, 1n, 0n), CLOSE + 86_400).command).toBe(false); // default: unchecked
   });
 });
 
