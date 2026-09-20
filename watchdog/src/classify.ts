@@ -10,8 +10,16 @@ import { classifyOracleRef } from './oracle-ref';
 const MIN = 60;
 const HOUR = 3600;
 
+/// Total by construction: an alert line must never be the thing that stops a
+/// run. `Date` covers about +/- 8.64e12 seconds, and the decoder already
+/// rejects implausible times, so this fallback should be unreachable; it is
+/// here so that a formatting path can never throw out of the run.
 export function fmtUtc(unixS: number): string {
-  return new Date(unixS * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  const d = new Date(unixS * 1000);
+  // Out of Date's range (about +/- 8.64e12 seconds), NaN or infinite: say so
+  // rather than throw. toISOString() would throw RangeError here.
+  if (Number.isNaN(d.getTime())) return `unix ${unixS}`;
+  return d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 }
 
 export function fmtAge(seconds: number): string {

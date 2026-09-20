@@ -21,6 +21,7 @@ import {
 import type { MarketHead } from './abi';
 import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges, transitionCandidates } from './discovery';
 import { inGroups, makeNet } from './net';
+import { FETCH_TIMEOUT_MS } from './config';
 import { dueProbes, probeCharts, probeComments, probeMarketPage, probeProviderB, probeResolverRpc, readPublicRpc, type ProbeResult } from './probes';
 import { advanceCursor, allocateConfirmations, compareHeads, confirmAtBlock, discover, planScan, readPages, readPublicAtBlock, type Confirmation, type DiscoveryResult, type PageOutcome, type PublicRead, type ScanPlan } from './scan';
 import type { AcquireResult, CommitPayload, CommitResult, CriticalRow, NoteRow, WarningRow } from './state';
@@ -81,6 +82,37 @@ export interface RunReport {
 }
 
 const PROBE_UNCLASSIFIED = /: (deadline|budget)$/;
+
+/// A run must always end in exactly one Healthchecks request (r15 §5.5), and
+/// progress must never be thrown away by anything but a lost lease or the
+/// deadline (§5.3). A defect that throws would otherwise leave the check
+/// silent until its grace expires, on this run and every run after it, so an
+/// unexpected throw is reported as a failure here. Only the error's type is
+/// sent: a message could carry a URL that holds a credential.
+export async function runGuarded(
+  deps: Deps,
+  scheduledTime: number,
+  runner: (d: Deps, t: number) => Promise<RunReport> = runOnce,
+): Promise<RunReport | { kind: 'crashed'; error: string; pingAccepted: boolean }> {
+  try {
+    return await runner(deps, scheduledTime);
+  } catch (err) {
+    const name = (err as { name?: string } | null)?.name ?? 'Error';
+    const iso = new Date(scheduledTime).toISOString();
+    const net = makeNet(deps.fetch, deps.now, deps.sleep, deps.now() + FETCH_TIMEOUT_MS, 1);
+    const body = `mako-watchdog ${iso} CRASHED
+the run threw ${name} before it could report; nothing was committed
+${manifestLine([], ['ds'])}`;
+    deps.log(`[watchdog] ${iso} crashed: ${name}`);
+    let accepted = false;
+    try {
+      accepted = (await pingHealthchecks(net, deps.env.healthchecksUrl, 'fail', body, deps.env.dryRun, deps.log)).accepted;
+    } catch {
+      // Nothing left to try: the dead-man check goes Down after its grace.
+    }
+    return { kind: 'crashed', error: name, pingAccepted: accepted };
+  }
+}
 
 export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunReport> {
   const start = deps.now();

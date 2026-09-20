@@ -123,6 +123,13 @@ export interface MarketHead {
   resolved: boolean;
 }
 
+/// Times must be plausible seconds. V4 caps a market at MAX_DURATION = 7 days
+/// (d088ced L352-354) and writes these words only in createMarket (L389-390),
+/// so a value beyond the year 2100 is a provider answer, not chain state. The
+/// bound also keeps every time inside the range ECMAScript `Date` can format
+/// (about the year 275760), so no alert line can throw on one.
+const MAX_TIMESTAMP_S = 4_102_444_800; // 2100-01-01T00:00:00Z
+
 /// V4 limits `question` to 1-200 bytes (d088ced L356); a missing market has 0.
 const MAX_QUESTION_BYTES = 200;
 
@@ -160,14 +167,19 @@ export function decodeMarketHead(id: number, dataHex: string): MarketHead {
   const end = qAt + 32 + ceil32(qLen);
   if (end !== total) throw new Error('abi: length mismatch');
   zeroPadding(h, qAt + 32 + qLen, end);
+  const time = (k: number) => {
+    const v = wordNum(h, at(k));
+    if (v > MAX_TIMESTAMP_S) throw new Error(`abi: word ${k} is not a plausible timestamp`);
+    return v;
+  };
   return {
     id,
     mType: wordNum(h, at(1)),
     oracleRef: '0x' + word(h, at(2)),
-    // uint64 in Solidity; safe integers here (the contract bounds them to real times).
-    createdAt: wordNum(h, at(4)),
-    closeTime: wordNum(h, at(5)),
-    bettingCloseTime: wordNum(h, at(6)),
+    // uint64 in Solidity, bounded here to plausible seconds.
+    createdAt: time(4),
+    closeTime: time(5),
+    bettingCloseTime: time(6),
     totalYes: wordBig(h, at(7)),
     totalNo: wordBig(h, at(8)),
     resolved: wordNum(h, at(12)) === 1,

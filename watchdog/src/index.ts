@@ -2,7 +2,7 @@
 // Cron every 5 minutes; no HTTP surface; no private key; no transactions.
 
 import { getAddress } from 'viem';
-import { runOnce, type RunEnv } from './run';
+import { runGuarded, type RunEnv } from './run';
 import type { WatchdogState } from './state';
 
 export { WatchdogState } from './state';
@@ -77,7 +77,7 @@ export default {
     const runEnv = readEnv(env);
     const stub = env.WATCHDOG_STATE.get(env.WATCHDOG_STATE.idFromName('watchdog'));
     ctx.waitUntil(
-      runOnce(
+      runGuarded(
         {
           fetch: (input, init) => fetch(input, init),
           now: () => Date.now(),
