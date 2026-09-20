@@ -94,7 +94,9 @@ function errorName(err: unknown): string {
     return 'Error'; // a throwing getter
   }
   if (typeof raw !== 'string') return 'Error';
-  const clean = raw.replace(/[^\x20-\x7e]/g, '').trim().slice(0, 64);
+  // Bound BEFORE sanitising (review r8): a 50 MB name must not be scanned in
+  // full to produce 64 characters.
+  const clean = raw.slice(0, 64).replace(/[^\x20-\x7e]/g, '').trim();
   return clean || 'Error';
 }
 
@@ -249,10 +251,26 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const oneWayIds = [...new Set([...transitionIds, ...cursorIds])];
   const oneWay = new Set(oneWayIds);
   const commandOnlyIds = commandIds.filter((id) => !oneWay.has(id));
-  const toConfirm = [...oneWayIds, ...commandOnlyIds];
+  // Clearing a delivered market critical is a one-way suppression, so it needs
+  // the second source its creation would need (review r8, and the r2 rule that
+  // a persisted one-way fact needs at least the trust gate of the alert it can
+  // suppress). Only a stored critical this run's head would CLEAR is a
+  // candidate: one that is still critical costs no budget, because it is
+  // rebuilt either way. Severity does not depend on the command status, so
+  // this pre-pass can run before confirmation.
+  const wouldClear = (c: CriticalRow): boolean => {
+    const m = c.marketId === null ? null : reads.get(c.marketId);
+    if (!m) return false;
+    if (c.key.startsWith('u:')) return unsupportedOracle(m, nowS) === null;
+    return classifyStuck(m, nowS, 'unchecked').severity !== 'critical';
+  };
+  const clearingIds = [...new Set(snap.criticals.filter(wouldClear).map((c) => c.marketId as number))];
+  const recoveryOnlyIds = clearingIds.filter((id) => !oneWay.has(id) && !commandSlate.has(id));
+  const toConfirm = [...oneWayIds, ...commandOnlyIds, ...recoveryOnlyIds];
   // Reserved shares per category, so sustained creation cannot starve commands
-  // and a command backlog cannot stall discovery or the cursor (review r4).
-  const selected = allocateConfirmations([oneWayIds, commandOnlyIds]);
+  // and a command backlog cannot stall discovery, the cursor or a recovery
+  // (reviews r4, r8).
+  const selected = allocateConfirmations([oneWayIds, commandOnlyIds, recoveryOnlyIds]);
   const emptyConfirmation: Confirmation = { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
   let confirmation: Confirmation = emptyConfirmation;
   if (d && bootstrapping) {
@@ -306,8 +324,19 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     warn.set(key, { key, since: p?.since ?? scheduledTime, deliveredAt: p?.deliveredAt ?? null, line, lastCommandAt: p?.lastCommandAt ?? null });
   };
 
-  // Market-level rows for markets not read this run are kept unchanged.
-  for (const c of snap.criticals) if (c.marketId !== null && !reads.get(c.marketId)) crit.set(c.key, c);
+  // Market-level rows are kept unchanged when the market was not read, AND
+  // when it was read but no independent source confirmed that head (review
+  // r8): otherwise a provider B answering "resolved" or "healthy" for a market
+  // it is lying about would delete a delivered critical and go quiet, with no
+  // refund command ever produced and no recovery note sent.
+  const retainedCrit = new Set<number>();
+  for (const c of snap.criticals) {
+    if (c.marketId === null) continue;
+    if (!reads.get(c.marketId) || !confirmation.confirmed.has(c.marketId)) {
+      crit.set(c.key, c);
+      retainedCrit.add(c.marketId);
+    }
+  }
   for (const w of snap.warnings) {
     const id = w.key.startsWith('w:') ? Number(w.key.slice(2)) : null;
     if (id !== null && !reads.get(id)) warn.set(w.key, w);
@@ -321,6 +350,9 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     if (v.severity === 'critical') {
       keepCrit(`m:${id}`, v.line, id, null);
       if (v.command) commandCritical.push(id);
+    } else if (retainedCrit.has(id)) {
+      // Its critical was retained for want of a second source, so do not also
+      // report the same market as a lesser thing on the same unconfirmed head.
     } else if (v.severity === 'warn' || v.severity === 'digest') {
       keepWarn(`w:${id}`, v.line);
       if (v.command) commandWarn.push(id);

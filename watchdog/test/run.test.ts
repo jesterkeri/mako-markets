@@ -531,6 +531,73 @@ describe('refund commands need the public RPC to confirm at the same block (I7)'
   });
 });
 
+// Review r8: REMOVING a delivered market critical is a one-way suppression, so
+// it needs the same second source its creation would need. Otherwise a
+// provider B that answers "resolved" or "healthy" for a market it is lying
+// about deletes the alert and the watchdog goes quiet, with no refund command
+// ever produced and no recovery note sent.
+describe('clearing a critical needs the second source (review r8)', () => {
+  it('a fabricated resolution does not clear a stored UO', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const real = openMarket(1, 'PEPE:gt:1', w); // no such crypto symbol: UO
+    w.markets = [real];
+    const r1 = await tick(w, state);
+    expect(r1.payload!.criticals.map((c) => c.key)).toEqual(['u:0']);
+    expect(w.telegram.sent.join('\n')).toContain('#0 PUBLIC market (CRYPTO)');
+
+    // Provider B now claims the market resolved; the public RPC says it did not.
+    w.markets = [{ ...real, resolved: true, outcome: 1 }];
+    w.publicMarkets = [real];
+    const r2 = await tick(w, state);
+    expect(r2.payload!.criticals.map((c) => c.key)).toEqual(['u:0']); // still there
+    expect(r2.payload!.resolvedBits.replace(/0/g, '')).toBe(''); // and no bit set
+    expect(r2.failed).toContain('S1');
+
+    // Provider B tells the truth: the resolution clears it.
+    w.markets = [{ ...real, resolved: true, outcome: 1 }];
+    w.publicMarkets = undefined;
+    const r3 = await tick(w, state);
+    expect(r3.payload!.criticals.map((c) => c.key)).toEqual([]);
+  });
+
+  it('a fabricated healthy head does not clear a stored stuck-market critical', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const stuck = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = [stuck];
+    const r1 = await tick(w, state);
+    expect(r1.payload!.criticals.map((c) => c.key)).toEqual(['m:0']);
+
+    // Provider B moves the close time into the future, so the market reads as
+    // healthy and never becomes a resolution transition. The public RPC still
+    // returns the real head.
+    w.markets = [{ ...stuck, closeTime: nowS(w) + 86_400, bettingCloseTime: nowS(w) + 43_200 }];
+    w.publicMarkets = [stuck];
+    const r2 = await tick(w, state);
+    expect(r2.payload!.criticals.map((c) => c.key)).toEqual(['m:0']);
+    // And it is not demoted to a warning on the strength of the same head.
+    expect(r2.payload!.warnings.map((x) => x.key)).not.toContain('w:0');
+
+    // Both sources agree it is healthy: now it clears.
+    w.markets = [{ ...stuck, closeTime: nowS(w) + 86_400, bettingCloseTime: nowS(w) + 43_200 }];
+    w.publicMarkets = undefined;
+    const r3 = await tick(w, state);
+    expect(r3.payload!.criticals.map((c) => c.key)).toEqual([]);
+  });
+
+  it('a market that stays critical costs no confirmation budget, so the cursor still advances', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 60 }, () => oneSided);
+    await tick(w, state);
+    for (let i = 0; i < 150; i++) w.markets.push(openMarket(1, 'BTC:gt:1', w));
+    const r = await tick(w, state);
+    expect(r.payload!.meta.creationCursor).toBe(210);
+  });
+});
+
 // Review r2: one-way state (resolved bits, the creation cursor) needs the same
 // second source as a refund command.
 describe('one-way state needs the second source (review r2)', () => {

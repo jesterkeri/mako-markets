@@ -92,6 +92,11 @@ jobs:
       - name: Mirrored tables and parsers agree
         run: pnpm check:mirrors
 
+      # The checker itself: a set reduced to one file, or a dropped byte
+      # comparison, must not pass unnoticed (slice-1 review r8).
+      - name: The mirror checker catches what it claims to
+        run: pnpm test:mirrors
+
       - name: Run AA tests
         run: pnpm test:aa
 

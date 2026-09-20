@@ -11,6 +11,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "check:mirrors": "node scripts/check-mirrors.mjs",
+    "test:mirrors": "node --test scripts/check-mirrors.test.mjs",
     "check:cf-worker": "pnpm -C cf-worker install --frozen-lockfile --ignore-workspace && pnpm -C cf-worker typecheck",
     "check:watchdog": "pnpm -C watchdog install --frozen-lockfile --ignore-workspace && pnpm -C watchdog typecheck && pnpm -C watchdog test && pnpm -C watchdog test:scripts && pnpm -C watchdog check:feed-status && pnpm -C watchdog bundle && pnpm -C watchdog assert-bundle",
     "check:workers": "pnpm run check:cf-worker && pnpm run check:watchdog",

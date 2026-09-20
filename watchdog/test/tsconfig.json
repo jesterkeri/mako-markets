@@ -3,7 +3,17 @@
   "compilerOptions": {
     "moduleResolution": "bundler",
     "noUnusedLocals": false,
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"]
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
+    // mirror-differential.test.ts pulls in cf-worker/src/index.ts and
+    // src/lib/market-timing.ts, which import viem from their own packages.
+    // CI installs this package alone (--ignore-workspace), so point those
+    // imports at the copy here, the way vitest's resolve.dedupe does at
+    // runtime (slice-1 review r8).
+    "baseUrl": "..",
+    "paths": {
+      "viem": ["node_modules/viem"],
+      "viem/*": ["node_modules/viem/*"]
+    }
   },
   "include": ["./**/*.ts", "../src/**/*.ts"]
 }

@@ -132,9 +132,6 @@ export interface MarketHead {
 /// unread like any other bad answer.
 const MIN_DURATION_S = 5 * 60;
 const MAX_DURATION_S = 7 * 24 * 3600;
-/// Slack for a head read slightly before the market's creating block is
-/// visible to this provider: a market cannot be created in the future.
-const CREATED_AHEAD_SLACK_S = 300;
 
 /// V4 limits `question` to 1-200 bytes (d088ced L356); a missing market has 0.
 const MAX_QUESTION_BYTES = 200;
@@ -198,7 +195,13 @@ export function assertV4Timing(m: MarketHead, headTimestamp?: number): void {
   const duration = m.closeTime - m.createdAt;
   if (duration < MIN_DURATION_S || duration > MAX_DURATION_S) throw new Error('abi: duration outside V4 limits');
   if (m.bettingCloseTime <= m.createdAt || m.bettingCloseTime > m.closeTime) throw new Error('abi: betting close outside (createdAt, closeTime]');
-  if (headTimestamp !== undefined && m.createdAt > headTimestamp + CREATED_AHEAD_SLACK_S) {
+  // Both read paths request an explicit block, and V4 writes createdAt as
+  // that block's own timestamp (d088ced L388), so a market in the state of
+  // block H cannot claim a later creation. There is no slack to give: a
+  // provider that cannot honour the block tag is the failure being detected,
+  // and it must leave the id unread rather than widen what counts as state
+  // (review r8).
+  if (headTimestamp !== undefined && m.createdAt > headTimestamp) {
     throw new Error('abi: market created after the block it was read at');
   }
 }

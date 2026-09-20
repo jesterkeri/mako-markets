@@ -742,7 +742,11 @@ type PriceFeedOracleRefResult =
 /// Returns a tagged union so the caller can map each failure mode to
 /// a distinct NotAllowedReason. Production caller is
 /// `decodeCreateMarketArgs` (#180 chunk B).
-function parsePriceFeedOracleRef(
+/// Exported for watchdog/test/mirror-differential.test.ts, which runs one
+/// shared vector table through this copy, the resolver's and the watchdog's,
+/// so the mirror is checked by behaviour rather than by the marker above
+/// (watchdog slice-1 review r8). Nothing else imports it.
+export function parsePriceFeedOracleRef(
   ref: Hex,
   expectedClass: 'forex' | 'commodities' | 'stocks',
 ): PriceFeedOracleRefResult {

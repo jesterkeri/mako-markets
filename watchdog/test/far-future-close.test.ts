@@ -68,10 +68,17 @@ describe('a time no V4 market can have', () => {
       ['duration over 7 days', { ...base, closeTime: base.createdAt + 604_801 }],
       ['betting close after close', { ...base, bettingCloseTime: base.closeTime + 1 }],
       ['betting close at creation', { ...base, bettingCloseTime: base.createdAt }],
-      ['created after the head block', { ...base, createdAt: head + 301, closeTime: head + 301 + 86_400, bettingCloseTime: head + 301 + 43_200 }],
+      // Review r8: both read paths request an explicit block, and V4 writes
+      // createdAt as that block's timestamp, so ONE second past the head is
+      // already impossible. There is no slack.
+      ['created one second after the head block', { ...base, createdAt: head + 1, closeTime: head + 301, bettingCloseTime: head + 2 }],
+      ['created five minutes after the head block', { ...base, createdAt: head + 301, closeTime: head + 301 + 86_400, bettingCloseTime: head + 301 + 43_200 }],
     ] as const) {
       expect(() => decodeMarketHead(1, encodeMarket(bad), head), label).toThrow();
     }
+    // Created IN the head block is the boundary and is valid.
+    const atHead = { ...base, createdAt: head, closeTime: head + 86_400, bettingCloseTime: head + 43_200 };
+    expect(decodeMarketHead(1, encodeMarket(atHead), head).createdAt).toBe(head);
     // A market that does not exist still decodes as zeros.
     expect(decodeMarketHead(9, encodeMarket(null), head).closeTime).toBe(0);
   });
@@ -104,6 +111,43 @@ describe('a time no V4 market can have', () => {
     expect(r.failed).toContain('S1'); // the poisoned id counts as unread
     expect(r.payload!.auditAppend.map((a) => a.marketId)).toEqual([0]); // I8a holds
     expect(r.payload!.meta.creationCursor).toBe(1); // the cursor stops at the unread id
+  });
+});
+
+// Review r8: both read paths ask for an explicit block, and V4 writes
+// createdAt as that block's own timestamp, so a head claiming creation even
+// one second later cannot be that block's state. A provider that cannot
+// honour a block tag is the failure being detected: the id must go unread,
+// not widen what counts as chain state.
+describe('a head created after the block it was read at', () => {
+  const aheadOf = (ts: number): FakeMarket => ({
+    mType: 1, ref: 'BTC:gt:1', createdAt: ts + 1, closeTime: ts + 301, bettingCloseTime: ts + 2, yes: 0n, no: 0n, resolved: false,
+  });
+
+  it('is unread on the provider B page read, so the cursor does not pass it', async () => {
+    const w = makeWorld();
+    const ts = Math.floor(w.clock.t / 1000);
+    w.markets = [aheadOf(ts)];
+    const r = await tick(w, freshState());
+    expect(r.payload!.meta.creationCursor).toBe(0);
+    expect(r.payload!.meta.resolvedBootstrapped).toBe(false); // an id was not read
+    expect(r.failed).toContain('S1');
+  });
+
+  it('is unread on the public confirmation read, so nothing is confirmed from it', async () => {
+    const w = makeWorld();
+    const ts = Math.floor(w.clock.t / 1000);
+    const real = closedMarket(1, 'BTC:gt:1', ts, 600, 0n, 0n);
+    w.markets = [real]; // provider B is honest
+    w.publicMarkets = [aheadOf(ts)]; // the second source answers the impossible head
+    const r = await tick(w, freshState());
+    expect(r.payload!.meta.resolvedBootstrapped).toBe(false);
+    expect(r.failed).toContain('S1');
+    // Unread, not "disagreed": the decoder refused the head rather than
+    // comparing it, so this is a public-RPC read failure, not two sources
+    // reporting different chain state.
+    expect(r.healthchecksBody).toContain('public RPC could not read every market');
+    expect(r.healthchecksBody).not.toContain('providers disagree');
   });
 });
 
@@ -144,7 +188,9 @@ describe('an unexpected throw still reaches Joshua', () => {
       e.name = 'Ru\u0000nt\nimeError'.padEnd(200, '!');
       throw e;
     });
-    expect(out2).toMatchObject({ kind: 'crashed', error: 'RuntimeError' + '!'.repeat(64 - 12) });
+    // Bounded to 64 characters BEFORE the non-printable characters are
+    // stripped (review r8), so two of them leave 62.
+    expect(out2).toMatchObject({ kind: 'crashed', error: 'RuntimeError' + '!'.repeat(50) });
     expect(w2.hc.pings[0].body).toContain(`ms ${Number.MAX_SAFE_INTEGER}`);
   });
 

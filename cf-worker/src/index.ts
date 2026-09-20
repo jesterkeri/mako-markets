@@ -237,6 +237,12 @@ const NBA_BY_ID_BUDGET_PER_TICK = 4;
 // MIRROR_ORACLE_REF_PARSERS — this file's oracleRef parsers decide what the
 // resolver can settle. Copies: src/lib/aa-call-allowlist.ts (sponsor-time
 // gate) and watchdog/src/oracle-ref.ts (decides the watchdog's UO alert).
+//
+// The four parsers below are exported for one reason: the watchdog runs a
+// shared vector table through both its copies and these originals, so the
+// mirror is checked by behaviour and not by the marker above
+// (watchdog/test/mirror-differential.test.ts, slice-1 review r8). The Worker
+// itself is the default export, so the named exports add nothing to it.
 function decodeOracleRefString(ref: Hex): string | null {
   try {
     const raw = hexToString(ref, { size: 32 });
@@ -247,7 +253,7 @@ function decodeOracleRefString(ref: Hex): string | null {
   }
 }
 
-function parseCryptoOracleRef(ref: Hex): CryptoOracleRef | null {
+export function parseCryptoOracleRef(ref: Hex): CryptoOracleRef | null {
   const decoded = decodeOracleRefString(ref);
   if (!decoded) return null;
   const parts = decoded.split(':').map((p) => p.trim());
@@ -264,7 +270,7 @@ function parseCryptoOracleRef(ref: Hex): CryptoOracleRef | null {
   };
 }
 
-function parseFootballOracleRef(ref: Hex): FootballOracleRef | null {
+export function parseFootballOracleRef(ref: Hex): FootballOracleRef | null {
   const decoded = decodeOracleRefString(ref);
   if (!decoded) return null;
   const parts = decoded.split(':').map((p) => p.trim());
@@ -281,7 +287,7 @@ function parseFootballOracleRef(ref: Hex): FootballOracleRef | null {
   };
 }
 
-function parseBasketballOracleRef(ref: Hex): BasketballOracleRef | null {
+export function parseBasketballOracleRef(ref: Hex): BasketballOracleRef | null {
   const decoded = decodeOracleRefString(ref);
   if (!decoded) return null;
   const parts = decoded.split(':').map((p) => p.trim());
@@ -649,7 +655,7 @@ type PriceFeedOracleRef = {
   class: 'forex' | 'commodities' | 'stocks';
 };
 
-function parsePriceFeedOracleRef(
+export function parsePriceFeedOracleRef(
   ref: Hex,
   expectedClass: 'forex' | 'commodities' | 'stocks',
 ): PriceFeedOracleRef | null {
