@@ -52,6 +52,10 @@ HANDOVER*.md
 # Claude scratch dir for in-flight plans, review notes, and draft artifacts.
 # Contents are session-scoped, never shipped.
 .claude-tmp/
+# Agent worktrees: `isolation: worktree` checks the whole repo out in here
+# (hundreds of MB). Narrow on purpose, so a project-level .claude/agents or
+# .claude/settings.json can still be committed.
+/.claude/worktrees/
 
 # Operator audit log for ambiguous AA pending-op resolutions
 # (scripts/resolve-ambiguous-op.mts). Local to the operator's machine.

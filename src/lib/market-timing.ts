@@ -55,7 +55,14 @@ export function sportsTimestamps(
 }
 
 /**
- * Pure mirror of v4 `suggestedCryptoBettingCloseTime(createdAt, resolutionTime)`.
+ * MIRROR_CRYPTO_CUTOFF: pure mirror of v4
+ * `suggestedCryptoBettingCloseTime(createdAt, resolutionTime)`.
+ *
+ * The contract is the source of truth (MakoMarketsV4.sol at `d088ced`, the
+ * deployed commit). Grep `MIRROR_CRYPTO_CUTOFF` for every copy; today they are
+ * this preview and `watchdog/src/classify.ts` (`suggestedCryptoCutoff`, which
+ * the watchdog uses to flag a new market whose betting cutoff is later than the
+ * contract suggests, and which is tested against values read from chain).
  *
  * Tiers (mirror of MakoMarketsV4.sol):
  *   duration ≤ 1h    → bettingCloseTime = createdAt + duration * 50%

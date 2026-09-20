@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     // Gemini's staged reference components — not wired into the app yet.
     // Lint when integrated. See memory: "Isolate Gemini staged components".
     "staged-gemini/**",
+    // Agent worktrees: a full second copy of the repo, which would otherwise
+    // be linted twice and report duplicate findings.
+    ".claude/worktrees/**",
     // Worker build output (gitignored; wrangler writes it locally).
     "watchdog/dist/**",
     "watchdog/.wrangler/**",
