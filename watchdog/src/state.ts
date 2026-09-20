@@ -163,24 +163,33 @@ export class WatchdogState extends DurableObject<Record<string, never>> {
     return { token, meta, checks, criticals, warnings, notes, resolvedBits, auditQueueSize };
   }
 
-  /// A lease expires by the CRON's scheduled time, never by a caller's clock
-  /// (review r7). Fencing protects this object's state, but it cannot unsend a
-  /// Telegram message, so a run with a fast clock must not be able to take a
-  /// live lease and deliver a second set of alerts. `scheduledTime` comes from
-  /// the runtime's ScheduledController, is the same quantity for every run,
-  /// and moves forward 300 s a tick, so a holder that has not committed by the
-  /// time an event 270 s later arrives is dead by the run deadline (200 s).
+  /// Expiry is measured by THIS OBJECT's clock, read here inside it (review
+  /// r7, corrected by the adversary pass on r7). Fencing protects this
+  /// object's state, but it cannot unsend a Telegram message, so a second run
+  /// must never take a live lease and deliver the same refund command again.
+  ///
+  /// Two clocks were tried and both were wrong. A clock passed in by the
+  /// caller lets an instance running fast declare a live lease expired. The
+  /// cron's `scheduledTime` cannot measure a holder at all: consecutive ticks
+  /// are always 300 s apart, which is past the 270 s expiry, so the check was
+  /// vacuous and a late-delivered event (r15 section 7 expects them) left two
+  /// runs live at once. Every run reaches this same object, so its own clock
+  /// is the one quantity no caller can disagree with, and it measures what the
+  /// lease is actually about: how long the holder has been running.
+  ///
+  /// `scheduledTime` still decides ordering (forward-only) and is stored so a
+  /// commit must carry the one its lease was taken for.
   async acquire(scheduledTime: number): Promise<AcquireResult> {
+    const nowMs = Date.now();
     return this.ctx.storage.transactionSync((): AcquireResult => {
       const lease = this.readLease();
       if (lease.lastAccepted !== null && scheduledTime <= lease.lastAccepted) return { ok: false, reason: 'not_newer' };
-      const heldSince = lease.scheduledTime ?? scheduledTime;
-      if (lease.held && scheduledTime - heldSince < LEASE_MS) return { ok: false, reason: 'lease_held' };
+      if (lease.held && nowMs < lease.expiresAt) return { ok: false, reason: 'lease_held' };
       const token = lease.token + 1;
       this.ctx.storage.sql.exec(
         'UPDATE lease SET token = ?, held = 1, expires_at = ?, scheduled_time = ? WHERE id = 1',
         token,
-        scheduledTime + LEASE_MS,
+        nowMs + LEASE_MS,
         scheduledTime,
       );
       return { ok: true, snapshot: this.readSnapshot(token) };

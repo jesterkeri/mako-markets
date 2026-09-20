@@ -470,7 +470,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       const row = crit.get(p.key)!;
       // A refund command deferred for budget keeps its alert due, so the next
       // run confirms it first (no starvation, review r3).
-      if (confirmed[p.message]) crit.set(p.key, { ...row, lastDeliveredAt: scheduledTime });
+      if (p.messages.length > 0 && p.messages.every((i) => confirmed[i])) crit.set(p.key, { ...row, lastDeliveredAt: scheduledTime });
     }
   }
   for (const [key, w] of warn) if (w.deliveredAt === null && placedNonCrit.has(key)) warn.set(key, { ...w, deliveredAt: scheduledTime });

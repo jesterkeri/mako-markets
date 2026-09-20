@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
+import { LEASE_MS } from '../src/config';
 import { INITIAL_META, type CommitPayload, type Snapshot } from '../src/state';
 
 // Each test uses its own object name: storage persists within a file.
@@ -24,6 +25,16 @@ function payload(snap: Snapshot, cursor: number, extra: Partial<CommitPayload> =
 
 const T0 = 1_790_000_000_000;
 
+/// Time passing, for the one clock a test cannot set. Lease expiry is the
+/// Durable Object's OWN clock (`src/state.ts`), so a test moves the stored
+/// expiry rather than pretending to be a caller with a different clock: that
+/// pretence is exactly what the lease must ignore.
+async function setExpiry(s: ReturnType<typeof stub>, deltaMs: number) {
+  await runInDurableObject(s, (_i, st) => {
+    st.storage.sql.exec('UPDATE lease SET expires_at = ? WHERE id = 1', Date.now() + deltaMs);
+  });
+}
+
 describe('lease (I6)', () => {
   it('starts empty with the initial meta', async () => {
     const s = stub();
@@ -39,12 +50,29 @@ describe('lease (I6)', () => {
     const s = stub();
     expect((await s.acquire(T0)).ok).toBe(true);
     expect(await s.acquire(T0 + 100_000)).toEqual({ ok: false, reason: 'lease_held' });
+    // The NEXT CRON TICK is 300 s of scheduled time later, past the 270 s
+    // expiry, and must still be refused while the holder is alive: a late
+    // event (r15 section 7) can arrive while the previous run is mid-delivery.
+    expect(await s.acquire(T0 + 300_000)).toEqual({ ok: false, reason: 'lease_held' });
+    expect(await s.acquire(T0 + 10 * 300_000)).toEqual({ ok: false, reason: 'lease_held' });
+  });
+
+  it('the stored expiry comes from this object clock, not from the scheduled time', async () => {
+    const s = stub();
+    const far = T0 + 365 * 24 * 3600_000; // a scheduled time a year out
+    expect((await s.acquire(far)).ok).toBe(true);
+    await runInDurableObject(s, (_i, st) => {
+      const row = st.storage.sql.exec<{ expires_at: number; scheduled_time: number }>('SELECT expires_at, scheduled_time FROM lease').one();
+      expect(row.scheduled_time).toBe(far); // kept, for commit fencing
+      expect(Math.abs(row.expires_at - (Date.now() + LEASE_MS))).toBeLessThan(5_000);
+    });
   });
 
   it('A passes 270 s: B gets token + 1 and A cannot commit', async () => {
     const s = stub();
     const a = await s.acquire(T0);
     if (!a.ok) throw new Error('A');
+    await setExpiry(s, 0); // A's lease has run out
     const b = await s.acquire(T0 + 300_000);
     if (!b.ok) throw new Error('B');
     expect(b.snapshot.token).toBe(a.snapshot.token + 1);
@@ -55,12 +83,13 @@ describe('lease (I6)', () => {
     expect(c.snapshot.meta.creationCursor).toBe(7);
   });
 
-  it('1 ms before expiry the lease still holds, and a fast clock cannot take it', async () => {
+  it('before expiry the lease holds; at expiry it frees', async () => {
     const s = stub();
     await s.acquire(T0);
-    // Expiry is measured in the cron's scheduled time, which no caller sets.
-    expect((await s.acquire(T0 + 270_000 - 1)).ok).toBe(false);
-    expect((await s.acquire(T0 + 270_000)).ok).toBe(true);
+    await setExpiry(s, 5_000);
+    expect(await s.acquire(T0 + 300_000)).toEqual({ ok: false, reason: 'lease_held' });
+    await setExpiry(s, 0);
+    expect((await s.acquire(T0 + 300_000)).ok).toBe(true);
   });
 
   it('duplicate, out-of-order and late events cannot acquire', async () => {
@@ -77,6 +106,7 @@ describe('lease (I6)', () => {
     const s = stub();
     const a = await s.acquire(T0);
     if (!a.ok) throw new Error('A');
+    await setExpiry(s, 0); // A stopped without committing
     const b = await s.acquire(T0 + 300_000);
     if (!b.ok) throw new Error('B');
     // B (later token) commits first; A's stale commit is rejected.

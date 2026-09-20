@@ -39,7 +39,10 @@ describe('manifest', () => {
     const pack = packCriticals('h', due, null, manifestLine([1], []));
     expect(pack.placed.length).toBeLessThan(100);
     expect(pack.messages.join('\n')).toContain(`+${100 - pack.placed.length} more critical`);
-    for (const p of pack.placed) expect(p.message).toBeLessThan(pack.messages.length);
+    for (const p of pack.placed) {
+      expect(p.messages.length).toBeGreaterThan(0);
+      for (const m of p.messages) expect(m).toBeLessThan(pack.messages.length);
+    }
   });
 });
 
@@ -130,6 +133,27 @@ describe('Healthchecks "accepted"', () => {
     await pingHealthchecks(netFor(w), HC, 'fail', 'b', false, () => {});
     await pingHealthchecks(netFor(w), HC, 'log', 'b', false, () => {});
     expect(w.hc.pings.map((p) => p.url)).toEqual([`${HC}/fail`, `${HC}/log`]);
+  });
+});
+
+// The adversary pass on r7: a detail line was recorded against the LAST
+// message its bytes landed in, while the command used its whole span. A line
+// that spanned two messages where only the second arrived would have been
+// marked delivered, and then suppressed for the 6 h reminder period, with only
+// its tail in the chat. Unreachable while every detail line the run builds is
+// far below the 1,000-character split, and pinned here so lengthening one
+// cannot quietly half-deliver it.
+describe('a detail line that spans messages', () => {
+  it('names every message holding its bytes, not just the last', () => {
+    // No space or comma, so the splitter cannot cut it short.
+    const due = [{ key: 'm:1', line: '#1' + 'z'.repeat(5_000) }];
+    const pack = packCriticals('h', due, null, manifestLine([1], []));
+    const p = pack.placed.find((x) => x.key === 'm:1')!;
+    expect(p.messages.length).toBeGreaterThan(1);
+    const named = new Set(p.messages);
+    pack.messages.forEach((m, i) => {
+      expect(named.has(i)).toBe(m.includes('z'));
+    });
   });
 });
 

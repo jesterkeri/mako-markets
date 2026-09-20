@@ -1,12 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
+import { LEASE_MS } from '../src/config';
 import { runOnce, type Deps } from '../src/run';
 import { closedMarket, makeDeps, makeWorld, MAKO as MAKO_ADDR, RESOLVER as RES_ADDR, type FakeMarket, type World } from './fake';
 
 let n = 0;
-function freshState(): Deps['state'] {
+type TestState = Deps['state'] & { age: (ms?: number) => Promise<void> };
+function freshState(): TestState {
   const s = env.WATCHDOG_STATE.get(env.WATCHDOG_STATE.idFromName(`run-test-${n++}`));
-  return { acquire: (a) => s.acquire(a), commit: (t, a, p) => s.commit(t, a, p) };
+  return {
+    acquire: (a) => s.acquire(a),
+    commit: (t, a, p) => s.commit(t, a, p),
+    /// Time passing, for the one clock a test cannot set: lease expiry is the
+    /// Durable Object's own (`src/state.ts`), so the world clock moving does
+    /// not free a lease left behind by a killed run. This ages the stored
+    /// expiry, which is what real elapsed time does to it.
+    age: async (ms = LEASE_MS) => {
+      await runInDurableObject(s, (_i, st) => {
+        st.storage.sql.exec('UPDATE lease SET expires_at = expires_at - ? WHERE id = 1', ms);
+      });
+    },
+  };
 }
 
 const FIVE_MIN = 300_000;
@@ -197,7 +212,8 @@ describe('creation cursor over whole runs', () => {
     expect(r.committed).toBe(false);
     expect(w.hc.pings.length).toBe(1); // only the first run's ping
     w.latencyMs = 20;
-    w.clock.t += FIVE_MIN; // the stale lease (270 s) has expired
+    w.clock.t += FIVE_MIN;
+    await state.age(); // the stale lease (270 s) has expired
     const r2 = await tick(w, state);
     expect(r2.payload!.meta.creationCursor).toBe(2);
   });
@@ -263,6 +279,7 @@ describe('discovery (I8a part a)', () => {
     expect(killed.committed).toBe(false);
     w.latencyMs = 20;
     w.clock.t += FIVE_MIN;
+    await state.age(); // the killed run's lease has expired
     const r = await tick(w, state);
     expect(r.payload!.auditAppend.map((a) => a.marketId)).toEqual([0, 2]);
     const r2 = await tick(w, state);

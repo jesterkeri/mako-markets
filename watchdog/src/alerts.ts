@@ -93,8 +93,11 @@ export interface CriticalPack {
   /// True when the manifest could not fit and was replaced by a count; the
   /// run is then ineffective (only possible outside the 2,000-market envelope).
   manifestTruncated: boolean;
-  /// Keys of the detail lines that made it into a message, with the message index.
-  placed: { key: string; message: number }[];
+  /// Keys of the detail lines that made it into a message, with EVERY message
+  /// their bytes landed in. A line counts as delivered only when all of them
+  /// are confirmed, the same rule the command uses: a line long enough to
+  /// span two messages is half-delivered if only the second arrives.
+  placed: { key: string; messages: number[] }[];
 }
 
 /// Messages 1 to 3: header, as many due detail lines as fit, the refund
@@ -129,10 +132,14 @@ export function packCriticals(
     if (build(mid).messages.length <= maxMessages) lo = mid;
     else hi = mid - 1;
   }
-  const { messages, where, spans } = build(lo);
-  const placed = due.slice(0, lo).map((d, i) => ({ key: d.key, message: where[i + 1] }));
-  const span = commandLine >= 0 ? spans[commandLine] : null;
-  const commandMessages = span && span.first >= 0 ? Array.from({ length: span.last - span.first + 1 }, (_, i) => span.first + i) : [];
+  const { messages, spans } = build(lo);
+  /// Every message index a line's bytes landed in; empty when it wrote none.
+  const spanOf = (line: number) => {
+    const s = spans[line];
+    return s.first >= 0 ? Array.from({ length: s.last - s.first + 1 }, (_, i) => s.first + i) : [];
+  };
+  const placed = due.slice(0, lo).map((d, i) => ({ key: d.key, messages: spanOf(i + 1) }));
+  const commandMessages = commandLine >= 0 ? spanOf(commandLine) : [];
   return { messages, placed, manifestTruncated, commandMessages };
 }
 
