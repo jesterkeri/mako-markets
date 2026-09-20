@@ -5,12 +5,16 @@ import feedStatus from './feed-status.json';
 // and src/lib/crypto-assets.ts, so a change there fails CI until this copy
 // follows.
 
-/// MIRROR of the resolver's CRYPTO_SYMBOLS (cf-worker/src/index.ts L147).
+/// MIRROR_CRYPTO_ASSETS of the resolver's CRYPTO_SYMBOLS
+/// (cf-worker/src/index.ts L147, itself a copy of src/lib/crypto-assets.ts).
+/// test/assets-drift.test.ts fails if they diverge.
 export const CRYPTO_SYMBOLS: readonly string[] = ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'APT', 'SUI', 'DOGE', 'LINK', 'MON'];
 
 export type PriceFeedClass = 'forex' | 'commodities' | 'stocks';
 
-/// MIRROR of PRICE_FEED_ASSETS symbol -> class (cf-worker/src/price-feed-assets.ts).
+/// MIRROR_PRICE_FEED_ASSETS: symbol -> class from src/lib/price-feed-assets.ts
+/// (and its byte-identical copy cf-worker/src/price-feed-assets.ts).
+/// test/assets-drift.test.ts fails if they diverge.
 export const PRICE_FEED_CLASS: ReadonlyMap<string, PriceFeedClass> = new Map<string, PriceFeedClass>([
   ['EURUSD', 'forex'], ['USDJPY', 'forex'], ['GBPUSD', 'forex'], ['AUDUSD', 'forex'], ['USDCAD', 'forex'],
   ['USDCHF', 'forex'], ['NZDUSD', 'forex'], ['EURGBP', 'forex'], ['EURJPY', 'forex'], ['GBPJPY', 'forex'],

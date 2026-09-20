@@ -1,3 +1,4 @@
+// MIRROR_ORACLE_REF_PARSERS.
 // The resolver's oracleRef parsers, copied in behaviour from
 // cf-worker/src/index.ts L237-296 (crypto, football, basketball) and
 // L636-667 (forex, commodities, stocks, with the class check). A market whose

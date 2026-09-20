@@ -11,6 +11,11 @@
  *                                              STOCKS tabs)
  *   - `cf-worker/src/price-feed-assets.ts`   (byte-identical mirror;
  *                                              see "Mirror" below)
+ *   - `watchdog/src/assets.ts`               (symbol -> class table only,
+ *                                              MIRROR_PRICE_FEED_ASSETS;
+ *                                              the alert-only watchdog
+ *                                              Worker, checked by its
+ *                                              assets-drift test)
  *
  * Pyth Hermes is the price source (free, no API key, ~30 req/min).
  * IDs below were copied from `GET https://hermes.pyth.network/v2/price_feeds`

@@ -15,9 +15,11 @@ const eslintConfig = defineConfig([
     // Gemini's staged reference components — not wired into the app yet.
     // Lint when integrated. See memory: "Isolate Gemini staged components".
     "staged-gemini/**",
-    // Watchdog build output (gitignored; wrangler writes it locally).
+    // Worker build output (gitignored; wrangler writes it locally).
     "watchdog/dist/**",
     "watchdog/.wrangler/**",
+    "cf-worker/dist/**",
+    "cf-worker/.wrangler/**",
   ]),
 ]);
 

@@ -95,10 +95,12 @@ jobs:
       - name: Build
         run: pnpm build
 
-  # Alert-only watchdog Worker (watchdog/, its own package like cf-worker/).
+  # Alert-only watchdog Worker: watchdog/ is its own package like cf-worker/
+  # (own lockfile, installed with --ignore-workspace, own vitest major).
   # Wrangler 4 needs Node 22. The last step builds the deploy bundle and fails
-  # if it contains any signing, transaction-sending or Data Streams code
-  # (mako-design/WATCHDOG_PLAN.md r15 §8, I9).
+  # if it contains any signing, transaction-sending or Data Streams code. The
+  # design it implements (WATCHDOG_PLAN.md r15 §8, I9) lives outside this repo,
+  # in the sibling mako-design checkout, so it is not linkable from here.
   watchdog:
     runs-on: ubuntu-latest
     timeout-minutes: 15

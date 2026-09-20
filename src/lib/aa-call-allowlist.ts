@@ -724,7 +724,9 @@ export function decodeAndAssertClaimShape(call: {
 /// STOCKS). Tagged-union so the caller can surface the specific
 /// NotAllowedReason code rather than collapsing everything into a
 /// generic "bad oracleRef". Local to this module; cf-worker has its
-/// own mirror parser for resolution (chunk C of #180).
+/// own mirror parser for resolution (chunk C of #180), and
+/// watchdog/src/oracle-ref.ts has a third copy that decides whether the
+/// resolver could settle a market at all (MIRROR_ORACLE_REF_PARSERS).
 type PriceFeedOracleRefResult =
   | { kind: 'ok'; symbol: string; op: 'gt' | 'lt'; strike: number }
   | { kind: 'bad_format' }
