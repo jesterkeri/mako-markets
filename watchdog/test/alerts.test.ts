@@ -115,3 +115,50 @@ describe('Healthchecks "accepted"', () => {
     expect(w.hc.pings.map((p) => p.url)).toEqual([`${HC}/fail`, `${HC}/log`]);
   });
 });
+
+// Review r6: commandMessages must name exactly the messages that hold command
+// bytes. Claiming an extra message makes a delivered command look undelivered.
+describe('commandMessages is exact', () => {
+  const manifest = manifestLine([1, 2, 3], []);
+  const command = refundCommand(MAKO, [7, 9, 78]);
+
+  function assertExact(pack: ReturnType<typeof packCriticals>) {
+    const holds = pack.messages.map((m) => m.includes('cast send'));
+    const named = new Set(pack.commandMessages);
+    holds.forEach((hasBytes, i) => {
+      expect(named.has(i)).toBe(hasBytes); // named exactly when it holds bytes
+    });
+    expect(pack.commandMessages.length).toBeGreaterThan(0);
+  }
+
+  it('however the detail lines fall, across many line counts and lengths', () => {
+    for (const count of [0, 1, 5, 17, 40, 120]) {
+      for (const len of [60, 130, 400, 1200]) {
+        const due = Array.from({ length: count }, (_, i) => ({ key: `m:${i}`, line: `#${i} ` + 'x'.repeat(len) }));
+        assertExact(packCriticals('MAKO WATCHDOG: header', due, command, manifest));
+      }
+    }
+  });
+
+  it('when the command is pushed whole into the next message', () => {
+    // Fill message 1 so the short command cannot fit in it.
+    const due = [{ key: 'm:1', line: 'y'.repeat(4_000) }];
+    const pack = packCriticals('h', due, command, manifest);
+    expect(pack.messages[0].includes('cast send')).toBe(false);
+    expect(pack.commandMessages).not.toContain(0);
+    assertExact(pack);
+  });
+
+  it('when the command line is long enough to span messages', () => {
+    // A continuation piece carries ids but not the literal "cast send", so the
+    // oracle here is "does this message hold any of the command's ids".
+    const ids = Array.from({ length: 900 }, (_, i) => 100000 + i);
+    const pack = packCriticals('h', [], refundCommand(MAKO, ids), manifest);
+    expect(pack.commandMessages.length).toBeGreaterThan(1);
+    const named = new Set(pack.commandMessages);
+    pack.messages.forEach((m, i) => {
+      const holds = ids.some((id) => m.includes(String(id)));
+      expect(named.has(i)).toBe(holds);
+    });
+  });
+});

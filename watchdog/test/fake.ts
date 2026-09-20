@@ -105,6 +105,12 @@ export interface World {
     fail429Once?: boolean;
     /// Accept only this many messages in a run, then fail (partial delivery).
     okMessages?: number;
+    /// Outcome per request ATTEMPT, consumed in order, so any pattern can be
+    /// driven: ['fail', 'ok'] rejects the first message and accepts the second
+    /// (review r6). Falls back to `mode` once the list runs out.
+    attempts?: ('ok' | 'fail' | '429')[];
+    /// Attempts made this run, reset by the test between runs.
+    attemptsMade?: number;
   };
   hc: { mode: 'ok' | 'not_found' | 'rate_limited' | 'no_header' | 'small_header' | '500' | 'timeout'; pings: { url: string; body: string }[] };
   app: { comments: boolean; market: boolean; charts: boolean };
@@ -236,6 +242,19 @@ export function makeFetch(w: World): typeof fetch {
     if (host === 'api.telegram.org') {
       const text = (JSON.parse(body) as { text: string }).text;
       w.log.push(`${host} send`);
+      if (w.telegram.attempts?.length) {
+        const i = w.telegram.attemptsMade ?? 0;
+        w.telegram.attemptsMade = i + 1;
+        const outcome = w.telegram.attempts[i];
+        if (outcome === 'fail') return new Response('{"ok":false}', { status: 500 });
+        if (outcome === '429') {
+          return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: w.telegram.retryAfter } }), { status: 429 });
+        }
+        if (outcome === 'ok') {
+          w.telegram.sent.push(text);
+          return Response.json({ ok: true, result: { message_id: w.telegram.sent.length } });
+        }
+      }
       if (w.telegram.mode === 'fail') return new Response('{"ok":false}', { status: 500 });
       if (w.telegram.okMessages !== undefined && w.telegram.sent.length >= w.telegram.okMessages) {
         return new Response('{"ok":false}', { status: 500 });

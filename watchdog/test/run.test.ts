@@ -882,6 +882,66 @@ describe('command delivery accounting (review r5)', () => {
   });
 });
 
+describe('partial Telegram delivery in any order (review r6)', () => {
+  /// 50 one-sided markets past +24h: their lines fill message 1, so the refund
+  /// command lands in message 2.
+  function fiftyDue(attempts?: ('ok' | 'fail' | '429')[]) {
+    const w = makeWorld({ telegram: { mode: 'ok', retryAfter: 1, sent: [], attempts, attemptsMade: 0 } });
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 50 }, () => oneSided);
+    return { w, state: freshState() };
+  }
+
+  it('the command message is accepted although an earlier message failed: it counts as served', async () => {
+    const { w, state } = fiftyDue(['fail', 'ok', 'ok', 'ok']);
+    const r = await tick(w, state);
+    const commandMessage = r.telegramMessages.findIndex((m) => m.includes('cast send'));
+    expect(commandMessage).toBeGreaterThan(0);
+    expect(r.telegramConfirmed[0]).toBe(false);
+    expect(r.telegramConfirmed[commandMessage]).toBe(true);
+    expect(w.telegram.sent.join('\n')).toContain('cast send'); // Joshua has a runnable command
+    expect(r.payload!.criticals.filter((c) => c.lastCommandAt !== null)).toHaveLength(50);
+    expect(r.failed).toContain('S3'); // a critical message still failed
+    expect(r.ping).toBe('fail');
+  });
+
+  it('[false, true, false] still records the accepted command message', async () => {
+    const { w, state } = fiftyDue(['fail', 'ok', 'fail', 'fail']);
+    const r = await tick(w, state);
+    const commandMessage = r.telegramMessages.findIndex((m) => m.includes('cast send'));
+    expect(r.telegramConfirmed[commandMessage]).toBe(true);
+    expect(r.payload!.criticals.filter((c) => c.lastCommandAt !== null)).toHaveLength(50);
+  });
+
+  it('every attempt rate-limited past the deadline: nothing is recorded as served', async () => {
+    const { w, state } = fiftyDue(['429', '429', '429', '429']);
+    w.telegram.retryAfter = 10_000; // far past the run deadline
+    const r = await tick(w, state);
+    expect(r.telegramConfirmed.every((c) => c === false)).toBe(true);
+    expect(r.payload!.criticals.every((c) => c.lastCommandAt === null)).toBe(true);
+    expect(r.ping).toBe('fail');
+  });
+
+  it('repeated partial delivery with more than 50 commands still drains: the first 50 advance, later ids follow', async () => {
+    const w = makeWorld({ telegram: { mode: 'ok', retryAfter: 1, sent: [], attempts: ['fail', 'ok', 'ok', 'ok'], attemptsMade: 0 } });
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 120 }, () => oneSided);
+    const served = new Set<number>();
+    let runs = 0;
+    while (served.size < 120 && runs < 8) {
+      w.telegram.sent = [];
+      w.telegram.attemptsMade = 0; // the same pattern every run: message 1 fails
+      const r = await tick(w, state);
+      for (const id of commandIdsIn(w.telegram.sent.join('\n'))) served.add(id);
+      expect(r.payload!.criticals.filter((c) => c.lastCommandAt !== null).length).toBe(served.size);
+      runs++;
+    }
+    expect(served.size).toBe(120);
+    expect(runs).toBeLessThanOrEqual(3);
+  });
+});
+
 describe('budget and category overlap (review r5)', () => {
   it('an ordinary minute-zero run makes 21 HTTP requests: 11 provider B, 1 rr, 1 confirmation, 3 probes, 4 Telegram, 1 Healthchecks', async () => {
     const w = makeWorld({ clock: { t: Date.UTC(2026, 8, 19, 12, 55, 1) } });

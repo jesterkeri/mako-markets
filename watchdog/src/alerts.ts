@@ -51,7 +51,11 @@ export function pack(lines: string[], limit: number): { messages: string[]; wher
   const room = () => (cur ? limit - cur.length - 1 : limit);
   for (const line of lines) {
     let rest = line;
-    const first = messages.length;
+    // Where this line's first BYTES land, not where it was first considered
+    // (review r6): a short line that does not fit is flushed to the next
+    // message, and claiming the earlier message would make a delivered
+    // command look undelivered.
+    let first: number | null = null;
     while (rest.length > room()) {
       if (rest.length < SPLIT_AT && rest.length <= limit) {
         flush();
@@ -63,13 +67,17 @@ export function pack(lines: string[], limit: number): { messages: string[]; wher
         continue;
       }
       const n = cutToFit(rest, r);
+      if (first === null) first = messages.length;
       cur = cur ? `${cur}\n${rest.slice(0, n)}` : rest.slice(0, n);
       rest = rest.slice(n);
       flush();
     }
-    if (rest) cur = cur ? `${cur}\n${rest}` : rest;
+    if (rest) {
+      if (first === null) first = messages.length;
+      cur = cur ? `${cur}\n${rest}` : rest;
+    }
     where.push(messages.length);
-    spans.push({ first: Math.min(first, messages.length), last: messages.length });
+    spans.push({ first: first ?? messages.length, last: messages.length });
   }
   flush();
   return { messages, where, spans };
