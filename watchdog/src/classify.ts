@@ -119,8 +119,9 @@ export function unsupportedOracle(m: MarketHead, nowS: number): string | null {
   );
 }
 
-/// Local copy of V4's suggestedCryptoBettingCloseTime (d088ced L455-468),
-/// checked against the contract in test/classify.test.ts.
+/// MIRROR_CRYPTO_CUTOFF: local copy of V4's suggestedCryptoBettingCloseTime
+/// (d088ced L455-468), checked against values read from the contract in
+/// test/classify.test.ts. The app's copy is src/lib/market-timing.ts.
 export function suggestedCryptoCutoff(createdAt: number, resolutionTime: number): number {
   if (resolutionTime <= createdAt) return createdAt;
   const duration = resolutionTime - createdAt;

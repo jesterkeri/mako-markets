@@ -38,7 +38,8 @@ function cutToFit(s: string, room: number): number {
 
 /// Greedy packing of lines into messages of at most `limit` characters.
 /// Returns the messages and, for each input line, the first and last message
-/// its pieces landed in (a long line can span messages).
+/// its pieces landed in (a long line can span messages). A line with no bytes
+/// lands nowhere and reports `{ first: -1, last: -1 }` (review r7 NIT).
 export function pack(lines: string[], limit: number): { messages: string[]; where: number[]; spans: { first: number; last: number }[] } {
   const messages: string[] = [];
   const where: number[] = [];
@@ -77,7 +78,7 @@ export function pack(lines: string[], limit: number): { messages: string[]; wher
       cur = cur ? `${cur}\n${rest}` : rest;
     }
     where.push(messages.length);
-    spans.push({ first: first ?? messages.length, last: messages.length });
+    spans.push(first === null ? { first: -1, last: -1 } : { first, last: messages.length });
   }
   flush();
   return { messages, where, spans };
@@ -131,7 +132,7 @@ export function packCriticals(
   const { messages, where, spans } = build(lo);
   const placed = due.slice(0, lo).map((d, i) => ({ key: d.key, message: where[i + 1] }));
   const span = commandLine >= 0 ? spans[commandLine] : null;
-  const commandMessages = span ? Array.from({ length: span.last - span.first + 1 }, (_, i) => span.first + i) : [];
+  const commandMessages = span && span.first >= 0 ? Array.from({ length: span.last - span.first + 1 }, (_, i) => span.first + i) : [];
   return { messages, placed, manifestTruncated, commandMessages };
 }
 

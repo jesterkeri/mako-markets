@@ -50,7 +50,7 @@ export interface RunEnv {
 }
 
 export interface StateStub {
-  acquire(scheduledTime: number, nowMs: number): Promise<AcquireResult>;
+  acquire(scheduledTime: number): Promise<AcquireResult>;
   commit(token: number, scheduledTime: number, payload: CommitPayload): Promise<CommitResult>;
 }
 
@@ -139,7 +139,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   let acq: AcquireResult;
   try {
     report.doCalls++;
-    acq = await deps.state.acquire(scheduledTime, deps.now());
+    acq = await deps.state.acquire(scheduledTime);
   } catch {
     report.kind = 'state_unavailable';
     report.failed = ['S8'];
@@ -164,7 +164,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     const d = await discP;
     if (!d.ok) return { d, plan: null, pages: null };
     const plan = planScan(d.value.nextMarketId, meta.creationCursor, runIndex);
-    const pages = await readPages(net, env.providerBUrl, env.makoAddress, d.value.finalizedBlock, d.value.nextMarketId, plan.ids);
+    const pages = await readPages(net, env.providerBUrl, env.makoAddress, d.value.finalizedBlock, d.value.finalizedTimestamp, d.value.nextMarketId, plan.ids);
     return { d, plan, pages };
   };
   // The public RPC: the rr probe, then (bootstrap only) every id below N at the

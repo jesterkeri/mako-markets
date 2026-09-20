@@ -234,6 +234,9 @@ type NbaFetchState = {
 
 const NBA_BY_ID_BUDGET_PER_TICK = 4;
 
+// MIRROR_ORACLE_REF_PARSERS — this file's oracleRef parsers decide what the
+// resolver can settle. Copies: src/lib/aa-call-allowlist.ts (sponsor-time
+// gate) and watchdog/src/oracle-ref.ts (decides the watchdog's UO alert).
 function decodeOracleRefString(ref: Hex): string | null {
   try {
     const raw = hexToString(ref, { size: 32 });

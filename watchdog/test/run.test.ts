@@ -6,7 +6,7 @@ import { closedMarket, makeDeps, makeWorld, MAKO as MAKO_ADDR, RESOLVER as RES_A
 let n = 0;
 function freshState(): Deps['state'] {
   const s = env.WATCHDOG_STATE.get(env.WATCHDOG_STATE.idFromName(`run-test-${n++}`));
-  return { acquire: (a, b) => s.acquire(a, b), commit: (t, a, p) => s.commit(t, a, p) };
+  return { acquire: (a) => s.acquire(a), commit: (t, a, p) => s.commit(t, a, p) };
 }
 
 const FIVE_MIN = 300_000;
@@ -207,7 +207,7 @@ describe('creation cursor over whole runs', () => {
     const state = freshState();
     w.markets = [openMarket(1, 'BTC:gt:1', w)];
     const scheduled = Math.floor(w.clock.t / FIVE_MIN) * FIVE_MIN;
-    await state.acquire(scheduled - FIVE_MIN, w.clock.t); // another run holds it
+    await state.acquire(scheduled - 60_000); // another run holds it, 60 s ago
     const r = await runOnce(makeDeps(w, state), scheduled);
     expect(r.kind).toBe('skipped');
     expect(r.ping).toBe('log');

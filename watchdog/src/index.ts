@@ -83,7 +83,7 @@ export default {
           now: () => Date.now(),
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
           state: {
-            acquire: (scheduledTime, nowMs) => stub.acquire(scheduledTime, nowMs),
+            acquire: (scheduledTime) => stub.acquire(scheduledTime),
             commit: (token, scheduledTime, payload) => stub.commit(token, scheduledTime, payload),
           },
           env: runEnv,

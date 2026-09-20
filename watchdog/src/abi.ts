@@ -123,12 +123,18 @@ export interface MarketHead {
   resolved: boolean;
 }
 
-/// Times must be plausible seconds. V4 caps a market at MAX_DURATION = 7 days
-/// (d088ced L352-354) and writes these words only in createMarket (L389-390),
-/// so a value beyond the year 2100 is a provider answer, not chain state. The
-/// bound also keeps every time inside the range ECMAScript `Date` can format
-/// (about the year 275760), so no alert line can throw on one.
-const MAX_TIMESTAMP_S = 4_102_444_800; // 2100-01-01T00:00:00Z
+/// V4's own timing invariants, checked against the head the market was read
+/// at (review r7: a calendar cap would reject a valid market that spans it).
+/// createMarket (d088ced L349-354, values stored L382-390) requires
+/// closeTime > createdAt, createdAt < bettingCloseTime <= closeTime, and a
+/// duration of closeTime - createdAt within [MIN_DURATION, MAX_DURATION].
+/// A head that breaks them is a provider answer, not chain state, so the id is
+/// unread like any other bad answer.
+const MIN_DURATION_S = 5 * 60;
+const MAX_DURATION_S = 7 * 24 * 3600;
+/// Slack for a head read slightly before the market's creating block is
+/// visible to this provider: a market cannot be created in the future.
+const CREATED_AHEAD_SLACK_S = 300;
 
 /// V4 limits `question` to 1-200 bytes (d088ced L356); a missing market has 0.
 const MAX_QUESTION_BYTES = 200;
@@ -140,7 +146,7 @@ const MAX_QUESTION_BYTES = 200;
 /// discarded: only the canonical encoding Solidity produces is accepted
 /// (tuple at 0x20, question at tuple + 0x200 with its full padded tail, no
 /// trailing data) and every field must fit its declared Solidity width.
-export function decodeMarketHead(id: number, dataHex: string): MarketHead {
+export function decodeMarketHead(id: number, dataHex: string, headTimestamp?: number): MarketHead {
   const h = hexBody(dataHex);
   const total = h.length / 2;
   if (wordNum(h, 0) !== 32) throw new Error('abi: bad tuple offset');
@@ -167,23 +173,34 @@ export function decodeMarketHead(id: number, dataHex: string): MarketHead {
   const end = qAt + 32 + ceil32(qLen);
   if (end !== total) throw new Error('abi: length mismatch');
   zeroPadding(h, qAt + 32 + qLen, end);
-  const time = (k: number) => {
-    const v = wordNum(h, at(k));
-    if (v > MAX_TIMESTAMP_S) throw new Error(`abi: word ${k} is not a plausible timestamp`);
-    return v;
-  };
-  return {
+  const head: MarketHead = {
     id,
     mType: wordNum(h, at(1)),
     oracleRef: '0x' + word(h, at(2)),
-    // uint64 in Solidity, bounded here to plausible seconds.
-    createdAt: time(4),
-    closeTime: time(5),
-    bettingCloseTime: time(6),
+    // uint64 in Solidity, and a safe integer here.
+    createdAt: wordNum(h, at(4)),
+    closeTime: wordNum(h, at(5)),
+    bettingCloseTime: wordNum(h, at(6)),
     totalYes: wordBig(h, at(7)),
     totalNo: wordBig(h, at(8)),
     resolved: wordNum(h, at(12)) === 1,
   };
+  // A market that does not exist reads as all zeros; the caller decides what
+  // that means for the id it asked for.
+  if (head.closeTime === 0 && head.createdAt === 0 && head.bettingCloseTime === 0) return head;
+  assertV4Timing(head, headTimestamp);
+  return head;
+}
+
+/// The timing invariants V4 enforces at creation, checked against the block
+/// the head was read at when the caller knows it.
+export function assertV4Timing(m: MarketHead, headTimestamp?: number): void {
+  const duration = m.closeTime - m.createdAt;
+  if (duration < MIN_DURATION_S || duration > MAX_DURATION_S) throw new Error('abi: duration outside V4 limits');
+  if (m.bettingCloseTime <= m.createdAt || m.bettingCloseTime > m.closeTime) throw new Error('abi: betting close outside (createdAt, closeTime]');
+  if (headTimestamp !== undefined && m.createdAt > headTimestamp + CREATED_AHEAD_SLACK_S) {
+    throw new Error('abi: market created after the block it was read at');
+  }
 }
 
 /// A 32-byte word holding an address, returned checksum-free in lowercase.

@@ -89,6 +89,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Mirrored tables and parsers agree
+        run: pnpm check:mirrors
+
       - name: Run AA tests
         run: pnpm test:aa
 

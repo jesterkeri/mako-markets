@@ -21,7 +21,7 @@ import { closedMarket, encodeMarket, makeDeps, makeWorld, type FakeMarket, type 
 let n = 0;
 function freshState(): Deps['state'] {
   const s = env.WATCHDOG_STATE.get(env.WATCHDOG_STATE.idFromName(`far-future-${n++}`));
-  return { acquire: (a, b) => s.acquire(a, b), commit: (t, a, p) => s.commit(t, a, p) };
+  return { acquire: (a) => s.acquire(a), commit: (t, a, p) => s.commit(t, a, p) };
 }
 
 const FIVE_MIN = 300_000;
@@ -46,11 +46,34 @@ function farFuture(w: World, mType: number, ref: string): FakeMarket {
 
 describe('a time no V4 market can have', () => {
   it('is rejected by the decoder, so the id is unread like any other bad answer', () => {
-    expect(() => decodeMarketHead(1, encodeMarket({ mType: 1, ref: 'BTC:gt:1', createdAt: 1, closeTime: FAR, bettingCloseTime: FAR, yes: 0n, no: 0n, resolved: false }))).toThrow(/plausible timestamp/);
-    // The year 2100 bound, either side.
-    const ok = { mType: 1, ref: 'BTC:gt:1', createdAt: 1, closeTime: 4_102_444_800, bettingCloseTime: 4_102_444_800, yes: 0n, no: 0n, resolved: false };
-    expect(decodeMarketHead(1, encodeMarket(ok)).closeTime).toBe(4_102_444_800);
-    expect(() => decodeMarketHead(1, encodeMarket({ ...ok, closeTime: 4_102_444_801 }))).toThrow();
+    const far = { mType: 1, ref: 'BTC:gt:1', createdAt: FAR - 86_400, closeTime: FAR, bettingCloseTime: FAR, yes: 0n, no: 0n, resolved: false };
+    expect(() => decodeMarketHead(1, encodeMarket(far), 1_800_000_000)).toThrow(/created after the block/);
+  });
+
+  it('a valid market that spans the year 2100 is accepted (review r7: no calendar cap)', () => {
+    // Created 2099-12-31T23:58:00Z, closing five minutes later, in 2100.
+    const createdAt = Date.UTC(2099, 11, 31, 23, 58) / 1000;
+    const m = { mType: 1, ref: 'BTC:gt:1', createdAt, closeTime: createdAt + 300, bettingCloseTime: createdAt + 200, yes: 0n, no: 0n, resolved: false };
+    const head = decodeMarketHead(1, encodeMarket(m), createdAt + 10);
+    expect(head.closeTime).toBe(createdAt + 300);
+    expect(fmtUtc(head.closeTime)).toContain('2100-01-01');
+  });
+
+  it("rejects heads that break V4's own timing rules", () => {
+    const base = { mType: 1, ref: 'BTC:gt:1', createdAt: 1_800_000_000, closeTime: 1_800_000_000 + 86_400, bettingCloseTime: 1_800_000_000 + 43_200, yes: 0n, no: 0n, resolved: false };
+    const head = 1_800_000_100;
+    expect(decodeMarketHead(1, encodeMarket(base), head).closeTime).toBe(base.closeTime);
+    for (const [label, bad] of [
+      ['duration under 5 minutes', { ...base, closeTime: base.createdAt + 299, bettingCloseTime: base.createdAt + 100 }],
+      ['duration over 7 days', { ...base, closeTime: base.createdAt + 604_801 }],
+      ['betting close after close', { ...base, bettingCloseTime: base.closeTime + 1 }],
+      ['betting close at creation', { ...base, bettingCloseTime: base.createdAt }],
+      ['created after the head block', { ...base, createdAt: head + 301, closeTime: head + 301 + 86_400, bettingCloseTime: head + 301 + 43_200 }],
+    ] as const) {
+      expect(() => decodeMarketHead(1, encodeMarket(bad), head), label).toThrow();
+    }
+    // A market that does not exist still decodes as zeros.
+    expect(decodeMarketHead(9, encodeMarket(null), head).closeTime).toBe(0);
   });
 
   it('never makes a formatting or classification path throw', () => {

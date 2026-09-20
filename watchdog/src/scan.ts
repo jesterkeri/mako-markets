@@ -141,7 +141,7 @@ export interface PageOutcome {
 /// Reads the plan's ids at one block, one request in flight (F26). A failed
 /// request, a failed call inside aggregate3, a decode error, or a zero
 /// closeTime below N (a market cannot have one) all leave the id unread.
-export async function readPages(net: Net, url: string, mako: string, blockNumber: number, n: number, ids: number[]): Promise<PageOutcome> {
+export async function readPages(net: Net, url: string, mako: string, blockNumber: number, blockTimestamp: number, n: number, ids: number[]): Promise<PageOutcome> {
   const reads = new Map<number, MarketHead | null>();
   for (const id of ids) reads.set(id, null);
   const blockTag = '0x' + blockNumber.toString(16);
@@ -171,7 +171,7 @@ export async function readPages(net: Net, url: string, mako: string, blockNumber
         const data = datas[k];
         if (data === null) return;
         try {
-          const head = decodeMarketHead(id, data);
+          const head = decodeMarketHead(id, data, blockTimestamp);
           if (head.closeTime === 0 && id < n) return;
           reads.set(id, head);
         } catch {
@@ -272,7 +272,7 @@ export async function readPublicAtBlock(net: Net, publicUrl: string, mako: strin
         let head: MarketHead | null = null;
         if (data !== null) {
           try {
-            head = decodeMarketHead(id, data);
+            head = decodeMarketHead(id, data, d.finalizedTimestamp);
           } catch {
             head = null;
           }

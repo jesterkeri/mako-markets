@@ -168,13 +168,23 @@ describe('strict decoding agrees with viem on valid encodings', () => {
       const v = {
         creator: `0x${r(1 << 30).toString(16).padStart(40, '0')}` as `0x${string}`,
         mType: r(7), oracleRef: stringToHex(`BTC:gt:${r(99999)}`, { size: 32 }), question: 'q'.repeat(1 + r(200)),
-        createdAt: BigInt(1_700_000_000 + r(1e8)), closeTime: BigInt(1_700_000_000 + r(1e8)), bettingCloseTime: BigInt(1_700_000_000 + r(1e8)),
+        ...(() => {
+          // V4 timings: duration in [5 min, 7 days], betting close inside it.
+          const createdAt = 1_700_000_000 + r(1e8);
+          const duration = 300 + r(604_800 - 300);
+          const closeTime = createdAt + duration;
+          return {
+            createdAt: BigInt(createdAt),
+            closeTime: BigInt(closeTime),
+            bettingCloseTime: BigInt(createdAt + 1 + r(duration)),
+          };
+        })(),
         totalYes: BigInt(r(1e9)) * 10n ** 12n, totalNo: BigInt(r(1e9)), yesBettorCount: r(1000), noBettorCount: r(1000), outcome: r(4),
         resolved: r(2) === 1, creatorFeeClaimed: r(2) === 1, protocolFeeBpsSnapshot: r(500), creatorFeeBpsSnapshot: r(500),
       };
       const enc = encodeAbiParameters(tuple, [v]);
       const [back] = decodeAbiParameters(tuple, enc);
-      const h = decodeMarketHead(i, enc);
+      const h = decodeMarketHead(i, enc, Number(v.createdAt) + 1);
       expect(h).toEqual({
         id: i, mType: back.mType, oracleRef: back.oracleRef, createdAt: Number(back.createdAt), closeTime: Number(back.closeTime),
         bettingCloseTime: Number(back.bettingCloseTime), totalYes: back.totalYes, totalNo: back.totalNo, resolved: back.resolved,
