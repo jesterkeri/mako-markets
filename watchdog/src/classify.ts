@@ -22,6 +22,16 @@ export function fmtUtc(unixS: number): string {
   return d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 }
 
+/// Total, in milliseconds, for the run header and the crash report. A cron
+/// event always carries a valid scheduled time, but the crash guard is the
+/// last boundary before silence, so its own formatting must not throw
+/// (review r7).
+export function fmtIsoMs(ms: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return `ms ${ms}`;
+  return d.toISOString();
+}
+
 export function fmtAge(seconds: number): string {
   if (seconds < HOUR) return `${Math.floor(seconds / MIN)}m`;
   if (seconds < 48 * HOUR) return `${Math.floor(seconds / HOUR)}h`;

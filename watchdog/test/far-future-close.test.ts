@@ -120,11 +120,32 @@ describe('an unexpected throw still reaches Joshua', () => {
     expect(w.hc.pings).toHaveLength(1);
     expect(w.hc.pings[0].url).toMatch(/\/fail$/);
     expect(w.hc.pings[0].body).toContain('the run threw TypeError');
-    expect(w.hc.pings[0].body).toContain('nothing was committed');
+    expect(w.hc.pings[0].body).toContain('treat this run as incomplete');
     for (const text of [w.hc.pings[0].body, logs.join('\n')]) {
       expect(text).not.toContain('SECRET-KEY');
       expect(text).not.toContain('providerb.test');
     }
+  });
+
+  // Review r7: the guard is the last boundary before silence, so nothing it
+  // does itself may throw. Each of these would have escaped it before.
+  it('survives a hostile thrown value and an out-of-range scheduled time', async () => {
+    const hostile = { get name() { throw new Error('getter'); } };
+    const w1 = makeWorld();
+    const out1 = await runGuarded(makeDeps(w1, freshState()), Date.UTC(2026, 8, 20, 12, 0), async () => {
+      throw hostile;
+    });
+    expect(out1).toMatchObject({ kind: 'crashed', error: 'Error' });
+    expect(w1.hc.pings).toHaveLength(1);
+
+    const w2 = makeWorld();
+    const out2 = await runGuarded(makeDeps(w2, freshState()), Number.MAX_SAFE_INTEGER, async () => {
+      const e = new Error('x');
+      e.name = 'Ru\u0000nt\nimeError'.padEnd(200, '!');
+      throw e;
+    });
+    expect(out2).toMatchObject({ kind: 'crashed', error: 'RuntimeError' + '!'.repeat(64 - 12) });
+    expect(w2.hc.pings[0].body).toContain(`ms ${Number.MAX_SAFE_INTEGER}`);
   });
 
   it('a run that does not throw is returned untouched', async () => {

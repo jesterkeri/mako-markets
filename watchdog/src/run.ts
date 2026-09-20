@@ -6,7 +6,7 @@
 // Telegram -> commit -> Healthchecks.
 
 import { manifestLine, packCriticals, packNonCritical, pingHealthchecks, refundCommand, sendTelegram, type PingKind } from './alerts';
-import { applyFlap, classifyStuck, commandAllowed, creationFindings, fmtUsdc, unsupportedOracle } from './classify';
+import { applyFlap, classifyStuck, commandAllowed, creationFindings, fmtIsoMs, fmtUsdc, unsupportedOracle } from './classify';
 import {
   DIGEST_HOUR_UTC,
   ENVELOPE_N,
@@ -83,6 +83,21 @@ export interface RunReport {
 
 const PROBE_UNCLASSIFIED = /: (deadline|budget)$/;
 
+/// The thrown value's type name, defensively (review r7): a name getter that
+/// throws, a non-string name, or a long or non-printable name must not break
+/// the crash report itself. Only the type is reported, never the message.
+function errorName(err: unknown): string {
+  let raw: unknown;
+  try {
+    raw = (err as { name?: unknown } | null)?.name;
+  } catch {
+    return 'Error'; // a throwing getter
+  }
+  if (typeof raw !== 'string') return 'Error';
+  const clean = raw.replace(/[^\x20-\x7e]/g, '').trim().slice(0, 64);
+  return clean || 'Error';
+}
+
 /// A run must always end in exactly one Healthchecks request (r15 §5.5), and
 /// progress must never be thrown away by anything but a lost lease or the
 /// deadline (§5.3). A defect that throws would otherwise leave the check
@@ -97,11 +112,14 @@ export async function runGuarded(
   try {
     return await runner(deps, scheduledTime);
   } catch (err) {
-    const name = (err as { name?: string } | null)?.name ?? 'Error';
-    const iso = new Date(scheduledTime).toISOString();
+    const name = errorName(err);
+    const iso = fmtIsoMs(scheduledTime);
     const net = makeNet(deps.fetch, deps.now, deps.sleep, deps.now() + FETCH_TIMEOUT_MS, 1);
+    // Best-effort diagnosis, not a statement about state: a throw after the
+    // commit is possible, so this says the run is unreliable, not that it
+    // wrote nothing (review r7).
     const body = `mako-watchdog ${iso} CRASHED
-the run threw ${name} before it could report; nothing was committed
+the run threw ${name} and did not report; treat this run as incomplete
 ${manifestLine([], ['ds'])}`;
     deps.log(`[watchdog] ${iso} crashed: ${name}`);
     let accepted = false;
@@ -124,7 +142,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     httpRequests: 0, doCalls: 0, telegramMessages: [], telegramConfirmed: [], committed: false,
     payload: null, plan: null, healthchecksBody: '', s3Reasons: [],
   };
-  const iso = new Date(scheduledTime).toISOString();
+  const iso = fmtIsoMs(scheduledTime);
   const finish = async (kind: PingKind, body: string) => {
     report.ping = kind;
     report.healthchecksBody = body;

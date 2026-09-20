@@ -99,7 +99,7 @@ export interface World {
   /// Finalized block time for this run; tick() fixes it so both providers agree.
   finalizedTs?: number;
   telegram: {
-    mode: 'ok' | 'fail' | '429';
+    mode: 'ok' | 'fail' | '429' | 'garbage' | 'bad429';
     retryAfter: number;
     sent: string[];
     fail429Once?: boolean;
@@ -108,7 +108,9 @@ export interface World {
     /// Outcome per request ATTEMPT, consumed in order, so any pattern can be
     /// driven: ['fail', 'ok'] rejects the first message and accepts the second
     /// (review r6). Falls back to `mode` once the list runs out.
-    attempts?: ('ok' | 'fail' | '429')[];
+    /// `garbage` is a 200 whose body is not the JSON Telegram documents;
+    /// `bad429` is a 429 whose retry_after is not a number (review r7).
+    attempts?: ('ok' | 'fail' | '429' | 'garbage' | 'bad429')[];
     /// Attempts made this run, reset by the test between runs.
     attemptsMade?: number;
   };
@@ -247,6 +249,10 @@ export function makeFetch(w: World): typeof fetch {
         w.telegram.attemptsMade = i + 1;
         const outcome = w.telegram.attempts[i];
         if (outcome === 'fail') return new Response('{"ok":false}', { status: 500 });
+        if (outcome === 'garbage') return new Response('<html>gateway</html>', { status: 200 });
+        if (outcome === 'bad429') {
+          return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 'soon' } }), { status: 429 });
+        }
         if (outcome === '429') {
           return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: w.telegram.retryAfter } }), { status: 429 });
         }
@@ -256,6 +262,10 @@ export function makeFetch(w: World): typeof fetch {
         }
       }
       if (w.telegram.mode === 'fail') return new Response('{"ok":false}', { status: 500 });
+      if (w.telegram.mode === 'garbage') return new Response('<html>gateway</html>', { status: 200 });
+      if (w.telegram.mode === 'bad429') {
+        return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 'soon' } }), { status: 429 });
+      }
       if (w.telegram.okMessages !== undefined && w.telegram.sent.length >= w.telegram.okMessages) {
         return new Response('{"ok":false}', { status: 500 });
       }

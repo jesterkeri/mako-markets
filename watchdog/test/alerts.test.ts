@@ -80,6 +80,23 @@ describe('Telegram', () => {
     expect(r).toEqual([false]);
     expect(w.clock.t - t0).toBeLessThan(1000);
   });
+  // Review r7: both of these are "not confirmed", and neither may be read as
+  // delivered or turned into a wait.
+  it('a 200 whose body is not Telegram JSON is not a confirmation', async () => {
+    const w = makeWorld({ telegram: { mode: 'garbage', retryAfter: 1, sent: [] } });
+    const r = await sendTelegram(netFor(w), { token: 't', chatId: '1', dryRun: false, log: () => {} }, ['a']);
+    expect(r).toEqual([false]);
+    expect(w.telegram.sent).toEqual([]);
+    expect(w.log.filter((l) => l.startsWith('api.telegram.org')).length).toBe(1); // no retry
+  });
+  it('a 429 whose retry_after is not a number is not retried and does not wait', async () => {
+    const w = makeWorld({ telegram: { mode: 'bad429', retryAfter: 1, sent: [] } });
+    const t0 = w.clock.t;
+    const r = await sendTelegram(netFor(w), { token: 't', chatId: '1', dryRun: false, log: () => {} }, ['a']);
+    expect(r).toEqual([false]);
+    expect(w.clock.t - t0).toBeLessThan(1000);
+    expect(w.log.filter((l) => l.startsWith('api.telegram.org')).length).toBe(1);
+  });
   it('never makes more than 4 requests', async () => {
     const w = makeWorld({ telegram: { mode: '429', retryAfter: 1, sent: [] } });
     await sendTelegram(netFor(w), { token: 't', chatId: '1', dryRun: false, log: () => {} }, ['a', 'b', 'c', 'd']);
