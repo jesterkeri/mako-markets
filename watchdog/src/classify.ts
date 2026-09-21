@@ -32,6 +32,18 @@ export function fmtIsoMs(ms: number): string {
   return d.toISOString();
 }
 
+/// The line for a row kept because no independent source confirmed this run's
+/// head (review r10). The condition is repeated exactly as last confirmed, so
+/// an unconfirmed head cannot weaken it, and nothing is claimed about THIS
+/// run: no command was offered, and the condition's own age is as of the last
+/// confirmation, not now. Storing the rendered line alone made a reminder say
+/// "refund command below" in a message that carried no command.
+export function retainedLine(condition: string, staleForS: number, reason: 'unconfirmed' | 'deferred'): string {
+  const since = staleForS > 0 ? `, unconfirmed for ${fmtAge(staleForS)}` : '';
+  const why = reason === 'deferred' ? 'not re-checked this run (second-source budget)' : 'NOT CONFIRMED at this block';
+  return `${condition}: ${why}${since}, so no command this run; the text above is as last confirmed`;
+}
+
 export function fmtAge(seconds: number): string {
   if (seconds < HOUR) return `${Math.floor(seconds / MIN)}m`;
   if (seconds < 48 * HOUR) return `${Math.floor(seconds / HOUR)}h`;
@@ -59,7 +71,13 @@ export type Severity = 'none' | 'warn' | 'critical' | 'digest';
 
 export interface MarketVerdict {
   severity: Severity;
+  /// The full line to send: the condition, then what this run can say about
+  /// the remedy.
   line: string;
+  /// The condition alone, with no clause about this run. It is the part that
+  /// an unconfirmed head may not weaken (review r9), and the only part worth
+  /// repeating when a row is retained (review r10).
+  condition: string;
   command: boolean;
 }
 
@@ -74,7 +92,7 @@ export type CommandStatus = 'confirmed' | 'withheld' | 'deferred' | 'unchecked';
 /// the contract uses. A command is offered only when `command` is
 /// `confirmed`, whatever the table says (fail closed).
 export function classifyStuck(m: MarketHead, nowS: number, command: CommandStatus = 'unchecked'): MarketVerdict {
-  const none: MarketVerdict = { severity: 'none', line: '', command: false };
+  const none: MarketVerdict = { severity: 'none', line: '', condition: '', command: false };
   if (m.resolved || m.closeTime === 0 || nowS < m.closeTime) return none;
   const age = nowS - m.closeTime;
   const oneSided = isOneSided(m);
@@ -101,19 +119,19 @@ export function classifyStuck(m: MarketHead, nowS: number, command: CommandStatu
   const line = refundNote ? `${head}: ${refundNote}` : head;
 
   // Every two-sided market, any type, past close + 24h is critical (r15 §5.2).
-  if (!oneSided && pastGrace) return { severity: 'critical', line, command: false };
+  if (!oneSided && pastGrace) return { severity: 'critical', line, condition: head, command: false };
 
   if (m.mType === MARKET_TYPE.MAKO) {
-    return age >= 24 * HOUR ? { severity: 'digest', line, command: offer } : none;
+    return age >= 24 * HOUR ? { severity: 'digest', line, condition: head, command: offer } : none;
   }
   if (isSportsType(m.mType)) {
-    if (age >= 24 * HOUR) return { severity: 'critical', line, command: offer };
-    if (age >= 6 * HOUR) return { severity: 'warn', line, command: offer };
+    if (age >= 24 * HOUR) return { severity: 'critical', line, condition: head, command: offer };
+    if (age >= 6 * HOUR) return { severity: 'warn', line, condition: head, command: offer };
     return none;
   }
   // Price types, and any unknown type (which is also UO).
-  if (age >= HOUR) return { severity: 'critical', line, command: offer };
-  if (age >= 10 * MIN) return { severity: 'warn', line, command: offer };
+  if (age >= HOUR) return { severity: 'critical', line, condition: head, command: offer };
+  if (age >= 10 * MIN) return { severity: 'warn', line, condition: head, command: offer };
   return none;
 }
 

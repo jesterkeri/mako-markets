@@ -6,7 +6,7 @@
 // Telegram -> commit -> Healthchecks.
 
 import { manifestLine, packCriticals, packNonCritical, pingHealthchecks, refundCommand, sendTelegram, type PingKind } from './alerts';
-import { applyFlap, classifyStuck, commandAllowed, creationFindings, fmtIsoMs, fmtUsdc, unsupportedOracle } from './classify';
+import { applyFlap, classifyStuck, commandAllowed, creationFindings, fmtIsoMs, fmtUsdc, retainedLine, unsupportedOracle } from './classify';
 import {
   DIGEST_HOUR_UTC,
   ENVELOPE_N,
@@ -259,8 +259,14 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // reporting a one-sided market as two-sided so the line becomes "no safe
   // refund path" and it stops being a command candidate. Raising an alert on
   // one source is fine; weakening one is not.
-  const storedCritIds = [...new Set(snap.criticals.filter((c) => c.marketId !== null && reads.get(c.marketId)).map((c) => c.marketId as number))];
-  const recoveryOnlyIds = storedCritIds.filter((id) => !oneWay.has(id) && !commandSlate.has(id));
+  const warnMarketId = (key: string) => (key.startsWith('w:') ? Number(key.slice(2)) : null);
+  const storedAlertIds = [
+    ...new Set([
+      ...snap.criticals.filter((c) => c.marketId !== null && reads.get(c.marketId)).map((c) => c.marketId as number),
+      ...snap.warnings.map((w) => warnMarketId(w.key)).filter((id): id is number => id !== null && !!reads.get(id)),
+    ]),
+  ];
+  const recoveryOnlyIds = storedAlertIds.filter((id) => !oneWay.has(id) && !commandSlate.has(id));
   const toConfirm = [...oneWayIds, ...commandOnlyIds, ...recoveryOnlyIds];
   // Reserved shares per category, so sustained creation cannot starve commands
   // and a command backlog cannot stall discovery, the cursor or a recovery
@@ -308,15 +314,36 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
 
   // 5. Classification.
   const crit = new Map<string, CriticalRow>();
-  const keepCrit = (key: string, line: string, marketId: number | null, code: string | null) => {
+  /// `condition` is the part an unconfirmed head may not weaken; it is stored
+  /// with the scheduled time so a later retained run can repeat it truthfully.
+  /// Check-level rows pass none: they are recomputed from the probes each run.
+  const keepCrit = (key: string, line: string, marketId: number | null, code: string | null, condition: string | null = null) => {
     const p = prevCrit.get(key);
-    crit.set(key, { key, since: p?.since ?? scheduledTime, lastDeliveredAt: p?.lastDeliveredAt ?? null, line, marketId, code, lastCommandAt: p?.lastCommandAt ?? null });
+    crit.set(key, {
+      key,
+      since: p?.since ?? scheduledTime,
+      lastDeliveredAt: p?.lastDeliveredAt ?? null,
+      line,
+      condition,
+      confirmedAt: condition === null ? null : scheduledTime,
+      marketId,
+      code,
+      lastCommandAt: p?.lastCommandAt ?? null,
+    });
   };
   const warn = new Map<string, WarningRow>();
-  const keepWarn = (key: string, line: string) => {
+  const keepWarn = (key: string, line: string, condition: string | null = null) => {
     const p = prevWarn.get(key);
     // A warning is announced once; its text may change (the age grows) without a new message.
-    warn.set(key, { key, since: p?.since ?? scheduledTime, deliveredAt: p?.deliveredAt ?? null, line, lastCommandAt: p?.lastCommandAt ?? null });
+    warn.set(key, {
+      key,
+      since: p?.since ?? scheduledTime,
+      deliveredAt: p?.deliveredAt ?? null,
+      line,
+      condition,
+      confirmedAt: condition === null ? null : scheduledTime,
+      lastCommandAt: p?.lastCommandAt ?? null,
+    });
   };
 
   // Market-level rows are kept AS THEY WERE when the market was not read, and
@@ -328,17 +355,43 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // and both are invisible to the reader.
   const retainedKeys = new Set<string>();
   const retainedCrit = new Set<number>();
+  /// A row kept because this run had no confirmed head for it. When the market
+  /// was READ but not confirmed, the line is re-rendered from the stored
+  /// condition so it promises nothing about this run and says how long it has
+  /// gone unconfirmed (review r10). When the market was not read at all, the
+  /// row is untouched, as before.
+  /// Rows whose market WAS read this run but could not be verified. Counted so
+  /// the Telegram header says so even when their own lines do not fit (the
+  /// adversary's secondary finding on r9: the stored Healthchecks body is not
+  /// visible on a success ping).
+  let unverified = 0;
+  const retain = <T extends { key: string; line: string; condition: string | null; confirmedAt: number | null }>(row: T, read: boolean, id: number): T => {
+    if (!read || row.condition === null) return row;
+    unverified++;
+    const staleFor = row.confirmedAt === null ? 0 : Math.max(0, Math.floor((scheduledTime - row.confirmedAt) / 1000));
+    // Budget deferral is not a provider failure, and must not read like one.
+    const reason = confirmation.deferred.includes(id) ? 'deferred' : 'unconfirmed';
+    return { ...row, line: retainedLine(row.condition, staleFor, reason) };
+  };
   for (const c of snap.criticals) {
     if (c.marketId === null) continue;
-    if (!reads.get(c.marketId) || !confirmation.confirmed.has(c.marketId)) {
-      crit.set(c.key, c);
+    const read = !!reads.get(c.marketId);
+    if (!read || !confirmation.confirmed.has(c.marketId)) {
+      crit.set(c.key, retain(c, read, c.marketId));
       retainedKeys.add(c.key);
       retainedCrit.add(c.marketId);
     }
   }
   for (const w of snap.warnings) {
-    const id = w.key.startsWith('w:') ? Number(w.key.slice(2)) : null;
-    if (id !== null && !reads.get(id)) warn.set(w.key, w);
+    const id = warnMarketId(w.key);
+    if (id === null) continue;
+    const read = !!reads.get(id);
+    // Same rule for warnings (the adversary pass on r9): a warning can carry a
+    // refund command too, so an unconfirmed head must not clear or rewrite one.
+    if (!read || !confirmation.confirmed.has(id)) {
+      warn.set(w.key, retain(w, read, id));
+      retainedKeys.add(w.key);
+    }
   }
   const commandCritical: number[] = [];
   const commandWarn: number[] = [];
@@ -347,19 +400,24 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     if (!m) continue;
     const v = classifyStuck(m, nowS, commandAllowed(m, nowS) ? commandStatus(id) : 'unchecked');
     if (v.severity === 'critical') {
-      // A retained row keeps its confirmed text: this head may not rewrite it.
-      if (!retainedKeys.has(`m:${id}`)) keepCrit(`m:${id}`, v.line, id, null);
+      // A retained row keeps its confirmed condition: this head may not
+      // rewrite it. Raising is not weakening, so a critical does supersede a
+      // retained warning for the same market.
+      if (!retainedKeys.has(`m:${id}`)) keepCrit(`m:${id}`, v.line, id, null, v.condition);
+      warn.delete(`w:${id}`);
+      retainedKeys.delete(`w:${id}`);
       if (v.command) commandCritical.push(id);
     } else if (retainedCrit.has(id)) {
       // Its critical was retained for want of a second source, so do not also
       // report the same market as a lesser thing on the same unconfirmed head.
     } else if (v.severity === 'warn' || v.severity === 'digest') {
-      keepWarn(`w:${id}`, v.line);
+      if (!retainedKeys.has(`w:${id}`)) keepWarn(`w:${id}`, v.line, v.condition);
       if (v.command) commandWarn.push(id);
       if (v.severity === 'digest') digestLines.push(v.line);
     }
     const uo = unsupportedOracle(m, nowS);
-    if (uo && !retainedKeys.has(`u:${id}`)) keepCrit(`u:${id}`, uo, id, null);
+    // UO's line is a condition on its own: it promises no action.
+    if (uo && !retainedKeys.has(`u:${id}`)) keepCrit(`u:${id}`, uo, id, null, uo);
   }
   // Commands only ever for one-sided markets past close + 24h, confirmed by
   // the public RPC at the same block (I7).
@@ -469,7 +527,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const cmdIds = commandCritical.filter((id) => crit.has(`m:${id}`));
   if (dueCrit.length || cmdIds.length) {
     critPack = packCriticals(
-      `MAKO WATCHDOG: ${dueCrit.length} critical due, ${critList.length} open${cmdIds.length ? `, ${cmdIds.length} refund command${cmdIds.length > 1 ? 's' : ''}` : ''} (block ${d?.finalizedBlock ?? '?'})`,
+      `MAKO WATCHDOG: ${dueCrit.length} critical due, ${critList.length} open${cmdIds.length ? `, ${cmdIds.length} refund command${cmdIds.length > 1 ? 's' : ''}` : ''}${unverified ? `, ${unverified} not re-checked` : ''} (block ${d?.finalizedBlock ?? '?'})`,
       dueCrit.map((c) => ({ key: c.key, line: c.line })),
       cmdIds.length ? refundCommand(env.makoAddress, cmdIds) : null,
       manifest,

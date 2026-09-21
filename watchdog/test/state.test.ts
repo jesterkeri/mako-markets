@@ -141,8 +141,8 @@ describe('state round trip', () => {
     if (!a.ok) throw new Error('A');
     const p = payload(a.snapshot, 86, {
       checks: [{ code: 'nc', state: 'fail', since: T0, observed: 'fail', streak: 0, detail: 'comments API: http 500' }],
-      criticals: [{ key: 'm:78', since: T0, lastDeliveredAt: null, line: '#78 ...', marketId: 78, code: null, lastCommandAt: T0 }],
-      warnings: [{ key: 'bal', since: T0, deliveredAt: T0, line: 'low', lastCommandAt: null }],
+      criticals: [{ key: 'm:78', since: T0, lastDeliveredAt: null, line: '#78 ...', condition: '#78 ...', confirmedAt: T0, marketId: 78, code: null, lastCommandAt: T0 }],
+      warnings: [{ key: 'bal', since: T0, deliveredAt: T0, line: 'low', condition: null, confirmedAt: null, lastCommandAt: null }],
       notes: [{ key: 'bootstrap', createdAt: T0, text: 'started' }],
       resolvedBits: 'ff01',
       auditAppend: [{ marketId: 90, block: 5, discoveredAt: T0 }],

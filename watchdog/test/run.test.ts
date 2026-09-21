@@ -604,9 +604,16 @@ describe('clearing a critical needs the second source (review r8)', () => {
     w.markets = [{ ...oneSided, no: 1n }];
     w.publicMarkets = [oneSided];
     const r2 = await tick(w, state);
-    const line = r2.payload!.criticals.find((c) => c.key === 'm:0')!.line;
-    expect(line).toContain('refund command'); // the confirmed text is kept
-    expect(line).not.toContain('no safe refund path'); // and not rewritten
+    const row = r2.payload!.criticals.find((c) => c.key === 'm:0')!;
+    // The confirmed CONDITION is kept, so the false "two-sided" reading cannot
+    // replace it (review r9) ...
+    expect(row.condition).toContain('one-sided');
+    expect(row.line).toContain('one-sided');
+    expect(row.line).not.toContain('no safe refund path');
+    // ... and the line promises nothing about this run (review r10).
+    expect(row.line).toContain('NOT CONFIRMED at this block');
+    expect(row.line).not.toContain('refund command below');
+    expect(w.telegram.sent.join('\n')).not.toContain('cast send');
     // The market was re-read and the disagreement is reported, not accepted.
     expect(r2.failed).toContain('S1');
     expect(r2.healthchecksBody).toContain('providers disagree at the same block');
@@ -617,6 +624,54 @@ describe('clearing a critical needs the second source (review r8)', () => {
     w.publicMarkets = undefined;
     await tick(w, state);
     expect(commandIdsIn(w.telegram.sent.join('\n'))).toEqual([0]);
+  });
+
+  it('a stored WARNING is protected the same way: an unconfirmed head cannot clear it', async () => {
+    // The adversary pass on r9 flagged this as unproven scope: warnings can
+    // carry a refund command too, so r9's principle applies to them.
+    const w = makeWorld();
+    const state = freshState();
+    const warnMarket = closedMarket(1, 'LINK:gt:20', nowS(w), 20 * 60, 1_000_000n, 0n);
+    w.markets = [warnMarket];
+    const r1 = await tick(w, state);
+    expect(r1.payload!.warnings.map((x) => x.key)).toEqual(['w:0']);
+
+    // Provider B alone says it resolved. The public RPC says otherwise.
+    w.markets = [{ ...warnMarket, resolved: true, outcome: 1 }];
+    w.publicMarkets = [warnMarket];
+    const r2 = await tick(w, state);
+    expect(r2.payload!.warnings.map((x) => x.key)).toEqual(['w:0']);
+    expect(r2.payload!.warnings[0].line).toContain('NOT CONFIRMED at this block');
+    expect(r2.failed).toContain('S1');
+
+    // Both sources agree it resolved: now it clears.
+    w.publicMarkets = undefined;
+    const r3 = await tick(w, state);
+    expect(r3.payload!.warnings.map((x) => x.key)).toEqual([]);
+  });
+
+  it('a row the confirmation budget could not reach says so, and does not blame the provider', async () => {
+    // The adversary's secondary finding: past the 200-id budget some stored
+    // rows go unverified. They must say which kind of gap it was, in Telegram,
+    // not only in the Healthchecks body a success ping never shows.
+    const w = makeWorld();
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = Array.from({ length: 250 }, () => oneSided);
+    await tick(w, state);
+    for (let i = 0; i < 50; i++) w.markets.push(openMarket(1, 'BTC:gt:1', w));
+    w.clock.t += 6 * 3600_000; // every reminder is due
+    w.telegram.sent = [];
+    const r = await tick(w, state);
+    const deferredRows = r.payload!.criticals.filter((c) => c.line.includes('not re-checked this run'));
+    expect(deferredRows.length).toBeGreaterThan(0); // the budget really did run out
+    for (const c of deferredRows) {
+      expect(c.line).not.toContain('NOT CONFIRMED'); // budget, not a provider failure
+      expect(c.line).not.toContain('refund command below');
+    }
+    // And it reaches Joshua, not just the stored body: at 250 criticals most
+    // lines do not fit, so the count goes in the header, which always does.
+    expect(w.telegram.sent.join('\n')).toMatch(/\d+ not re-checked \(block/);
   });
 
   it('re-confirming stored criticals costs budget but cannot starve the cursor', async () => {
@@ -803,7 +858,10 @@ describe('one-way state needs the second source (review r2)', () => {
     expect(r.payload!.auditAppend.map((a) => a.marketId)).toEqual([200]); // the transition went first
     expect(r.effective).toBe(true); // only command deferral remains, which is allowed
     const deferred = r.payload!.criticals.find((c) => c.key === 'm:199')!;
-    expect(deferred.line).toContain('refund command in a later run');
+    // Whether it was re-checked this run or not, its line never claims a
+    // command it did not get (review r10), and it is not marked delivered.
+    expect(deferred.line).not.toContain('refund command below');
+    expect(deferred.line).toMatch(/refund command in a later run|not re-checked this run|NOT CONFIRMED/);
     expect(deferred.lastDeliveredAt).not.toBe(sched); // not marked delivered: still due
     // Every one of the 200 gets its command within a bounded number of runs,
     // longest unserved first (review r4).
