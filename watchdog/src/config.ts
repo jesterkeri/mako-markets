@@ -48,6 +48,19 @@ export const FINALIZED_MAX_LAG_BLOCKS = 1_000;
 /// and before any refund command. One request of 4 x 50 ids per run; more is
 /// deferred to later runs (a large bootstrap is staged this way).
 export const CONFIRM_IDS_PER_RUN = 200;
+/// How long a stored alert may go without an independent re-read before the
+/// run stops calling itself effective (slice-1 review r10).
+///
+/// This is a backstop for rotation being BROKEN, not a bound on ordinary
+/// queueing, so it sits well above the worst case a healthy queue produces.
+/// That worst case: at the 2,000-market envelope the recovery category's
+/// reserved share is at least floor(200/3) = 66 ids a run, so every stored
+/// alert is re-read within ceil(2000/66) = 31 runs, about 2 h 35 m at the
+/// 5-minute cadence. 24 hours is roughly ten times that, so tripping it means
+/// the queue is not rotating or the second source has been failing all day,
+/// either of which the dead-man switch should hear about. A row merely waiting
+/// its turn never trips it.
+export const STALE_ALERT_MS = 24 * 3600_000;
 
 /// Refund commands offered in one run. The command is meant to be copied and
 /// run, so the list stays short; the rest keep their alerts due and are

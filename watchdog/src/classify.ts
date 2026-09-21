@@ -38,9 +38,15 @@ export function fmtIsoMs(ms: number): string {
 /// run: no command was offered, and the condition's own age is as of the last
 /// confirmation, not now. Storing the rendered line alone made a reminder say
 /// "refund command below" in a message that carried no command.
-export function retainedLine(condition: string, staleForS: number, reason: 'unconfirmed' | 'deferred'): string {
-  const since = staleForS > 0 ? `, unconfirmed for ${fmtAge(staleForS)}` : '';
+/// `staleForS` is null when no independent source has EVER confirmed this
+/// condition: provider B alone reported it, which the alert-only policy allows,
+/// but the line must not then claim the text was confirmed (review r10).
+export function retainedLine(condition: string, staleForS: number | null, reason: 'unconfirmed' | 'deferred'): string {
   const why = reason === 'deferred' ? 'not re-checked this run (second-source budget)' : 'NOT CONFIRMED at this block';
+  if (staleForS === null) {
+    return `${condition}: ${why}; reported by one provider and NEVER independently confirmed, so no command`;
+  }
+  const since = staleForS > 0 ? `, unconfirmed for ${fmtAge(staleForS)}` : '';
   return `${condition}: ${why}${since}, so no command this run; the text above is as last confirmed`;
 }
 

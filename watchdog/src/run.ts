@@ -17,6 +17,7 @@ import {
   REMINDER_MS,
   RESOLVER_BALANCE_WARN_WEI,
   RUN_DEADLINE_MS,
+  STALE_ALERT_MS,
 } from './config';
 import type { MarketHead } from './abi';
 import { applyDiscovery, bitsFromHex, bitsToHex, formatRanges, transitionCandidates } from './discovery';
@@ -260,12 +261,24 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // refund path" and it stops being a command candidate. Raising an alert on
   // one source is fine; weakening one is not.
   const warnMarketId = (key: string) => (key.startsWith('w:') ? Number(key.slice(2)) : null);
-  const storedAlertIds = [
-    ...new Set([
-      ...snap.criticals.filter((c) => c.marketId !== null && reads.get(c.marketId)).map((c) => c.marketId as number),
-      ...snap.warnings.map((w) => warnMarketId(w.key)).filter((id): id is number => id !== null && !!reads.get(id)),
-    ]),
+  const storedAlertRows: { id: number; confirmedAt: number | null }[] = [
+    ...snap.criticals.filter((c) => c.marketId !== null && reads.get(c.marketId)).map((c) => ({ id: c.marketId as number, confirmedAt: c.confirmedAt })),
+    ...snap.warnings
+      .map((w) => ({ id: warnMarketId(w.key), confirmedAt: w.confirmedAt }))
+      .filter((r): r is { id: number; confirmedAt: number | null } => r.id !== null && !!reads.get(r.id)),
   ];
+  /// Longest unverified first, the same fairness rule refund commands use
+  /// (review r4), keyed on when each row's condition was last independently
+  /// confirmed. `allocateConfirmations` takes a PREFIX of each category, so
+  /// without an order that moves, the same ids were re-read every run and the
+  /// tail could stay stale for ever (review r10). A row just confirmed sorts
+  /// last next run, so the queue rotates with no extra cursor to persist.
+  const oldestFirst = new Map<number, number>();
+  for (const r of storedAlertRows) {
+    const at = r.confirmedAt ?? 0; // never confirmed goes first
+    oldestFirst.set(r.id, Math.min(oldestFirst.get(r.id) ?? at, at));
+  }
+  const storedAlertIds = [...oldestFirst.keys()].sort((a, b) => (oldestFirst.get(a) as number) - (oldestFirst.get(b) as number) || a - b);
   const recoveryOnlyIds = storedAlertIds.filter((id) => !oneWay.has(id) && !commandSlate.has(id));
   const toConfirm = [...oneWayIds, ...commandOnlyIds, ...recoveryOnlyIds];
   // Reserved shares per category, so sustained creation cannot starve commands
@@ -317,6 +330,12 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   /// `condition` is the part an unconfirmed head may not weaken; it is stored
   /// with the scheduled time so a later retained run can repeat it truthfully.
   /// Check-level rows pass none: they are recomputed from the probes each run.
+  /// `confirmedAt` is the time the condition was rendered from a head an
+  /// INDEPENDENT source confirmed, and null while only provider B has seen it
+  /// (review r10: the alert-only policy may raise a row from one source, but a
+  /// later run must not then describe it as "last confirmed"). It is also the
+  /// rotation key for re-reads, so it must mean exactly this.
+  const confirmedNow = (marketId: number | null) => marketId !== null && confirmation.confirmed.has(marketId);
   const keepCrit = (key: string, line: string, marketId: number | null, code: string | null, condition: string | null = null) => {
     const p = prevCrit.get(key);
     crit.set(key, {
@@ -325,14 +344,14 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       lastDeliveredAt: p?.lastDeliveredAt ?? null,
       line,
       condition,
-      confirmedAt: condition === null ? null : scheduledTime,
+      confirmedAt: condition === null ? null : confirmedNow(marketId) ? scheduledTime : (p?.confirmedAt ?? null),
       marketId,
       code,
       lastCommandAt: p?.lastCommandAt ?? null,
     });
   };
   const warn = new Map<string, WarningRow>();
-  const keepWarn = (key: string, line: string, condition: string | null = null) => {
+  const keepWarn = (key: string, line: string, condition: string | null = null, marketId: number | null = null) => {
     const p = prevWarn.get(key);
     // A warning is announced once; its text may change (the age grows) without a new message.
     warn.set(key, {
@@ -341,7 +360,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       deliveredAt: p?.deliveredAt ?? null,
       line,
       condition,
-      confirmedAt: condition === null ? null : scheduledTime,
+      confirmedAt: condition === null ? null : confirmedNow(marketId) ? scheduledTime : (p?.confirmedAt ?? null),
       lastCommandAt: p?.lastCommandAt ?? null,
     });
   };
@@ -368,7 +387,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const retain = <T extends { key: string; line: string; condition: string | null; confirmedAt: number | null }>(row: T, read: boolean, id: number): T => {
     if (!read || row.condition === null) return row;
     unverified++;
-    const staleFor = row.confirmedAt === null ? 0 : Math.max(0, Math.floor((scheduledTime - row.confirmedAt) / 1000));
+    const staleFor = row.confirmedAt === null ? null : Math.max(0, Math.floor((scheduledTime - row.confirmedAt) / 1000));
     // Budget deferral is not a provider failure, and must not read like one.
     const reason = confirmation.deferred.includes(id) ? 'deferred' : 'unconfirmed';
     return { ...row, line: retainedLine(row.condition, staleFor, reason) };
@@ -411,7 +430,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       // Its critical was retained for want of a second source, so do not also
       // report the same market as a lesser thing on the same unconfirmed head.
     } else if (v.severity === 'warn' || v.severity === 'digest') {
-      if (!retainedKeys.has(`w:${id}`)) keepWarn(`w:${id}`, v.line, v.condition);
+      if (!retainedKeys.has(`w:${id}`)) keepWarn(`w:${id}`, v.line, v.condition, id);
       if (v.command) commandWarn.push(id);
       if (v.severity === 'digest') digestLines.push(v.line);
     }
@@ -650,7 +669,15 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   // (review r3); only refund-command deferral may leave a run effective.
   const oneWayDeferred = confirmation.deferred.some((id) => oneWay.has(id));
   const bootstrapDone = disc?.bootstrapped ?? meta.resolvedBootstrapped;
-  if (!allRead || !allConfirmed || oneWayDeferred || !bootstrapDone) failed.push('S1');
+  // Rotation bounds how long a stored alert waits to be re-read (review r10).
+  // Past that bound the queue is not rotating, it is stuck, and a stuck queue
+  // must not ride a success ping: a row nobody has re-read may already be
+  // describing a market that recovered.
+  const staleAlerts = [...payload.criticals, ...payload.warnings].filter(
+    (r) => r.condition !== null && r.confirmedAt !== null && scheduledTime - r.confirmedAt > STALE_ALERT_MS,
+  ).length;
+  const staleDetail = staleAlerts ? `${staleAlerts} stored alert${staleAlerts > 1 ? 's' : ''} not re-read within ${STALE_ALERT_MS / 3600_000} h` : '';
+  if (!allRead || !allConfirmed || oneWayDeferred || !bootstrapDone || staleAlerts) failed.push('S1');
   if (observations.some((o) => o.obs === 'fail' && PROBE_UNCLASSIFIED.test(o.detail))) failed.push('S2');
   const staleNonCrit =
     payload.warnings.some((w) => w.deliveredAt === null && scheduledTime - w.since > NONCRITICAL_MAX_WAIT_MS) ||
@@ -676,6 +703,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   if (!commitOk) runCodes.push('ds');
   const body = [
     `mako-watchdog ${iso} ${report.effective ? 'effective' : 'INEFFECTIVE ' + failed.join(',')}${s3.length ? ' (' + s3.join('; ') + ')' : ''}`,
+    ...(staleDetail ? [staleDetail] : []),
     manifestLine(critMarketIds, runCodes),
     d
       ? `block ${d.finalizedBlock} (latest ${d.latestBlock}), markets ${d.nextMarketId}, read ${countRead(reads)}/${plan?.ids.length ?? 0}, cursor ${meta.creationCursor}->${newCursor}, audit queue ${snap.auditQueueSize + payload.auditAppend.length}`

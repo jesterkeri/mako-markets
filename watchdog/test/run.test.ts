@@ -674,6 +674,74 @@ describe('clearing a critical needs the second source (review r8)', () => {
     expect(w.telegram.sent.join('\n')).toMatch(/\d+ not re-checked \(block/);
   });
 
+  // Review r10 MAJOR: allocateConfirmations takes a PREFIX of each category,
+  // so a fixed order meant the same ids were re-read every run and the tail
+  // could stay stale for ever while the run still reported success. The order
+  // is now longest-unverified-first, keyed on when each row was last
+  // independently confirmed.
+  //
+  // The condition here changes WITHOUT a resolution, deliberately: a resolved
+  // market is a one-way transition and gets confirmed through that category
+  // whatever the recovery order does, which would make these tests pass
+  // against the very defect they are meant to catch.
+  describe('recovery re-reads rotate', () => {
+    /// `count` markets that become one-sided warnings (closed 20 minutes ago),
+    /// bootstrapped and delivered.
+    async function withStoredWarnings(count: number) {
+      const w = makeWorld();
+      const state = freshState();
+      const warnMarket = closedMarket(1, 'LINK:gt:20', nowS(w), 20 * 60, 1_000_000n, 0n);
+      w.markets = Array.from({ length: count }, () => warnMarket);
+      const r = await tick(w, state);
+      expect(r.payload!.warnings.length).toBe(count);
+      for (const x of r.payload!.warnings) expect(x.condition).toContain('one-sided');
+      return { w, state };
+    }
+
+    /// Both providers now see this market as two-sided. The stored condition
+    /// may only follow once the id is independently re-read.
+    function bothSourcesSeeTwoSided(w: World, id: number) {
+      w.markets[id] = { ...w.markets[id], no: 1_000_000n };
+    }
+
+    async function runsUntilConditionUpdates(w: World, state: Deps['state'], id: number, cap: number) {
+      for (let runs = 1; runs <= cap; runs++) {
+        const r = await tick(w, state);
+        const row = r.payload!.warnings.find((x) => x.key === `w:${id}`);
+        if (row && row.condition?.includes('two-sided')) return runs;
+      }
+      return Infinity;
+    }
+
+    it('re-reads a NON-PREFIX id at 201 stored alerts, which a fixed prefix never reaches', async () => {
+      const { w, state } = await withStoredWarnings(201);
+      bothSourcesSeeTwoSided(w, 200); // last in id order
+      expect(await runsUntilConditionUpdates(w, state, 200, 4)).toBeLessThanOrEqual(4);
+    });
+
+    it('re-reads a middle id at the 2,000-market envelope within the rotation bound, with no critical message to carry it', async () => {
+      const { w, state } = await withStoredWarnings(2000);
+      bothSourcesSeeTwoSided(w, 1000);
+      // Every row is an already-delivered warning, so no critical message is
+      // built at all: the run's own verdict is the only signal, which is why
+      // the bound has to hold on its own.
+      expect(await runsUntilConditionUpdates(w, state, 1000, 31)).toBeLessThanOrEqual(31);
+    });
+
+    it('serves the longest-unverified rows next, not the same prefix again', async () => {
+      const { w, state } = await withStoredWarnings(300);
+      const r2 = await tick(w, state); // 200 of 300 re-read
+      const at2 = new Map(r2.payload!.warnings.map((x) => [x.key, x.confirmedAt]));
+      const fresh2 = [...at2.entries()].filter(([, at]) => at !== null).length;
+      expect(fresh2).toBeGreaterThan(0);
+      const r3 = await tick(w, state);
+      const at3 = new Map(r3.payload!.warnings.map((x) => [x.key, x.confirmedAt]));
+      // The tail a fixed prefix would never reach is re-read on the next run.
+      expect(at3.get('w:299')).not.toBe(at2.get('w:299'));
+      expect(at3.get('w:299')).not.toBe(null);
+    });
+  });
+
   it('re-confirming stored criticals costs budget but cannot starve the cursor', async () => {
     const w = makeWorld();
     const state = freshState();

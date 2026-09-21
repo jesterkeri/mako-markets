@@ -75,6 +75,43 @@ async function reminderAfterThePublicRpcDies(): Promise<{ text: string; body: st
   return { text, body: r2.healthchecksBody };
 }
 
+// Review r10 MINOR: the alert-only policy may raise a row from provider B
+// alone, but a later run must not then describe that text as "last confirmed".
+// `confirmedAt` is the time the condition was rendered from an INDEPENDENTLY
+// confirmed head, and stays null until one exists.
+describe('a row no second source has ever seen says so', () => {
+  it('a warning raised from provider B alone is never described as last confirmed', async () => {
+    const w = makeWorld();
+    const state = freshState();
+    // Bootstrap with the market still OPEN, so the bootstrap's own all-ids
+    // comparison is not what confirms the condition that comes later.
+    const created = nowS(w) - 600;
+    w.markets = [{ mType: 1, ref: 'LINK:gt:20', createdAt: created, closeTime: created + 1800, bettingCloseTime: created + 900, yes: 1_000_000n, no: 0n, resolved: false }];
+    const r1 = await tick(w, state);
+    expect(r1.payload!.warnings.map((x) => x.key)).toEqual([]);
+    expect(r1.payload!.meta.resolvedBootstrapped).toBe(true);
+
+    // It closes and crosses the warning threshold. Nothing asks the public RPC
+    // about it: it is below the creation cursor, it has not resolved, and it is
+    // not past close + 24 h so no command is due.
+    w.clock.t += 45 * 60_000;
+    const r2 = await tick(w, state);
+    const raised = r2.payload!.warnings.find((x) => x.key === 'w:0')!;
+    expect(raised.condition).toContain('one-sided');
+    expect(raised.confirmedAt).toBe(null); // provider B only
+
+    // The public RPC is unreachable on the next run, so the row is retained.
+    // Only one tick on, so it is still inside the warning window rather than
+    // having grown into a critical.
+    w.publicDown = true;
+    const r3 = await tick(w, state);
+    const row = r3.payload!.warnings.find((x) => x.key === 'w:0')!;
+    expect(row.confirmedAt).toBe(null);
+    expect(row.line).toContain('NEVER independently confirmed');
+    expect(row.line).not.toContain('as last confirmed');
+  });
+});
+
 describe('a retained critical line must not describe a run that did not happen', () => {
   it('never says "refund command below" in a message that carries no command', async () => {
     const { text } = await reminderAfterThePublicRpcDies();
