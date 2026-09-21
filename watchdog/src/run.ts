@@ -146,12 +146,18 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     payload: null, plan: null, healthchecksBody: '', s3Reasons: [],
   };
   const iso = fmtIsoMs(scheduledTime);
-  const finish = async (kind: PingKind, body: string) => {
+  /// The run's single Healthchecks request (r15 section 5.5). `pastDeadline`
+  /// gives it a FRESH net: the run's own net refuses to send once the deadline
+  /// has passed, and a deadline-stopped run is exactly the run the dead-man
+  /// switch exists to report, so it must still be able to speak (found while
+  /// deploying, 2026-09-21).
+  const finish = async (kind: PingKind, body: string, pastDeadline = false) => {
     report.ping = kind;
     report.healthchecksBody = body;
-    const r = await pingHealthchecks(net, env.healthchecksUrl, kind, body, env.dryRun, deps.log);
+    const pingNet = pastDeadline ? makeNet(deps.fetch, deps.now, deps.sleep, deps.now() + FETCH_TIMEOUT_MS, 1) : net;
+    const r = await pingHealthchecks(pingNet, env.healthchecksUrl, kind, body, env.dryRun, deps.log);
     report.pingAccepted = r.accepted;
-    report.httpRequests = net.requests;
+    report.httpRequests = net.requests + (pastDeadline ? pingNet.requests : 0);
     deps.log(`[watchdog] ${iso} ${report.kind} ${report.effective ? 'effective' : 'ineffective ' + report.failed.join(',')} ping=${kind}${r.accepted ? '' : ' (not accepted: ' + r.reason + ')'}`);
     return report;
   };
@@ -644,9 +650,8 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   if (net.now() >= net.deadlineAt) {
     report.kind = 'deadline';
     report.failed = ['S6'];
-    report.httpRequests = net.requests;
     deps.log(`[watchdog] ${iso} deadline passed before commit; nothing committed`);
-    return report;
+    return finish('fail', `mako-watchdog ${iso} INEFFECTIVE S6\nthe 200 s run deadline passed before the commit; nothing was committed\n${manifestLine([], ['ds'])}`, true);
   }
   let commitOk = false;
   try {
@@ -721,10 +726,20 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     ...[...critList].sort(critOrder).map((c) => c.line),
   ].join('\n');
   const kind: PingKind = report.effective ? 'success' : !criticalsDelivered ? 'fail' : 'log';
+  // A slow run still reports. Skipping the ping here made the dead-man switch
+  // silent in the one case it is for, and left no log line either, which is
+  // how it stayed invisible through eleven review rounds.
   if (deps.now() >= net.deadlineAt) {
     report.kind = 'deadline';
-    report.httpRequests = net.requests;
-    return report;
+    report.failed = [...new Set([...report.failed, 'S6'])];
+    report.effective = false;
+    // Not `body`: that was rendered before S6 was known and can claim the run
+    // was effective, which a run that passed its deadline was not.
+    return finish(
+      'fail',
+      `mako-watchdog ${iso} INEFFECTIVE ${report.failed.join(',')}\nthe ${RUN_DEADLINE_MS / 1000} s run deadline passed after the commit (committed=${commitOk})\n${manifestLine(critMarketIds, runCodes)}`,
+      true,
+    );
   }
   return finish(kind, body);
 }

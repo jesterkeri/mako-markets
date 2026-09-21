@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
-import { LEASE_MS } from '../src/config';
+import { LEASE_MS, RUN_DEADLINE_MS } from '../src/config';
 import { runOnce, type Deps } from '../src/run';
 import { closedMarket, makeDeps, makeWorld, MAKO as MAKO_ADDR, RESOLVER as RES_ADDR, type FakeMarket, type World } from './fake';
 
@@ -210,12 +210,49 @@ describe('creation cursor over whole runs', () => {
     const r = await tick(w, state);
     expect(r.kind).toBe('deadline');
     expect(r.committed).toBe(false);
-    expect(w.hc.pings.length).toBe(1); // only the first run's ping
+    // Found while deploying, 2026-09-21: a deadline-stopped run used to return
+    // WITHOUT pinging and without logging, so the dead-man switch went silent
+    // in the one situation it exists for, and left nothing to diagnose with.
+    // It must still report, on a fresh net, because the run's own net refuses
+    // to send once the deadline has passed.
+    expect(w.hc.pings.length).toBe(2);
+    expect(w.hc.pings.at(-1)!.url).toMatch(/\/fail$/);
+    expect(w.hc.pings.at(-1)!.body).toContain('S6');
+    expect(w.hc.pings.at(-1)!.body).toContain('run deadline passed');
+    expect(r.ping).toBe('fail');
     w.latencyMs = 20;
     w.clock.t += FIVE_MIN;
     await state.age(); // the stale lease (270 s) has expired
     const r2 = await tick(w, state);
     expect(r2.payload!.meta.creationCursor).toBe(2);
+  });
+
+  it('a deadline crossed DURING the commit still reports, and does not claim to be effective', async () => {
+    // The second deadline path, unreachable with the fake on its own: the
+    // clock only moves on requests, and nothing happens between the two
+    // deadline checks except the commit. So make the commit itself slow, the
+    // way a real Durable Object round trip can be when the run is already at
+    // the edge of its 200 s budget.
+    const w = makeWorld();
+    const base = freshState();
+    const state: typeof base = {
+      ...base,
+      commit: async (token, scheduled, payload) => {
+        const r = await base.commit(token, scheduled, payload);
+        w.clock.t += RUN_DEADLINE_MS + 1_000; // the deadline passes here
+        return r;
+      },
+    };
+    w.markets = [closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n)];
+    const r = await tick(w, state);
+    expect(r.kind).toBe('deadline');
+    expect(r.committed).toBe(true); // the commit DID happen
+    expect(r.effective).toBe(false); // but the run may not call itself effective
+    expect(r.ping).toBe('fail');
+    expect(w.hc.pings.at(-1)!.url).toMatch(/\/fail$/);
+    expect(w.hc.pings.at(-1)!.body).toContain('run deadline passed after the commit');
+    expect(w.hc.pings.at(-1)!.body).toContain('committed=true');
+    expect(w.hc.pings.at(-1)!.body).not.toContain(' effective');
   });
 
   it('a lease held by another run: skipped with /log, nothing read', async () => {
