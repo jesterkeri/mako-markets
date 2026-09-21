@@ -251,21 +251,16 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
   const oneWayIds = [...new Set([...transitionIds, ...cursorIds])];
   const oneWay = new Set(oneWayIds);
   const commandOnlyIds = commandIds.filter((id) => !oneWay.has(id));
-  // Clearing a delivered market critical is a one-way suppression, so it needs
-  // the second source its creation would need (review r8, and the r2 rule that
-  // a persisted one-way fact needs at least the trust gate of the alert it can
-  // suppress). Only a stored critical this run's head would CLEAR is a
-  // candidate: one that is still critical costs no budget, because it is
-  // rebuilt either way. Severity does not depend on the command status, so
-  // this pre-pass can run before confirmation.
-  const wouldClear = (c: CriticalRow): boolean => {
-    const m = c.marketId === null ? null : reads.get(c.marketId);
-    if (!m) return false;
-    if (c.key.startsWith('u:')) return unsupportedOracle(m, nowS) === null;
-    return classifyStuck(m, nowS, 'unchecked').severity !== 'critical';
-  };
-  const clearingIds = [...new Set(snap.criticals.filter(wouldClear).map((c) => c.marketId as number))];
-  const recoveryOnlyIds = clearingIds.filter((id) => !oneWay.has(id) && !commandSlate.has(id));
+  // Every market that already holds a critical is re-read, and its row only
+  // changes on a confirmed head (reviews r8, r9, and the r2 rule that a
+  // persisted one-way fact needs at least the trust gate of the alert it can
+  // suppress). r8 gated only CLEARING, which was too narrow: a head that
+  // keeps the market critical can still take the safe action away, by
+  // reporting a one-sided market as two-sided so the line becomes "no safe
+  // refund path" and it stops being a command candidate. Raising an alert on
+  // one source is fine; weakening one is not.
+  const storedCritIds = [...new Set(snap.criticals.filter((c) => c.marketId !== null && reads.get(c.marketId)).map((c) => c.marketId as number))];
+  const recoveryOnlyIds = storedCritIds.filter((id) => !oneWay.has(id) && !commandSlate.has(id));
   const toConfirm = [...oneWayIds, ...commandOnlyIds, ...recoveryOnlyIds];
   // Reserved shares per category, so sustained creation cannot starve commands
   // and a command backlog cannot stall discovery, the cursor or a recovery
@@ -324,16 +319,20 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     warn.set(key, { key, since: p?.since ?? scheduledTime, deliveredAt: p?.deliveredAt ?? null, line, lastCommandAt: p?.lastCommandAt ?? null });
   };
 
-  // Market-level rows are kept unchanged when the market was not read, AND
-  // when it was read but no independent source confirmed that head (review
-  // r8): otherwise a provider B answering "resolved" or "healthy" for a market
-  // it is lying about would delete a delivered critical and go quiet, with no
-  // refund command ever produced and no recovery note sent.
+  // Market-level rows are kept AS THEY WERE when the market was not read, and
+  // when it was read but no independent source confirmed that head (reviews
+  // r8, r9). Otherwise a provider B lying about a market could delete a
+  // delivered critical and go quiet, or keep the critical while replacing a
+  // runnable refund command with "no safe refund path" and never offering the
+  // command again. Both are suppressions of something already established,
+  // and both are invisible to the reader.
+  const retainedKeys = new Set<string>();
   const retainedCrit = new Set<number>();
   for (const c of snap.criticals) {
     if (c.marketId === null) continue;
     if (!reads.get(c.marketId) || !confirmation.confirmed.has(c.marketId)) {
       crit.set(c.key, c);
+      retainedKeys.add(c.key);
       retainedCrit.add(c.marketId);
     }
   }
@@ -348,7 +347,8 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     if (!m) continue;
     const v = classifyStuck(m, nowS, commandAllowed(m, nowS) ? commandStatus(id) : 'unchecked');
     if (v.severity === 'critical') {
-      keepCrit(`m:${id}`, v.line, id, null);
+      // A retained row keeps its confirmed text: this head may not rewrite it.
+      if (!retainedKeys.has(`m:${id}`)) keepCrit(`m:${id}`, v.line, id, null);
       if (v.command) commandCritical.push(id);
     } else if (retainedCrit.has(id)) {
       // Its critical was retained for want of a second source, so do not also
@@ -359,7 +359,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       if (v.severity === 'digest') digestLines.push(v.line);
     }
     const uo = unsupportedOracle(m, nowS);
-    if (uo) keepCrit(`u:${id}`, uo, id, null);
+    if (uo && !retainedKeys.has(`u:${id}`)) keepCrit(`u:${id}`, uo, id, null);
   }
   // Commands only ever for one-sided markets past close + 24h, confirmed by
   // the public RPC at the same block (I7).

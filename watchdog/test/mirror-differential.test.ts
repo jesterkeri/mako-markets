@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { stringToHex } from 'viem';
 import {
+  CRYPTO_SYMBOLS as RESOLVER_CRYPTO_SYMBOLS,
   parseBasketballOracleRef as resolverBasketball,
   parseCryptoOracleRef as resolverCrypto,
   parseFootballOracleRef as resolverFootball,
@@ -19,6 +20,7 @@ import {
 } from '../../cf-worker/src/index';
 import { suggestedCryptoBettingCloseTimeMirror } from '../../src/lib/market-timing';
 import { PRICE_FEED_CLASSES, PRICE_FEED_VECTORS } from '../../test-vectors/price-feed-oracle-ref';
+import { CRYPTO_SYMBOLS } from '../src/assets';
 import { parseBasketballOracleRef, parseCryptoOracleRef, parseFootballOracleRef, parsePriceFeedOracleRef } from '../src/oracle-ref';
 import { suggestedCryptoCutoff } from '../src/classify';
 
@@ -27,7 +29,12 @@ const hex = (s: string) => stringToHex(s, { size: 32 });
 /// Valid forms, every rejection mode both parsers are supposed to share, and
 /// the quirks the copies were told to keep (the crypto strike goes through
 /// Number() with no pattern; the price-feed strike through a pattern first).
+/// A valid reference for EVERY declared symbol, so a symbol removed from one
+/// allowlist and not the other is caught (review r9: a table of four hand
+/// picked symbols would have missed DOGE going away on one side).
 const CRYPTO = [
+  ...CRYPTO_SYMBOLS.map((sym) => `${sym}:gt:1`),
+  ...RESOLVER_CRYPTO_SYMBOLS.map((sym) => `${sym}:lt:2.5`),
   'BTC:gt:100000', 'ETH:lt:2000', 'SOL:gt:0.5', 'MON:gt:1',
   'BTC:gt:1e5', 'BTC:gt:0x10', 'BTC:gt: 100 ', 'BTC:GT:1', 'btc:gt:1',
   'PEPE:gt:1', 'BTC:gt:0', 'BTC:gt:-1', 'BTC:gt:abc', 'BTC:gt:', 'BTC:gt',
@@ -87,6 +94,12 @@ describe('the watchdog parsers agree with the resolver they mirror', () => {
       expect(!!mine, label).toBe(!!theirs);
       if (mine && theirs) expect([mine.symbol, mine.op, mine.strike], label).toEqual([theirs.symbol, theirs.op, theirs.strike]);
     }
+  });
+
+  it('the two crypto allowlists are the same list', () => {
+    // The parsers gate on this table, so comparing it directly is stronger
+    // than any set of vectors (review r9).
+    expect([...CRYPTO_SYMBOLS]).toEqual([...RESOLVER_CRYPTO_SYMBOLS]);
   });
 
   it('the resolver still matches the shared vector table the app copy is pinned to', () => {

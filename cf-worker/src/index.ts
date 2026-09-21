@@ -144,7 +144,10 @@ type CryptoSymbol =
   | 'BTC' | 'ETH' | 'SOL' | 'AVAX' | 'NEAR'
   | 'APT' | 'SUI' | 'DOGE' | 'LINK' | 'MON';
 
-const CRYPTO_SYMBOLS: readonly CryptoSymbol[] = [
+/// Exported so the watchdog's differential test can compare this list with
+/// its copy directly, rather than only through the symbols a vector table
+/// happens to name (slice-1 review r9).
+export const CRYPTO_SYMBOLS: readonly CryptoSymbol[] = [
   'BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'APT', 'SUI', 'DOGE', 'LINK', 'MON',
 ] as const;
 

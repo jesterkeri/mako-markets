@@ -586,15 +586,53 @@ describe('clearing a critical needs the second source (review r8)', () => {
     expect(r3.payload!.criticals.map((c) => c.key)).toEqual([]);
   });
 
-  it('a market that stays critical costs no confirmation budget, so the cursor still advances', async () => {
+  it('an unconfirmed head cannot turn a runnable refund command into "no safe refund path"', async () => {
+    // Review r9: r8 gated only CLEARING a critical. A head that keeps the
+    // market critical can still take the safe action away.
+    const w = makeWorld();
+    const state = freshState();
+    const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
+    w.markets = [oneSided];
+    const r1 = await tick(w, state);
+    expect(commandIdsIn(w.telegram.sent.join('\n'))).toEqual([0]); // confirmed and delivered
+    expect(r1.payload!.criticals[0].line).toContain('refund command below');
+
+    // Provider B reports the same market at the same block as TWO-SIDED, which
+    // in V4 has no safe refund path. The public RPC still says one-sided.
+    w.clock.t += 6 * 3600_000; // the reminder is due, so the line is re-sent
+    w.telegram.sent = [];
+    w.markets = [{ ...oneSided, no: 1n }];
+    w.publicMarkets = [oneSided];
+    const r2 = await tick(w, state);
+    const line = r2.payload!.criticals.find((c) => c.key === 'm:0')!.line;
+    expect(line).toContain('refund command'); // the confirmed text is kept
+    expect(line).not.toContain('no safe refund path'); // and not rewritten
+    // The market was re-read and the disagreement is reported, not accepted.
+    expect(r2.failed).toContain('S1');
+    expect(r2.healthchecksBody).toContain('providers disagree at the same block');
+
+    // Provider B tells the truth again: the command comes back on schedule.
+    w.telegram.sent = [];
+    w.markets = [oneSided];
+    w.publicMarkets = undefined;
+    await tick(w, state);
+    expect(commandIdsIn(w.telegram.sent.join('\n'))).toEqual([0]);
+  });
+
+  it('re-confirming stored criticals costs budget but cannot starve the cursor', async () => {
     const w = makeWorld();
     const state = freshState();
     const oneSided = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
     w.markets = Array.from({ length: 60 }, () => oneSided);
     await tick(w, state);
     for (let i = 0; i < 150; i++) w.markets.push(openMarket(1, 'BTC:gt:1', w));
+    // 60 stored criticals now share the 200-id budget with 150 cursor ids and
+    // the 50 due commands, so the cursor takes what its reserved share allows
+    // and finishes on the next run. It never stops advancing.
     const r = await tick(w, state);
-    expect(r.payload!.meta.creationCursor).toBe(210);
+    expect(r.payload!.meta.creationCursor).toBe(200);
+    const r2 = await tick(w, state);
+    expect(r2.payload!.meta.creationCursor).toBe(210);
   });
 });
 
@@ -789,7 +827,9 @@ describe('one-way state needs the second source (review r2)', () => {
     w.clock.t += 6 * 3600_000; // reminders due, commands now allowed
     for (let i = 0; i < 150; i++) w.markets.push(openMarket(1, 'BTC:gt:1', w)); // 150 cursor ids go first
     const r = await tick(w, state);
-    expect(r.payload!.meta.creationCursor).toBe(210);
+    // 200, not 210: the 60 stored criticals are re-confirmed too (review r9),
+    // so ten cursor ids wait for the next run.
+    expect(r.payload!.meta.creationCursor).toBe(200);
     const ids = r.telegramMessages.join('\n').match(/for id in ([\d ]+); do/)![1].trim().split(' ').map(Number);
     expect(ids).toEqual(Array.from({ length: 50 }, (_, i) => i)); // 0-49 confirmed, 50-59 deferred
     expect(r.telegramMessages.join('\n')).toContain('#59 CRYPTO one-sided'); // the deferred line was sent

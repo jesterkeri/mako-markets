@@ -17,6 +17,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+/// Sets whose declaration MUST carry an `identical` pair. Without this, the
+/// property could simply be deleted and the byte comparison would vanish while
+/// the gate stayed green (slice-1 review r9).
+export const REQUIRE_IDENTICAL = ['MIRROR_PRICE_FEED_ASSETS'];
+
 export const SETS = [
   {
     marker: 'MIRROR_PRICE_FEED_ASSETS',
@@ -53,6 +58,9 @@ export function checkMirrors(root = process.cwd(), sets = SETS) {
   const problems = [];
   for (const set of sets) {
     if (set.files.length < 2) problems.push(`${set.marker}: a mirror set needs at least two files, found ${set.files.length}`);
+    if (REQUIRE_IDENTICAL.includes(set.marker) && (!set.identical || set.identical.length !== 2)) {
+      problems.push(`${set.marker}: this set must declare an \`identical\` pair of exactly two files`);
+    }
     for (const f of set.files) {
       let text;
       try {

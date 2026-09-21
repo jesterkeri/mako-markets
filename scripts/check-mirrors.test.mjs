@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SETS, checkMirrors } from './check-mirrors.mjs';
+import { REQUIRE_IDENTICAL, SETS, checkMirrors } from './check-mirrors.mjs';
 
 const MARKER = 'MIRROR_DEMO';
 const SET = { marker: MARKER, files: ['a/one.ts', 'b/two.ts', 'c/three.ts'], identical: ['a/one.ts', 'b/two.ts'] };
@@ -68,6 +68,29 @@ test('a set reduced to one file is caught: a mirror of one is not a mirror', () 
 test('an empty set is caught', () => {
   const problems = run(() => {}, [{ marker: MARKER, files: [] }]);
   assert.match(problems[0], /needs at least two files/);
+});
+
+test('the price-feed byte-identity pair is declared, and removing it fails', () => {
+  // Review r9: the byte comparison only ran when `identical` was present, and
+  // nothing required it, so deleting the property silently removed the only
+  // check that would catch a one-byte Pyth feed-id change.
+  const set = SETS.find((x) => x.marker === 'MIRROR_PRICE_FEED_ASSETS');
+  assert.ok(set, 'MIRROR_PRICE_FEED_ASSETS must exist');
+  assert.deepEqual(set.identical, ['src/lib/price-feed-assets.ts', 'cf-worker/src/price-feed-assets.ts']);
+
+  const stripped = [{ marker: set.marker, files: set.files }];
+  const problems = checkMirrors(join(import.meta.dirname, '..'), stripped);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /must declare an `identical` pair/);
+});
+
+test('every set that must compare bytes says so', () => {
+  for (const marker of REQUIRE_IDENTICAL) {
+    const set = SETS.find((x) => x.marker === marker);
+    assert.ok(set, `${marker} is in REQUIRE_IDENTICAL but not in SETS`);
+    assert.equal(set.identical.length, 2);
+    for (const f of set.identical) assert.ok(set.files.includes(f), `${marker}: ${f} is compared but not declared`);
+  }
 });
 
 test('the real sets are declared with at least two members each and a marker', () => {
