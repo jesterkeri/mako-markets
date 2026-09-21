@@ -52,11 +52,24 @@ export const CONFIRM_IDS_PER_RUN = 200;
 /// run stops calling itself effective (slice-1 review r10).
 ///
 /// This is a backstop for rotation being BROKEN, not a bound on ordinary
-/// queueing, so it sits well above the worst case a healthy queue produces.
+/// queueing, so it sits well above the worst case a HEALTHY queue produces.
 /// That worst case: at the 2,000-market envelope the recovery category's
 /// reserved share is at least floor(200/3) = 66 ids a run, so every stored
 /// alert is re-read within ceil(2000/66) = 31 runs, about 2 h 35 m at the
-/// 5-minute cadence. 24 hours is roughly ten times that, so tripping it means
+/// 5-minute cadence.
+///
+/// That bound holds only while the selected public reads actually CONFIRM
+/// (slice-1 review r11). Rotation is driven by `confirmedAt`, which a failed
+/// attempt does not move, so a set of rows the two providers persistently
+/// disagree about stays oldest and keeps being re-selected, and a row behind
+/// them can wait indefinitely. That is not a silent failure: every such run
+/// has a disagreement or an unread id, so S1 fails, the run is ineffective,
+/// no command is offered for an unconfirmed market, and this bound then fires
+/// within a day. Making the bound unconditional would mean recording attempts
+/// as well as confirmations, which is deliberately NOT done here: it would
+/// move a row down the queue on the strength of a failure.
+///
+/// 24 hours is roughly ten times the healthy worst case, so tripping it means
 /// the queue is not rotating or the second source has been failing all day,
 /// either of which the dead-man switch should hear about. A row merely waiting
 /// its turn never trips it.
