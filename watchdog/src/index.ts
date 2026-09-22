@@ -2,6 +2,9 @@
 // Cron every 5 minutes; no HTTP surface; no private key; no transactions.
 
 import { getAddress } from 'viem';
+import { manifestLine, pingHealthchecks } from './alerts';
+import { FETCH_TIMEOUT_MS } from './config';
+import { makeNet } from './net';
 import { runGuarded, type RunEnv } from './run';
 import type { WatchdogState } from './state';
 
@@ -72,9 +75,37 @@ function readEnvUnchecked(env: Env): RunEnv {
   };
 }
 
+/// A configuration failure is reported with the one value that does not
+/// depend on the rest of the configuration being valid (review r12). Before
+/// this, `readEnv` threw outside `runGuarded`, so a malformed PROVIDER_B_URL
+/// produced no request at all and the only signal was the dead-man check
+/// going Down after its grace. `pingHealthchecks` validates the URL itself,
+/// so a bad one here simply makes no request rather than reaching anywhere.
+async function reportConfigFailure(env: Env, err: unknown, log: (line: string) => void): Promise<void> {
+  const raw = err instanceof Error ? err.message : 'configuration is invalid';
+  // readEnv's messages name the variable, never its value, but bound and
+  // sanitise anyway: nothing from the environment belongs in an alert unread.
+  const detail = raw.slice(0, 200).replace(/[^\x20-\x7e]/g, '').trim() || 'configuration is invalid';
+  const iso = new Date().toISOString();
+  const body = `mako-watchdog ${iso} INEFFECTIVE S1\nconfiguration rejected before the run started: ${detail}\n${manifestLine([], ['ds'])}`;
+  log(`[watchdog] ${iso} configuration rejected: ${detail}`);
+  const net = makeNet((i, x) => fetch(i, x), () => Date.now(), (ms) => new Promise((r) => setTimeout(r, ms)), Date.now() + FETCH_TIMEOUT_MS, 1);
+  try {
+    await pingHealthchecks(net, env.HEALTHCHECKS_PING_URL ?? '', 'fail', body, false, log);
+  } catch {
+    // Nothing left to try: the dead-man check goes Down after its grace.
+  }
+}
+
 export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const runEnv = readEnv(env);
+    let runEnv: RunEnv;
+    try {
+      runEnv = readEnv(env);
+    } catch (err) {
+      ctx.waitUntil(reportConfigFailure(env, err, (line) => console.log(line)));
+      return;
+    }
     const stub = env.WATCHDOG_STATE.get(env.WATCHDOG_STATE.idFromName('watchdog'));
     ctx.waitUntil(
       runGuarded(

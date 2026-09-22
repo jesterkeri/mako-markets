@@ -146,18 +146,23 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     payload: null, plan: null, healthchecksBody: '', s3Reasons: [],
   };
   const iso = fmtIsoMs(scheduledTime);
-  /// The run's single Healthchecks request (r15 section 5.5). `pastDeadline`
-  /// gives it a FRESH net: the run's own net refuses to send once the deadline
-  /// has passed, and a deadline-stopped run is exactly the run the dead-man
-  /// switch exists to report, so it must still be able to speak (found while
-  /// deploying, 2026-09-21).
-  const finish = async (kind: PingKind, body: string, pastDeadline = false) => {
+  /// The run's single Healthchecks request (r15 section 5.5). When the run is
+  /// already past its deadline this uses a FRESH net, because the run's own
+  /// net refuses to send once the deadline has passed, and a run that ran out
+  /// of time is exactly the run the dead-man switch exists to report.
+  const finish = async (kind: PingKind, body: string) => {
     report.ping = kind;
     report.healthchecksBody = body;
-    const pingNet = pastDeadline ? makeNet(deps.fetch, deps.now, deps.sleep, deps.now() + FETCH_TIMEOUT_MS, 1) : net;
+    // Decided HERE, not by the caller (review r12): `net.send` returns
+    // `deadline` without fetching once the run's budget is spent, so ANY late
+    // call site would have produced no request at all. A slow or unavailable
+    // Durable Object is exactly such a case, and exactly the incident the
+    // independent path exists for.
+    const late = deps.now() >= net.deadlineAt;
+    const pingNet = late ? makeNet(deps.fetch, deps.now, deps.sleep, deps.now() + FETCH_TIMEOUT_MS, 1) : net;
     const r = await pingHealthchecks(pingNet, env.healthchecksUrl, kind, body, env.dryRun, deps.log);
     report.pingAccepted = r.accepted;
-    report.httpRequests = net.requests + (pastDeadline ? pingNet.requests : 0);
+    report.httpRequests = net.requests + (late ? pingNet.requests : 0);
     deps.log(`[watchdog] ${iso} ${report.kind} ${report.effective ? 'effective' : 'ineffective ' + report.failed.join(',')} ping=${kind}${r.accepted ? '' : ' (not accepted: ' + r.reason + ')'}`);
     return report;
   };
@@ -651,7 +656,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     report.kind = 'deadline';
     report.failed = ['S6'];
     deps.log(`[watchdog] ${iso} deadline passed before commit; nothing committed`);
-    return finish('fail', `mako-watchdog ${iso} INEFFECTIVE S6\nthe 200 s run deadline passed before the commit; nothing was committed\n${manifestLine([], ['ds'])}`, true);
+    return finish('fail', `mako-watchdog ${iso} INEFFECTIVE S6\nthe 200 s run deadline passed before the commit; nothing was committed\n${manifestLine([], ['ds'])}`);
   }
   let commitOk = false;
   try {
@@ -738,7 +743,6 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     return finish(
       'fail',
       `mako-watchdog ${iso} INEFFECTIVE ${report.failed.join(',')}\nthe ${RUN_DEADLINE_MS / 1000} s run deadline passed after the commit (committed=${commitOk})\n${manifestLine(critMarketIds, runCodes)}`,
-      true,
     );
   }
   return finish(kind, body);

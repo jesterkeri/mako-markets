@@ -173,14 +173,19 @@ export interface TelegramTarget {
 
 /// Sends each message in order, at most TELEGRAM_MAX_MESSAGES requests in
 /// total. A 429 is retried once only if its retry_after ends before the
-/// deadline and a request remains. Returns which messages Telegram confirmed.
+/// deadline and a request remains. Returns which messages Telegram confirmed;
+/// in a dry run that is every message unconfirmed, because nothing was sent.
 export async function sendTelegram(net: Net, t: TelegramTarget, texts: string[]): Promise<boolean[]> {
   const confirmed = texts.map(() => false);
   let used = 0;
   for (let i = 0; i < texts.length; i++) {
     if (t.dryRun) {
+      // Printed, NOT delivered. Claiming otherwise wrote real delivery state
+      // from a rehearsal: `lastDeliveredAt`, `lastCommandAt` and the creation
+      // cursor all advanced, so the first REAL run stayed quiet for a reminder
+      // period and a creation alert could be skipped for good (review r12).
+      // A dry run may simulate the message; it may not speak for Telegram.
       t.log(`[dry-run telegram ${i + 1}/${texts.length}]\n${texts[i]}`);
-      confirmed[i] = true;
       continue;
     }
     for (let attempt = 0; attempt < 2 && used < TELEGRAM_MAX_MESSAGES; attempt++) {
