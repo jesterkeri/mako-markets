@@ -30,5 +30,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "cf-worker", "keeper", "rounds-delivery", "staged-gemini"]
+  "exclude": ["node_modules", "cf-worker", "keeper", "rounds-delivery", "rounds-watch", "staged-gemini"]
 }

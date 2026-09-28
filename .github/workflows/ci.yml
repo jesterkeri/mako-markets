@@ -31,6 +31,7 @@ on:
       - v4-onboarding
       # The rounds keeper is deployed from its own branch by hand (wrangler), so its CI runs on pushes there.
       - 'feat/rounds-keeper'
+      - 'feat/rounds-watch'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
@@ -129,6 +130,44 @@ jobs:
 
       - name: Key scripts parse
         run: bash -n scripts/keeper-key.sh && bash -n scripts/keeper-secrets.sh
+
+      - name: Build the deploy bundle
+        run: pnpm bundle
+
+  # Rounds liveness watch Worker (rounds-watch/): alert-only, its own package like keeper/.
+  rounds-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: rounds-watch
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The watch tests read the keeper's captured report fixture.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Secrets script parses
+        run: bash -n scripts/watch-secrets.sh
 
       - name: Build the deploy bundle
         run: pnpm bundle
