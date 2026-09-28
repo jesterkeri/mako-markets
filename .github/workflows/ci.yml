@@ -29,6 +29,8 @@ on:
     branches:
       - main
       - v4-onboarding
+      # The rounds keeper is deployed from its own branch by hand (wrangler), so its CI runs on pushes there.
+      - 'feat/rounds-keeper'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
@@ -91,3 +93,42 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # Rounds keeper Worker (keeper/, with the shared rounds-delivery/ module): its own package with its own
+  # lockfile, installed with --ignore-workspace like cf-worker/. Wrangler 4 needs Node 22. The bundle step
+  # proves the deployable Worker builds, since vitest resolves imports differently from wrangler's bundler.
+  keeper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: keeper
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Key scripts parse
+        run: bash -n scripts/keeper-key.sh && bash -n scripts/keeper-secrets.sh
+
+      - name: Build the deploy bundle
+        run: pnpm bundle

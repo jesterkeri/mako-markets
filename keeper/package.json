@@ -1,0 +1,29 @@
+{
+  "name": "mako-rounds-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker that settles MakoRoundsV1 rounds: every minute it takes one round due for settlement, fetches its two Chainlink Data Streams reports, simulates settle and sends it from a gas-only key.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail --format pretty",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "vitest run",
+    "bundle": "wrangler deploy --dry-run --outdir dist"
+  },
+  "dependencies": {
+    "viem": "2.56.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.13",
+    "@cloudflare/workers-types": "5.20260919.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.135.0"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "workerd"]
+  }
+}
