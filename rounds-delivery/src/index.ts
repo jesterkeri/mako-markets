@@ -48,22 +48,34 @@ export interface Due {
   closeAt: number;
 }
 
-/// The round to settle this run, or null. Of the rounds `pendingSettlement()` returned, the one that closed
-/// earliest among those at least `delayS` past close; ties go to the lower id. One per run: the keeper never
-/// has more than one transaction in flight (T0.1c).
+/// The round to settle this run, or null. Of the rounds `pendingSettlement()` returned that are at least
+/// `delayS` past close and not in `skip`, the one tried LEAST RECENTLY (never tried first), then the earliest
+/// close, then the lower id. Taking turns matters: a round that cannot settle (its report is missing, its
+/// spread is too wide) must only spend its own turn, never block every later round until its deadline,
+/// where the later rounds would refund NoPrice despite valid reports (adversary pass, 2026-09-28).
+/// One per run: the keeper never has more than one transaction in flight (T0.1c).
 export function pickRound(
   pending: readonly bigint[],
   closeTimes: ReadonlyMap<bigint, bigint>,
   duration: bigint,
   nowS: number,
   delayS: number = KEEPER_DELAY_S,
+  lastTried: ReadonlyMap<bigint, number> = new Map(),
+  skip: ReadonlySet<bigint> = new Set(),
 ): Due | null {
-  let best: { id: bigint; close: bigint } | null = null;
+  let best: { id: bigint; close: bigint; tried: number } | null = null;
   for (const id of pending) {
+    if (skip.has(id)) continue;
     const close = closeTimes.get(id);
     if (close === undefined) continue;
     if (BigInt(nowS) < close + BigInt(delayS)) continue;
-    if (best === null || close < best.close || (close === best.close && id < best.id)) best = { id, close };
+    const tried = lastTried.get(id) ?? Number.NEGATIVE_INFINITY;
+    if (
+      best === null ||
+      tried < best.tried ||
+      (tried === best.tried && (close < best.close || (close === best.close && id < best.id)))
+    )
+      best = { id, close, tried };
   }
   if (best === null) return null;
   return { roundId: best.id, anchorAt: Number(best.close - duration), closeAt: Number(best.close) };

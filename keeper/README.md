@@ -14,16 +14,23 @@ reuse unchanged (INVARIANTS N15).
 - Never a second transaction while the first may still land. A signed transaction is recorded under the
   lease before it is sent, so a run that crashes after sending always leaves it for the next run to check.
 - Nothing is sent unless the simulation passes. A round someone else settled first counts as success.
+- Rounds take turns (least recently tried first), so a round that cannot settle, say its report is missing,
+  only spends its own turn and never makes later rounds miss their deadlines. After a receipt the same run
+  goes on to the next round, so it takes one round every minute.
+- A round whose transaction reverts on chain or is dropped twice is no longer sent (it would only burn gas).
 - `settle` above 1,000,000 gas is refused (SPEC §5.5a).
-- Every run ends in one status (below). An unhealthy status lasting 5 minutes pings Healthchecks `/fail`;
-  a keeper that stops running is caught by Healthchecks' missing pings.
+- Every run ends in one status (below). Unhealthy for 4 minutes from the run that first saw it pings
+  Healthchecks `/fail`; a keeper that stops running is caught by Healthchecks' missing pings. `sent` and
+  `tx-pending` never end an unhealthy stretch, so a transaction that reverts every time still alerts.
+- An **alarm** rides on every run while any pending round is 30+ minutes past close or has stopped being sent,
+  so a failing round cannot hide between other rounds' healthy runs.
 - No key, secret or URL in any log line, status, ping or stored state (tested).
 - `DRY_RUN` is on unless it is exactly `"false"`.
 
 ## Statuses
 
-Healthy: `settled`, `sent`, `dry-run-would-send`, `nothing-due`, `waiting-report` (a report is not published
-yet), `already-settled`, `tx-pending`, `lease-held`.
+Healthy, and ending an unhealthy stretch: `settled`, `nothing-due`, `dry-run-would-send`, `waiting-report` (a
+report is not published yet), `already-settled`. Neutral: `sent`, `tx-pending`, `lease-held`.
 
 Unhealthy: `rpc-rate-limited`, `rpc-error`, `report-api-error`, `report-missing-30m`, `simulation-reverted`
 (with the contract error's name), `gas-over-budget`, `low-gas-balance` (cannot pay for this settlement),

@@ -8,7 +8,7 @@ import { encodeAbiParameters, encodeErrorResult, encodeFunctionResult, keccak256
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ROUNDS_ABI } from '../../rounds-delivery/src/index';
 import { makeNet } from '../src/net';
-import { runKeeper, TX_STUCK_MS, UNHEALTHY_REPORT_MS, type Deps, type RunConfig } from '../src/run';
+import { runKeeper, TX_STUCK_MS, UNHEALTHY_REPORT_MS, unhealthyRun, type Deps, type RunConfig } from '../src/run';
 import { INITIAL_META, type InFlight, type Meta } from '../src/state';
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 
@@ -208,23 +208,37 @@ describe('never two transactions at once', () => {
     expect(w.meta.inFlight).not.toBeNull();
   });
 
-  it('reports settled when the receipt succeeds, and clears it', async () => {
+  it('reports settled when the receipt succeeds, clears it, and goes on to the next round in the same run', async () => {
     w.meta.inFlight = inFlight();
     w.receipt = { status: '0x1' };
-    expect(await run()).toMatchObject({ status: 'settled', detail: expect.stringContaining('round 7') });
+    w.pending = []; // the settled round has left pendingSettlement
+    const o = await run();
+    expect(o).toMatchObject({ status: 'nothing-due', prior: { status: 'settled', detail: expect.stringContaining('round 7') } });
     expect(w.meta.inFlight).toBeNull();
   });
 
-  it('reports a reverted transaction as unhealthy', async () => {
+  it('reports a reverted transaction as unhealthy and counts it against the round', async () => {
     w.meta.inFlight = inFlight();
     w.receipt = { status: '0x0' };
-    expect((await run()).status).toBe('tx-reverted');
+    const o = await run();
+    expect(o.prior?.status).toBe('tx-reverted');
+    expect(unhealthyRun(o)).toBe(true);
+    expect(w.meta.txFailures['7']).toBe(1);
   });
 
-  it('after 3 minutes with no receipt, reports it dropped and clears it without sending in the same run', async () => {
+  it('after 3 minutes with no receipt, reports it dropped, counts it, and re-simulates before sending again', async () => {
     w.meta.inFlight = { ...inFlight(), sentAt: w.now - TX_STUCK_MS };
-    expect((await run()).status).toBe('tx-dropped');
-    expect(w.meta.inFlight).toBeNull();
+    const o = await run();
+    expect(o.prior?.status).toBe('tx-dropped');
+    expect(w.meta.txFailures['7']).toBe(1);
+    expect(w.order).toEqual(['simulate', 'sign', 'record', 'send']);
+  });
+
+  it('stops sending a round after 2 failed transactions, and raises an alarm every run while it is pending', async () => {
+    w.meta.txFailures = { '7': 2 };
+    const o = await run();
+    expect(o.status).toBe('nothing-due');
+    expect(o.alarm).toContain('round 7 not sent after 2 failed transactions');
     expect(w.sent).toEqual([]);
   });
 
@@ -288,10 +302,26 @@ describe('every failure has a status, and none is silent', () => {
     await run();
     expect(w.pings).toEqual([{ kind: 'fail', body: 'mako-rounds-keeper rpc-rate-limited' }]);
     w.rpcStatus = 200;
+    w.pending = [];
     w.now += 60_000;
     await run();
     expect(w.pings.at(-1)?.kind).toBe('ok');
     expect(w.meta.unhealthySince).toBeNull();
+  });
+
+  it('a round still pending 30 minutes after close raises an alarm even when this run itself is healthy', async () => {
+    w.now = (CLOSE + 30 * 60) * 1000;
+    w.simulate.revert = 'RoundAlreadyTerminal'; // this run's own status is healthy
+    const o = await run();
+    expect(o.status).toBe('already-settled');
+    expect(o.alarm).toContain('round 7 unsettled 30 min after close');
+    expect(unhealthyRun(o)).toBe(true);
+  });
+
+  it('a sent transaction does not end an unhealthy stretch; only visible progress does', async () => {
+    w.meta.unhealthySince = w.now - 60_000;
+    await run(); // sent
+    expect(w.meta.unhealthySince).toBe(w.now - 60_000);
   });
 });
 

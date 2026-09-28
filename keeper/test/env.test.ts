@@ -40,6 +40,18 @@ describe('keeper config', () => {
     }
   });
 
+  it('refuses an out-of-range key by name, without the value viem would print', () => {
+    const zero = '0x' + '0'.repeat(64);
+    expect(() => readEnv(base({ KEEPER_PRIVATE_KEY: zero }))).toThrow('KEEPER_PRIVATE_KEY is not a valid secp256k1 key');
+    const max = '0x' + 'f'.repeat(64);
+    try {
+      readEnv(base({ KEEPER_PRIVATE_KEY: max }));
+      throw new Error('accepted');
+    } catch (e) {
+      expect(String(e)).toBe('Error: KEEPER_PRIVATE_KEY is not a valid secp256k1 key');
+    }
+  });
+
   it('refuses a malformed key, a missing contract address and a non-HTTPS endpoint', () => {
     expect(() => readEnv(base({ KEEPER_PRIVATE_KEY: '0x1234' }))).toThrow('KEEPER_PRIVATE_KEY is not a 32-byte hex key');
     expect(() => readEnv(base({ ROUNDS_ADDRESS: '' }))).toThrow('ROUNDS_ADDRESS is not set');

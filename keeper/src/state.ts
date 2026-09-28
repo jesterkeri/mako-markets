@@ -24,9 +24,21 @@ export interface Meta {
   unhealthySince: number | null;
   lastStatus: string | null;
   lastRunAt: number | null;
+  /// Per pending round id: when the keeper last tried it (ms), so rounds take turns.
+  attempts: Record<string, number>;
+  /// Per pending round id: transactions that reverted on chain or were dropped. At 2 the round is no longer
+  /// sent (it would only burn gas) and the keeper raises an alarm until the round leaves pendingSettlement.
+  txFailures: Record<string, number>;
 }
 
-export const INITIAL_META: Meta = { inFlight: null, unhealthySince: null, lastStatus: null, lastRunAt: null };
+export const INITIAL_META: Meta = {
+  inFlight: null,
+  unhealthySince: null,
+  lastStatus: null,
+  lastRunAt: null,
+  attempts: {},
+  txFailures: {},
+};
 
 export type AcquireResult = { ok: true; token: number; meta: Meta } | { ok: false };
 export type CommitResult = { ok: true } | { ok: false };

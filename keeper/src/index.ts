@@ -56,8 +56,14 @@ export function readEnv(env: Env): { cfg: RunConfig; key: Hex } {
   if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error('KEEPER_PRIVATE_KEY is not a 32-byte hex key');
   const keeperAddress = address(env.KEEPER_ADDRESS, 'KEEPER_ADDRESS');
   // The configured public address must be the key's, so a wrong secret is caught before it signs anything.
-  if (privateKeyToAccount(key as Hex).address !== keeperAddress)
-    throw new Error('KEEPER_PRIVATE_KEY does not belong to KEEPER_ADDRESS');
+  // viem's own error for an out-of-range key prints the key as a decimal, so it is never let through.
+  let derived: string;
+  try {
+    derived = privateKeyToAccount(key as Hex).address;
+  } catch {
+    throw new Error('KEEPER_PRIVATE_KEY is not a valid secp256k1 key');
+  }
+  if (derived !== keeperAddress) throw new Error('KEEPER_PRIVATE_KEY does not belong to KEEPER_ADDRESS');
   const cfg: RunConfig = {
     roundsAddress: address(env.ROUNDS_ADDRESS, 'ROUNDS_ADDRESS'),
     keeperAddress,

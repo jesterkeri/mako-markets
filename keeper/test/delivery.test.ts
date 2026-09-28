@@ -103,6 +103,18 @@ describe('choosing the round', () => {
     expect(pickRound([1n, 3n, 2n], closes, D, 20_000)?.roundId).toBe(2n);
   });
 
+  it('takes turns: the round tried least recently goes first, so a failing round cannot block the rest', () => {
+    const tried = new Map<bigint, number>([[2n, 5_000], [3n, 1_000]]);
+    expect(pickRound([1n, 2n, 3n], closes, D, 20_000, 300, tried)?.roundId).toBe(1n); // never tried
+    tried.set(1n, 9_000);
+    expect(pickRound([1n, 2n, 3n], closes, D, 20_000, 300, tried)?.roundId).toBe(3n);
+  });
+
+  it('skips a round it has been told to skip', () => {
+    expect(pickRound([1n, 2n], closes, D, 20_000, 300, new Map(), new Set([2n]))?.roundId).toBe(1n);
+    expect(pickRound([2n], closes, D, 20_000, 300, new Map(), new Set([2n]))).toBeNull();
+  });
+
   it('ignores a pending id with no close time', () => {
     expect(pickRound([7n], closes, D, 20_000)).toBeNull();
   });
