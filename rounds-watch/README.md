@@ -12,10 +12,13 @@ settling; anyone with Data Streams access can settle it), and one missing means 
 report appears. For a NoPrice refund the alert states only what the API returned at the check: a check made
 after the refund cannot say why the refund happened.
 
-**How it finds rounds.** It re-reads every open round each run (the contract caps non-terminal rounds at
-10), and a separate history cursor reads new round ids and always moves forward, so a round left open for
-days never hides a newer one. Report checks are kept per round and rotate (never checked first, then the
-oldest), so every alerting round gets its check within a few runs even while Telegram is down.
+**How it finds rounds.** Every active round is re-read each run (the contract caps non-terminal rounds at
+10; past 40 the reads rotate, and none is dropped). A history cursor reads new round ids and always moves
+forward, so a round left open for days never hides a newer one. A NoPrice refund goes into a queue once seen
+and stays there until Telegram confirms its alert: a refunded round never changes, so it is not re-read.
+Report checks are kept per round and rotate (never checked first, then the oldest), so every alerting round
+gets its check within a few runs even while Telegram is down. Healthchecks receives every alert line, up to
+the 100,000 bytes it stores per ping.
 
 A one-sided round is not flagged: it never settles by design and refunds OneSided.
 

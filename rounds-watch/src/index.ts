@@ -90,7 +90,8 @@ const worker = {
       },
       ping: async (kind, body) => {
         const base = env.HEALTHCHECKS_PING_URL.trim().replace(/\/$/, '');
-        await send(net, kind === 'ok' ? base : `${base}/fail`, { method: 'POST', body: body.slice(0, 10_000) });
+        // Healthchecks stores the first 100,000 bytes of a body (healthchecks.io/docs/attaching_logs).
+        await send(net, kind === 'ok' ? base : `${base}/fail`, { method: 'POST', body: body.slice(0, 100_000) });
       },
     });
     console.log(JSON.stringify({ watch: outcome.status, conditions: outcome.conditions, cron: event.scheduledTime }));

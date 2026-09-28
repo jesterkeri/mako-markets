@@ -204,7 +204,7 @@ describe('delivery', () => {
     expect(w.pings).toEqual([]);
   });
 
-  it('moves its history cursor past every id it read, and keeps only open rounds to re-read', async () => {
+  it('moves its history cursor past every id it read, and keeps only active rounds to re-read', async () => {
     w.rounds = [
       { start: C - 900, status: STATUS.Settled, up: 1n, down: 1n },
       active(C - 900),
@@ -213,7 +213,7 @@ describe('delivery', () => {
     at(C, 60);
     await run();
     expect(w.meta.historyCursor).toBe(4);
-    expect(w.meta.open).toEqual([2]);
+    expect(w.meta.active).toEqual([2]);
   });
 
   it('never lets the Data Streams secret or the endpoints into a message or a ping', async () => {
@@ -297,3 +297,65 @@ describe('report checks are not repeated needlessly', () => {
   });
 });
 
+// Codex T2.0d r2 regressions: a Telegram outage can queue any number of NoPrice alerts, and none of them,
+// nor any active round, may be dropped.
+describe('nothing is dropped behind a NoPrice backlog', () => {
+  const noPrice = (): R => ({ start: C - 900, status: STATUS.Refunded, reason: REFUND_REASON.NoPrice, up: 1n, down: 1n });
+
+  it('keeps a later active round first seen before its threshold, and reports it once due', async () => {
+    const late = C + 3600;
+    w.rounds = Array.from({ length: 40 }, noPrice);
+    w.rounds.push(active(late - 900)); // round 41, not yet due when first seen
+    w.telegramOk = false;
+    at(late, 60);
+    for (let i = 0; i < 3; i++) {
+      await run();
+      w.now += 300_000;
+    }
+    expect(w.meta.active).toContain(41);
+    at(late, UNSETTLED_ALERT_S);
+    for (let i = 0; i < 12; i++) {
+      await run();
+      w.now += 300_000;
+    }
+    const body = w.pings.at(-1)?.body ?? '';
+    expect(body).toMatch(/Round 41 is UNSETTLED[^\n]*start \S+ exists, close \S+ exists/);
+  });
+
+  it('keeps a 41st NoPrice alert, checks it, and delivers every one once Telegram is back', async () => {
+    w.rounds = Array.from({ length: 41 }, noPrice);
+    w.telegramOk = false;
+    at(C, 86_400 + 60);
+    for (let i = 0; i < 12; i++) {
+      await run();
+      w.now += 300_000;
+    }
+    expect(Object.keys(w.meta.noPrice)).toHaveLength(41);
+    expect(w.pings.at(-1)?.body).toMatch(/Round 41 REFUNDED NoPrice\. At [^\n]*start \S+ exists, close \S+ exists/);
+    w.telegramOk = true;
+    for (let i = 0; i < 6; i++) {
+      await run();
+      w.now += 300_000;
+    }
+    expect(Object.keys(w.meta.noPrice)).toHaveLength(0);
+    const all = w.messages.join('\n');
+    for (let id = 1; id <= 41; id++) expect(all).toContain(`Round ${id} REFUNDED NoPrice`);
+  });
+});
+
+describe('more active rounds than one read covers', () => {
+  it('rotates the reads so every one is checked and alerted, dropping none', async () => {
+    w.rounds = Array.from({ length: 45 }, () => active(C - 900));
+    at(C, 60);
+    await run(); // reads 1-40
+    await run(); // reads 41-45 as new ids; all 45 now active
+    expect(w.meta.active).toHaveLength(45);
+    at(C, UNSETTLED_ALERT_S);
+    for (let i = 0; i < 20; i++) {
+      await run();
+      w.now += 300_000;
+    }
+    const all = w.messages.join('\n');
+    for (let id = 1; id <= 45; id++) expect(all).toContain(`Round ${id} is UNSETTLED`);
+  });
+});

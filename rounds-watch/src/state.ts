@@ -15,14 +15,26 @@ export interface Evidence {
   at: number;
 }
 
+/// A round refunded NoPrice whose alert Telegram has not confirmed yet. Terminal rounds never change, so
+/// what the alert needs is kept here and the round is never read from the chain again.
+export interface PendingNoPrice {
+  startTime: number;
+  closeTime: number;
+}
+
 export interface Meta {
   /// Every round id below this one has been read at least once; each run reads the next ids from here, so
   /// new rounds are always reached however long an old round stays open (Codex T2.0d r1).
   historyCursor: number;
-  /// Round ids still worth re-reading every run: non-terminal (the contract caps these at
-  /// MAX_ACTIVE_ROUNDS) or refunded NoPrice with the alert not yet delivered.
-  open: number[];
-  /// Per round id: when each alert kind was DELIVERED (Telegram confirmed). An undelivered alert is retried.
+  /// Non-terminal round ids, ALL re-read every run (the contract caps them at MAX_ACTIVE_ROUNDS). Never
+  /// dropped until the chain shows them terminal (Codex T2.0d r2).
+  active: number[];
+  /// Rotation point if `active` ever exceeds MAX_ACTIVE_READ, so a read that cannot cover all of them in one
+  /// run still covers every one within a bounded number of runs, and drops none.
+  activeCursor: number;
+  /// NoPrice alerts waiting for Telegram. Removed ONLY when Telegram confirms delivery (Codex T2.0d r2).
+  noPrice: Record<string, PendingNoPrice>;
+  /// Per active round id: when the unsettled alert was DELIVERED (Telegram confirmed).
   alerted: Record<string, Partial<Record<AlertKind, number>>>;
   /// Per round id in an alert condition: the report check, kept across runs so checks rotate through every
   /// due round even while Telegram is down (Codex T2.0d r1).
@@ -31,7 +43,16 @@ export interface Meta {
   lastRunAt: number | null;
 }
 
-export const INITIAL_META: Meta = { historyCursor: 1, open: [], alerted: {}, evidence: {}, lastStatus: null, lastRunAt: null };
+export const INITIAL_META: Meta = {
+  historyCursor: 1,
+  active: [],
+  activeCursor: 0,
+  noPrice: {},
+  alerted: {},
+  evidence: {},
+  lastStatus: null,
+  lastRunAt: null,
+};
 
 export type AcquireResult = { ok: true; token: number; meta: Meta } | { ok: false };
 

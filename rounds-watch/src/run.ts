@@ -20,15 +20,15 @@ import { readReport, reportHeaders, reportPath, type HmacHex } from '../../round
 import { REFUND_REASON, STATUS, WATCH_ABI } from './abi';
 import { send, type Net } from './net';
 import { rpcBatch, type RpcCall } from './rpc';
-import type { AlertKind, Evidence, Meta } from './state';
+import type { AlertKind, Evidence, Meta, PendingNoPrice } from './state';
 
 /// N21: a round unsettled this long after close is flagged.
 export const UNSETTLED_ALERT_S = 30 * 60;
 /// New round ids read per run by the history scan. Rounds are created far more slowly than 40 per 5 minutes.
 export const MAX_SCAN = 40;
-/// Round ids re-read per run from the open set. The contract caps non-terminal rounds at MAX_ACTIVE_ROUNDS
-/// (10); the rest of the set is NoPrice alerts not yet delivered.
-export const MAX_OPEN = 40;
+/// Active round ids read per run. The contract caps non-terminal rounds at MAX_ACTIVE_ROUNDS (10), so all are
+/// read every run; if the set were ever larger, reads rotate and nothing is dropped.
+export const MAX_ACTIVE_READ = 40;
 /// Report checks per run (2 Data Streams requests each). Checks rotate: rounds with no check yet go first,
 /// then the oldest check, so every due round is checked within a bounded number of runs, Telegram or not.
 export const MAX_CHECKS_PER_RUN = 4;
@@ -84,11 +84,14 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
   const now = deps.net.now();
   const acquired = await deps.state.acquire(now);
   if (!acquired.ok) return { status: 'lease-held', lines: [], conditions: [] };
-  // historyCursor, open and evidence arrived in the second version of this state; default them.
-  const m = acquired.meta as Partial<Meta> & { cursor?: number };
+  // Earlier versions of this state kept `cursor` or `open`; their ids are re-read as active candidates, and
+  // the chain decides what they are.
+  const m = acquired.meta as Partial<Meta> & { cursor?: number; open?: number[] };
   const meta: Meta = {
     historyCursor: m.historyCursor ?? m.cursor ?? 1,
-    open: [...(m.open ?? [])],
+    active: [...new Set([...(m.active ?? []), ...(m.open ?? [])])],
+    activeCursor: m.activeCursor ?? 0,
+    noPrice: { ...(m.noPrice ?? {}) },
     alerted: { ...(m.alerted ?? {}) },
     evidence: { ...(m.evidence ?? {}) },
     lastStatus: m.lastStatus ?? null,
@@ -130,12 +133,19 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
   const count = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundCount', data: head.items[0].result as Hex }));
   const duration = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'DURATION', data: head.items[1].result as Hex }));
 
-  // Two sources, so an old open round can never hide a newer one (Codex T2.0d r1): the open set, re-read
-  // every run, and the next new ids from the history cursor, which always moves forward.
-  const open = [...new Set(meta.open)].sort((a, b) => a - b).slice(0, MAX_OPEN);
+  // Two sources, so an old round can never hide a newer one (Codex T2.0d r1): every active round, and the
+  // next new ids from the history cursor, which always moves forward. NoPrice alerts waiting for Telegram
+  // are not re-read at all: a refunded round never changes (Codex T2.0d r2).
+  const activeAll = [...new Set(meta.active)].sort((a, b) => a - b);
+  let activeRead = activeAll;
+  if (activeAll.length > MAX_ACTIVE_READ) {
+    const from = meta.activeCursor % activeAll.length;
+    activeRead = [...activeAll.slice(from), ...activeAll.slice(0, from)].slice(0, MAX_ACTIVE_READ);
+    meta.activeCursor = (from + MAX_ACTIVE_READ) % activeAll.length;
+  }
   const fresh: number[] = [];
   for (let id = Math.max(1, meta.historyCursor); id <= count && fresh.length < MAX_SCAN; id++) fresh.push(id);
-  const ids = [...new Set([...open, ...fresh])];
+  const ids = [...new Set([...activeRead, ...fresh])];
 
   const rounds: RoundView[] = [];
   if (ids.length > 0) {
@@ -161,19 +171,29 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     }
   }
 
+  // Classify what was read. Only ids actually read are moved: an active id not read this run stays active.
+  const readIds = new Set(rounds.map((r) => r.id));
+  const active = new Set(activeAll.filter((id) => !readIds.has(id)));
+  for (const r of rounds) {
+    if (r.status === STATUS.Active || r.status === STATUS.None) active.add(r.id);
+    else if (r.status === STATUS.Refunded && r.refundReason === REFUND_REASON.NoPrice)
+      meta.noPrice[String(r.id)] ??= { startTime: r.startTime, closeTime: r.closeTime };
+  }
+  meta.active = [...active].sort((a, b) => a - b);
+  if (fresh.length) meta.historyCursor = fresh[fresh.length - 1] + 1;
+
   // What is in an alert condition now, and what has not been said yet.
   const conditions: string[] = [];
   const due: { round: RoundView; kind: AlertKind }[] = [];
   for (const r of rounds) {
-    const said = meta.alerted[String(r.id)] ?? {};
     if (r.status === STATUS.Active && r.twoSided && nowS - r.closeTime >= UNSETTLED_ALERT_S) {
       conditions.push(`round ${r.id} unsettled ${Math.floor((nowS - r.closeTime) / 60)} min after close`);
-      if (said.unsettled === undefined) due.push({ round: r, kind: 'unsettled' });
+      if (meta.alerted[String(r.id)]?.unsettled === undefined) due.push({ round: r, kind: 'unsettled' });
     }
-    if (r.status === STATUS.Refunded && r.refundReason === REFUND_REASON.NoPrice && said['no-price'] === undefined) {
-      conditions.push(`round ${r.id} refunded NoPrice`);
-      due.push({ round: r, kind: 'no-price' });
-    }
+  }
+  for (const [k, p] of Object.entries(meta.noPrice).sort(([a], [b]) => Number(a) - Number(b))) {
+    conditions.push(`round ${k} refunded NoPrice`);
+    due.push({ round: noPriceView(Number(k), p), kind: 'no-price' });
   }
 
   // Report checks, rotating across every due round: never checked first, then the oldest check. A due
@@ -202,8 +222,7 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
 
   // Telegram: as many whole lines as fit in one message; only those count as delivered on success.
   let status: WatchStatus = conditions.length ? 'alerting' : 'quiet';
-  const header = 'Mako rounds watch';
-  let text = header;
+  let text = 'Mako rounds watch';
   let included = 0;
   for (const l of lines) {
     if (text.length + 2 + l.length > TELEGRAM_CHARS) break;
@@ -213,29 +232,31 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
   if (included > 0) {
     const ok = await deps.telegram(text);
     if (ok) {
-      for (const { round, kind } of ready.slice(0, included))
-        meta.alerted[String(round.id)] = { ...(meta.alerted[String(round.id)] ?? {}), [kind]: nowMs };
+      for (const { round, kind } of ready.slice(0, included)) {
+        if (kind === 'no-price') delete meta.noPrice[String(round.id)];
+        else meta.alerted[String(round.id)] = { ...(meta.alerted[String(round.id)] ?? {}), unsettled: nowMs };
+      }
     } else {
       status = 'telegram-failed';
     }
   }
 
-  // The open set: non-terminal rounds, and NoPrice refunds whose alert is not yet delivered. The history
-  // cursor moves past every id it read, whatever its state.
-  const stillOpen = rounds.filter(
-    (r) =>
-      r.status === STATUS.Active ||
-      r.status === STATUS.None ||
-      (r.status === STATUS.Refunded && r.refundReason === REFUND_REASON.NoPrice && meta.alerted[String(r.id)]?.['no-price'] === undefined),
-  );
-  meta.open = stillOpen.map((r) => r.id);
-  if (fresh.length) meta.historyCursor = fresh[fresh.length - 1] + 1;
-  const keep = new Set(meta.open.map(String));
+  // Forget alert and evidence records only for rounds that are neither active nor waiting on a NoPrice alert.
+  const keep = new Set([...meta.active.map(String), ...Object.keys(meta.noPrice)]);
   for (const k of Object.keys(meta.alerted)) if (!keep.has(k)) delete meta.alerted[k];
   for (const k of Object.keys(meta.evidence)) if (!keep.has(k)) delete meta.evidence[k];
 
   return { status, lines, conditions };
 }
+
+const noPriceView = (id: number, p: PendingNoPrice): RoundView => ({
+  id,
+  status: STATUS.Refunded,
+  refundReason: REFUND_REASON.NoPrice,
+  startTime: p.startTime,
+  closeTime: p.closeTime,
+  twoSided: true,
+});
 
 async function reportState(cfg: WatchConfig, deps: WatchDeps, boundary: number): Promise<ReportState> {
   const path = reportPath(boundary);
