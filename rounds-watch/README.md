@@ -6,9 +6,16 @@ tells Joshua, once per round:
 - a two-sided round still **unsettled 30 minutes after close**;
 - a round that **refunded NoPrice**;
 
-and, for each, whether Chainlink published a report for **both** of the round's seconds. Both present means a
-delivery failure (the keeper and CRE are not settling; anyone with Data Streams access can settle it). One
-missing means Chainlink has no signed price for that second, and the round refunds whatever anyone does.
+and, for each, what the Data Streams API returned for **both** of the round's seconds, with the time it
+asked. For a round still unsettled, both present means a delivery failure (the keeper and CRE are not
+settling; anyone with Data Streams access can settle it), and one missing means it cannot settle unless the
+report appears. For a NoPrice refund the alert states only what the API returned at the check: a check made
+after the refund cannot say why the refund happened.
+
+**How it finds rounds.** It re-reads every open round each run (the contract caps non-terminal rounds at
+10), and a separate history cursor reads new round ids and always moves forward, so a round left open for
+days never hides a newer one. Report checks are kept per round and rotate (never checked first, then the
+oldest), so every alerting round gets its check within a few runs even while Telegram is down.
 
 A one-sided round is not flagged: it never settles by design and refunds OneSided.
 

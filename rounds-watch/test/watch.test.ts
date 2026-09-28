@@ -41,6 +41,7 @@ let w: {
   pings: { kind: string; body: string }[];
   meta: Meta;
   rpcDown: boolean;
+  dsRequests: number;
 };
 
 function roundResult(r: R) {
@@ -86,6 +87,7 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     );
   }
   if (url.startsWith(DS)) {
+    w.dsRequests++;
     const b = Number(new URL(url).searchParams.get('timestamp'));
     if (w.missing.has(b)) return new Response('not found', { status: 404 });
     return Response.json({ report: { feedID: fixture.feedID, validFromTimestamp: b, observationsTimestamp: b, fullReport: fixture.fullReport } });
@@ -118,7 +120,7 @@ const run = () => runWatch(cfg, deps());
 const active = (start: number, up = 1n, down = 1n): R => ({ start, status: STATUS.Active, up, down });
 
 beforeEach(() => {
-  w = { now: 0, rounds: [], missing: new Set(), telegramOk: true, messages: [], pings: [], meta: structuredClone(INITIAL_META), rpcDown: false };
+  w = { now: 0, rounds: [], missing: new Set(), telegramOk: true, messages: [], pings: [], meta: structuredClone(INITIAL_META), rpcDown: false, dsRequests: 0 };
 });
 
 const at = (closeTime: number, afterS: number) => (w.now = (closeTime + afterS) * 1000);
@@ -150,7 +152,7 @@ describe('unsettled rounds', () => {
     at(C, UNSETTLED_ALERT_S);
     await run();
     expect(w.messages[0]).toContain(`close ${new Date(C * 1000).toISOString().replace('.000Z', 'Z')} missing`);
-    expect(w.messages[0]).toContain('cannot settle and will refund NoPrice');
+    expect(w.messages[0]).toContain('cannot settle and refunds NoPrice');
   });
 
   it('never flags an honest round, a one-sided round, or a round before 30 minutes', async () => {
@@ -172,7 +174,7 @@ describe('NoPrice refunds', () => {
     at(C, 86_400 + 60);
     await run();
     expect(w.messages[0]).toContain('Round 1 REFUNDED NoPrice');
-    expect(w.messages[0]).toContain('nobody delivered them within 24 hours');
+    expect(w.messages[0]).toMatch(/the Data Streams API returned: start \S+ exists, close \S+ exists\.$/);
     await run();
     expect(w.messages).toHaveLength(1);
   });
@@ -202,7 +204,7 @@ describe('delivery', () => {
     expect(w.pings).toEqual([]);
   });
 
-  it('moves its cursor past finished rounds and keeps watching open ones', async () => {
+  it('moves its history cursor past every id it read, and keeps only open rounds to re-read', async () => {
     w.rounds = [
       { start: C - 900, status: STATUS.Settled, up: 1n, down: 1n },
       active(C - 900),
@@ -210,7 +212,8 @@ describe('delivery', () => {
     ];
     at(C, 60);
     await run();
-    expect(w.meta.cursor).toBe(2);
+    expect(w.meta.historyCursor).toBe(4);
+    expect(w.meta.open).toEqual([2]);
   });
 
   it('never lets the Data Streams secret or the endpoints into a message or a ping', async () => {
@@ -225,3 +228,72 @@ describe('delivery', () => {
     expect(all).not.toContain(DS);
   });
 });
+
+// Codex T2.0d r1 regressions.
+describe('an old open round never hides later ones', () => {
+  it('reports a later unsettled round and a later NoPrice refund behind a round left open and 41 finished ones', async () => {
+    const settled = (): R => ({ start: C - 900, status: STATUS.Settled, up: 1n, down: 1n });
+    const late = C + 10 * 86_400;
+    w.rounds = [active(C - 900)]; // round 1: two-sided, never settled, never refunded
+    for (let i = 0; i < 41; i++) w.rounds.push(settled());
+    w.rounds.push(active(late - 900)); // round 43
+    w.rounds.push({ start: late - 900, status: STATUS.Refunded, reason: REFUND_REASON.NoPrice, up: 1n, down: 1n }); // 44
+    at(late, UNSETTLED_ALERT_S);
+    for (let i = 0; i < 4; i++) {
+      await run();
+      w.now += 300_000;
+    }
+    const all = w.messages.join('\n');
+    expect(all).toContain('Round 1 is UNSETTLED');
+    expect(all).toContain('Round 43 is UNSETTLED');
+    expect(all).toContain('Round 44 REFUNDED NoPrice');
+  });
+});
+
+describe('report checks rotate while Telegram is down', () => {
+  it('gives every due round its report states within a bounded number of runs', async () => {
+    w.rounds = Array.from({ length: 9 }, () => active(C - 900));
+    w.telegramOk = false;
+    at(C, UNSETTLED_ALERT_S);
+    for (let i = 0; i < 3; i++) {
+      await run();
+      w.now += 300_000;
+    }
+    const body = w.pings.at(-1)?.body ?? '';
+    for (let id = 1; id <= 9; id++) expect(body).toMatch(new RegExp(`Round ${id} is UNSETTLED[^\\n]*start \\S+ exists, close \\S+ exists`));
+    expect(w.pings.at(-1)?.kind).toBe('fail');
+  });
+});
+
+describe('a NoPrice alert states only what the API returned', () => {
+  it('makes no causal claim whether the reports exist now or could not be checked', async () => {
+    w.rounds = [
+      { start: C - 900, status: STATUS.Refunded, reason: REFUND_REASON.NoPrice, up: 1n, down: 1n },
+      { start: C - 1800, status: STATUS.Refunded, reason: REFUND_REASON.NoPrice, up: 1n, down: 1n },
+    ];
+    w.missing.add(C - 900); // round 2's close second: missing
+    at(C, 86_400 + 60);
+    await run();
+    const text = w.messages.join('\n');
+    expect(text).toContain('Round 1 REFUNDED NoPrice. At ');
+    expect(text).toContain('Round 2 REFUNDED NoPrice. At ');
+    expect(text).not.toMatch(/because|nobody delivered|no one could have|DELIVERY failure/);
+  });
+});
+
+describe('report checks are not repeated needlessly', () => {
+  it('reuses a check for 30 minutes while Telegram is down, then checks again', async () => {
+    w.rounds = [active(C - 900)];
+    w.telegramOk = false;
+    at(C, UNSETTLED_ALERT_S);
+    await run();
+    expect(w.dsRequests).toBe(2);
+    w.now += 25 * 60_000;
+    await run();
+    expect(w.dsRequests).toBe(2);
+    w.now += 5 * 60_000;
+    await run();
+    expect(w.dsRequests).toBe(4);
+  });
+});
+

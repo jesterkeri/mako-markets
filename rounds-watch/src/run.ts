@@ -20,15 +20,20 @@ import { readReport, reportHeaders, reportPath, type HmacHex } from '../../round
 import { REFUND_REASON, STATUS, WATCH_ABI } from './abi';
 import { send, type Net } from './net';
 import { rpcBatch, type RpcCall } from './rpc';
-import type { AlertKind, Meta } from './state';
+import type { AlertKind, Evidence, Meta } from './state';
 
 /// N21: a round unsettled this long after close is flagged.
 export const UNSETTLED_ALERT_S = 30 * 60;
-/// Rounds read per run. The contract caps non-terminal rounds at MAX_ACTIVE_ROUNDS (10), so the scan from
-/// the cursor stays short; this bounds it anyway.
+/// New round ids read per run by the history scan. Rounds are created far more slowly than 40 per 5 minutes.
 export const MAX_SCAN = 40;
-/// Rounds whose reports are checked per run (2 Data Streams requests each). Later ones wait a run.
-export const MAX_ALERTS_PER_RUN = 4;
+/// Round ids re-read per run from the open set. The contract caps non-terminal rounds at MAX_ACTIVE_ROUNDS
+/// (10); the rest of the set is NoPrice alerts not yet delivered.
+export const MAX_OPEN = 40;
+/// Report checks per run (2 Data Streams requests each). Checks rotate: rounds with no check yet go first,
+/// then the oldest check, so every due round is checked within a bounded number of runs, Telegram or not.
+export const MAX_CHECKS_PER_RUN = 4;
+/// A report check this old is repeated, so an "unknown" or "missing" is not kept forever.
+export const EVIDENCE_TTL_MS = 30 * 60_000;
 
 export interface WatchConfig {
   roundsAddress: Hex;
@@ -70,6 +75,8 @@ interface RoundView {
 }
 
 type ReportState = 'exists' | 'missing' | string;
+/// Telegram's limit is 4,096 characters; leave room.
+const TELEGRAM_CHARS = 4000;
 
 const iso = (s: number) => new Date(s * 1000).toISOString().replace('.000Z', 'Z');
 
@@ -77,7 +84,16 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
   const now = deps.net.now();
   const acquired = await deps.state.acquire(now);
   if (!acquired.ok) return { status: 'lease-held', lines: [], conditions: [] };
-  const meta: Meta = { ...acquired.meta, alerted: { ...acquired.meta.alerted } };
+  // historyCursor, open and evidence arrived in the second version of this state; default them.
+  const m = acquired.meta as Partial<Meta> & { cursor?: number };
+  const meta: Meta = {
+    historyCursor: m.historyCursor ?? m.cursor ?? 1,
+    open: [...(m.open ?? [])],
+    alerted: { ...(m.alerted ?? {}) },
+    evidence: { ...(m.evidence ?? {}) },
+    lastStatus: m.lastStatus ?? null,
+    lastRunAt: m.lastRunAt ?? null,
+  };
 
   let outcome: WatchOutcome;
   try {
@@ -114,8 +130,13 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
   const count = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundCount', data: head.items[0].result as Hex }));
   const duration = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'DURATION', data: head.items[1].result as Hex }));
 
-  const ids: number[] = [];
-  for (let id = Math.max(1, meta.cursor); id <= count && ids.length < MAX_SCAN; id++) ids.push(id);
+  // Two sources, so an old open round can never hide a newer one (Codex T2.0d r1): the open set, re-read
+  // every run, and the next new ids from the history cursor, which always moves forward.
+  const open = [...new Set(meta.open)].sort((a, b) => a - b).slice(0, MAX_OPEN);
+  const fresh: number[] = [];
+  for (let id = Math.max(1, meta.historyCursor); id <= count && fresh.length < MAX_SCAN; id++) fresh.push(id);
+  const ids = [...new Set([...open, ...fresh])];
+
   const rounds: RoundView[] = [];
   if (ids.length > 0) {
     const res = await rpcBatch(
@@ -155,39 +176,63 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     }
   }
 
-  // Report existence for the rounds being alerted this run.
-  const lines: string[] = [];
-  const delivered: { id: number; kind: AlertKind }[] = [];
-  for (const { round, kind } of due.slice(0, MAX_ALERTS_PER_RUN)) {
-    const start = await reportState(cfg, deps, round.startTime);
-    const close = await reportState(cfg, deps, round.closeTime);
-    lines.push(alertLine(round, kind, start, close, nowS));
-    delivered.push({ id: round.id, kind });
+  // Report checks, rotating across every due round: never checked first, then the oldest check. A due
+  // round waits for its check before it is alerted, since N21's alert must carry the report state.
+  const nowMs = nowS * 1000;
+  const needCheck = due
+    .filter(({ round }) => {
+      const e = meta.evidence[String(round.id)];
+      return e === undefined || nowMs - e.at >= EVIDENCE_TTL_MS;
+    })
+    .sort((a, b) => (meta.evidence[String(a.round.id)]?.at ?? -1) - (meta.evidence[String(b.round.id)]?.at ?? -1) || a.round.id - b.round.id);
+  const checked = new Set<number>();
+  for (const { round } of needCheck) {
+    if (checked.has(round.id)) continue;
+    if (checked.size >= MAX_CHECKS_PER_RUN) break;
+    checked.add(round.id);
+    meta.evidence[String(round.id)] = {
+      start: await reportState(cfg, deps, round.startTime),
+      close: await reportState(cfg, deps, round.closeTime),
+      at: deps.net.now(),
+    };
   }
 
+  const ready = due.filter(({ round }) => meta.evidence[String(round.id)] !== undefined);
+  const lines = ready.map(({ round, kind }) => alertLine(round, kind, meta.evidence[String(round.id)], nowS));
+
+  // Telegram: as many whole lines as fit in one message; only those count as delivered on success.
   let status: WatchStatus = conditions.length ? 'alerting' : 'quiet';
-  if (lines.length > 0) {
-    const text = ['Mako rounds watch', ...lines].join('\n\n');
-    const ok = await deps.telegram(text.slice(0, 4000));
+  const header = 'Mako rounds watch';
+  let text = header;
+  let included = 0;
+  for (const l of lines) {
+    if (text.length + 2 + l.length > TELEGRAM_CHARS) break;
+    text += '\n\n' + l;
+    included++;
+  }
+  if (included > 0) {
+    const ok = await deps.telegram(text);
     if (ok) {
-      const at = nowS * 1000;
-      for (const d of delivered) meta.alerted[String(d.id)] = { ...(meta.alerted[String(d.id)] ?? {}), [d.kind]: at };
+      for (const { round, kind } of ready.slice(0, included))
+        meta.alerted[String(round.id)] = { ...(meta.alerted[String(round.id)] ?? {}), [kind]: nowMs };
     } else {
       status = 'telegram-failed';
     }
   }
 
-  // Advance past rounds that are terminal and have nothing left to say; forget what was said about them.
-  let cursor = Math.max(1, meta.cursor);
-  for (const r of rounds) {
-    if (r.id !== cursor) break;
-    const terminal = r.status === STATUS.Settled || r.status === STATUS.Refunded;
-    const owesNoPrice = r.status === STATUS.Refunded && r.refundReason === REFUND_REASON.NoPrice && meta.alerted[String(r.id)]?.['no-price'] === undefined;
-    if (!terminal || owesNoPrice) break;
-    cursor++;
-  }
-  meta.cursor = cursor;
-  for (const k of Object.keys(meta.alerted)) if (Number(k) < cursor) delete meta.alerted[k];
+  // The open set: non-terminal rounds, and NoPrice refunds whose alert is not yet delivered. The history
+  // cursor moves past every id it read, whatever its state.
+  const stillOpen = rounds.filter(
+    (r) =>
+      r.status === STATUS.Active ||
+      r.status === STATUS.None ||
+      (r.status === STATUS.Refunded && r.refundReason === REFUND_REASON.NoPrice && meta.alerted[String(r.id)]?.['no-price'] === undefined),
+  );
+  meta.open = stillOpen.map((r) => r.id);
+  if (fresh.length) meta.historyCursor = fresh[fresh.length - 1] + 1;
+  const keep = new Set(meta.open.map(String));
+  for (const k of Object.keys(meta.alerted)) if (!keep.has(k)) delete meta.alerted[k];
+  for (const k of Object.keys(meta.evidence)) if (!keep.has(k)) delete meta.evidence[k];
 
   return { status, lines, conditions };
 }
@@ -203,23 +248,19 @@ async function reportState(cfg: WatchConfig, deps: WatchDeps, boundary: number):
   return `unknown (${r.reason})`;
 }
 
-export function alertLine(r: RoundView, kind: AlertKind, start: ReportState, close: ReportState, nowS: number): string {
-  const reports = `Chainlink reports: start ${iso(r.startTime)} ${start}, close ${iso(r.closeTime)} ${close}.`;
+export function alertLine(r: RoundView, kind: AlertKind, e: Evidence, nowS: number): string {
+  const checkedAt = iso(Math.floor(e.at / 1000));
+  const reports = `At ${checkedAt} the Data Streams API returned: start ${iso(r.startTime)} ${e.start}, close ${iso(r.closeTime)} ${e.close}.`;
+  if (kind === 'no-price') {
+    // A check made after the refund cannot say why it happened (Codex T2.0d r1): a report may have appeared
+    // only after the deadline. So it states what the API returned, and nothing more.
+    return `Round ${r.id} REFUNDED NoPrice. ${reports}`;
+  }
   let cause: string;
-  if (start === 'exists' && close === 'exists')
-    cause =
-      kind === 'unsettled'
-        ? 'Both reports exist, so this is a DELIVERY failure: the keeper and CRE are not settling. Anyone with Data Streams access can settle it.'
-        : 'Both reports existed, so the round refunded because nobody delivered them within 24 hours.';
-  else if (start === 'missing' || close === 'missing')
-    cause =
-      kind === 'unsettled'
-        ? 'Chainlink has no report for that second, so the round cannot settle and will refund NoPrice at its deadline.'
-        : 'Chainlink had no report for that second, so no one could have settled it.';
-  else cause = 'Report availability could not be checked this run.';
-  const head =
-    kind === 'unsettled'
-      ? `Round ${r.id} is UNSETTLED ${Math.floor((nowS - r.closeTime) / 60)} min after close.`
-      : `Round ${r.id} REFUNDED NoPrice.`;
-  return `${head} ${reports} ${cause}`;
+  if (e.start === 'exists' && e.close === 'exists')
+    cause = 'Both reports exist inside the settlement window, so this is a DELIVERY failure: the keeper and CRE are not settling. Anyone with Data Streams access can settle it.';
+  else if (e.start === 'missing' || e.close === 'missing')
+    cause = 'A report is missing for that second; if it never appears, the round cannot settle and refunds NoPrice at its deadline.';
+  else cause = 'Report availability could not be checked; the next check repeats it.';
+  return `Round ${r.id} is UNSETTLED ${Math.floor((nowS - r.closeTime) / 60)} min after close. ${reports} ${cause}`;
 }
