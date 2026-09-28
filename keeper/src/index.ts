@@ -79,7 +79,7 @@ export async function hmacSha256Hex(secret: string, message: string): Promise<st
   return Array.from(sig, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export default {
+const worker = {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const { cfg, key } = readEnv(env);
     const account = privateKeyToAccount(key);
@@ -111,3 +111,5 @@ export default {
     void ctx;
   },
 };
+
+export default worker;

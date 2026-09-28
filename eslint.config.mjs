@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     // Gemini's staged reference components — not wired into the app yet.
     // Lint when integrated. See memory: "Isolate Gemini staged components".
     "staged-gemini/**",
+    // Rounds keeper Worker build output (gitignored; wrangler writes it locally).
+    "keeper/dist/**",
+    "keeper/.wrangler/**",
   ]),
 ]);
 
