@@ -56,27 +56,49 @@ describe('identityFromPrivyUser', () => {
   });
 });
 
-const row = (over: Partial<User>): User => ({ id: 'user-1', email: 'a@b.com', magicEoa: MAGIC, ...over }) as User;
+const U1 = 'did:privy:u1';
+const U2 = 'did:privy:u2';
+const row = (over: Partial<User>): User =>
+  ({ id: 'user-1', email: 'a@b.com', magicEoa: MAGIC, privyUserId: null, ...over }) as User;
 
 describe('decideEmbeddedUser', () => {
   it('creates a new account signed by the first Privy wallet', () => {
-    expect(decideEmbeddedUser([], 'a@b.com', [W0, W1])).toEqual({ action: 'create', eoa: W0 });
+    expect(decideEmbeddedUser([], 'a@b.com', [W0, W1], U1)).toEqual({ action: 'create', eoa: W0 });
   });
 
-  it('reuses an account already signed by one of the Privy wallets, even not the first', () => {
-    const r = row({ magicEoa: W1 });
-    expect(decideEmbeddedUser([r], 'a@b.com', [W0, W1])).toEqual({ action: 'reuse', row: r });
+  it('reuses an account bound to this Privy user and signed by one of its wallets, even not the first', () => {
+    const r = row({ magicEoa: W1, privyUserId: U1 });
+    expect(decideEmbeddedUser([r], 'a@b.com', [W0, W1], U1)).toEqual({ action: 'reuse', row: r });
   });
 
-  it('moves a Magic-era account, once, to the first Privy wallet', () => {
-    const r = row({ magicEoa: MAGIC });
-    expect(decideEmbeddedUser([r], 'a@b.com', [W0])).toEqual({ action: 'move', row: r, eoa: W0 });
-    // After the move the account's signer is W0: the same sign-in now reuses, it never moves again.
-    expect(decideEmbeddedUser([row({ magicEoa: W0 })], 'a@b.com', [W0, W1]).action).toBe('reuse');
+  it('moves a Magic-era (unbound) account once, to the first Privy wallet', () => {
+    const r = row({ magicEoa: MAGIC, privyUserId: null });
+    expect(decideEmbeddedUser([r], 'a@b.com', [W0], U1)).toEqual({ action: 'move', row: r, eoa: W0 });
+    // Once bound (the move records U1), the same sign-in reuses; it never moves again.
+    expect(decideEmbeddedUser([row({ magicEoa: W0, privyUserId: U1 })], 'a@b.com', [W0, W1], U1).action).toBe('reuse');
+  });
+
+  it('binds an unbound account whose signer is already one of the wallets without changing its signer', () => {
+    const r = row({ magicEoa: W1, privyUserId: null });
+    expect(decideEmbeddedUser([r], 'a@b.com', [W0, W1], U1)).toEqual({ action: 'move', row: r, eoa: W1 });
+  });
+
+  // Codex T2.2 r1: a fresh Privy account for the same email must not move the account again.
+  it('refuses a different Privy user for an account already bound, even with the same verified email', () => {
+    const r = row({ magicEoa: W0, privyUserId: U1 });
+    expect(decideEmbeddedUser([r], 'a@b.com', ['0x' + 'd'.repeat(40)], U2)).toEqual({
+      action: 'conflict',
+      reason: 'privy_identity_mismatch',
+    });
+  });
+
+  it('refuses, rather than rotating, when the bound Privy user no longer lists the account signer', () => {
+    const r = row({ magicEoa: W0, privyUserId: U1 });
+    expect(decideEmbeddedUser([r], 'a@b.com', [W1], U1)).toEqual({ action: 'conflict', reason: 'wallet_set_changed' });
   });
 
   it('refuses a wallet that already signs for a different email', () => {
-    expect(decideEmbeddedUser([row({ email: 'other@b.com', magicEoa: W0 })], 'a@b.com', [W0])).toEqual({
+    expect(decideEmbeddedUser([row({ email: 'other@b.com', magicEoa: W0 })], 'a@b.com', [W0], U1)).toEqual({
       action: 'conflict',
       reason: 'eoa_with_different_email',
     });
@@ -85,6 +107,6 @@ describe('decideEmbeddedUser', () => {
   it('refuses when the email and a wallet point at two different accounts', () => {
     const a = row({ id: 'u1', email: 'a@b.com', magicEoa: MAGIC });
     const b = row({ id: 'u2', email: 'x@y.com', magicEoa: W0 });
-    expect(decideEmbeddedUser([a, b], 'a@b.com', [W0]).action).toBe('conflict');
+    expect(decideEmbeddedUser([a, b], 'a@b.com', [W0], U1).action).toBe('conflict');
   });
 });

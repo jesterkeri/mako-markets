@@ -203,4 +203,43 @@ describe('POST /api/user/auth: Privy move of a TOTP-enabled Magic-era account', 
     expect(store.userSafes.map((r) => r.safeAddress)).toEqual(store.userSafes.map(() => magicSafe));
     expect(store.sessions.map((r) => r.id)).toEqual(['owner-laptop-session']);
   });
+
+  // Codex T2.2 r1: a fresh Privy account for the same email must not move an account that is already bound.
+  it('refuses a second Privy user for a bound account (no TOTP): signer, Safe and sessions unchanged', async () => {
+    const { deriveSafeAddress } = await import('@/lib/safe');
+    const { SAFE_TRACKED_CHAIN_IDS } = await import('@/lib/chain');
+    const W1 = PRIVY_EOA;
+    const W2 = '0x' + '9'.repeat(40);
+    store.users = [
+      {
+        id: USER_ID,
+        authType: 'magic',
+        email: EMAIL,
+        magicEoa: W1,
+        privyUserId: 'did:privy:u1',
+        walletAddress: null,
+        displayName: null,
+        avatarUrl: null,
+        totpSecret: null,
+        totpEnabledAt: null,
+        lastEmailChangedAt: null,
+      },
+    ];
+    const w1Safe = deriveSafeAddress(W1 as `0x${string}`);
+    store.userSafes = SAFE_TRACKED_CHAIN_IDS.map((chainId) => ({ userId: USER_ID, chainId, safeAddress: w1Safe }));
+    store.sessions = [{ id: 'owner-laptop-session', userId: USER_ID }];
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.isAllowedForCurrentStage.mockResolvedValue(true);
+    mocks.verifyPrivyLogin.mockResolvedValue({ privyUserId: 'did:privy:u2', email: EMAIL, wallets: [W2] });
+
+    const { POST } = await import('../../app/api/user/auth/route');
+    const res = await POST(privySignIn());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'identity_conflict' });
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(store.users[0].magicEoa).toBe(W1);
+    expect(store.users[0].privyUserId).toBe('did:privy:u1');
+    expect(store.userSafes.map((r) => r.safeAddress)).toEqual(store.userSafes.map(() => w1Safe));
+    expect(store.sessions.map((r) => r.id)).toEqual(['owner-laptop-session']);
+  });
 });

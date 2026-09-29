@@ -25,27 +25,35 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // Body: { privyAccessToken: string }
 //
 // Privy since 2026-09-29 (Joshua: everyone moves to Privy). The account's Safe is owned by the user's Privy
-// embedded wallet; Mako's own sponsorship (/api/aa/sponsor, /api/aa/send) is unchanged. An account whose
-// signer is a Magic-era EOA is moved once to the Privy wallet: its Safe is repointed and every other session
-// revoked (upsertEmbeddedUser). Steps 1-2 below read "verify the Privy access token, then read the user's
-// email and embedded wallets from Privy's API"; the Magic wording is kept for history.
+// embedded wallet; Mako's own sponsorship (/api/aa/sponsor, /api/aa/send) is unchanged.
 //
 // 0. Same-origin gate (CSRF). Reject anything that doesn't carry an Origin
 //    header matching this host — login CSRF would otherwise let an attacker
 //    set the victim's session cookie to the attacker's account.
-// 1. Validate the DID token cryptographically (Magic admin SDK)
-// 2. Pull canonical { email, publicAddress } via the same admin SDK
-// 3. Normalize email + EOA, gate on the allowlist for non-dev stages
+// 1. Verify the Privy access token (src/lib/privy-server.ts).
+// 2. Read the user's verified email, Privy user id and Privy-created embedded
+//    Ethereum wallets from Privy's API, never from the browser.
+// 3. Normalize the email, gate on the allowlist for non-dev stages.
 // 4. In a single Drizzle transaction:
-//      a. upsertMagicUser — find-or-create the users row (throws on conflict)
-//      b. derive the Safe address (pure CREATE2; same value on every chain
-//         under Path X) and INSERT a user_safes row per tracked chain id
+//      a. upsertEmbeddedUser (src/lib/user-upsert.ts, decideEmbeddedUser):
+//           - no account: create one bound to this Privy user;
+//           - bound to this Privy user and signed by one of its wallets: reuse;
+//           - bound to a different Privy user, or its signer no longer among
+//             the user's wallets: refuse (409), never move again;
+//           - not bound yet (Magic-era): bind it and move its signer ONCE to
+//             the Privy wallet (applyEmbeddedMove: Safe repointed on every
+//             tracked chain, every session revoked). For a TOTP account the
+//             move is NOT made here: a totp_signin_move challenge carries the
+//             target wallet and Privy user id, and /api/user/auth/totp moves
+//             the account only after the second factor passes.
+//      b. derive the Safe from the ACCOUNT's signer and make sure its
+//         user_safes rows exist.
 //      c. BRANCH:
 //           - users.totp_secret IS NULL → read prior-session row BEFORE
 //             createSession (see "lastSignInAt ordering" below);
 //             createSession; return cookie + full wire shape
 //           - users.totp_secret IS NOT NULL → INSERT auth_challenges row
-//             scoped to (user.id, magicEoa, 'totp_signin'); return
+//             (purpose totp_signin, or totp_signin_move as above); return
 //             { status: 'totp_required', challengeId } and DO NOT issue
 //             a session cookie. The browser holds challengeId only;
 //             /api/user/auth/totp consumes it on successful TOTP /
@@ -54,12 +62,13 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 //    disabled path only.
 //
 // Failures map cleanly to status codes:
-//   400  bad body / missing didToken
-//   401  validateDidToken throws (bad/expired token)
+//   400  bad body / missing privyAccessToken
+//   401  the Privy access token does not verify
 //   403  cross-origin request OR email not on allowlist
-//   409  IdentityConflictError (email vs EOA mismatch)
-//   500  config error (missing MAGIC_SECRET_KEY) or unexpected DB failure
-//   502  Magic admin API unreachable / metadata lookup failed
+//   409  IdentityConflictError (identity mismatch; see step 4a)
+//   422  a valid Privy user without a verified email or an embedded wallet
+//   500  config error (NEXT_PUBLIC_PRIVY_APP_ID / PRIVY_APP_SECRET unset) or
+//        unexpected DB failure
 //
 // Success response shape (bucket A, see src/lib/users-wire.ts):
 //   { ok: true, authed: true, ...WireUser, lastSignInAt,
@@ -84,7 +93,7 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 //
 // Body parsing intentionally rejects unknown extras quietly — the auth route
 // must never echo browser-supplied fields into the DB. Email + EOA come
-// only from the Magic admin lookup.
+// only from Privy's API.
 // ----------------------------------------------------------------------------
 
 export async function POST(req: Request) {
@@ -150,7 +159,7 @@ export async function POST(req: Request) {
   let outcome: Outcome;
   try {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
-      const { user, moved, pendingMoveTo } = await upsertEmbeddedUser(tx, email, identity.wallets, {
+      const { user, moved, pendingMoveTo } = await upsertEmbeddedUser(tx, email, identity.wallets, identity.privyUserId, {
         deferMoveIfTotp: true,
       });
       if (!user.email || !user.magicEoa) {
@@ -165,6 +174,7 @@ export async function POST(req: Request) {
           userId: user.id,
           magicEoa: pendingMoveTo,
           purpose: TOTP_SIGNIN_MOVE_PURPOSE,
+          privyUserId: identity.privyUserId,
         });
         return { kind: 'totp_required', challengeId };
       }
@@ -185,7 +195,7 @@ export async function POST(req: Request) {
         }
       }
 
-      // Phase 1G: split on TOTP. upsertMagicUser returns the full users
+      // Phase 1G: split on TOTP. upsertEmbeddedUser returns the full users
       // row including `totpSecret`. Non-null means 2FA is on for this
       // user; gate the session cookie behind /api/user/auth/totp.
       if (user.totpSecret) {
@@ -269,7 +279,7 @@ export async function POST(req: Request) {
 
 /// Pull the safe diagnostic fields off an unknown error for logging. Avoids
 /// dumping the entire error object — keeping the shape minimal narrows the
-/// surface for any embedded sensitive data (DID tokens, session ids) that
+/// surface for any embedded sensitive data (access tokens, session ids) that
 /// a future error message format change might introduce.
 ///
 /// Non-throwing by design. This helper is called inside catch blocks; if it

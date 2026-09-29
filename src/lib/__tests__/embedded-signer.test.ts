@@ -8,6 +8,8 @@ import { buildSafeOpEnvelope } from '../aa-signature';
 import {
   clearEmbeddedSigner,
   EmbeddedSignerMismatch,
+  EmbeddedSignerMissing,
+  markEmbeddedSignerMissing,
   EmbeddedSignerNotReady,
   registerEmbeddedSigner,
   signSafeOpHash,
@@ -83,5 +85,16 @@ describe('embedded signer', () => {
     const assertion = expect(signSafeOpHash(args)).rejects.toBeInstanceOf(EmbeddedSignerNotReady);
     await vi.advanceTimersByTimeAsync(15_000);
     await assertion;
+  });
+
+  it("fails at once, with a clear error, when the account's wallet is known to be unavailable", async () => {
+    markEmbeddedSignerMissing();
+    await expect(signSafeOpHash(args)).rejects.toBeInstanceOf(EmbeddedSignerMissing);
+  });
+
+  it('a wallet registered after being reported missing signs normally', async () => {
+    markEmbeddedSignerMissing();
+    registerEmbeddedSigner(OWNER, provider());
+    await expect(signSafeOpHash(args)).resolves.toMatch(/^0x/);
   });
 });

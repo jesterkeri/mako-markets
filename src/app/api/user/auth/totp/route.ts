@@ -195,11 +195,14 @@ export async function POST(req: Request) {
   // A pending-move challenge (Magic-era 2FA account moving to its Privy wallet) names the wallet it moves TO;
   // the move happens below, only once the second factor has passed. If the account already reached that
   // wallet some other way there is nothing to move. Any other challenge must match the live signer.
-  const moveTo =
-    challenge.purpose === TOTP_SIGNIN_MOVE_PURPOSE && user.magicEoa.toLowerCase() !== challenge.magicEoa.toLowerCase()
-      ? challenge.magicEoa.toLowerCase()
-      : null;
-  if (challenge.purpose !== TOTP_SIGNIN_MOVE_PURPOSE && user.magicEoa.toLowerCase() !== challenge.magicEoa.toLowerCase()) {
+  // It also binds the account to its Privy user, which is why the challenge carries that id; without it the
+  // challenge is refused.
+  const isMove = challenge.purpose === TOTP_SIGNIN_MOVE_PURPOSE;
+  if (isMove && !challenge.privyUserId) {
+    return Response.json({ error: 'challenge_invalid' }, { status: 401 });
+  }
+  const moveTo = isMove ? challenge.magicEoa.toLowerCase() : null;
+  if (!isMove && user.magicEoa.toLowerCase() !== challenge.magicEoa.toLowerCase()) {
     return Response.json({ error: 'eoa_drift' }, { status: 401 });
   }
 
@@ -348,10 +351,16 @@ export async function POST(req: Request) {
           : null;
 
       // Step 6b: the second factor has passed, so a pending move happens now, in this transaction: the
-      // signer (conditional on the one read above), the Safe, and every existing session. If the signer
-      // changed since, nothing moves and the whole sign-in rolls back.
+      // Privy binding and the signer (conditional on the account still being unbound and on the signer read
+      // above), the Safe, and every existing session. If either changed since, nothing moves and the whole
+      // sign-in rolls back.
       if (moveTo !== null) {
-        const moved = await applyEmbeddedMove(tx, { userId: user.id, from: user.magicEoa!, to: moveTo });
+        const moved = await applyEmbeddedMove(tx, {
+          userId: user.id,
+          from: user.magicEoa!,
+          to: moveTo,
+          privyUserId: challenge.privyUserId!,
+        });
         if (!moved) throw new ChallengeInvalid();
       }
 

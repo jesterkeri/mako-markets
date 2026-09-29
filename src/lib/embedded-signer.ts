@@ -25,11 +25,14 @@ interface Signer {
 }
 
 let active: Signer | null = null;
+let missing = false;
 let waiters: ((s: Signer) => void)[] = [];
 
-/// Called by the Privy bridge when the user's embedded wallet is ready (and again if it changes).
+/// Called by the Privy bridge when the embedded wallet that owns this account is ready (and again if it
+/// changes). The bridge registers only the wallet whose address is the account's signer.
 export function registerEmbeddedSigner(address: Address, provider: Eip1193Provider): void {
   active = { address, provider };
+  missing = false;
   const ready = waiters;
   waiters = [];
   for (const w of ready) w(active);
@@ -38,6 +41,23 @@ export function registerEmbeddedSigner(address: Address, provider: Eip1193Provid
 /// Called on logout, or when the embedded wallet goes away.
 export function clearEmbeddedSigner(): void {
   active = null;
+  missing = false;
+}
+
+/// Called by the bridge when Privy's wallets have loaded but none is the account's signer: signing fails at
+/// once with a clear message instead of waiting for a wallet that will not come.
+export function markEmbeddedSignerMissing(): void {
+  active = null;
+  missing = true;
+}
+
+export class EmbeddedSignerMissing extends Error {
+  constructor() {
+    super(
+      "The wallet that owns this account isn't available in this sign-in. Sign out and sign in again with the same email; if it keeps happening, contact support.",
+    );
+    this.name = 'EmbeddedSignerMissing';
+  }
 }
 
 export class EmbeddedSignerNotReady extends Error {
@@ -62,6 +82,7 @@ const READY_TIMEOUT_MS = 15_000;
 
 async function readySigner(): Promise<Signer> {
   if (active) return active;
+  if (missing) throw new EmbeddedSignerMissing();
   return new Promise<Signer>((resolve, reject) => {
     const timer = setTimeout(() => {
       waiters = waiters.filter((w) => w !== onReady);

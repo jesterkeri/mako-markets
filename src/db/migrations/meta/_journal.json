@@ -71,6 +71,13 @@
       "when": 1783091210332,
       "tag": "0009_comments",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790670000000,
+      "tag": "0010_users_privy_identity",
+      "breakpoints": true
     }
   ]
 }

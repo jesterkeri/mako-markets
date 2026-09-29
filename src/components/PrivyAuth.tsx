@@ -12,7 +12,8 @@ import { PrivyProvider, usePrivy, useWallets } from '@privy-io/react-auth';
 import type { Address } from 'viem';
 
 import { monadTestnet } from '@/lib/chain';
-import { clearEmbeddedSigner, registerEmbeddedSigner } from '@/lib/embedded-signer';
+import { clearEmbeddedSigner, markEmbeddedSignerMissing, registerEmbeddedSigner } from '@/lib/embedded-signer';
+import { useUser } from '@/lib/use-user';
 
 export const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() ?? '';
 
@@ -55,15 +56,27 @@ function EmbeddedActionsProvider({ children }: { children: React.ReactNode }) {
   return <EmbeddedActionsContext.Provider value={value}>{children}</EmbeddedActionsContext.Provider>;
 }
 
-function EmbeddedSignerBridge() {
+/// Registers, with the signer seam, the Privy embedded wallet whose address is THIS account's signer, never
+/// simply the first one Privy lists (Codex T2.2 r1: an account signed by a user's second wallet could never
+/// bet). If Privy's wallets have loaded and none is the signer, signing fails with a clear message. Render it
+/// inside the React Query provider (it reads the account) and only when Privy is configured.
+export function EmbeddedSignerBridge() {
   const { ready, authenticated } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
-  const embedded = wallets.find((w) => w.walletClientType === 'privy');
+  const { user } = useUser();
+  const owner = user && user.authType === 'magic' ? user.magicEoa.toLowerCase() : null;
+  const embedded = owner
+    ? wallets.find((w) => w.walletClientType === 'privy' && w.address.toLowerCase() === owner)
+    : undefined;
 
   React.useEffect(() => {
     if (!ready || !walletsReady) return;
-    if (!authenticated || !embedded) {
+    if (!authenticated || !owner) {
       clearEmbeddedSigner();
+      return;
+    }
+    if (!embedded) {
+      markEmbeddedSignerMissing();
       return;
     }
     let cancelled = false;
@@ -73,7 +86,7 @@ function EmbeddedSignerBridge() {
     return () => {
       cancelled = true;
     };
-  }, [ready, walletsReady, authenticated, embedded]);
+  }, [ready, walletsReady, authenticated, owner, embedded]);
 
   return null;
 }
@@ -92,7 +105,6 @@ export function PrivyAuthProvider({ children }: { children: React.ReactNode }) {
         appearance: { theme: 'dark', accentColor: '#FACC15' },
       }}
     >
-      <EmbeddedSignerBridge />
       <EmbeddedActionsProvider>{children}</EmbeddedActionsProvider>
     </PrivyProvider>
   );

@@ -7,7 +7,7 @@ import { WagmiProvider } from 'wagmi';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { config } from '@/lib/wagmi';
 import { ThemeProvider } from '@/lib/use-theme';
-import { PrivyAuthProvider } from '@/components/PrivyAuth';
+import { EmbeddedSignerBridge, PRIVY_APP_ID, PrivyAuthProvider } from '@/components/PrivyAuth';
 
 // ---------------------------------------------------------------
 // SSR localStorage polyfill.
@@ -142,6 +142,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyAuthProvider>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
+        {/* Reads the account to pick its own Privy wallet; needs Privy, so only when it is configured. */}
+        {PRIVY_APP_ID && <EmbeddedSignerBridge />}
         <ThemeProvider>
           <RainbowKitProvider theme={darkTheme({
             accentColor: '#FACC15',

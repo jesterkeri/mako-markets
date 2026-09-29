@@ -713,7 +713,7 @@ describe('POST /api/user/auth/totp', () => {
   // the account moves TO, and the move happens only after the second factor passes.
   describe('pending move to a Privy wallet', () => {
     const PRIVY_EOA = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-    const moveChallenge = { userId: USER_ID, magicEoa: PRIVY_EOA, purpose: 'totp_signin_move' };
+    const moveChallenge = { userId: USER_ID, magicEoa: PRIVY_EOA, purpose: 'totp_signin_move', privyUserId: 'did:privy:u1' };
 
     function succeedFactor() {
       mocks.checkSameOrigin.mockReturnValue({ ok: true });
@@ -741,6 +741,7 @@ describe('POST /api/user/auth/totp', () => {
         userId: USER_ID,
         from: MAGIC_EOA,
         to: PRIVY_EOA,
+        privyUserId: 'did:privy:u1',
       });
       expect(mocks.consumeSigninChallengeInTx).toHaveBeenCalledWith(
         expect.objectContaining({ purpose: 'totp_signin_move' }),
@@ -770,6 +771,17 @@ describe('POST /api/user/auth/totp', () => {
       expect(res.status).toBe(401);
       expect(mocks.createSession).not.toHaveBeenCalled();
       expect(mocks.cookiesStore.set).not.toHaveBeenCalled();
+    });
+
+    it('a pending-move challenge without its Privy user is refused before any factor work', async () => {
+      succeedFactor();
+      mocks.validateSigninChallenge.mockResolvedValue({ ...moveChallenge, privyUserId: null });
+      mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+      const { POST } = await import('../../app/api/user/auth/totp/route');
+      const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+      expect(res.status).toBe(401);
+      expect(mocks.applyEmbeddedMove).not.toHaveBeenCalled();
+      expect(mocks.createSession).not.toHaveBeenCalled();
     });
 
     it('an ordinary TOTP challenge never moves the account', async () => {

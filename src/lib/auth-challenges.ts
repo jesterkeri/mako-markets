@@ -42,6 +42,8 @@ export type SigninChallenge = {
   userId: string;
   magicEoa: string;
   purpose: SigninPurpose;
+  /// Set on a pending Privy move: the Privy user the account binds to once TOTP passes.
+  privyUserId: string | null;
 };
 
 /// INSERT a fresh totp_signin challenge bound to (userId, magicEoa) and
@@ -54,6 +56,7 @@ export async function createSigninChallenge(args: {
   magicEoa: string;
   ttlSec?: number;
   purpose?: SigninPurpose;
+  privyUserId?: string;
 }): Promise<string> {
   const ttlSec = args.ttlSec ?? SIGNIN_CHALLENGE_TTL_SEC;
   const expiresAt = new Date(Date.now() + ttlSec * 1000);
@@ -64,6 +67,7 @@ export async function createSigninChallenge(args: {
       userId: args.userId,
       magicEoa: args.magicEoa.toLowerCase(),
       purpose: args.purpose ?? TOTP_SIGNIN_PURPOSE,
+      privyUserId: args.privyUserId ?? null,
       expiresAt,
     })
     .returning({ id: authChallenges.id });
@@ -82,6 +86,7 @@ export async function validateSigninChallenge(args: {
       userId: authChallenges.userId,
       magicEoa: authChallenges.magicEoa,
       purpose: authChallenges.purpose,
+      privyUserId: authChallenges.privyUserId,
     })
     .from(authChallenges)
     .where(

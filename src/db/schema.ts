@@ -152,6 +152,9 @@ export const users = pgTable('users', {
   email: text('email'),
   /// Magic-side identity. NULL for wallet rows.
   magicEoa: text('magic_eoa'),
+  /// The Privy user this email account belongs to (migration 0010). NULL until its first Privy sign-in; set
+  /// once, and a different Privy user is refused after that. Unique when set (partial index in the SQL).
+  privyUserId: text('privy_user_id'),
   /// Wallet-side identity. NULL for Magic rows. Stored canonical
   /// lowercase (DB CHECK + helper assertion both enforce). Partial
   /// unique index `users_wallet_address_uniq` lives in raw migration
@@ -643,6 +646,8 @@ export const authChallenges = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     magicEoa: text('magic_eoa').notNull(),
     purpose: text('purpose').notNull(),
+    /// For a pending Privy move (purpose totp_signin_move): the Privy user the account binds to once TOTP passes.
+    privyUserId: text('privy_user_id'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

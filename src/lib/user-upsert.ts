@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import { type DbOrTx } from '@/db/client';
 import { sessions, userSafes, users, type User } from '@/db/schema';
@@ -83,7 +83,12 @@ export class IdentityConflictError extends Error {
   constructor(
     public readonly reason:
       | 'email_with_different_eoa'
-      | 'eoa_with_different_email',
+      | 'eoa_with_different_email'
+      /// The account already belongs to a different Privy user (Codex T2.2 r1: never move it again).
+      | 'privy_identity_mismatch'
+      /// The account's Privy user no longer lists the account's signer among its wallets: refused, not
+      /// silently rotated to a new Safe.
+      | 'wallet_set_changed',
   ) {
     super(`IDENTITY_CONFLICT: ${reason}`);
     this.name = 'IdentityConflictError';
@@ -162,8 +167,8 @@ export async function upsertMagicUser(
 /// The result of signing in with a Privy identity.
 export interface EmbeddedUpsert {
   user: User;
-  /// True when this sign-in moved an existing account from its old signer (a Magic-era EOA) to the Privy
-  /// wallet. The move already repointed the Safe and revoked every session (applyEmbeddedMove).
+  /// True when this sign-in bound the account to its Privy user and, for a Magic-era account, moved its signer
+  /// to the Privy wallet. The move already repointed the Safe and revoked every session (applyEmbeddedMove).
   moved: boolean;
   /// Set instead of moving when the account has TOTP on: the Privy wallet it will move to once the second
   /// factor passes. Nothing about the account has changed; the caller issues a pending-move challenge.
@@ -171,26 +176,29 @@ export interface EmbeddedUpsert {
 }
 
 /**
- * Move an account to a new signer, in the caller's transaction: the signer (conditional on the one read, so a
- * concurrent move cannot also succeed), the account's Safe on every tracked chain, and every session (they
- * carry nothing of the old signer, but the owner must sign in again with the new one). Returns false, having
- * changed nothing, if the signer is no longer `from`.
+ * Bind an account to its Privy user and move its signer, in the caller's transaction. Allowed ONCE: only
+ * while the account has no Privy user, and only from the signer read (so a concurrent move cannot also
+ * succeed). Repoints the account's Safe on every tracked chain and, when the signer changes, revokes every
+ * session. Returns null, having changed nothing, if either condition no longer holds.
  */
 export async function applyEmbeddedMove(
   tx: DbOrTx,
-  args: { userId: string; from: string | null; to: string },
+  args: { userId: string; from: string | null; to: string; privyUserId: string },
 ): Promise<User | null> {
   const to = normalizeEoa(args.to);
   const updated = await tx
     .update(users)
-    .set({ magicEoa: to })
+    .set({ magicEoa: to, privyUserId: args.privyUserId })
     .where(
-      args.from === null
-        ? and(eq(users.id, args.userId), sql`${users.magicEoa} IS NULL`)
-        : and(eq(users.id, args.userId), eq(users.magicEoa, args.from)),
+      and(
+        eq(users.id, args.userId),
+        isNull(users.privyUserId),
+        args.from === null ? isNull(users.magicEoa) : eq(users.magicEoa, args.from),
+      ),
     )
     .returning();
   if (updated.length !== 1) return null;
+  if (args.from === to) return updated[0]; // bound to Privy, signer unchanged: nothing else moves
   const safeAddress = deriveSafeAddress(to as `0x${string}`);
   for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
     await tx
@@ -202,56 +210,63 @@ export async function applyEmbeddedMove(
   return updated[0];
 }
 
-/**
- * Find-or-create the email account for a Privy identity (Joshua, 2026-09-29: everyone moves to Privy).
- *
- *   - No account for this email or these wallets: create one, signed by the first Privy wallet.
- *   - The account's signer is one of this Privy user's wallets: reuse it unchanged. So a second Privy wallet
- *     for the same user never silently moves the account to a different Safe.
- *   - The account's signer is NOT one of them (a Magic-era account): move it, once, to the first Privy
- *     wallet. The Magic key keeps control of the old Safe; the account now owns a new one.
- *   - A wallet already belongs to a different email, or the email and a wallet point at two accounts:
- *     IdentityConflictError, never a guess.
- *
- * Email ownership is proven by Privy's email code, exactly as Magic's was, so the move grants nothing Magic
- * sign-in did not already grant.
- */
 /// What to do with a Privy sign-in, given the rows that already match its email or wallets. Pure, so every
 /// case is tested without a database.
 export type EmbeddedDecision =
   | { action: 'create'; eoa: string }
   | { action: 'reuse'; row: User }
   | { action: 'move'; row: User; eoa: string }
-  | { action: 'conflict'; reason: 'email_with_different_eoa' | 'eoa_with_different_email' };
+  | {
+      action: 'conflict';
+      reason: 'email_with_different_eoa' | 'eoa_with_different_email' | 'privy_identity_mismatch' | 'wallet_set_changed';
+    };
 
-export function decideEmbeddedUser(existing: User[], email: string, wallets: string[]): EmbeddedDecision {
+/**
+ * The account's Privy user is recorded on its first Privy sign-in and never changes (Codex T2.2 r1):
+ *
+ *   - No account: create one, bound to this Privy user, signed by its first wallet.
+ *   - Bound to this Privy user: reuse it if its signer is one of the user's wallets; if not, refuse
+ *     (wallet_set_changed) rather than rotate it to a new Safe.
+ *   - Bound to a different Privy user: refuse (privy_identity_mismatch), even with the same verified email.
+ *   - Not bound yet (Magic-era): bind it and move it ONCE, to its signer if that is already one of the user's
+ *     wallets, otherwise to the first wallet.
+ *   - A wallet signs for a different email, or the email and a wallet point at two accounts: refuse.
+ */
+export function decideEmbeddedUser(existing: User[], email: string, wallets: string[], privyUserId: string): EmbeddedDecision {
   if (wallets.length === 0) throw new Error('decideEmbeddedUser: no wallets');
   const primary = wallets[0];
   if (existing.length === 0) return { action: 'create', eoa: primary };
   if (existing.length > 1) return { action: 'conflict', reason: 'email_with_different_eoa' };
   const row = existing[0];
   if (row.email !== email) return { action: 'conflict', reason: 'eoa_with_different_email' };
-  if (row.magicEoa !== null && wallets.includes(row.magicEoa)) return { action: 'reuse', row };
-  return { action: 'move', row, eoa: primary };
+  const signerIsTheirs = row.magicEoa !== null && wallets.includes(row.magicEoa);
+  // Any empty value (NULL from the database) means not bound yet.
+  if (row.privyUserId) {
+    if (row.privyUserId !== privyUserId) return { action: 'conflict', reason: 'privy_identity_mismatch' };
+    return signerIsTheirs ? { action: 'reuse', row } : { action: 'conflict', reason: 'wallet_set_changed' };
+  }
+  return { action: 'move', row, eoa: signerIsTheirs ? (row.magicEoa as string) : primary };
 }
 
 export async function upsertEmbeddedUser(
   tx: DbOrTx,
   rawEmail: string,
   rawWallets: string[],
+  privyUserId: string,
   opts: { deferMoveIfTotp?: boolean } = {},
 ): Promise<EmbeddedUpsert> {
   const email = normalizeEmail(rawEmail);
   const wallets = rawWallets.map((w) => normalizeEoa(w));
   if (wallets.length === 0) throw new Error('upsertEmbeddedUser: no wallets');
+  if (!privyUserId) throw new Error('upsertEmbeddedUser: no Privy user id');
 
   const existing = await tx
     .select()
     .from(users)
-    .where(or(eq(users.email, email), inArray(users.magicEoa, wallets)))
+    .where(or(eq(users.email, email), inArray(users.magicEoa, wallets), eq(users.privyUserId, privyUserId)))
     .limit(3);
 
-  const d = decideEmbeddedUser(existing, email, wallets);
+  const d = decideEmbeddedUser(existing, email, wallets, privyUserId);
   switch (d.action) {
     case 'conflict':
       throw new IdentityConflictError(d.reason);
@@ -260,7 +275,7 @@ export async function upsertEmbeddedUser(
     case 'create': {
       const inserted = await tx
         .insert(users)
-        .values({ email, magicEoa: d.eoa, authType: 'magic' })
+        .values({ email, magicEoa: d.eoa, privyUserId, authType: 'magic' })
         .onConflictDoNothing()
         .returning();
       if (inserted.length === 1) return { user: inserted[0], moved: false };
@@ -269,9 +284,9 @@ export async function upsertEmbeddedUser(
     }
     case 'move': {
       // A 2FA account moves only after its second factor: proving the email alone must not change the
-      // account's signer or Safe, or sign its owner out (adversary pass, 2026-09-29).
+      // account's signer, Safe or Privy identity, or sign its owner out (adversary pass, 2026-09-29).
       if (opts.deferMoveIfTotp && d.row.totpSecret) return { user: d.row, moved: false, pendingMoveTo: d.eoa };
-      const moved = await applyEmbeddedMove(tx, { userId: d.row.id, from: d.row.magicEoa, to: d.eoa });
+      const moved = await applyEmbeddedMove(tx, { userId: d.row.id, from: d.row.magicEoa, to: d.eoa, privyUserId });
       if (!moved) throw new IdentityConflictError('email_with_different_eoa');
       return { user: moved, moved: true };
     }
