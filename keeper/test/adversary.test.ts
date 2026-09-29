@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { ROUNDS_ABI } from '../../rounds-delivery/src/index';
 import { ROUNDS_REFUND_ABI } from '../src/abi-refunds';
 import { refundAnswer } from './refund-fake';
+import { multicallAnswer } from './multicall-fake';
 import { makeNet } from '../src/net';
 import { runKeeper, type Deps, type RunConfig, type TxRequest } from '../src/run';
 import { INITIAL_META, type InFlight, type Meta } from '../src/state';
@@ -70,6 +71,8 @@ class Chain {
   answer(method: string, params: unknown[]): unknown {
     switch (method) {
       case 'eth_call': {
+      const mc = multicallAnswer(params[0] as { to: Hex; data: Hex }, (c) => this.answer('eth_call', [c, 'latest']));
+      if (mc) return mc;
         const data = (params[0] as { data: Hex }).data;
         // Refund views, from the rounds this chain holds (ids 1..n), and no V4 pools.
         const world = {

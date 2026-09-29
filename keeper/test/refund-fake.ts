@@ -20,6 +20,8 @@ export interface FakeMarket {
 export interface RefundWorld {
   rounds: FakeRound[]; // id = index + 1
   markets: FakeMarket[]; // id = index
+  /// Market ids whose getMarket reverts (a read that fails although the market exists).
+  failMarkets?: Set<number>;
 }
 
 export const emptyRefundWorld = (): RefundWorld => ({ rounds: [], markets: [] });
@@ -36,6 +38,7 @@ export function refundAnswer(call: { to: Hex; data: Hex }, rounds: Hex, pools: H
       return { result: encodeFunctionResult({ abi: POOLS_ABI, functionName, result: BigInt(w.markets.length) }) };
     if (functionName === 'RESOLUTION_GRACE') return { result: encodeFunctionResult({ abi: POOLS_ABI, functionName, result: 86_400n }) };
     if (functionName === 'getMarket') {
+      if (w.failMarkets?.has(Number(args![0]))) return { error: { code: 3, message: 'execution reverted' } };
       const m = w.markets[Number(args![0])];
       return {
         result: encodeFunctionResult({

@@ -8,6 +8,7 @@ import { encodeAbiParameters, encodeErrorResult, encodeFunctionResult, keccak256
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ROUNDS_ABI } from '../../rounds-delivery/src/index';
 import { emptyRefundWorld, refundAnswer, type RefundWorld } from './refund-fake';
+import { multicallAnswer } from './multicall-fake';
 import { makeNet } from '../src/net';
 import { runKeeper, TX_STUCK_MS, UNHEALTHY_REPORT_MS, unhealthyRun, type Deps, type RunConfig } from '../src/run';
 import { INITIAL_META, type InFlight, type Meta } from '../src/state';
@@ -56,6 +57,7 @@ interface World {
   recordOk: boolean;
   order: string[];
   refundWorld: RefundWorld;
+  closeFail: boolean;
 }
 
 let w: World;
@@ -70,13 +72,15 @@ function rpcAnswer(method: string, params: unknown[]): unknown {
   const call = params[0] as { data: Hex; from?: Hex };
   switch (method) {
     case 'eth_call': {
+      const mc = multicallAnswer(params[0] as { to: Hex; data: Hex }, (c) => rpcAnswer('eth_call', [c, 'latest']));
+      if (mc) return mc;
       // The refund scan: no rounds or pools to refund unless a test says so.
       const refund = refundAnswer(call as { to: Hex; data: Hex }, ROUNDS, POOLS, w.refundWorld);
       if (refund) return refund;
       const sel = call.data.slice(0, 10);
       if (sel === '0x36ceb433') return { result: encodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'pendingSettlement', result: w.pending }) };
       if (sel === '0x1be05289') return { result: encodeAbiParameters([{ type: 'uint64' }], [900n]) }; // DURATION()
-      if (sel === '0x0c0c8719') return { result: encodeAbiParameters([{ type: 'uint64' }], [BigInt(CLOSE)]) }; // closeTimeOf
+      if (sel === '0x0c0c8719') return w.closeFail ? { error: { code: 3, message: 'execution reverted' } } : { result: encodeAbiParameters([{ type: 'uint64' }], [BigInt(CLOSE)]) }; // closeTimeOf
       // settle simulation, from the keeper
       if (w.simulate.revert) return { error: { code: 3, message: 'execution reverted', data: encodeErrorResult({ abi: ROUNDS_ABI, errorName: w.simulate.revert as never }) } };
       w.order.push('simulate');
@@ -166,6 +170,7 @@ beforeEach(() => {
     recordOk: true,
     order: [],
     refundWorld: emptyRefundWorld(),
+    closeFail: false,
   };
 });
 
@@ -368,3 +373,12 @@ function beforeEachReset(now: number) {
   w.pings = [];
   w.now = now;
 }
+
+describe('a pending round whose close time cannot be read', () => {
+  it('fails the run loudly instead of silently never settling it', async () => {
+    w.closeFail = true;
+    const o = await run();
+    expect(o).toMatchObject({ status: 'rpc-error', detail: 'closeTimeOf 7 failed' });
+    expect(w.sent).toEqual([]);
+  });
+});

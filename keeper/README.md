@@ -30,8 +30,13 @@ workflow will reuse unchanged (INVARIANTS N15).
 - A round whose transaction reverts on chain or is dropped twice is no longer sent (it would only burn gas).
 - Any transaction estimated above 1,000,000 gas is refused (SPEC §5.5a).
 - **The refund breaker:** automatic V4 refunds stop after 3 in an hour or 6 in a day. The alarm rides on
-  every run until Joshua sets `REFUND_BREAKER_RESET` (an ISO time later than the trip) in `wrangler.toml`
-  and redeploys. The count is written together with the transaction record, so a crash cannot lose it.
+  every run until Joshua sets `REFUND_BREAKER_RESET` in `wrangler.toml` to the current UTC time (later
+  than the trip, never in the future: a future time is ignored) and redeploys. Both windows are closed (a
+  refund exactly an hour ago counts). The count is the send time, written with the transaction record
+  before sending, so a crash cannot lose it.
+- **Reads go through Multicall3**, one item per scan: the public Monad RPC limits items, not requests, to
+  15 a second. A busy run stays at 14 items or fewer, and a read that fails for a market or round that
+  exists fails the run loudly; it is never taken for "nothing due".
 - Every run ends in one status (below). Unhealthy for 4 minutes from the run that first saw it pings
   Healthchecks `/fail`; a keeper that stops running is caught by Healthchecks' missing pings. `sent` and
   `tx-pending` never end an unhealthy stretch, so a transaction that reverts every time still alerts.

@@ -34,6 +34,7 @@ import { send, type Net } from './net';
 import { hexQuantity, rpcBatch, safeQuantity, type RpcCall, type RpcItem } from './rpc';
 import { decodeErrorResult, decodeFunctionResult, encodeFunctionData, type Abi } from 'viem';
 import { POOLS_ABI, ROUND_STATUS, ROUNDS_REFUND_ABI } from './abi-refunds';
+import { aggregate, decodeAggregate } from './multicall';
 import type { InFlight, Meta, TxKind } from './state';
 
 export const CHAIN_ID = 10143;
@@ -194,8 +195,11 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     breakerTrippedAt: a.breakerTrippedAt ?? null,
   };
 
-  // The breaker's reset is Joshua's: REFUND_BREAKER_RESET later than the trip clears it and its count.
-  if (meta.breakerTrippedAt !== null && cfg.breakerResetAt !== null && cfg.breakerResetAt > meta.breakerTrippedAt) {
+  // The breaker's reset is Joshua's: REFUND_BREAKER_RESET clears a trip only if it is later than the trip AND
+  // not in the future. A future reset would otherwise clear every trip until that time, which is no breaker
+  // at all (adversary pass, 2026-09-29).
+  const resetFuture = cfg.breakerResetAt !== null && cfg.breakerResetAt > now;
+  if (meta.breakerTrippedAt !== null && cfg.breakerResetAt !== null && !resetFuture && cfg.breakerResetAt > meta.breakerTrippedAt) {
     meta.breakerTrippedAt = null;
     meta.poolRefundsSent = [];
   }
@@ -210,7 +214,8 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
   // A tripped breaker is an alarm on EVERY run until reset, busy or idle.
   if (meta.breakerTrippedAt !== null)
     outcome = withAlarms(outcome, [
-      `automatic pool refunds HALTED by the breaker since ${iso(meta.breakerTrippedAt)}; set REFUND_BREAKER_RESET after that to resume`,
+      `automatic pool refunds HALTED by the breaker since ${iso(meta.breakerTrippedAt)}; set REFUND_BREAKER_RESET to a time after that and no later than now to resume` +
+        (resetFuture ? ' (the REFUND_BREAKER_RESET set now is in the future, so it is ignored)' : ''),
     ]);
 
   const end = deps.net.now();
@@ -321,14 +326,17 @@ async function takeRound(
   // Nothing to settle: this run's transaction, if any, is an overdue refund.
   if (pending.length === 0) return takeRefund(cfg, deps, token, meta, nowMs);
 
-  const closes = await rpc(cfg, deps, pending.map((id) => call(closeTimeData(id))));
+  // One Multicall3 item for every close time: the public RPC limits items per second, not requests.
+  const closes = await rpc(cfg, deps, [aggregate(pending.map((id) => ({ target: cfg.roundsAddress, data: closeTimeData(id) })))]);
   if (isOutcome(closes)) return closes;
+  if (!closes[0].ok) return itemFailure(closes[0]);
+  const closeResults = decodeAggregate(closes[0].result, pending.length);
+  if (closeResults === null) return { status: 'rpc-error', detail: 'bad_response' };
   const closeTimes = new Map<bigint, bigint>();
   for (let i = 0; i < pending.length; i++) {
-    const it = closes[i];
-    if (!it.ok) return itemFailure(it);
+    if (!closeResults[i].success) return { status: 'rpc-error', detail: `closeTimeOf ${pending[i]} failed` };
     try {
-      closeTimes.set(pending[i], decodeCloseTime(it.result as Hex));
+      closeTimes.set(pending[i], decodeCloseTime(closeResults[i].returnData));
     } catch {
       return { status: 'rpc-error', detail: 'bad_response' };
     }
@@ -425,8 +433,8 @@ interface Job {
   decode: (data: unknown) => string | null;
   /// Reverts that mean the goal is already met, and the healthy status to report instead.
   done: Record<string, Status>;
-  /// Written together with the in-flight record, before sending (the breaker count).
-  extra?: Partial<Meta>;
+  /// Counts toward the breaker: the send time is written together with the in-flight record, before sending.
+  countPoolRefund?: boolean;
 }
 
 async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job: Job): Promise<Outcome> {
@@ -470,11 +478,13 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
 
   const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
-  const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt: deps.net.now(), kind: job.kind };
-  const recorded = await deps.state.recordInFlight(token, inFlight, deps.net.now(), job.extra ?? {});
+  const sentAt = deps.net.now();
+  const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt, kind: job.kind };
+  const extra: Partial<Meta> = job.countPoolRefund ? { poolRefundsSent: [...meta.poolRefundsSent, sentAt] } : {};
+  const recorded = await deps.state.recordInFlight(token, inFlight, sentAt, extra);
   if (!recorded.ok) return { status: 'lease-lost', detail: label };
   meta.inFlight = inFlight;
-  if (job.extra) Object.assign(meta, job.extra);
+  Object.assign(meta, extra);
 
   const sent = await rpcBatch(deps.net, cfg.rpcUrl, [{ method: 'eth_sendRawTransaction', params: [raw] }]);
   // A failed send leaves the recorded transaction; the next run finds no receipt and an unused nonce, and after
@@ -512,38 +522,54 @@ function openWindow(open: number[], nowS: number): number[] {
 interface Scan<T> {
   read: Map<number, T>;
   count: number;
+  constants: bigint[];
 }
 
-async function scan<T>(
-  cfg: RunConfig,
-  deps: Deps,
+/// One contract's discovery reads, for a Multicall3 item: its id counter, its constants, then each id. The
+/// decoder is strict: a failed counter or constant, or a failed read of an id that exists, fails the run
+/// (reported, never skipped); only an id past the end may fail, and it is simply not read yet. The first
+/// version skipped any failed item, so a rate-limited read of a due market passed as "nothing due" forever
+/// (adversary pass, 2026-09-29).
+function scanReads<T>(
   to: Hex,
   abi: Abi,
   countFn: string,
-  itemFn: string,
   constants: string[],
+  itemFn: string,
   ids: number[],
-): Promise<{ scan: Scan<T>; constants: bigint[] } | Outcome> {
-  const call = (functionName: string, args: unknown[] = []): RpcCall => ({
-    method: 'eth_call',
-    params: [{ to, data: encodeFunctionData({ abi, functionName, args } as never) }, 'latest'],
-  });
-  const calls = [call(countFn), ...constants.map((c) => call(c)), ...ids.map((id) => call(itemFn, [BigInt(id)]))];
-  const items = await rpc(cfg, deps, calls);
-  if (isOutcome(items)) return items;
-  const head = items.slice(0, 1 + constants.length);
-  for (const it of head) if (!it.ok) return itemFailure(it);
-  const dec = (fn: string, it: RpcItem) =>
-    decodeFunctionResult({ abi, functionName: fn, data: (it as { result: unknown }).result as Hex } as never) as unknown;
-  const count = Number(dec(countFn, head[0]) as bigint);
-  const consts = constants.map((c, i) => BigInt(dec(c, head[1 + i]) as bigint));
-  const read = new Map<number, T>();
-  ids.forEach((id, i) => {
-    const it = items[1 + constants.length + i];
-    // An id past the end reverts or reads empty; it is simply not read yet.
-    if (it.ok) read.set(id, dec(itemFn, it) as T);
-  });
-  return { scan: { read, count }, constants: consts };
+  exists: (id: number, count: number) => boolean,
+) {
+  const enc = (functionName: string, args: unknown[] = []) => encodeFunctionData({ abi, functionName, args } as never);
+  const reads = [enc(countFn), ...constants.map((c) => enc(c)), ...ids.map((id) => enc(itemFn, [BigInt(id)]))].map((data) => ({ target: to, data }));
+  const decode = (item: RpcItem): Scan<T> | Outcome => {
+    if (!item.ok) return itemFailure(item);
+    const results = decodeAggregate(item.result, reads.length);
+    if (results === null) return { status: 'rpc-error', detail: 'bad_response' };
+    const dec = (fn: string, data: Hex) => decodeFunctionResult({ abi, functionName: fn, data } as never) as unknown;
+    const head = results.slice(0, 1 + constants.length);
+    if (head.some((r) => !r.success)) return { status: 'rpc-error', detail: `${countFn} scan failed` };
+    let count: number;
+    let consts: bigint[];
+    try {
+      count = Number(dec(countFn, head[0].returnData) as bigint);
+      consts = constants.map((c, i) => BigInt(dec(c, head[1 + i].returnData) as bigint));
+    } catch {
+      return { status: 'rpc-error', detail: 'bad_response' };
+    }
+    const read = new Map<number, T>();
+    for (let i = 0; i < ids.length; i++) {
+      const r = results[1 + constants.length + i];
+      if (!exists(ids[i], count)) continue;
+      if (!r.success) return { status: 'rpc-error', detail: `${itemFn} ${ids[i]} failed` };
+      try {
+        read.set(ids[i], dec(itemFn, r.returnData) as T);
+      } catch {
+        return { status: 'rpc-error', detail: 'bad_response' };
+      }
+    }
+    return { read, count, constants: consts };
+  };
+  return { reads, decode };
 }
 
 interface RoundRow {
@@ -559,18 +585,25 @@ interface MarketRow {
 
 async function takeRefund(cfg: RunConfig, deps: Deps, token: number, meta: Meta, nowMs: number): Promise<Outcome> {
   const nowS = Math.floor(nowMs / 1000);
-  meta.poolRefundsSent = meta.poolRefundsSent.filter((t) => nowMs - t < 86_400_000);
+  meta.poolRefundsSent = meta.poolRefundsSent.filter((t) => nowMs - t <= 86_400_000);
   const alarms: string[] = [];
 
-  // Rounds: open ids plus the next new ids, one batch; ids past roundCount are ignored.
+  // Discovery: for each contract, the open ids plus the next new ids, each contract as ONE Multicall3 item,
+  // both in one request. Round ids run 1..roundCount; V4 market ids 0..nextMarketId-1.
   const roundIds = [...new Set([...openWindow(meta.roundsOpen, nowS), ...range(meta.roundsCursor, DISCOVERY_FRESH)])];
-  const r = await scan<RoundRow>(cfg, deps, cfg.roundsAddress, ROUNDS_REFUND_ABI as Abi, 'roundCount', 'roundOf', ['DURATION', 'SUBMIT_WINDOW', 'ENTRY_LEAD'], roundIds);
+  const poolIds = [...new Set([...openWindow(meta.poolsOpen, nowS), ...range(meta.poolsCursor, DISCOVERY_FRESH)])];
+  const rs = scanReads<RoundRow>(cfg.roundsAddress, ROUNDS_REFUND_ABI as Abi, 'roundCount', ['DURATION', 'SUBMIT_WINDOW', 'ENTRY_LEAD'], 'roundOf', roundIds, (id, n) => id >= 1 && id <= n);
+  const ps = scanReads<MarketRow>(cfg.poolsAddress, POOLS_ABI as Abi, 'nextMarketId', ['RESOLUTION_GRACE'], 'getMarket', poolIds, (id, n) => id >= 0 && id < n);
+  const items = await rpc(cfg, deps, [aggregate(rs.reads), aggregate(ps.reads)]);
+  if (isOutcome(items)) return withAlarms(items, alarms);
+  const r = rs.decode(items[0]);
   if (isOutcome(r)) return withAlarms(r, alarms);
+  const p = ps.decode(items[1]);
+  if (isOutcome(p)) return withAlarms(p, alarms);
   const [duration, submitWindow, entryLead] = r.constants;
   const roundsDue: number[] = [];
-  const roundsOpen = new Set(meta.roundsOpen.filter((id) => !r.scan.read.has(id)));
-  for (const [id, row] of r.scan.read) {
-    if (id > r.scan.count) continue;
+  const roundsOpen = new Set(meta.roundsOpen.filter((id) => !r.read.has(id)));
+  for (const [id, row] of r.read) {
     if (Number(row.status) !== ROUND_STATUS.Active) continue;
     roundsOpen.add(id);
     const start = row.startTime;
@@ -578,22 +611,19 @@ async function takeRefund(cfg: RunConfig, deps: Deps, token: number, meta: Meta,
     if ((BigInt(nowS) >= start - entryLead && oneSided) || BigInt(nowS) >= start + duration + submitWindow) roundsDue.push(id);
   }
   meta.roundsOpen = [...roundsOpen].sort((a, b) => a - b);
-  meta.roundsCursor = advance(meta.roundsCursor, r.scan.count, r.scan.read, 1);
+  meta.roundsCursor = advance(meta.roundsCursor, r.count, r.read, 1);
 
   // Pools (V4): the same, over unresolved markets.
-  const poolIds = [...new Set([...openWindow(meta.poolsOpen, nowS), ...range(meta.poolsCursor, DISCOVERY_FRESH)])];
-  const p = await scan<MarketRow>(cfg, deps, cfg.poolsAddress, POOLS_ABI as Abi, 'nextMarketId', 'getMarket', ['RESOLUTION_GRACE'], poolIds);
-  if (isOutcome(p)) return withAlarms(p, alarms);
   const [grace] = p.constants;
   const poolsDue: number[] = [];
-  const poolsOpen = new Set(meta.poolsOpen.filter((id) => !p.scan.read.has(id)));
-  for (const [id, m] of p.scan.read) {
-    if (id >= p.scan.count || m.closeTime === 0n || m.resolved) continue;
+  const poolsOpen = new Set(meta.poolsOpen.filter((id) => !p.read.has(id)));
+  for (const [id, m] of p.read) {
+    if (m.closeTime === 0n || m.resolved) continue;
     poolsOpen.add(id);
     if (BigInt(nowS) >= m.closeTime + grace) poolsDue.push(id);
   }
   meta.poolsOpen = [...poolsOpen].sort((a, b) => a - b);
-  meta.poolsCursor = advance(meta.poolsCursor, p.scan.count - 1, p.scan.read, 0);
+  meta.poolsCursor = advance(meta.poolsCursor, p.count - 1, p.read, 0);
 
   // Forget refund memory for ids no longer open.
   const keep = new Set([...meta.roundsOpen.map((id) => `rr:${id}`), ...meta.poolsOpen.map((id) => `pr:${id}`)]);
@@ -627,7 +657,8 @@ async function takeRefund(cfg: RunConfig, deps: Deps, token: number, meta: Meta,
   if (pool === undefined || meta.breakerTrippedAt !== null) return withAlarms({ status: 'nothing-due' }, alarms);
 
   // The breaker: 3 automatic V4 refunds per hour, 6 per day. The next one past that trips it and halts them.
-  const lastHour = meta.poolRefundsSent.filter((t) => nowMs - t < 3_600_000).length;
+  // Closed windows: a refund exactly an hour (or a day) ago still counts.
+  const lastHour = meta.poolRefundsSent.filter((t) => nowMs - t <= 3_600_000).length;
   if (lastHour >= POOL_REFUNDS_PER_HOUR || meta.poolRefundsSent.length >= POOL_REFUNDS_PER_DAY) {
     meta.breakerTrippedAt = nowMs;
     return withAlarms({ status: 'refund-breaker-tripped', detail: `${lastHour} this hour, ${meta.poolRefundsSent.length} today; ${poolsDue.length} due` }, alarms);
@@ -641,7 +672,7 @@ async function takeRefund(cfg: RunConfig, deps: Deps, token: number, meta: Meta,
     decode: (d) => decodeWith(POOLS_ABI as Abi, d),
     // The resolver settled it first: final either way, and the goal is met.
     done: { AlreadyResolved: 'already-resolved' },
-    extra: cfg.dryRun ? undefined : { poolRefundsSent: [...meta.poolRefundsSent, nowMs] },
+    countPoolRefund: true,
   });
   return withAlarms(o, alarms);
 }

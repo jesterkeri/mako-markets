@@ -10,6 +10,7 @@ import { makeNet } from '../src/net';
 import { runKeeper, unhealthyRun, UNHEALTHY_REPORT_MS, type Deps, type Outcome, type RunConfig, type TxRequest } from '../src/run';
 import { INITIAL_META, type InFlight, type Meta } from '../src/state';
 import { refundAnswer, type RefundWorld } from './refund-fake';
+import { multicallAnswer } from './multicall-fake';
 
 const ROUNDS = '0x00000000000000000000000000000000000A11CE' as Hex;
 const POOLS = '0x0000000000000000000000000000000000000900' as Hex;
@@ -55,6 +56,8 @@ function answer(method: string, params: unknown[]): unknown {
   const call = params[0] as { to: Hex; data: Hex; from?: Hex };
   switch (method) {
     case 'eth_call': {
+      const mc = multicallAnswer(params[0] as { to: Hex; data: Hex }, (c) => answer('eth_call', [c, 'latest']));
+      if (mc) return mc;
       if (call.from === undefined) {
         const r = refundAnswer(call, ROUNDS, POOLS, w.world);
         if (r) return r;
@@ -109,8 +112,10 @@ function describeTx(to: Hex, data: Hex): Sent {
   return { to: ROUNDS, fn: d.functionName, id: (d.args as readonly bigint[])[0] };
 }
 
+let rpcItems = 0;
 const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
   const calls = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] }[];
+  rpcItems += calls.length;
   return Response.json(calls.map((c) => ({ jsonrpc: '2.0', id: c.id, ...(answer(c.method, c.params) as object) })));
 }) as typeof fetch;
 
@@ -338,5 +343,54 @@ describe('the breaker: 3 per hour, 6 per day', () => {
     w.now = T0 + DAY;
     await drain(Math.ceil(UNHEALTHY_REPORT_MS / 60_000) + 8);
     expect(w.pings.some((p) => p.kind === 'fail' && p.body.includes('HALTED'))).toBe(true);
+  });
+});
+
+describe('adversary pass 2026-09-29, follow-ups', () => {
+  it('ignores a breaker reset that is still in the future, and says so in the alarm', async () => {
+    w.world.markets = Array.from({ length: 6 }, () => market(T0));
+    w.now = T0 + DAY;
+    const future = (T0 + 2 * DAY) * 1000;
+    for (let i = 0; i < 8; i++) {
+      await run({ ...baseCfg, breakerResetAt: future });
+      w.now += 60;
+    }
+    expect(w.sent).toHaveLength(3);
+    expect(w.statuses.at(-1)?.alarm).toContain('is in the future, so it is ignored');
+  });
+
+  it('counts a refund exactly an hour ago: the hour window is closed', async () => {
+    w.world.markets = Array.from({ length: 4 }, () => market(T0));
+    w.now = T0 + DAY;
+    await run(); // 0
+    w.now += 60;
+    await run(); // settled receipt + 1
+    w.now += 60;
+    await run(); // 2
+    w.now = T0 + DAY + 3600; // exactly an hour after the first
+    await run();
+    expect(w.sent).toHaveLength(3);
+    expect(w.meta.breakerTrippedAt).not.toBeNull();
+  });
+
+  it('a failed read of a market that exists fails the run loudly, never passes as nothing due', async () => {
+    w.world.markets = [market(T0)];
+    w.now = T0 + DAY;
+    w.world.failMarkets = new Set([0]); // getMarket(0) reverts inside the multicall
+    const o = await run();
+    expect(o.status).toBe('rpc-error');
+    expect(o.detail).toContain('getMarket 0 failed');
+  });
+
+  it('a busy run stays within the public RPC limit of 15 items (one run: receipt, settle scan, refund scans, send)', async () => {
+    w.world.markets = Array.from({ length: 40 }, () => market(T0));
+    w.world.rounds = Array.from({ length: 10 }, () => ({ start: T0 + 60, status: 1, up: 5n, down: 0n }));
+    w.now = T0 + DAY;
+    for (let i = 0; i < 6; i++) {
+      rpcItems = 0;
+      await run();
+      expect(rpcItems).toBeLessThanOrEqual(14);
+      w.now += 60;
+    }
   });
 });
