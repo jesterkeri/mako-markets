@@ -61,7 +61,6 @@ jobs:
       NEXT_PUBLIC_USDC_ADDRESS_MONAD_TESTNET: '0x000000000000000000000000000000000000dcba'
       NEXT_PUBLIC_PROJECT_ID: 'ci-placeholder'
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
-      NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY: 'pk_live_ci_placeholder'
       # Privy validates the app id's shape at render time (exactly 25 characters), so the placeholder has it:
       # the build then exercises the Privy provider rather than skipping it.
       NEXT_PUBLIC_PRIVY_APP_ID: 'cm00000000000000000000000'

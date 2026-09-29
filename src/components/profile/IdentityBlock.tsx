@@ -184,7 +184,7 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
           );
         } else if (body.error === 'eoa_mismatch') {
           setEmailEditError(
-            "Magic returned a different wallet than expected. We didn't update anything. Please refresh and try again.",
+            "The sign-in returned a different wallet than expected. Nothing was changed. Please refresh and try again.",
           );
         } else if (body.error === 'cooldown_active') {
           const when = body.availableAt
@@ -213,7 +213,7 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
       }
       console.error('Email change failed', e);
       setEmailEditError(
-        'Magic could not complete the change. If you closed the modal, try again.',
+        'The email change could not be completed. If you closed the window, try again.',
       );
       setEmailEdit('open');
     }

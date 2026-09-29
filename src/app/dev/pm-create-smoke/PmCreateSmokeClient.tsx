@@ -64,7 +64,7 @@ export default function PmCreateSmokeClient() {
         title="not signed in"
         body={
           <p>
-            Visit <a href="/signup">/signup</a> first to authenticate via Magic.
+            Visit <a href="/signup">/signup</a> first to sign in with email.
             The dev surface uses your active session cookie to call the AA
             routes + the PM draft route.
           </p>
@@ -79,7 +79,7 @@ export default function PmCreateSmokeClient() {
         body={
           <p>
             The PM create flow drives ERC-4337 user-ops via your derived Safe.
-            Wallet-session users have no Safe — sign out and sign in via Magic
+            Wallet-session users have no Safe — sign out and sign in with email
             at <a href="/signup">/signup</a>.
           </p>
         }

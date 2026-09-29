@@ -311,7 +311,7 @@ export default function SignupPage() {
         // Best-effort — disconnect on a non-connected state is a no-op,
         // and a real failure here doesn't block sign-in. Log so a
         // wagmi regression shows up.
-        console.warn('Wallet disconnect on Magic sign-in failed', e);
+        console.warn('Wallet disconnect on email sign-in failed', e);
       }
 
       // Remember this email for one-tap return on the next visit. Lives

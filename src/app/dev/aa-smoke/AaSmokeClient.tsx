@@ -69,7 +69,7 @@ export default function AaSmokeClient() {
         title="not signed in"
         body={
           <p>
-            Visit <a href="/signup">/signup</a> first to authenticate via Magic.
+            Visit <a href="/signup">/signup</a> first to sign in with email.
             The dev surface uses your active session cookie to call the AA routes.
           </p>
         }
@@ -89,7 +89,7 @@ export default function AaSmokeClient() {
           <p>
             The AA dev surface drives ERC-4337 user-ops via your derived
             Safe. Wallet-session users have no Safe — sign out and sign
-            in via Magic at <a href="/signup">/signup</a>.
+            in with email at <a href="/signup">/signup</a>.
           </p>
         }
       />

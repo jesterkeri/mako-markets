@@ -16,18 +16,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   checkSameOrigin: vi.fn(),
   getUserSession: vi.fn(),
-  validateDidToken: vi.fn(),
-  getMetadataByDidToken: vi.fn(),
 }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
 vi.mock('@/lib/user-session', () => ({
   getUserSession: mocks.getUserSession,
-}));
-vi.mock('@/lib/magic-server', () => ({
-  validateDidToken: mocks.validateDidToken,
-  getMetadataByDidToken: mocks.getMetadataByDidToken,
-  MagicConfigError: class MagicConfigError extends Error {},
 }));
 
 afterEach(() => vi.clearAllMocks());
@@ -76,10 +69,22 @@ describe('POST /api/user/email/update — entry guards', () => {
     const res = await POST(makeRequest());
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'wallet_session' });
-    // Guard precedes body parse + Magic admin SDK calls. A wallet user
-    // hitting this route should NEVER trigger validateDidToken or any
-    // metadata fetch.
-    expect(mocks.validateDidToken).not.toHaveBeenCalled();
-    expect(mocks.getMetadataByDidToken).not.toHaveBeenCalled();
+  });
+
+  // Privy since 2026-09-29: email change is not built for Privy yet, so an email session is told plainly.
+  it('answers an email session with 410 email_change_unavailable', async () => {
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.getUserSession.mockResolvedValue({
+      authType: 'magic',
+      userId: USER_ID,
+      email: 'a@b.com',
+      magicEoa: '0x' + 'a'.repeat(40),
+      walletAddress: null,
+      sessionId: 's',
+    });
+    const { POST } = await import('../../app/api/user/email/update/route');
+    const res = await POST(makeRequest());
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({ error: 'email_change_unavailable' });
   });
 });
