@@ -11,11 +11,16 @@ import { DurableObject } from 'cloudflare:workers';
 /// Shorter than the one-minute cron period, so a crashed run's lease is free for the next one.
 export const LEASE_MS = 50_000;
 
+/// What a transaction does. Older records without `kind` are settlements.
+export type TxKind = 'settle' | 'round-refund' | 'pool-refund';
+
 export interface InFlight {
   hash: string;
   nonce: number;
+  /// The round id for a settlement or round refund; the V4 market id for a pool refund.
   roundId: string;
   sentAt: number;
+  kind?: TxKind;
 }
 
 export interface Meta {
@@ -29,6 +34,16 @@ export interface Meta {
   /// Per pending round id: transactions that reverted on chain or were dropped. At 2 the round is no longer
   /// sent (it would only burn gas) and the keeper raises an alarm until the round leaves pendingSettlement.
   txFailures: Record<string, number>;
+  /// Refund discovery (Joshua 2026-09-29: after 24 hours, refund automatically). For each contract: the next
+  /// id not yet read, and the ids still open (non-terminal round, unresolved V4 market), re-read every run.
+  roundsCursor: number;
+  roundsOpen: number[];
+  poolsCursor: number;
+  poolsOpen: number[];
+  /// When each automatic V4 refund was SENT (ms), for the circuit breaker: 3 per hour, 6 per day.
+  poolRefundsSent: number[];
+  /// Set when the breaker trips; V4 refunds stay halted until REFUND_BREAKER_RESET is later than this.
+  breakerTrippedAt: number | null;
 }
 
 export const INITIAL_META: Meta = {
@@ -38,6 +53,12 @@ export const INITIAL_META: Meta = {
   lastRunAt: null,
   attempts: {},
   txFailures: {},
+  roundsCursor: 1,
+  roundsOpen: [],
+  poolsCursor: 0,
+  poolsOpen: [],
+  poolRefundsSent: [],
+  breakerTrippedAt: null,
 };
 
 export type AcquireResult = { ok: true; token: number; meta: Meta } | { ok: false };
@@ -74,7 +95,7 @@ export class KeeperState extends DurableObject<Record<string, never>> {
   /// Records a signed transaction BEFORE it is sent (its hash is known once signed), only if `token` still
   /// holds the lease. A run that sends and then crashes has therefore always left its transaction behind for
   /// the next run to check; a run that cannot record it does not send.
-  recordInFlight(token: number, inFlight: InFlight, now: number): CommitResult {
+  recordInFlight(token: number, inFlight: InFlight, now: number, extra: Partial<Meta> = {}): CommitResult {
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql;
       const lease = sql.exec<{ token: number; held: number; expires_at: number }>(
@@ -82,7 +103,8 @@ export class KeeperState extends DurableObject<Record<string, never>> {
       ).one();
       if (lease.token !== token || lease.held !== 1 || lease.expires_at <= now) return { ok: false } as const;
       const meta = JSON.parse(sql.exec<{ json: string }>(`SELECT json FROM meta WHERE id = 1`).one().json) as Meta;
-      sql.exec(`UPDATE meta SET json = ? WHERE id = 1`, JSON.stringify({ ...meta, inFlight }));
+      // `extra` rides in the same write: a refund's breaker count must survive a crash after sending.
+      sql.exec(`UPDATE meta SET json = ? WHERE id = 1`, JSON.stringify({ ...meta, ...extra, inFlight }));
       return { ok: true } as const;
     });
   }

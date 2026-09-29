@@ -12,6 +12,7 @@ const ADDRESS = privateKeyToAccount(KEY).address;
 const base = (over: Partial<Env> = {}): Env =>
   ({
     ROUNDS_ADDRESS: '0x00000000000000000000000000000000000A11cE',
+    POOLS_ADDRESS: '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195',
     KEEPER_ADDRESS: ADDRESS,
     RPC_URL: 'https://testnet-rpc.monad.xyz/',
     DATASTREAMS_URL: 'https://api.testnet-dataengine.chain.link',

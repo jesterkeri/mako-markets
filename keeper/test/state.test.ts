@@ -44,4 +44,15 @@ describe('the run lease', () => {
     const next = await s.acquire(LEASE_MS);
     expect(next.ok && next.meta.inFlight).toEqual(tx);
   });
+
+  it('writes the breaker count in the same record as the transaction, so a crash after sending keeps it', async () => {
+    const s = stub('breaker-count');
+    const a = await s.acquire(0);
+    if (!a.ok) throw new Error('no lease');
+    expect(await s.recordInFlight(a.token, tx, 10, { poolRefundsSent: [10] })).toEqual({ ok: true });
+    // no commit: crashed after sending
+    const next = await s.acquire(LEASE_MS);
+    expect(next.ok && next.meta.poolRefundsSent).toEqual([10]);
+    expect(next.ok && next.meta.inFlight).toEqual(tx);
+  });
 });

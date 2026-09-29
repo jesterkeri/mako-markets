@@ -32,7 +32,9 @@ import {
 } from '../../rounds-delivery/src/index';
 import { send, type Net } from './net';
 import { hexQuantity, rpcBatch, safeQuantity, type RpcCall, type RpcItem } from './rpc';
-import type { InFlight, Meta } from './state';
+import { decodeErrorResult, decodeFunctionResult, encodeFunctionData, type Abi } from 'viem';
+import { POOLS_ABI, ROUND_STATUS, ROUNDS_REFUND_ABI } from './abi-refunds';
+import type { InFlight, Meta, TxKind } from './state';
 
 export const CHAIN_ID = 10143;
 /// SPEC §5.5 step 4: a missing report is retried every run and alerted after 30 minutes.
@@ -47,9 +49,19 @@ export const UNHEALTHY_REPORT_MS = 4 * 60_000;
 export const MAX_TX_FAILURES = 2;
 /// Gas balance for fewer than this many settlements is reported, so it is topped up before it runs out.
 export const LOW_BALANCE_SETTLEMENTS = 20n;
+/// Circuit breaker on automatic V4 refunds (Joshua 2026-09-29, after the 2026-06-12 wrongful NBA refunds).
+export const POOL_REFUNDS_PER_HOUR = 3;
+export const POOL_REFUNDS_PER_DAY = 6;
+/// Ids read per run by each discovery scan, and open ids re-read per run (rotating past this, dropping none).
+export const DISCOVERY_FRESH = 20;
+export const DISCOVERY_OPEN = 30;
 
 export type Healthy =
   | 'settled'
+  | 'round-refunded'
+  | 'pool-refunded'
+  | 'already-refunded'
+  | 'already-resolved'
   | 'sent'
   | 'dry-run-would-send'
   | 'nothing-due'
@@ -68,13 +80,24 @@ export type Unhealthy =
   | 'sent-low-gas'
   | 'tx-reverted'
   | 'tx-dropped'
+  | 'refund-breaker-tripped'
   | 'lease-lost';
 export type Status = Healthy | Unhealthy;
 
 /// Statuses that show the keeper working, and so end an unhealthy stretch. `sent`, `tx-pending` and
 /// `lease-held` are neutral: they neither start nor end one, so a transaction that reverts every time
 /// (sent, reverted, sent, ...) still reaches Healthchecks (adversary pass, 2026-09-28).
-const CLEARING = new Set<Status>(['settled', 'nothing-due', 'dry-run-would-send', 'waiting-report', 'already-settled']);
+const CLEARING = new Set<Status>([
+  'settled',
+  'round-refunded',
+  'pool-refunded',
+  'nothing-due',
+  'dry-run-would-send',
+  'waiting-report',
+  'already-settled',
+  'already-refunded',
+  'already-resolved',
+]);
 
 const UNHEALTHY = new Set<Status>([
   'rpc-rate-limited',
@@ -87,6 +110,7 @@ const UNHEALTHY = new Set<Status>([
   'sent-low-gas',
   'tx-reverted',
   'tx-dropped',
+  'refund-breaker-tripped',
   'lease-lost',
 ]);
 export const isUnhealthy = (s: Status): boolean => UNHEALTHY.has(s);
@@ -112,6 +136,10 @@ export const unhealthyRun = (o: Outcome): boolean =>
 
 export interface RunConfig {
   roundsAddress: Hex;
+  /// Live MakoMarketsV4 (Pools): overdue markets are refunded automatically.
+  poolsAddress: Hex;
+  /// REFUND_BREAKER_RESET (ms): a tripped breaker clears when this is later than the trip.
+  breakerResetAt: number | null;
   keeperAddress: Hex;
   rpcUrl: string;
   datastreamsUrl: string;
@@ -131,7 +159,7 @@ export interface TxRequest {
 
 export interface StateStub {
   acquire(now: number): Promise<{ ok: true; token: number; meta: Meta } | { ok: false }>;
-  recordInFlight(token: number, inFlight: InFlight, now: number): Promise<{ ok: boolean }>;
+  recordInFlight(token: number, inFlight: InFlight, now: number, extra?: Partial<Meta>): Promise<{ ok: boolean }>;
   commit(token: number, meta: Meta, now: number): Promise<{ ok: boolean }>;
 }
 
@@ -153,7 +181,24 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
   if (!acquired.ok) return { status: 'lease-held' };
   const { token } = acquired;
   // attempts and txFailures arrived after the first deployments of this state; default them.
-  const meta: Meta = { ...acquired.meta, attempts: { ...(acquired.meta.attempts ?? {}) }, txFailures: { ...(acquired.meta.txFailures ?? {}) } };
+  const a = acquired.meta as Partial<Meta>;
+  const meta: Meta = {
+    ...acquired.meta,
+    attempts: { ...(a.attempts ?? {}) },
+    txFailures: { ...(a.txFailures ?? {}) },
+    roundsCursor: a.roundsCursor ?? 1,
+    roundsOpen: [...(a.roundsOpen ?? [])],
+    poolsCursor: a.poolsCursor ?? 0,
+    poolsOpen: [...(a.poolsOpen ?? [])],
+    poolRefundsSent: [...(a.poolRefundsSent ?? [])],
+    breakerTrippedAt: a.breakerTrippedAt ?? null,
+  };
+
+  // The breaker's reset is Joshua's: REFUND_BREAKER_RESET later than the trip clears it and its count.
+  if (meta.breakerTrippedAt !== null && cfg.breakerResetAt !== null && cfg.breakerResetAt > meta.breakerTrippedAt) {
+    meta.breakerTrippedAt = null;
+    meta.poolRefundsSent = [];
+  }
 
   let outcome: Outcome;
   try {
@@ -162,6 +207,11 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     // Anything unexpected is reported by kind only; the error text could carry a URL.
     outcome = { status: 'rpc-error', detail: 'unexpected' };
   }
+  // A tripped breaker is an alarm on EVERY run until reset, busy or idle.
+  if (meta.breakerTrippedAt !== null)
+    outcome = withAlarms(outcome, [
+      `automatic pool refunds HALTED by the breaker since ${iso(meta.breakerTrippedAt)}; set REFUND_BREAKER_RESET after that to resume`,
+    ]);
 
   const end = deps.net.now();
   meta.lastStatus = describe(outcome);
@@ -176,7 +226,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
   }
 
   if (meta.unhealthySince !== null && end - meta.unhealthySince >= UNHEALTHY_REPORT_MS)
-    await deps.ping('fail', `mako-rounds-keeper ${describe(outcome)}`);
+    await deps.ping('fail', `mako-settlement-keeper ${describe(outcome)}`);
   else if (!unhealthyRun(outcome)) await deps.ping('ok', describe(outcome));
   return outcome;
 }
@@ -214,10 +264,12 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
     const receipt = receiptItem.result as { status?: string } | null;
     if (receipt && typeof receipt === 'object') {
       meta.inFlight = null;
-      if (receipt.status === '0x1') prior = { status: 'settled', detail: `round ${f.roundId} ${f.hash}` };
+      const kind = f.kind ?? 'settle';
+      if (receipt.status === '0x1')
+        prior = { status: LANDED[kind], detail: `${targetLabel(kind, f.roundId)} ${f.hash}` };
       else {
-        meta.txFailures[f.roundId] = (meta.txFailures[f.roundId] ?? 0) + 1;
-        prior = { status: 'tx-reverted', detail: `round ${f.roundId} ${f.hash}` };
+        meta.txFailures[failKey(kind, f.roundId)] = (meta.txFailures[failKey(kind, f.roundId)] ?? 0) + 1;
+        prior = { status: 'tx-reverted', detail: `${targetLabel(kind, f.roundId)} ${f.hash}` };
       }
     }
     else {
@@ -225,13 +277,15 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
     const latestNonce = safeQuantity(nonceItem.result);
     if (latestNonce === null) return { status: 'rpc-error', detail: 'bad_nonce' };
     // No receipt yet. Within 3 minutes, wait: never send a second transaction while this one may still land.
-    if (nowMs - f.sentAt < TX_STUCK_MS) return { status: 'tx-pending', detail: `round ${f.roundId} ${f.hash}` };
+    const label = targetLabel(f.kind ?? 'settle', f.roundId);
+    if (nowMs - f.sentAt < TX_STUCK_MS) return { status: 'tx-pending', detail: `${label} ${f.hash}` };
     // After 3 minutes with no receipt: if the nonce is still unused it was dropped (or never sent); if it was
     // used, another transaction took it. Either way this one will not land. Clear it and report it; the next
     // run re-simulates, so a round someone else settled meanwhile is not sent again.
     meta.inFlight = null;
-    meta.txFailures[f.roundId] = (meta.txFailures[f.roundId] ?? 0) + 1;
-    prior = { status: 'tx-dropped', detail: `round ${f.roundId} ${f.hash} nonce ${latestNonce > f.nonce ? 'used' : 'unused'}` };
+    const fk = failKey(f.kind ?? 'settle', f.roundId);
+    meta.txFailures[fk] = (meta.txFailures[fk] ?? 0) + 1;
+    prior = { status: 'tx-dropped', detail: `${label} ${f.hash} nonce ${latestNonce > f.nonce ? 'used' : 'unused'}` };
     }
   }
 
@@ -264,7 +318,8 @@ async function takeRound(
   } catch {
     return { status: 'rpc-error', detail: 'bad_response' };
   }
-  if (pending.length === 0) return { status: 'nothing-due' };
+  // Nothing to settle: this run's transaction, if any, is an overdue refund.
+  if (pending.length === 0) return takeRefund(cfg, deps, token, meta, nowMs);
 
   const closes = await rpc(cfg, deps, pending.map((id) => call(closeTimeData(id))));
   if (isOutcome(closes)) return closes;
@@ -280,9 +335,10 @@ async function takeRound(
   }
   const nowS = Math.floor(nowMs / 1000);
   // Memory only for rounds still pending: a settled or refunded round leaves pendingSettlement.
+  // Settlement keys are bare round ids; refund keys carry a prefix and are pruned by the refund scan.
   const live = new Set(pending.map(String));
-  for (const k of Object.keys(meta.attempts)) if (!live.has(k)) delete meta.attempts[k];
-  for (const k of Object.keys(meta.txFailures)) if (!live.has(k)) delete meta.txFailures[k];
+  for (const k of Object.keys(meta.attempts)) if (/^\d+$/.test(k) && !live.has(k)) delete meta.attempts[k];
+  for (const k of Object.keys(meta.txFailures)) if (/^\d+$/.test(k) && !live.has(k)) delete meta.txFailures[k];
 
   const alarms: string[] = [];
   const skip = new Set<bigint>();
@@ -297,9 +353,13 @@ async function takeRound(
   const alarm = alarms.length ? alarms.join('; ') : undefined;
   const withAlarm = (o: Outcome): Outcome => (alarm ? { ...o, alarm } : o);
 
-  const lastTried = new Map(Object.entries(meta.attempts).map(([k, v]) => [BigInt(k), v] as [bigint, number]));
+  const lastTried = new Map(
+    Object.entries(meta.attempts)
+      .filter(([k]) => /^\d+$/.test(k))
+      .map(([k, v]) => [BigInt(k), v] as [bigint, number]),
+  );
   const due = pickRound(pending, closeTimes, duration, nowS, undefined, lastTried, skip);
-  if (due === null) return withAlarm({ status: 'nothing-due' });
+  if (due === null) return withAlarm(await takeRefund(cfg, deps, token, meta, nowMs));
   meta.attempts[due.roundId.toString()] = nowMs;
   return withAlarm(await deliver(cfg, deps, token, meta, nowS, due));
 }
@@ -328,9 +388,50 @@ async function deliver(cfg: RunConfig, deps: Deps, token: number, meta: Meta, no
     reports.push(r.fullReport);
   }
 
-  // 4. Simulate, estimate, and read what sending needs, in one batch.
-  const data = settleData(due.roundId, reports[0], reports[1]);
-  const tx = { from: cfg.keeperAddress, to: cfg.roundsAddress, data };
+  return sendTx(cfg, deps, token, meta, {
+    kind: 'settle',
+    to: cfg.roundsAddress,
+    data: settleData(due.roundId, reports[0], reports[1]),
+    target: due.roundId.toString(),
+    decode: revertName,
+    // Someone else, CRE or another courier, settled it first: the goal is met.
+    done: { RoundAlreadyTerminal: 'already-settled' },
+  });
+}
+
+const minBig = (a: bigint, b: bigint): bigint => (a < b ? a : b);
+
+// ---------------------------------------------------------------------------------------------------------
+// One transaction, whatever it does: simulate and estimate first, then sign, record under the lease, send.
+// ---------------------------------------------------------------------------------------------------------
+
+const LANDED: Record<TxKind, Status> = { settle: 'settled', 'round-refund': 'round-refunded', 'pool-refund': 'pool-refunded' };
+
+function targetLabel(kind: TxKind, id: string): string {
+  return kind === 'settle' ? `round ${id}` : kind === 'round-refund' ? `round ${id} refund` : `pool ${id} refund`;
+}
+
+/// txFailures and attempts keys: settlements use the bare round id, refunds a prefix.
+function failKey(kind: TxKind, id: string): string {
+  return kind === 'settle' ? id : kind === 'round-refund' ? `rr:${id}` : `pr:${id}`;
+}
+
+interface Job {
+  kind: TxKind;
+  to: Hex;
+  data: Hex;
+  target: string;
+  /// Names a simulated revert from the target contract's errors.
+  decode: (data: unknown) => string | null;
+  /// Reverts that mean the goal is already met, and the healthy status to report instead.
+  done: Record<string, Status>;
+  /// Written together with the in-flight record, before sending (the breaker count).
+  extra?: Partial<Meta>;
+}
+
+async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job: Job): Promise<Outcome> {
+  const label = targetLabel(job.kind, job.target);
+  const tx = { from: cfg.keeperAddress, to: job.to, data: job.data };
   const batch = await rpc(cfg, deps, [
     { method: 'eth_call', params: [tx, 'latest'] },
     { method: 'eth_estimateGas', params: [tx, 'latest'] },
@@ -343,10 +444,9 @@ async function deliver(cfg: RunConfig, deps: Deps, token: number, meta: Meta, no
   const [simItem, gasItem, blockItem, tipItem, balItem, nonceItem] = batch;
   if (!simItem.ok) {
     if (simItem.kind !== 'rpc_error') return rpcFailure(simItem.kind);
-    const name = revertName(simItem.data);
-    // Someone else, CRE or another courier, settled it first: the goal is met.
-    if (name === 'RoundAlreadyTerminal') return { status: 'already-settled', detail: round };
-    return { status: 'simulation-reverted', detail: `${round} ${name ?? 'unknown'}` };
+    const name = job.decode(simItem.data);
+    if (name !== null && job.done[name]) return { status: job.done[name], detail: label };
+    return { status: 'simulation-reverted', detail: `${label} ${name ?? 'unknown'}` };
   }
   for (const it of [gasItem, blockItem, tipItem, balItem, nonceItem]) if (!it.ok) return itemFailure(it);
   const estimate = hexQuantity((gasItem as { result: unknown }).result);
@@ -356,32 +456,208 @@ async function deliver(cfg: RunConfig, deps: Deps, token: number, meta: Meta, no
   const nonce = safeQuantity((nonceItem as { result: unknown }).result);
   if (estimate === null || baseFee === null || tip === null || balance === null || nonce === null)
     return { status: 'rpc-error', detail: 'bad_response' };
-  if (estimate > SETTLE_GAS_CEILING) return { status: 'gas-over-budget', detail: `${round} ${estimate}` };
+  if (estimate > SETTLE_GAS_CEILING) return { status: 'gas-over-budget', detail: `${label} ${estimate}` };
 
   // Monad charges the gas LIMIT, so it stays tight: the estimate plus 20%, never above the ceiling.
   const gas = minBig((estimate * 12n) / 10n, SETTLE_GAS_CEILING);
   const maxPriorityFeePerGas = tip;
   const maxFeePerGas = baseFee * 2n + tip;
   const cost = gas * maxFeePerGas;
-  if (balance < cost) return { status: 'low-gas-balance', detail: `${round} balance ${balance} < ${cost}` };
+  if (balance < cost) return { status: 'low-gas-balance', detail: `${label} balance ${balance} < ${cost}` };
   const lowAfter = balance - cost < cost * LOW_BALANCE_SETTLEMENTS;
 
-  if (cfg.dryRun) return { status: 'dry-run-would-send', detail: `${round} gas ${gas}` };
+  if (cfg.dryRun) return { status: 'dry-run-would-send', detail: `${label} gas ${gas}` };
 
-  // 5. Sign, record under the lease, then send.
-  const raw = await deps.sign({ to: cfg.roundsAddress, data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
+  const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
-  const inFlight: InFlight = { hash, nonce, roundId: due.roundId.toString(), sentAt: deps.net.now() };
-  const recorded = await deps.state.recordInFlight(token, inFlight, deps.net.now());
-  if (!recorded.ok) return { status: 'lease-lost', detail: round };
+  const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt: deps.net.now(), kind: job.kind };
+  const recorded = await deps.state.recordInFlight(token, inFlight, deps.net.now(), job.extra ?? {});
+  if (!recorded.ok) return { status: 'lease-lost', detail: label };
   meta.inFlight = inFlight;
+  if (job.extra) Object.assign(meta, job.extra);
 
   const sent = await rpcBatch(deps.net, cfg.rpcUrl, [{ method: 'eth_sendRawTransaction', params: [raw] }]);
   // A failed send leaves the recorded transaction; the next run finds no receipt and an unused nonce, and after
   // TX_STUCK_MS reports it dropped and tries again. A rejected send (e.g. a nonce race) is reported now.
   if (!sent.ok) return rpcFailure(sent.kind);
   if (!sent.items[0].ok) return itemFailure(sent.items[0]);
-  return { status: lowAfter ? 'sent-low-gas' : 'sent', detail: `${round} ${hash}` };
+  return { status: lowAfter ? 'sent-low-gas' : 'sent', detail: `${label} ${hash}` };
 }
 
-const minBig = (a: bigint, b: bigint): bigint => (a < b ? a : b);
+// ---------------------------------------------------------------------------------------------------------
+// Overdue refunds (Joshua 2026-09-29): "After a market closes, Mako has 24 hours to settle it correctly. If
+// it is still unresolved after that, it refunds everyone." Both contracts make the refund permissionless and
+// final, and payouts stay pull: this only moves the market to its refund; each person claims their own.
+// ---------------------------------------------------------------------------------------------------------
+
+const iso = (ms: number) => new Date(ms).toISOString().replace('.000Z', 'Z');
+
+function decodeWith(abi: Abi, data: unknown): string | null {
+  if (typeof data !== 'string' || !/^0x[0-9a-fA-F]{8,}$/.test(data)) return null;
+  try {
+    return decodeErrorResult({ abi, data: data as Hex }).errorName;
+  } catch {
+    return null;
+  }
+}
+
+/// Open ids re-read this run: all of them, or a rotating window if there are more than DISCOVERY_OPEN.
+function openWindow(open: number[], nowS: number): number[] {
+  const ids = [...new Set(open)].sort((a, b) => a - b);
+  if (ids.length <= DISCOVERY_OPEN) return ids;
+  const from = (Math.floor(nowS / 60) * DISCOVERY_OPEN) % ids.length;
+  return [...ids.slice(from), ...ids.slice(0, from)].slice(0, DISCOVERY_OPEN);
+}
+
+interface Scan<T> {
+  read: Map<number, T>;
+  count: number;
+}
+
+async function scan<T>(
+  cfg: RunConfig,
+  deps: Deps,
+  to: Hex,
+  abi: Abi,
+  countFn: string,
+  itemFn: string,
+  constants: string[],
+  ids: number[],
+): Promise<{ scan: Scan<T>; constants: bigint[] } | Outcome> {
+  const call = (functionName: string, args: unknown[] = []): RpcCall => ({
+    method: 'eth_call',
+    params: [{ to, data: encodeFunctionData({ abi, functionName, args } as never) }, 'latest'],
+  });
+  const calls = [call(countFn), ...constants.map((c) => call(c)), ...ids.map((id) => call(itemFn, [BigInt(id)]))];
+  const items = await rpc(cfg, deps, calls);
+  if (isOutcome(items)) return items;
+  const head = items.slice(0, 1 + constants.length);
+  for (const it of head) if (!it.ok) return itemFailure(it);
+  const dec = (fn: string, it: RpcItem) =>
+    decodeFunctionResult({ abi, functionName: fn, data: (it as { result: unknown }).result as Hex } as never) as unknown;
+  const count = Number(dec(countFn, head[0]) as bigint);
+  const consts = constants.map((c, i) => BigInt(dec(c, head[1 + i]) as bigint));
+  const read = new Map<number, T>();
+  ids.forEach((id, i) => {
+    const it = items[1 + constants.length + i];
+    // An id past the end reverts or reads empty; it is simply not read yet.
+    if (it.ok) read.set(id, dec(itemFn, it) as T);
+  });
+  return { scan: { read, count }, constants: consts };
+}
+
+interface RoundRow {
+  startTime: bigint;
+  status: number;
+  upPool: bigint;
+  downPool: bigint;
+}
+interface MarketRow {
+  closeTime: bigint;
+  resolved: boolean;
+}
+
+async function takeRefund(cfg: RunConfig, deps: Deps, token: number, meta: Meta, nowMs: number): Promise<Outcome> {
+  const nowS = Math.floor(nowMs / 1000);
+  meta.poolRefundsSent = meta.poolRefundsSent.filter((t) => nowMs - t < 86_400_000);
+  const alarms: string[] = [];
+
+  // Rounds: open ids plus the next new ids, one batch; ids past roundCount are ignored.
+  const roundIds = [...new Set([...openWindow(meta.roundsOpen, nowS), ...range(meta.roundsCursor, DISCOVERY_FRESH)])];
+  const r = await scan<RoundRow>(cfg, deps, cfg.roundsAddress, ROUNDS_REFUND_ABI as Abi, 'roundCount', 'roundOf', ['DURATION', 'SUBMIT_WINDOW', 'ENTRY_LEAD'], roundIds);
+  if (isOutcome(r)) return withAlarms(r, alarms);
+  const [duration, submitWindow, entryLead] = r.constants;
+  const roundsDue: number[] = [];
+  const roundsOpen = new Set(meta.roundsOpen.filter((id) => !r.scan.read.has(id)));
+  for (const [id, row] of r.scan.read) {
+    if (id > r.scan.count) continue;
+    if (Number(row.status) !== ROUND_STATUS.Active) continue;
+    roundsOpen.add(id);
+    const start = row.startTime;
+    const oneSided = row.upPool === 0n || row.downPool === 0n;
+    if ((BigInt(nowS) >= start - entryLead && oneSided) || BigInt(nowS) >= start + duration + submitWindow) roundsDue.push(id);
+  }
+  meta.roundsOpen = [...roundsOpen].sort((a, b) => a - b);
+  meta.roundsCursor = advance(meta.roundsCursor, r.scan.count, r.scan.read, 1);
+
+  // Pools (V4): the same, over unresolved markets.
+  const poolIds = [...new Set([...openWindow(meta.poolsOpen, nowS), ...range(meta.poolsCursor, DISCOVERY_FRESH)])];
+  const p = await scan<MarketRow>(cfg, deps, cfg.poolsAddress, POOLS_ABI as Abi, 'nextMarketId', 'getMarket', ['RESOLUTION_GRACE'], poolIds);
+  if (isOutcome(p)) return withAlarms(p, alarms);
+  const [grace] = p.constants;
+  const poolsDue: number[] = [];
+  const poolsOpen = new Set(meta.poolsOpen.filter((id) => !p.scan.read.has(id)));
+  for (const [id, m] of p.scan.read) {
+    if (id >= p.scan.count || m.closeTime === 0n || m.resolved) continue;
+    poolsOpen.add(id);
+    if (BigInt(nowS) >= m.closeTime + grace) poolsDue.push(id);
+  }
+  meta.poolsOpen = [...poolsOpen].sort((a, b) => a - b);
+  meta.poolsCursor = advance(meta.poolsCursor, p.scan.count - 1, p.scan.read, 0);
+
+  // Forget refund memory for ids no longer open.
+  const keep = new Set([...meta.roundsOpen.map((id) => `rr:${id}`), ...meta.poolsOpen.map((id) => `pr:${id}`)]);
+  for (const k of Object.keys(meta.txFailures)) if (/^(rr|pr):/.test(k) && !keep.has(k)) delete meta.txFailures[k];
+  for (const k of Object.keys(meta.attempts)) if (/^(rr|pr):/.test(k) && !keep.has(k)) delete meta.attempts[k];
+
+  const skipped = (key: string) => (meta.txFailures[key] ?? 0) >= MAX_TX_FAILURES;
+  for (const id of roundsDue) if (skipped(`rr:${id}`)) alarms.push(`round ${id} refund not sent after ${MAX_TX_FAILURES} failed transactions`);
+  for (const id of poolsDue) if (skipped(`pr:${id}`)) alarms.push(`pool ${id} refund not sent after ${MAX_TX_FAILURES} failed transactions`);
+  const next = (ids: number[], prefix: string) =>
+    ids
+      .filter((id) => !skipped(`${prefix}${id}`))
+      .sort((a, b) => (meta.attempts[`${prefix}${a}`] ?? -1) - (meta.attempts[`${prefix}${b}`] ?? -1) || a - b)[0];
+
+  // Rounds first: the contract derives the reason itself (OneSided or NoPrice), so no breaker is needed.
+  const round = next(roundsDue, 'rr:');
+  if (round !== undefined) {
+    meta.attempts[`rr:${round}`] = nowMs;
+    const o = await sendTx(cfg, deps, token, meta, {
+      kind: 'round-refund',
+      to: cfg.roundsAddress,
+      data: encodeFunctionData({ abi: ROUNDS_REFUND_ABI, functionName: 'finalizeRefund', args: [BigInt(round)] }),
+      target: String(round),
+      decode: (d) => decodeWith(ROUNDS_REFUND_ABI as Abi, d) ?? revertName(d),
+      done: { RoundAlreadyTerminal: 'already-refunded' },
+    });
+    return withAlarms(o, alarms);
+  }
+
+  const pool = next(poolsDue, 'pr:');
+  if (pool === undefined || meta.breakerTrippedAt !== null) return withAlarms({ status: 'nothing-due' }, alarms);
+
+  // The breaker: 3 automatic V4 refunds per hour, 6 per day. The next one past that trips it and halts them.
+  const lastHour = meta.poolRefundsSent.filter((t) => nowMs - t < 3_600_000).length;
+  if (lastHour >= POOL_REFUNDS_PER_HOUR || meta.poolRefundsSent.length >= POOL_REFUNDS_PER_DAY) {
+    meta.breakerTrippedAt = nowMs;
+    return withAlarms({ status: 'refund-breaker-tripped', detail: `${lastHour} this hour, ${meta.poolRefundsSent.length} today; ${poolsDue.length} due` }, alarms);
+  }
+  meta.attempts[`pr:${pool}`] = nowMs;
+  const o = await sendTx(cfg, deps, token, meta, {
+    kind: 'pool-refund',
+    to: cfg.poolsAddress,
+    data: encodeFunctionData({ abi: POOLS_ABI, functionName: 'forceRefund', args: [BigInt(pool)] }),
+    target: String(pool),
+    decode: (d) => decodeWith(POOLS_ABI as Abi, d),
+    // The resolver settled it first: final either way, and the goal is met.
+    done: { AlreadyResolved: 'already-resolved' },
+    extra: cfg.dryRun ? undefined : { poolRefundsSent: [...meta.poolRefundsSent, nowMs] },
+  });
+  return withAlarms(o, alarms);
+}
+
+function range(from: number, n: number): number[] {
+  return Array.from({ length: n }, (_, i) => from + i);
+}
+
+/// The next id not yet read: past every consecutive id from `cursor` that was read and exists.
+function advance<T>(cursor: number, lastId: number, read: Map<number, T>, first: number): number {
+  let c = Math.max(first, cursor);
+  while (c <= lastId && read.has(c)) c++;
+  return c;
+}
+
+function withAlarms(o: Outcome, alarms: string[]): Outcome {
+  if (alarms.length === 0) return o;
+  return { ...o, alarm: o.alarm ? `${o.alarm}; ${alarms.join('; ')}` : alarms.join('; ') };
+}

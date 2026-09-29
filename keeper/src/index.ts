@@ -1,4 +1,5 @@
-// mako-rounds-keeper: settles MakoRoundsV1 rounds from a gas-only key (SPEC §5.5, TASKS T2.0c).
+// mako-settlement-keeper: settles MakoRoundsV1 rounds, and refunds overdue rounds and overdue V4 pools, from a
+// gas-only key (SPEC §5.5, TASKS T2.0c; automatic refunds, Joshua 2026-09-29).
 // Cron every minute; no HTTP surface. The key signs `settle` only: it holds no funds but gas, owns nothing,
 // and the contract gives its sender no power (settle is permissionless; the contract derives everything).
 
@@ -13,6 +14,9 @@ export { KeeperState } from './state';
 export interface Env {
   KEEPER_STATE: DurableObjectNamespace<KeeperState>;
   ROUNDS_ADDRESS: string;
+  POOLS_ADDRESS: string;
+  /// ISO time. When later than the breaker's trip, automatic V4 refunds resume. Unset: never reset.
+  REFUND_BREAKER_RESET?: string;
   KEEPER_ADDRESS: string;
   RPC_URL: string;
   DATASTREAMS_URL: string;
@@ -66,6 +70,8 @@ export function readEnv(env: Env): { cfg: RunConfig; key: Hex } {
   if (derived !== keeperAddress) throw new Error('KEEPER_PRIVATE_KEY does not belong to KEEPER_ADDRESS');
   const cfg: RunConfig = {
     roundsAddress: address(env.ROUNDS_ADDRESS, 'ROUNDS_ADDRESS'),
+    poolsAddress: address(env.POOLS_ADDRESS, 'POOLS_ADDRESS'),
+    breakerResetAt: breakerReset(env.REFUND_BREAKER_RESET),
     keeperAddress,
     rpcUrl: https(env.RPC_URL, 'RPC_URL'),
     datastreamsUrl: https(env.DATASTREAMS_URL, 'DATASTREAMS_URL'),
@@ -76,6 +82,16 @@ export function readEnv(env: Env): { cfg: RunConfig; key: Hex } {
   };
   https(env.HEALTHCHECKS_PING_URL, 'HEALTHCHECKS_PING_URL');
   return { cfg, key: key as Hex };
+}
+
+/// REFUND_BREAKER_RESET as ms, or null when unset. A value that is set but unparseable stops the run: a typo
+/// must not silently leave refunds halted or, worse, be read as a reset.
+function breakerReset(raw: string | undefined): number | null {
+  const v = raw?.trim();
+  if (!v) return null;
+  const ms = Date.parse(v);
+  if (!Number.isFinite(ms)) throw new Error('REFUND_BREAKER_RESET is not an ISO date-time');
+  return ms;
 }
 
 export async function hmacSha256Hex(secret: string, message: string): Promise<string> {
@@ -104,7 +120,7 @@ const worker = {
       net,
       state: {
         acquire: (now) => stub.acquire(now),
-        recordInFlight: (t, f, now) => stub.recordInFlight(t, f, now),
+        recordInFlight: (t, f, now, extra) => stub.recordInFlight(t, f, now, extra),
         commit: (t, m, now) => stub.commit(t, m, now),
       },
       sign: (tx: TxRequest) =>

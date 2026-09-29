@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Create the rounds keeper's gas-only key and save it to Bitwarden, without the key ever passing through a
+# Create the Mako Settlement Keeper's gas-only key and save it to Bitwarden, without the key ever passing through a
 # chat, a command argument, a file or shell history. Prints ONLY the public address.
 #
-# The key signs `settle` and nothing else. It must hold testnet MON for gas and nothing more: it is not the
+# The key signs `settle`, `finalizeRefund` and V4 `forceRefund`, all permissionless, and nothing else. It must hold testnet MON for gas and nothing more: it is not the
 # deployer, not the treasury, and owns nothing (PREFLIGHT: "the keeper signs with a gas-only key, never the
 # owner key").
 #
@@ -16,7 +16,7 @@
 set -euo pipefail
 set +x
 
-NOTE_NAME="${NOTE_NAME:-Mako rounds keeper key (testnet)}"
+NOTE_NAME="${NOTE_NAME:-Mako settlement keeper key (testnet)}"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
@@ -61,8 +61,9 @@ item.update({
     "name": os.environ["NOTE_NAME"],
     "secureNote": {"type": 0},
     "login": None, "card": None, "identity": None,
-    "notes": "Gas-only key for mako-rounds-keeper (Cloudflare Worker). Signs MakoRoundsV1.settle on Monad "
-             "testnet and nothing else. Holds testnet MON for gas only; never the deployer or treasury.",
+    "notes": "Gas-only key for mako-settlement-keeper (Cloudflare Worker). Signs MakoRoundsV1.settle and "
+             "finalizeRefund and MakoMarketsV4.forceRefund on Monad testnet, all permissionless, and nothing "
+             "else. Holds testnet MON for gas only; never the deployer or treasury.",
     "fields": [
         {"name": "KEEPER_ADDRESS", "value": os.environ["KEEPER_ADDR"], "type": 0},
         {"name": "KEEPER_PRIVATE_KEY", "value": os.environ["KEEPER_KEY"], "type": 1},

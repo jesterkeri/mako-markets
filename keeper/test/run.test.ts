@@ -7,6 +7,7 @@
 import { encodeAbiParameters, encodeErrorResult, encodeFunctionResult, keccak256, type Hex } from 'viem';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ROUNDS_ABI } from '../../rounds-delivery/src/index';
+import { emptyRefundWorld, refundAnswer, type RefundWorld } from './refund-fake';
 import { makeNet } from '../src/net';
 import { runKeeper, TX_STUCK_MS, UNHEALTHY_REPORT_MS, unhealthyRun, type Deps, type RunConfig } from '../src/run';
 import { INITIAL_META, type InFlight, type Meta } from '../src/state';
@@ -14,6 +15,7 @@ import fixture from './fixtures/fixture-btcusd-1789529160.json';
 
 const ROUNDS = '0x00000000000000000000000000000000000A11CE' as Hex;
 const KEEPER = '0x0000000000000000000000000000000000000B0B' as Hex;
+const POOLS = '0x0000000000000000000000000000000000000900' as Hex;
 const SECRET = 'S3CRET-never-print';
 const API_KEY = 'APIKEY-never-print';
 const RPC = 'https://rpc.test';
@@ -26,6 +28,8 @@ const cfg: RunConfig = {
   datastreamsKey: API_KEY,
   datastreamsSecret: SECRET,
   dryRun: false,
+  poolsAddress: POOLS,
+  breakerResetAt: null,
 };
 
 const CLOSE = 1_789_530_060; // a round whose start is the fixture's second
@@ -51,6 +55,7 @@ interface World {
   leaseFree: boolean;
   recordOk: boolean;
   order: string[];
+  refundWorld: RefundWorld;
 }
 
 let w: World;
@@ -65,6 +70,9 @@ function rpcAnswer(method: string, params: unknown[]): unknown {
   const call = params[0] as { data: Hex; from?: Hex };
   switch (method) {
     case 'eth_call': {
+      // The refund scan: no rounds or pools to refund unless a test says so.
+      const refund = refundAnswer(call as { to: Hex; data: Hex }, ROUNDS, POOLS, w.refundWorld);
+      if (refund) return refund;
       const sel = call.data.slice(0, 10);
       if (sel === '0x36ceb433') return { result: encodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'pendingSettlement', result: w.pending }) };
       if (sel === '0x1be05289') return { result: encodeAbiParameters([{ type: 'uint64' }], [900n]) }; // DURATION()
@@ -157,6 +165,7 @@ beforeEach(() => {
     leaseFree: true,
     recordOk: true,
     order: [],
+    refundWorld: emptyRefundWorld(),
   };
 });
 
@@ -300,7 +309,7 @@ describe('every failure has a status, and none is silent', () => {
     expect(w.pings).toEqual([]);
     w.now += UNHEALTHY_REPORT_MS;
     await run();
-    expect(w.pings).toEqual([{ kind: 'fail', body: 'mako-rounds-keeper rpc-rate-limited' }]);
+    expect(w.pings).toEqual([{ kind: 'fail', body: 'mako-settlement-keeper rpc-rate-limited' }]);
     w.rpcStatus = 200;
     w.pending = [];
     w.now += 60_000;

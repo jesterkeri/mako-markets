@@ -7,9 +7,11 @@
 //   - keeper-only: every round settled within 10 minutes of closeTime (T0.1c latency);
 //   - a failure must alert rather than silently miss settlement.
 
-import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, encodeFunctionResult, keccak256, type Hex } from 'viem';
+import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, encodeFunctionData, encodeFunctionResult, keccak256, type Hex } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { ROUNDS_ABI } from '../../rounds-delivery/src/index';
+import { ROUNDS_REFUND_ABI } from '../src/abi-refunds';
+import { refundAnswer } from './refund-fake';
 import { makeNet } from '../src/net';
 import { runKeeper, type Deps, type RunConfig, type TxRequest } from '../src/run';
 import { INITIAL_META, type InFlight, type Meta } from '../src/state';
@@ -27,6 +29,8 @@ const cfg: RunConfig = {
   datastreamsKey: 'k',
   datastreamsSecret: 's',
   dryRun: false,
+  poolsAddress: '0x0000000000000000000000000000000000000900',
+  breakerResetAt: null,
 };
 
 const DURATION = 900;
@@ -40,6 +44,7 @@ interface Round {
   /// The close report's spread is over MAX_SPREAD_BPS: `settle` reverts SpreadTooWide for this round, forever.
   wideSpread?: boolean;
   settledAt?: number;
+  refundedAt?: number;
 }
 
 class Chain {
@@ -48,6 +53,7 @@ class Chain {
   landing: Landing = 'success';
   receipts = new Map<string, { status: string }>();
   rawRound = new Map<string, bigint>();
+  rawRefund = new Set<string>();
   mined = 0;
   sends: { round: bigint; at: number }[] = [];
   pings: { kind: string; body: string; at: number }[] = [];
@@ -57,7 +63,7 @@ class Chain {
 
   pending(): bigint[] {
     return [...this.rounds.entries()]
-      .filter(([, r]) => r.settledAt === undefined && this.now >= r.close && this.now < r.close + SUBMIT_WINDOW)
+      .filter(([, r]) => r.settledAt === undefined && r.refundedAt === undefined && this.now >= r.close && this.now < r.close + SUBMIT_WINDOW)
       .map(([id]) => id);
   }
 
@@ -65,6 +71,24 @@ class Chain {
     switch (method) {
       case 'eth_call': {
         const data = (params[0] as { data: Hex }).data;
+        // Refund views, from the rounds this chain holds (ids 1..n), and no V4 pools.
+        const world = {
+          rounds: [...this.rounds.values()].map((r) => ({
+            start: r.close - DURATION,
+            status: r.settledAt !== undefined ? 2 : r.refundedAt !== undefined ? 3 : 1,
+            up: 1n,
+            down: 1n,
+          })),
+          markets: [],
+        };
+        const refund = refundAnswer(params[0] as { to: Hex; data: Hex }, ROUNDS, cfg.poolsAddress, world);
+        if (refund) return refund;
+        if (data.startsWith(encodeFunctionData({ abi: ROUNDS_REFUND_ABI, functionName: 'finalizeRefund', args: [0n] }).slice(0, 10))) {
+          const id = decodeFunctionData({ abi: ROUNDS_REFUND_ABI, data }).args![0] as bigint;
+          const why = this.refundRevert(id);
+          if (why) return { error: { code: 3, message: 'execution reverted', data: encodeErrorResult({ abi: ROUNDS_ABI, errorName: why as never }) } };
+          return { result: '0x' };
+        }
         const { functionName, args } = decodeFunctionData({ abi: ROUNDS_ABI, data });
         if (functionName === 'pendingSettlement')
           return { result: encodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'pendingSettlement', result: this.pending() }) };
@@ -93,11 +117,13 @@ class Chain {
         const raw = params[0] as Hex;
         const hash = keccak256(raw);
         const round = this.rawRound.get(raw)!;
+        const isRefund = this.rawRefund.has(raw);
         this.sends.push({ round, at: this.now });
         if (this.landing === 'never-mined') return { result: hash };
         this.mined++;
-        const ok = this.landing === 'success' && this.settleRevert(round) === null;
-        if (ok) this.rounds.get(round)!.settledAt = this.now;
+        const ok = this.landing === 'success' && (isRefund ? this.refundRevert(round) : this.settleRevert(round)) === null;
+        if (ok && isRefund) this.rounds.get(round)!.refundedAt = this.now;
+        else if (ok) this.rounds.get(round)!.settledAt = this.now;
         this.receipts.set(hash, { status: ok ? '0x1' : '0x0' });
         return { result: hash };
       }
@@ -105,9 +131,17 @@ class Chain {
     return { error: { code: -32601 } };
   }
 
+  /// finalizeRefund as MakoRoundsV1 decides it for these two-sided rounds: NoPrice once the window has passed.
+  refundRevert(id: bigint): string | null {
+    const r = this.rounds.get(id)!;
+    if (r.settledAt !== undefined || r.refundedAt !== undefined) return 'RoundAlreadyTerminal';
+    if (this.now < r.close + SUBMIT_WINDOW) return 'NotRefundableYet';
+    return null;
+  }
+
   settleRevert(id: bigint): string | null {
     const r = this.rounds.get(id)!;
-    if (r.settledAt !== undefined) return 'RoundAlreadyTerminal';
+    if (r.settledAt !== undefined || r.refundedAt !== undefined) return 'RoundAlreadyTerminal';
     if (this.now < r.close) return 'TooEarlyToSettle';
     if (this.now >= r.close + SUBMIT_WINDOW) return 'SubmitWindowClosed';
     if (r.wideSpread) return 'SpreadTooWide';
@@ -147,8 +181,14 @@ class Chain {
       sign: async (tx: TxRequest) => {
         // A distinct serialized transaction per signature, remembered so the fake chain knows its round.
         const raw = ('0x02' + (++this.signed).toString(16).padStart(8, '0') + tx.nonce.toString(16).padStart(8, '0')) as Hex;
-        const { args } = decodeFunctionData({ abi: ROUNDS_ABI, data: tx.data });
-        this.rawRound.set(raw, args![0] as bigint);
+        let decoded;
+        try {
+          decoded = decodeFunctionData({ abi: ROUNDS_ABI, data: tx.data });
+        } catch {
+          decoded = decodeFunctionData({ abi: ROUNDS_REFUND_ABI, data: tx.data });
+          this.rawRefund.add(raw);
+        }
+        this.rawRound.set(raw, decoded.args![0] as bigint);
         return raw;
       },
       hmac: async () => 'ab'.repeat(32),

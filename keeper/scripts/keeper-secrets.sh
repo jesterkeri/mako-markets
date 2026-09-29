@@ -2,7 +2,7 @@
 # Put the keeper Worker's four secrets into Cloudflare from Bitwarden, without any value passing through a
 # chat, a command argument, a file or shell history. Values go to `wrangler secret put` on stdin only.
 #
-#   KEEPER_PRIVATE_KEY       from the note "Mako rounds keeper key (testnet)"   (keeper-key.sh creates it)
+#   KEEPER_PRIVATE_KEY       from the note "Mako settlement keeper key (testnet)"   (keeper-key.sh creates it)
 #   DATASTREAMS_API_KEY      from the note "Chainlink Data Streams testnet"     (field DATA_STREAMS_API_KEY)
 #   DATASTREAMS_API_SECRET   from the same note                                 (field DATA_STREAMS_USER_SECRET)
 #   HEALTHCHECKS_PING_URL    pasted when asked (hidden); create the check first, period 1 min, grace 10 min
@@ -13,14 +13,14 @@
 set -euo pipefail
 set +x
 
-KEY_NOTE="${KEY_NOTE:-Mako rounds keeper key (testnet)}"
+KEY_NOTE="${KEY_NOTE:-Mako settlement keeper key (testnet)}"
 DS_NOTE="${DS_NOTE:-Chainlink Data Streams testnet}"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 command -v bw >/dev/null || die "bw not found"
 command -v python3 >/dev/null || die "python3 not found"
-[[ -f wrangler.toml ]] && grep -q '^name = "mako-rounds-keeper"' wrangler.toml || die "run this from the keeper/ directory"
+[[ -f wrangler.toml ]] && grep -q '^name = "mako-settlement-keeper"' wrangler.toml || die "run this from the keeper/ directory"
 [[ -n "${BW_SESSION:-}" ]] || die 'vault is not unlocked: run  export BW_SESSION=$(bw unlock --raw)  first'
 
 cleanup() { unset v HC; bw lock >/dev/null 2>&1 || true; }
