@@ -2,7 +2,7 @@
 // Privy lists (Codex T2.2 review r1), and signing fails clearly when that wallet is not available.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import * as React from 'react';
 
 const W0 = '0x' + 'a'.repeat(40);
@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   register: vi.fn(),
   clear: vi.fn(),
   missing: vi.fn(),
+  unavailable: vi.fn(),
 }));
 
 vi.mock('@privy-io/react-auth', () => ({
@@ -30,6 +31,7 @@ vi.mock('@/lib/embedded-signer', () => ({
   registerEmbeddedSigner: state.register,
   clearEmbeddedSigner: state.clear,
   markEmbeddedSignerMissing: state.missing,
+  markEmbeddedSignerUnavailable: state.unavailable,
 }));
 
 import { EmbeddedSignerBridge } from '@/components/PrivyAuth';
@@ -45,7 +47,33 @@ afterEach(() => {
   state.register.mockReset();
   state.clear.mockReset();
   state.missing.mockReset();
+  state.unavailable.mockReset();
 });
+
+/// A promise the test settles by hand.
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/// Unhandled rejections seen while `fn` runs, after the event loop has had a turn to report them.
+async function unhandledDuring(fn: () => Promise<void>): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const onUnhandled = (reason: unknown) => seen.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await fn();
+    await new Promise((r) => setTimeout(r, 20));
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  return seen;
+}
 
 describe('EmbeddedSignerBridge', () => {
   it("registers the account's own wallet when it is not the first Privy lists", async () => {
@@ -85,5 +113,33 @@ describe('EmbeddedSignerBridge', () => {
     render(<EmbeddedSignerBridge />);
     await waitFor(() => expect(state.clear).toHaveBeenCalled());
     expect(state.register).not.toHaveBeenCalled();
+  });
+
+  // Codex T2.2 r2: Privy lists the account's wallet but its provider fails to load.
+  it('reports the wallet unavailable, without an unhandled rejection, when Privy cannot load it', async () => {
+    state.wallets = [{ walletClientType: 'privy', address: W1, getEthereumProvider: () => Promise.reject(new Error('iframe failed')) }];
+    state.owner = W1;
+    const unhandled = await unhandledDuring(async () => {
+      render(<EmbeddedSignerBridge />);
+      await waitFor(() => expect(state.unavailable).toHaveBeenCalledTimes(1));
+    });
+    expect(unhandled).toEqual([]);
+    expect(state.register).not.toHaveBeenCalled();
+  });
+
+  it('a late failure for a wallet the bridge has moved past does not undo the current one', async () => {
+    const first = deferred<unknown>();
+    state.wallets = [{ walletClientType: 'privy', address: W1, getEthereumProvider: () => first.promise }];
+    state.owner = W1;
+    const view = render(<EmbeddedSignerBridge />);
+    // Privy hands back a fresh wallet object for the same address, and this one loads.
+    state.wallets = [wallet(W1)];
+    view.rerender(<EmbeddedSignerBridge />);
+    await waitFor(() => expect(state.register).toHaveBeenCalledWith(W1, { tag: W1 }));
+    await act(async () => {
+      first.reject(new Error('superseded'));
+      await first.promise.catch(() => {});
+    });
+    expect(state.unavailable).not.toHaveBeenCalled();
   });
 });

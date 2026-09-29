@@ -11,6 +11,8 @@ import {
   EmbeddedSignerMissing,
   markEmbeddedSignerMissing,
   EmbeddedSignerNotReady,
+  EmbeddedSignerUnavailable,
+  markEmbeddedSignerUnavailable,
   registerEmbeddedSigner,
   signSafeOpHash,
 } from '../embedded-signer';
@@ -97,4 +99,41 @@ describe('embedded signer', () => {
     registerEmbeddedSigner(OWNER, provider());
     await expect(signSafeOpHash(args)).resolves.toMatch(/^0x/);
   });
+
+  // Codex T2.2 r2: Privy lists the wallet but cannot load it. The answer is immediate, never a 15-second
+  // "still loading". Fake timers are frozen, so only an answer that needs no timer can settle here.
+  it("fails at once, with its own error, when Privy could not load the account's wallet", async () => {
+    vi.useFakeTimers();
+    markEmbeddedSignerUnavailable();
+    const outcome = await settleWithoutTimers(signSafeOpHash(args));
+    expect(outcome).toBeInstanceOf(EmbeddedSignerUnavailable);
+  });
+
+  it.each([
+    ['missing', markEmbeddedSignerMissing, EmbeddedSignerMissing],
+    ['unavailable', markEmbeddedSignerUnavailable, EmbeddedSignerUnavailable],
+  ] as const)('a signature already waiting is refused at once when the wallet is reported %s', async (_, mark, Err) => {
+    vi.useFakeTimers();
+    const pending = signSafeOpHash(args);
+    mark();
+    const outcome = await settleWithoutTimers(pending);
+    expect(outcome).toBeInstanceOf(Err);
+  });
+
+  it('a wallet registered after being reported unavailable signs normally', async () => {
+    markEmbeddedSignerUnavailable();
+    registerEmbeddedSigner(OWNER, provider());
+    await expect(signSafeOpHash(args)).resolves.toMatch(/^0x/);
+  });
 });
+
+/// Resolves to the promise's rejection (or its value) if it settles on microtasks alone, else to 'pending'.
+async function settleWithoutTimers(p: Promise<unknown>): Promise<unknown> {
+  let outcome: unknown = 'pending';
+  p.then(
+    (v) => (outcome = v),
+    (e) => (outcome = e),
+  );
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  return outcome;
+}

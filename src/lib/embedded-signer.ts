@@ -24,31 +24,56 @@ interface Signer {
   provider: Eip1193Provider;
 }
 
+interface Waiter {
+  resolve(s: Signer): void;
+  reject(e: Error): void;
+}
+
 let active: Signer | null = null;
-let missing = false;
-let waiters: ((s: Signer) => void)[] = [];
+/// Set when the bridge knows no signer is coming: the account's wallet is not in this sign-in ('missing'), or
+/// Privy failed to hand it over ('unavailable').
+let failure: 'missing' | 'unavailable' | null = null;
+let waiters: Waiter[] = [];
 
 /// Called by the Privy bridge when the embedded wallet that owns this account is ready (and again if it
 /// changes). The bridge registers only the wallet whose address is the account's signer.
 export function registerEmbeddedSigner(address: Address, provider: Eip1193Provider): void {
   active = { address, provider };
-  missing = false;
+  failure = null;
   const ready = waiters;
   waiters = [];
-  for (const w of ready) w(active);
+  for (const w of ready) w.resolve(active);
 }
 
 /// Called on logout, or when the embedded wallet goes away.
 export function clearEmbeddedSigner(): void {
   active = null;
-  missing = false;
+  failure = null;
 }
 
 /// Called by the bridge when Privy's wallets have loaded but none is the account's signer: signing fails at
 /// once with a clear message instead of waiting for a wallet that will not come.
 export function markEmbeddedSignerMissing(): void {
+  fail('missing');
+}
+
+/// Called by the bridge when Privy lists the account's wallet but could not give us its provider (Codex T2.2
+/// r2: this used to leave every signature waiting 15 seconds for a wallet that would not load).
+export function markEmbeddedSignerUnavailable(): void {
+  fail('unavailable');
+}
+
+function fail(kind: 'missing' | 'unavailable'): void {
   active = null;
-  missing = true;
+  failure = kind;
+  // A signature already waiting gets the same answer now, not a "still loading" timeout later.
+  const pending = waiters;
+  waiters = [];
+  for (const w of pending) w.reject(failureError(kind));
+}
+
+function failureError(kind: 'missing' | 'unavailable'): Error {
+  return kind === 'missing' ? new EmbeddedSignerMissing() : new EmbeddedSignerUnavailable();
 }
 
 export class EmbeddedSignerMissing extends Error {
@@ -57,6 +82,15 @@ export class EmbeddedSignerMissing extends Error {
       "The wallet that owns this account isn't available in this sign-in. Sign out and sign in again with the same email; if it keeps happening, contact support.",
     );
     this.name = 'EmbeddedSignerMissing';
+  }
+}
+
+/// Privy has the account's wallet but failed to load it (for example its iframe did not start). Reloading the
+/// page mounts the bridge again, which asks Privy again.
+export class EmbeddedSignerUnavailable extends Error {
+  constructor() {
+    super("Your wallet couldn't be loaded. Reload the page and try again; if it keeps happening, sign out and sign in again.");
+    this.name = 'EmbeddedSignerUnavailable';
   }
 }
 
@@ -82,17 +116,23 @@ const READY_TIMEOUT_MS = 15_000;
 
 async function readySigner(): Promise<Signer> {
   if (active) return active;
-  if (missing) throw new EmbeddedSignerMissing();
+  if (failure) throw failureError(failure);
   return new Promise<Signer>((resolve, reject) => {
     const timer = setTimeout(() => {
-      waiters = waiters.filter((w) => w !== onReady);
+      waiters = waiters.filter((w) => w !== waiter);
       reject(new EmbeddedSignerNotReady());
     }, READY_TIMEOUT_MS);
-    const onReady = (s: Signer) => {
-      clearTimeout(timer);
-      resolve(s);
+    const waiter: Waiter = {
+      resolve: (s) => {
+        clearTimeout(timer);
+        resolve(s);
+      },
+      reject: (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
     };
-    waiters.push(onReady);
+    waiters.push(waiter);
   });
 }
 

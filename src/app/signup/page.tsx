@@ -19,40 +19,31 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { TotpStep, mapTotpResponse } from '@/components/signup/TotpStep';
 
 // ----------------------------------------------------------------------------
-// /signup — email auth entry point.
+// /signup: the sign-in page, email (Privy) and wallet (SIWE) side by side.
 //
-// PRIVY since 2026-09-29 (Joshua: everyone moves to Privy). Step 2 below is now Privy's login modal,
-// pre-filled with the email: Privy verifies the email code and creates the user's embedded wallet, then the
-// page posts Privy's access token (not a Magic DID) to /api/user/auth, which reads the email and wallet from
-// Privy's own API. The rest of the journey, the retry handling and the TOTP step are unchanged; "DID" below
-// reads as "Privy access token".
-//
-// User journey:
-//   1. Type email, submit.
-//   2. magic.auth.loginWithEmailOTP({ email, lifespan }) opens Magic's hosted
-//      OTP modal; the user enters the code and the call resolves with a DID
-//      token that's only valid for `lifespan` seconds.
-//   3. POST { authToken } to /api/user/auth. The server validates the token,
-//      upserts the users + user_safes rows, creates a session, sets the cookie.
-//   4. On 200, redirect to /.
-//
-// DID lifespan is reduced from Magic's 900s default to 120s to narrow the
-// replay window. The user just needs the network round-trip to /api/user/auth
-// to land within that window. A stronger fix is to track consumed DID tids
-// server-side via `magic.token.decode(authToken)[1].tid` (admin SDK 2.8.2)
-// against a `consumed_dids` table — that lands with Phase 1B.
+// Email journey (Privy since 2026-09-29, when Joshua moved everyone off Magic):
+//   1. Type the email, submit.
+//   2. Privy's login modal opens pre-filled with it. Privy verifies the emailed code and creates the user's
+//      embedded wallet if they have none. A Privy session left over from an earlier visit is ended first,
+//      so the email is proven now.
+//   3. POST { privyAccessToken } to /api/user/auth. The server verifies the token, reads the email and the
+//      embedded wallets from Privy's own API (never from the browser), upserts the users + user_safes rows,
+//      and either creates a session or, for a TOTP account, returns a challenge for the second factor.
+//   4. On success, redirect to /.
 //
 // Retry behavior:
-//   - 4xx from server (bad_token, not_allowlisted, identity_conflict): the
-//     DID is unusable / the situation is terminal. Show error, fresh OTP
-//     required.
-//   - 5xx or network error: the DID is still valid for the rest of its
-//     lifespan. Cache it in state and offer a "Retry verification" button so
-//     the user doesn't have to redo OTP for a transient blip.
+//   - 4xx (bad_token, not_allowlisted, identity_conflict, ...): terminal for this token. Show the error; the
+//     user starts again from the email. A failure reaching Privy's API during verification also lands here,
+//     because the route answers it as bad_token.
+//   - 5xx or a network error: keep the token in state and offer RETRY VERIFICATION, so a transient blip does
+//     not cost a new email code. Privy's access token expires on Privy's schedule; a retry after that is
+//     refused as bad_token and the user starts again.
 //
-// The Connect-Wallet path is intentionally absent in Phase 1A — comes back in
-// Phase 1F. The visual style mirrors `staged-gemini/auth/SignInScreen.tsx` so
-// the page slots into the neobrutalist system already integrated into the app.
+// The access token is a bearer credential until it expires. The route accepts it only from this origin
+// (checkSameOrigin), and a TOTP account still needs its second factor before any session.
+//
+// The wallet path (RainbowKit + SIWE) always renders, whether or not Privy is configured. The visual style
+// mirrors `staged-gemini/auth/SignInScreen.tsx` so the page slots into the neobrutalist system.
 // ----------------------------------------------------------------------------
 
 
@@ -61,7 +52,7 @@ type SubmitState =
   | { kind: 'awaiting_otp' }
   | { kind: 'verifying'; authToken: string }
   | { kind: 'retry_available'; authToken: string; message: string }
-  /// Magic OTP verified, user has TOTP enabled. Server issued a
+  /// Email code verified, user has TOTP enabled. Server issued a
   /// challengeId; this is the second-factor step. `mode` flips
   /// between 6-digit TOTP entry and recovery-code entry. `submitting`
   /// gates the action button. `error` surfaces an inline retryable
@@ -269,7 +260,7 @@ export default function SignupPage() {
       } catch {
         // Body parse failure on a 2xx response is unexpected. Treat
         // it as a transient retry case rather than a hard error so
-        // the user can re-submit without restarting Magic.
+        // the user can re-submit without a new email code.
         setState({
           kind: 'retry_available',
           authToken,
@@ -298,12 +289,12 @@ export default function SignupPage() {
       }
 
       // Bucket-A session success. Auto-disconnect any RainbowKit
-      // wallet on Magic sign-in. The two auth methods are mutually
-      // exclusive by policy: a Magic-signed-in user should NOT also
+      // wallet on email sign-in. The two auth methods are mutually
+      // exclusive by policy: an email-signed-in user should NOT also
       // have an external wallet connected, because that ambiguates
       // which key signs the next transaction and clutters the UI
       // with a wallet chip the user didn't ask for. Account transfer
-      // between Magic and external wallets is a deliberate Phase 5+
+      // between email and external wallets is a deliberate Phase 5+
       // feature, not a side-effect of being signed in twice.
       try {
         disconnect();
@@ -348,7 +339,7 @@ export default function SignupPage() {
       return;
     }
 
-    // 4xx — terminal for this DID. Fresh OTP required.
+    // 4xx: terminal for this token. The user starts again from the email.
     let serverMessage = 'Sign-in failed. Please try again.';
     try {
       const body = (await res.json()) as { error?: string };
@@ -407,7 +398,7 @@ export default function SignupPage() {
     }
   }
 
-  /// Drop the cached DID and reset to the email form. Used when the user
+  /// Drop the cached token and reset to the email form. Used when the user
   /// realizes they typed the wrong address but already received an OTP for
   /// it — without this, the retry-available state would only let them
   /// re-attempt verification of the wrong email.
@@ -418,7 +409,7 @@ export default function SignupPage() {
   }
 
   /// Submit the TOTP / recovery factor for an issued challengeId. Routes
-  /// the response through the same bucket-A handling as the Magic OTP
+  /// the response through the same bucket-A handling as the email sign-in
   /// success path (cache hydrate → wallet disconnect → addRecentEmail →
   /// router.replace('/')). Error mapping per /api/user/auth/totp:
   ///   - 200            → success, identical to /api/user/auth success
@@ -494,7 +485,7 @@ export default function SignupPage() {
 
     // Success path. Mirrors postAuthToken's success branch — wallet
     // disconnect, recent-email cache, query cache pre-populate, route
-    // home. Keep this in sync if the Magic-OTP success path changes.
+    // home. Keep this in sync if the email sign-in success path changes.
     try {
       disconnect();
     } catch (e) {

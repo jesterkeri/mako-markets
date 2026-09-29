@@ -12,7 +12,12 @@ import { PrivyProvider, usePrivy, useWallets } from '@privy-io/react-auth';
 import type { Address } from 'viem';
 
 import { monadTestnet } from '@/lib/chain';
-import { clearEmbeddedSigner, markEmbeddedSignerMissing, registerEmbeddedSigner } from '@/lib/embedded-signer';
+import {
+  clearEmbeddedSigner,
+  markEmbeddedSignerMissing,
+  markEmbeddedSignerUnavailable,
+  registerEmbeddedSigner,
+} from '@/lib/embedded-signer';
 import { useUser } from '@/lib/use-user';
 
 export const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() ?? '';
@@ -58,8 +63,9 @@ function EmbeddedActionsProvider({ children }: { children: React.ReactNode }) {
 
 /// Registers, with the signer seam, the Privy embedded wallet whose address is THIS account's signer, never
 /// simply the first one Privy lists (Codex T2.2 r1: an account signed by a user's second wallet could never
-/// bet). If Privy's wallets have loaded and none is the signer, signing fails with a clear message. Render it
-/// inside the React Query provider (it reads the account) and only when Privy is configured.
+/// bet). If Privy's wallets have loaded and none is the signer, or Privy cannot load it, signing fails at once
+/// with a clear message. Render it inside the React Query provider (it reads the account) and only when Privy
+/// is configured.
 export function EmbeddedSignerBridge() {
   const { ready, authenticated } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
@@ -79,10 +85,19 @@ export function EmbeddedSignerBridge() {
       markEmbeddedSignerMissing();
       return;
     }
+    // `cancelled`: a late answer for a wallet this effect has moved past must not overwrite the current one.
     let cancelled = false;
-    void embedded.getEthereumProvider().then((provider) => {
-      if (!cancelled) registerEmbeddedSigner(embedded.address as Address, provider);
-    });
+    void embedded.getEthereumProvider().then(
+      (provider) => {
+        if (!cancelled) registerEmbeddedSigner(embedded.address as Address, provider);
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        // The error's name only: Privy's error text is not ours to log.
+        console.warn('[privy] embedded wallet provider failed to load', err instanceof Error ? err.name : typeof err);
+        markEmbeddedSignerUnavailable();
+      },
+    );
     return () => {
       cancelled = true;
     };
