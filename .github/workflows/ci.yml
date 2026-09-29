@@ -29,6 +29,8 @@ on:
     branches:
       - main
       - v4-onboarding
+      # Privy sign-in work is pushed here before any merge; its CI runs on every push.
+      - 'feat/privy'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
@@ -60,6 +62,9 @@ jobs:
       NEXT_PUBLIC_PROJECT_ID: 'ci-placeholder'
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
       NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY: 'pk_live_ci_placeholder'
+      # Privy validates the app id's shape at render time (exactly 25 characters), so the placeholder has it:
+      # the build then exercises the Privy provider rather than skipping it.
+      NEXT_PUBLIC_PRIVY_APP_ID: 'cm00000000000000000000000'
       MAKO_STAGE: 'production'
 
     steps:

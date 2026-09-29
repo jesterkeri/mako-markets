@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { eq, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { type DbOrTx } from '@/db/client';
 import { users, type User } from '@/db/schema';
@@ -155,6 +155,92 @@ export async function upsertMagicUser(
   }
   // row.magicEoa === eoa but email differs
   throw new IdentityConflictError('eoa_with_different_email');
+}
+
+/// The result of signing in with a Privy identity.
+export interface EmbeddedUpsert {
+  user: User;
+  /// True when this sign-in moved an existing account from its old signer (a Magic-era EOA) to the Privy
+  /// wallet: the caller must repoint the account's Safe and revoke its other sessions.
+  moved: boolean;
+}
+
+/**
+ * Find-or-create the email account for a Privy identity (Joshua, 2026-09-29: everyone moves to Privy).
+ *
+ *   - No account for this email or these wallets: create one, signed by the first Privy wallet.
+ *   - The account's signer is one of this Privy user's wallets: reuse it unchanged. So a second Privy wallet
+ *     for the same user never silently moves the account to a different Safe.
+ *   - The account's signer is NOT one of them (a Magic-era account): move it, once, to the first Privy
+ *     wallet. The Magic key keeps control of the old Safe; the account now owns a new one.
+ *   - A wallet already belongs to a different email, or the email and a wallet point at two accounts:
+ *     IdentityConflictError, never a guess.
+ *
+ * Email ownership is proven by Privy's email code, exactly as Magic's was, so the move grants nothing Magic
+ * sign-in did not already grant.
+ */
+/// What to do with a Privy sign-in, given the rows that already match its email or wallets. Pure, so every
+/// case is tested without a database.
+export type EmbeddedDecision =
+  | { action: 'create'; eoa: string }
+  | { action: 'reuse'; row: User }
+  | { action: 'move'; row: User; eoa: string }
+  | { action: 'conflict'; reason: 'email_with_different_eoa' | 'eoa_with_different_email' };
+
+export function decideEmbeddedUser(existing: User[], email: string, wallets: string[]): EmbeddedDecision {
+  if (wallets.length === 0) throw new Error('decideEmbeddedUser: no wallets');
+  const primary = wallets[0];
+  if (existing.length === 0) return { action: 'create', eoa: primary };
+  if (existing.length > 1) return { action: 'conflict', reason: 'email_with_different_eoa' };
+  const row = existing[0];
+  if (row.email !== email) return { action: 'conflict', reason: 'eoa_with_different_email' };
+  if (row.magicEoa !== null && wallets.includes(row.magicEoa)) return { action: 'reuse', row };
+  return { action: 'move', row, eoa: primary };
+}
+
+export async function upsertEmbeddedUser(tx: DbOrTx, rawEmail: string, rawWallets: string[]): Promise<EmbeddedUpsert> {
+  const email = normalizeEmail(rawEmail);
+  const wallets = rawWallets.map((w) => normalizeEoa(w));
+  if (wallets.length === 0) throw new Error('upsertEmbeddedUser: no wallets');
+
+  const existing = await tx
+    .select()
+    .from(users)
+    .where(or(eq(users.email, email), inArray(users.magicEoa, wallets)))
+    .limit(3);
+
+  const d = decideEmbeddedUser(existing, email, wallets);
+  switch (d.action) {
+    case 'conflict':
+      throw new IdentityConflictError(d.reason);
+    case 'reuse':
+      return { user: d.row, moved: false };
+    case 'create': {
+      const inserted = await tx
+        .insert(users)
+        .values({ email, magicEoa: d.eoa, authType: 'magic' })
+        .onConflictDoNothing()
+        .returning();
+      if (inserted.length === 1) return { user: inserted[0], moved: false };
+      // A concurrent sign-in created it first: refuse rather than guess; the retry resolves cleanly.
+      throw new IdentityConflictError('email_with_different_eoa');
+    }
+    case 'move': {
+      // Conditional on the signer we read, so two concurrent sign-ins cannot both move it.
+      const signer = d.row.magicEoa;
+      const updated = await tx
+        .update(users)
+        .set({ magicEoa: d.eoa })
+        .where(
+          signer === null
+            ? and(eq(users.id, d.row.id), sql`${users.magicEoa} IS NULL`)
+            : and(eq(users.id, d.row.id), eq(users.magicEoa, signer)),
+        )
+        .returning();
+      if (updated.length !== 1) throw new IdentityConflictError('email_with_different_eoa');
+      return { user: updated[0], moved: true };
+    }
+  }
 }
 
 /**

@@ -1,28 +1,21 @@
+import { eq } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 import { type Address } from 'viem';
 import { db } from '@/db/client';
-import { userSafes } from '@/db/schema';
+import { sessions, userSafes } from '@/db/schema';
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
 import { createSigninChallenge } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
-import { normalizeEmail } from '@/lib/email';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
 import { readLastSignIn } from '@/lib/last-sign-in';
-import {
-  MagicConfigError,
-  getMetadataByDidToken,
-  validateDidToken,
-} from '@/lib/magic-server';
+import { PrivyConfigError, PrivyIdentityError, verifyPrivyLogin, type PrivyIdentity } from '@/lib/privy-server';
 import { deriveSafeAddress } from '@/lib/safe';
 import {
   createSession,
   USER_SESSION_COOKIE,
   USER_SESSION_MAX_AGE_SEC,
 } from '@/lib/user-session';
-import {
-  IdentityConflictError,
-  upsertMagicUser,
-} from '@/lib/user-upsert';
+import { IdentityConflictError, upsertEmbeddedUser } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
@@ -30,7 +23,13 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // ----------------------------------------------------------------------------
 // POST /api/user/auth
 //
-// Body: { didToken: string }
+// Body: { privyAccessToken: string }
+//
+// Privy since 2026-09-29 (Joshua: everyone moves to Privy). The account's Safe is owned by the user's Privy
+// embedded wallet; Mako's own sponsorship (/api/aa/sponsor, /api/aa/send) is unchanged. An account whose
+// signer is a Magic-era EOA is moved once to the Privy wallet: its Safe is repointed and every other session
+// revoked (upsertEmbeddedUser). Steps 1-2 below read "verify the Privy access token, then read the user's
+// email and embedded wallets from Privy's API"; the Magic wording is kept for history.
 //
 // 0. Same-origin gate (CSRF). Reject anything that doesn't carry an Origin
 //    header matching this host — login CSRF would otherwise let an attacker
@@ -95,60 +94,45 @@ export async function POST(req: Request) {
     return Response.json({ error: 'cross_origin' }, { status: 403 });
   }
 
-  let body: { didToken?: unknown };
+  let body: { privyAccessToken?: unknown };
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: 'bad_body' }, { status: 400 });
   }
 
-  if (typeof body.didToken !== 'string' || body.didToken.length === 0) {
+  if (typeof body.privyAccessToken !== 'string' || body.privyAccessToken.length === 0) {
     return Response.json({ error: 'bad_body' }, { status: 400 });
   }
-  const didToken = body.didToken;
 
+  // Verify the token, then read the identity from Privy's API. The email and the wallets come only from
+  // there, never from the browser.
+  let identity: PrivyIdentity;
   try {
-    await validateDidToken(didToken);
+    identity = await verifyPrivyLogin(body.privyAccessToken);
   } catch (err) {
-    if (err instanceof MagicConfigError) {
-      console.error('[user/auth] Magic admin config error', summarizeError(err));
+    if (err instanceof PrivyConfigError) {
+      console.error('[user/auth] Privy config error', summarizeError(err));
       return Response.json({ error: 'internal' }, { status: 500 });
     }
-    // Log validation failures so a Magic API outage shows up as a spike of
-    // 401s with diagnostic context, not silent user pain. Log a structured
-    // summary instead of the raw err — Magic admin error messages have
-    // been observed to interpolate the offending DID, and we don't want
-    // sign-in tokens landing in Vercel runtime logs.
-    console.warn('[user/auth] DID validation failed', summarizeError(err));
+    if (err instanceof PrivyIdentityError) {
+      // A valid Privy user without a verified email or an embedded wallet: not a Mako email account yet.
+      return Response.json({ error: err.reason }, { status: 422 });
+    }
+    // A structured summary, never the raw error: it could carry the token.
+    console.warn('[user/auth] Privy token verification failed', summarizeError(err));
     return Response.json({ error: 'bad_token' }, { status: 401 });
   }
-
-  let email: string;
-  let eoa: Address;
-  try {
-    const meta = await getMetadataByDidToken(didToken);
-    email = normalizeEmail(meta.email);
-    eoa = meta.publicAddress as Address;
-  } catch (err) {
-    if (err instanceof MagicConfigError) {
-      console.error('[user/auth] Magic admin config error', summarizeError(err));
-      return Response.json({ error: 'internal' }, { status: 500 });
-    }
-    console.error('[user/auth] Magic metadata lookup failed', summarizeError(err));
-    return Response.json({ error: 'magic_metadata_failed' }, { status: 502 });
-  }
+  const email = identity.email.trim().toLowerCase();
 
   if (!(await isAllowedForCurrentStage(email))) {
     return Response.json({ error: 'not_allowlisted' }, { status: 403 });
   }
 
-  // Pure CREATE2 derivation, no RPC. Same value on every chain under Path X,
-  // so we can compute once and write the same string to both user_safes rows.
-  const safeAddress = deriveSafeAddress(eoa);
-
   type SessionOutcome = {
     kind: 'session';
     token: string;
+    safeAddress: Address;
     user: {
       email: string;
       magicEoa: string;
@@ -167,25 +151,34 @@ export async function POST(req: Request) {
   let outcome: Outcome;
   try {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
-      const user = await upsertMagicUser(tx, email, eoa);
+      const { user, moved } = await upsertEmbeddedUser(tx, email, identity.wallets);
+      if (!user.email || !user.magicEoa) {
+        throw new Error('[user-auth] embedded row missing email/magic_eoa post-upsert');
+      }
+      // The Safe belongs to the ACCOUNT's signer, which is not necessarily the wallet Privy listed first
+      // (upsertEmbeddedUser keeps an account on the Privy wallet it already has). Pure CREATE2, no RPC.
+      const eoa = user.magicEoa as Address;
+      const safeAddress = deriveSafeAddress(eoa);
 
-      // user_safes is keyed (user_id, chain_id) and uniquely indexed on the
-      // pair. Insert with onConflictDoNothing so a returning user (existing
-      // user row) doesn't fight the unique constraint when we re-derive at
-      // every login. The `safe_address` value is deterministic per EOA;
-      // there's no scenario where the same (user_id, chain_id) should hold
-      // a different safe_address than the derived one.
-      for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
-        await tx
-          .insert(userSafes)
-          .values({
-            userId: user.id,
-            chainId,
-            safeAddress,
-          })
-          .onConflictDoNothing({
-            target: [userSafes.userId, userSafes.chainId],
-          });
+      if (moved) {
+        // A Magic-era account now signed by its Privy wallet: point it at the new wallet's Safe, and end
+        // every session that still carries the old signer.
+        for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
+          await tx
+            .insert(userSafes)
+            .values({ userId: user.id, chainId, safeAddress })
+            .onConflictDoUpdate({ target: [userSafes.userId, userSafes.chainId], set: { safeAddress } });
+        }
+        await tx.delete(sessions).where(eq(sessions.userId, user.id));
+      } else {
+        // user_safes is keyed (user_id, chain_id). A returning user already has the row; the value is
+        // deterministic per signer, so there is nothing to update.
+        for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
+          await tx
+            .insert(userSafes)
+            .values({ userId: user.id, chainId, safeAddress })
+            .onConflictDoNothing({ target: [userSafes.userId, userSafes.chainId] });
+        }
       }
 
       // Phase 1G: split on TOTP. upsertMagicUser returns the full users
@@ -216,18 +209,11 @@ export async function POST(req: Request) {
           ? new Date(cooldownAvailable).toISOString()
           : null;
 
-      // CHECK constraint guarantees magic rows have non-null email +
-      // magic_eoa (the upsert just wrote auth_type='magic'). The DB
-      // column types are nullable to accommodate wallet rows; assert
-      // here so TS sees `string` and a corrupt CHECK surfaces as a 5xx.
-      if (!user.email || !user.magicEoa) {
-        throw new Error('[user-auth] magic row missing email/magic_eoa post-upsert');
-      }
-
       const token = await createSession(user.id, { tx });
       return {
         kind: 'session',
         token,
+        safeAddress,
         user: {
           email: user.email,
           magicEoa: user.magicEoa,
@@ -271,7 +257,7 @@ export async function POST(req: Request) {
   return Response.json({
     ok: true,
     authed: true,
-    ...magicUserToWire(outcome.user, safeAddress),
+    ...magicUserToWire(outcome.user, outcome.safeAddress),
     lastSignInAt: outcome.lastSignInAt,
     nextEmailChangeAvailableAt: outcome.nextEmailChangeAvailableAt,
   });

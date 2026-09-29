@@ -29,7 +29,7 @@
 
 import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
 
-import { signSafeOpHash } from './magic-browser';
+import { signSafeOpHash } from './embedded-signer';
 import { PM_CONTRACT_ADDRESS } from './contract';
 import {
   PM_BET_ABI,

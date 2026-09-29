@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // api-user-auth-totp-required.test.ts
 //
-// Phase 1G branch on /api/user/auth: when upsertMagicUser returns a row
+// Phase 1G branch on /api/user/auth (Privy since 2026-09-29): when upsertEmbeddedUser returns a row
 // with totp_secret set, the route MUST:
 //   1. NOT issue a session cookie.
 //   2. INSERT an auth_challenges row scoped to (user.id, magicEoa,
@@ -15,8 +15,8 @@
 //   3. Response includes the existing { ok, authed, email, magicEoa,
 //      safeAddress } shape.
 //
-// Boundary mocks for csrf, allowlist, magic-server, deriveSafeAddress,
-// upsertMagicUser, createSession, createSigninChallenge, db, and the
+// Boundary mocks for csrf, allowlist, privy-server, deriveSafeAddress,
+// upsertEmbeddedUser, createSession, createSigninChallenge, db, and the
 // userSafes insert chain.
 // ----------------------------------------------------------------------------
 
@@ -24,11 +24,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   checkSameOrigin: vi.fn(),
-  validateDidToken: vi.fn(),
-  getMetadataByDidToken: vi.fn(),
+  verifyPrivyLogin: vi.fn(),
   isAllowedForCurrentStage: vi.fn(),
   deriveSafeAddress: vi.fn(),
-  upsertMagicUser: vi.fn(),
+  upsertEmbeddedUser: vi.fn(),
   createSession: vi.fn(),
   createSigninChallenge: vi.fn(),
   selectPriorSession: vi.fn(),
@@ -36,10 +35,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
-vi.mock('@/lib/magic-server', () => ({
-  validateDidToken: mocks.validateDidToken,
-  getMetadataByDidToken: mocks.getMetadataByDidToken,
-  MagicConfigError: class MagicConfigError extends Error {},
+vi.mock('@/lib/privy-server', () => ({
+  verifyPrivyLogin: mocks.verifyPrivyLogin,
+  PrivyConfigError: class PrivyConfigError extends Error {},
+  PrivyIdentityError: class PrivyIdentityError extends Error {},
 }));
 vi.mock('@/lib/allowlist', () => ({
   isAllowedForCurrentStage: mocks.isAllowedForCurrentStage,
@@ -48,7 +47,7 @@ vi.mock('@/lib/safe', () => ({
   deriveSafeAddress: mocks.deriveSafeAddress,
 }));
 vi.mock('@/lib/user-upsert', () => ({
-  upsertMagicUser: mocks.upsertMagicUser,
+  upsertEmbeddedUser: mocks.upsertEmbeddedUser,
   IdentityConflictError: class IdentityConflictError extends Error {},
 }));
 vi.mock('@/lib/user-session', () => ({
@@ -139,7 +138,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const TOKEN = 'did-token-stub';
+const TOKEN = 'privy-access-token-stub';
 const EOA = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const SAFE = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const EMAIL = 'a@b.com';
@@ -149,7 +148,7 @@ function makeRequest() {
   return new Request('http://localhost/api/user/auth', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ didToken: TOKEN }),
+    body: JSON.stringify({ privyAccessToken: TOKEN }),
   });
 }
 
@@ -161,14 +160,10 @@ function setupHappyPathBase(opts: {
   lastEmailChangedAt?: Date | null;
 }) {
   mocks.checkSameOrigin.mockReturnValue({ ok: true });
-  mocks.validateDidToken.mockResolvedValue(undefined);
-  mocks.getMetadataByDidToken.mockResolvedValue({
-    email: EMAIL,
-    publicAddress: EOA,
-  });
+  mocks.verifyPrivyLogin.mockResolvedValue({ privyUserId: 'did:privy:u1', email: EMAIL, wallets: [EOA] });
   mocks.isAllowedForCurrentStage.mockResolvedValue(true);
   mocks.deriveSafeAddress.mockReturnValue(SAFE);
-  mocks.upsertMagicUser.mockResolvedValue({
+  mocks.upsertEmbeddedUser.mockResolvedValue({ moved: false, user: {
     id: USER_ID,
     email: EMAIL,
     magicEoa: EOA,
@@ -177,7 +172,7 @@ function setupHappyPathBase(opts: {
     totpSecret: opts.totpSecret,
     totpEnabledAt: opts.totpEnabledAt ?? null,
     lastEmailChangedAt: opts.lastEmailChangedAt ?? null,
-  });
+  } });
   mocks.selectPriorSession.mockResolvedValue([]);
 }
 

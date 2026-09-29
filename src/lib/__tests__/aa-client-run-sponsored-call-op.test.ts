@@ -34,7 +34,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Address, Hex } from 'viem';
 
 const mockSignSafeOpHash = vi.fn();
-vi.mock('../magic-browser', () => ({
+vi.mock('../embedded-signer', () => ({
   signSafeOpHash: (...args: unknown[]) => mockSignSafeOpHash(...args),
 }));
 

@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/private-markets/treasury', () => ({
   getPmTreasuryAddress: () => mocks.getPmTreasuryAddress(),
 }));
-vi.mock('../magic-browser', () => ({
+vi.mock('../embedded-signer', () => ({
   signSafeOpHash: (args: unknown) => mocks.signSafeOpHash(args),
 }));
 

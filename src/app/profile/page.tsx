@@ -23,7 +23,7 @@ import { runSendUsdc } from '@/lib/aa-client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS } from '@/lib/contract';
 import { SEND_USDC_MAX_PER_OP_BASE_UNITS } from '@/lib/aa-constants';
-import { getMagic } from '@/lib/magic-browser';
+import { useEmbeddedActions } from '@/components/PrivyAuth';
 
 function formatAddress(address: string | undefined): string {
   if (!address) return '';
@@ -107,6 +107,7 @@ type SendPhase =
 
 export default function ProfilePage() {
   const router = useRouter();
+  const embedded = useEmbeddedActions();
   const queryClient = useQueryClient();
   const { user, isLoading: isUserLoading } = useUser();
   const { address: connectedWallet } = useAccount();
@@ -279,12 +280,12 @@ export default function ProfilePage() {
     if (transitionInFlight) return;
     setSwitching(true);
 
+    // Privy since 2026-09-29; the same bounded, non-blocking treatment Magic's logout had.
     const magicLogout = (async () => {
       try {
-        const magic = await getMagic();
-        await magic.user.logout();
+        await embedded.logout();
       } catch (e) {
-        console.warn('Magic logout failed during switch-account', e);
+        console.warn('Privy logout failed during switch-account', e);
       }
     })();
 
@@ -323,14 +324,13 @@ export default function ProfilePage() {
 
   const handleExportKey = async () => {
     try {
-      const magic = await getMagic();
-      await magic.user.revealEVMPrivateKey();
+      // Privy's export flow for the embedded wallet (Privy since 2026-09-29).
+      await embedded.exportKey();
     } catch (e) {
-      // User-canceled the modal: Magic surfaces this as RPC -32603
-      // "User canceled action". Not an error — just close quietly.
+      // Closing Privy's modal is not an error; anything else is logged.
       const msg = e instanceof Error ? e.message : String(e);
-      if (/user canceled/i.test(msg)) return;
-      console.error('Failed to open magic reveal-key flow', e);
+      if (/cancel|exited/i.test(msg)) return;
+      console.error('Failed to open the key export flow', e);
     }
   };
 

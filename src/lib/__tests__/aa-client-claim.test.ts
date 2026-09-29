@@ -27,7 +27,7 @@ import type { Address, Hex } from 'viem';
 const mocks = vi.hoisted(() => ({
   signSafeOpHash: vi.fn(),
 }));
-vi.mock('../magic-browser', () => ({
+vi.mock('../embedded-signer', () => ({
   signSafeOpHash: (args: unknown) => mocks.signSafeOpHash(args),
 }));
 

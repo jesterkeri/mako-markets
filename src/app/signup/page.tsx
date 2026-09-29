@@ -6,7 +6,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useDisconnect, useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 
-import { getMagic } from '@/lib/magic-browser';
+import { useLogin, usePrivy } from '@privy-io/react-auth';
+
+import { PRIVY_APP_ID } from '@/components/PrivyAuth';
 import {
   addRecentEmail,
   getRecentEmails,
@@ -17,21 +19,27 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { TotpStep, mapTotpResponse } from '@/components/signup/TotpStep';
 
 // ----------------------------------------------------------------------------
-// /signup — Phase 1A email auth entry point.
+// /signup — email auth entry point.
+//
+// PRIVY since 2026-09-29 (Joshua: everyone moves to Privy). Step 2 below is now Privy's login modal,
+// pre-filled with the email: Privy verifies the email code and creates the user's embedded wallet, then the
+// page posts Privy's access token (not a Magic DID) to /api/user/auth, which reads the email and wallet from
+// Privy's own API. The rest of the journey, the retry handling and the TOTP step are unchanged; "DID" below
+// reads as "Privy access token".
 //
 // User journey:
 //   1. Type email, submit.
 //   2. magic.auth.loginWithEmailOTP({ email, lifespan }) opens Magic's hosted
 //      OTP modal; the user enters the code and the call resolves with a DID
 //      token that's only valid for `lifespan` seconds.
-//   3. POST { didToken } to /api/user/auth. The server validates the token,
+//   3. POST { authToken } to /api/user/auth. The server validates the token,
 //      upserts the users + user_safes rows, creates a session, sets the cookie.
 //   4. On 200, redirect to /.
 //
 // DID lifespan is reduced from Magic's 900s default to 120s to narrow the
 // replay window. The user just needs the network round-trip to /api/user/auth
 // to land within that window. A stronger fix is to track consumed DID tids
-// server-side via `magic.token.decode(didToken)[1].tid` (admin SDK 2.8.2)
+// server-side via `magic.token.decode(authToken)[1].tid` (admin SDK 2.8.2)
 // against a `consumed_dids` table — that lands with Phase 1B.
 //
 // Retry behavior:
@@ -47,13 +55,12 @@ import { TotpStep, mapTotpResponse } from '@/components/signup/TotpStep';
 // the page slots into the neobrutalist system already integrated into the app.
 // ----------------------------------------------------------------------------
 
-const DID_LIFESPAN_SEC = 120;
 
 type SubmitState =
   | { kind: 'idle' }
   | { kind: 'awaiting_otp' }
-  | { kind: 'verifying'; didToken: string }
-  | { kind: 'retry_available'; didToken: string; message: string }
+  | { kind: 'verifying'; authToken: string }
+  | { kind: 'retry_available'; authToken: string; message: string }
   /// Magic OTP verified, user has TOTP enabled. Server issued a
   /// challengeId; this is the second-factor step. `mode` flips
   /// between 6-digit TOTP entry and recovery-code entry. `submitting`
@@ -98,7 +105,20 @@ function WalletConnectRedirectGate({
 }
 
 
+/// Privy's hooks need its provider, which exists only when NEXT_PUBLIC_PRIVY_APP_ID is set. Without it there
+/// is no email sign-in, and the page says so rather than showing a form that cannot work.
 export default function SignupPage() {
+  if (!PRIVY_APP_ID) {
+    return (
+      <main className="min-h-screen flex items-center justify-center p-6">
+        <p className="max-w-md text-center">Email sign-in is not configured on this deployment. Please try again later.</p>
+      </main>
+    );
+  }
+  return <SignupWithPrivy />;
+}
+
+function SignupWithPrivy() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { disconnect } = useDisconnect();
@@ -156,24 +176,52 @@ export default function SignupPage() {
   }, []);
   /// Synchronous re-entry guard. React state updates queue across renders, so
   /// two rapid clicks on the retry button could both observe `state.kind ===
-  /// 'retry_available'` and fire two `postDidToken` calls — duplicate session
+  /// 'retry_available'` and fire two `postAuthToken` calls — duplicate session
   /// rows. The ref flips before the async call and resets after, blocking
   /// the second click from progressing.
   const inFlightRef = useRef(false);
 
-  async function postDidToken(didToken: string) {
-    setState({ kind: 'verifying', didToken });
+  /// Privy: the modal verifies the email code and makes the embedded wallet. `pendingEmailRef` marks a login
+  /// THIS page started, so a Privy session restored on page load never posts a token by itself.
+  const { authenticated, getAccessToken, logout: privyLogout } = usePrivy();
+  const pendingEmailRef = useRef(false);
+  const { login } = useLogin({
+    onComplete: async () => {
+      if (!pendingEmailRef.current) return;
+      pendingEmailRef.current = false;
+      const token = await getAccessToken();
+      if (!token) {
+        inFlightRef.current = false;
+        setState({ kind: 'error', message: 'Sign-in returned no token. Please try again.' });
+        return;
+      }
+      try {
+        await postAuthToken(token);
+      } finally {
+        inFlightRef.current = false;
+      }
+    },
+    onError: (err) => {
+      if (!pendingEmailRef.current) return;
+      pendingEmailRef.current = false;
+      inFlightRef.current = false;
+      setState({ kind: 'error', message: err === 'exited_auth_flow' ? 'Sign-in cancelled' : 'Sign-in failed. Please try again.' });
+    },
+  });
+
+  async function postAuthToken(authToken: string) {
+    setState({ kind: 'verifying', authToken });
     let res: Response;
     try {
       res = await fetch('/api/user/auth', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ didToken }),
+        body: JSON.stringify({ privyAccessToken: authToken }),
       });
     } catch {
       setState({
         kind: 'retry_available',
-        didToken,
+        authToken,
         message: 'Network error. The sign-in code is still valid; please retry.',
       });
       return;
@@ -198,7 +246,7 @@ export default function SignupPage() {
         // the user can re-submit without restarting Magic.
         setState({
           kind: 'retry_available',
-          didToken,
+          authToken,
           message:
             'Unexpected response from sign-in. The code is still valid; please retry.',
         });
@@ -269,16 +317,8 @@ export default function SignupPage() {
     }
 
     if (res.status >= 500) {
-      let serverMessage = 'Server error. The sign-in code is still valid; please retry.';
-      try {
-        const body = (await res.json()) as { error?: string };
-        if (body.error === 'magic_metadata_failed') {
-          serverMessage = 'Magic is temporarily unreachable. Please retry.';
-        }
-      } catch {
-        // fall through with default message
-      }
-      setState({ kind: 'retry_available', didToken, message: serverMessage });
+      // The Privy access token is still valid for a while, so the same token can be retried.
+      setState({ kind: 'retry_available', authToken, message: 'Server error. Your sign-in is still valid; please retry.' });
       return;
     }
 
@@ -292,6 +332,8 @@ export default function SignupPage() {
         serverMessage = 'Identity mismatch detected. Please contact support.';
       } else if (body.error === 'bad_token') {
         serverMessage = 'Sign-in token rejected. Please try again.';
+      } else if (body.error === 'no_email' || body.error === 'no_embedded_wallet') {
+        serverMessage = 'Your sign-in did not finish setting up. Please try again.';
       } else if (body.error === 'cross_origin') {
         serverMessage = 'Request blocked by security check. Please refresh and retry.';
       }
@@ -319,31 +361,17 @@ export default function SignupPage() {
     // their mind and used email instead).
     walletConnectIntentRef.current = false;
     setState({ kind: 'awaiting_otp' });
-    let didToken: string | null;
-    try {
-      const magic = await getMagic();
-      didToken = await magic.auth.loginWithEmailOTP({
-        email,
-        lifespan: DID_LIFESPAN_SEC,
-      });
-    } catch (err) {
-      inFlightRef.current = false;
-      const message = err instanceof Error ? err.message : 'Sign-in cancelled';
-      setState({ kind: 'error', message });
-      return;
+    // A Privy session left over from an earlier visit would skip the email code; end it so the email is
+    // proven now, and so the account signed in is the one typed here.
+    if (authenticated) {
+      try {
+        await privyLogout();
+      } catch (e) {
+        console.warn('Privy logout before sign-in failed', e);
+      }
     }
-
-    if (!didToken) {
-      inFlightRef.current = false;
-      setState({ kind: 'error', message: 'Magic returned no token. Please try again.' });
-      return;
-    }
-
-    try {
-      await postDidToken(didToken);
-    } finally {
-      inFlightRef.current = false;
-    }
+    pendingEmailRef.current = true;
+    login({ loginMethods: ['email'], prefill: { type: 'email', value: email } });
   }
 
   async function handleRetry() {
@@ -351,7 +379,7 @@ export default function SignupPage() {
     if (state.kind !== 'retry_available') return;
     inFlightRef.current = true;
     try {
-      await postDidToken(state.didToken);
+      await postAuthToken(state.authToken);
     } finally {
       inFlightRef.current = false;
     }
@@ -442,7 +470,7 @@ export default function SignupPage() {
       return;
     }
 
-    // Success path. Mirrors postDidToken's success branch — wallet
+    // Success path. Mirrors postAuthToken's success branch — wallet
     // disconnect, recent-email cache, query cache pre-populate, route
     // home. Keep this in sync if the Magic-OTP success path changes.
     try {

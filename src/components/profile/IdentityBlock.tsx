@@ -3,10 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import {
-  EmailUpdateNotSupported,
-  updateEmailWithMagic,
-} from '@/lib/magic-browser';
+import { EmailUpdateNotSupported, requestEmailChange } from '@/lib/email-change';
 import {
   USER_QUERY_KEY,
   type AuthedUser,
@@ -161,7 +158,7 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
     const ctrl = new AbortController();
     emailCtrlRef.current = ctrl;
     try {
-      const { didToken } = await updateEmailWithMagic({ newEmail: trimmed });
+      const { didToken } = await requestEmailChange({ newEmail: trimmed });
       if (!mountedRef.current) return;
 
       const res = await fetch('/api/user/email/update', {
@@ -544,8 +541,8 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
         {emailEdit === 'unsupported' && (
           <div className="mt-3 flex flex-col gap-2 bg-paper p-3 rounded-xl border-2 border-mako-red">
             <p className="mako-body text-sm text-ink">
-              Email change is not available in this app. To use a different
-              address, contact support and we will help you migrate your funds.
+              Email change is not available yet. To use a different address,
+              contact support to move your funds.
             </p>
             <button
               type="button"

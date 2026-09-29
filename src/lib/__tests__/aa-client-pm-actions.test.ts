@@ -73,7 +73,7 @@ let captured: CapturedRequest | null = null;
 
 // signSafeOpHash never runs because we 400 on the sponsor call. Mock
 // it anyway in case a regression makes the helper reach the sign step.
-vi.mock('../magic-browser', () => ({
+vi.mock('../embedded-signer', () => ({
   signSafeOpHash: vi.fn(async () => '0x' + '00'.repeat(77)),
 }));
 

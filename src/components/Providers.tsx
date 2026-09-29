@@ -7,6 +7,7 @@ import { WagmiProvider } from 'wagmi';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { config } from '@/lib/wagmi';
 import { ThemeProvider } from '@/lib/use-theme';
+import { PrivyAuthProvider } from '@/components/PrivyAuth';
 
 // ---------------------------------------------------------------
 // SSR localStorage polyfill.
@@ -138,6 +139,7 @@ function getQueryClient(): QueryClient {
 export function Providers({ children }: { children: React.ReactNode }) {
   const queryClient = getQueryClient();
   return (
+    <PrivyAuthProvider>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
@@ -150,5 +152,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
         </ThemeProvider>
       </QueryClientProvider>
     </WagmiProvider>
+    </PrivyAuthProvider>
   );
 }
