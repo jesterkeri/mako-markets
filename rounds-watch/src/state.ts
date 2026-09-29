@@ -39,6 +39,9 @@ export interface Meta {
   /// Per round id in an alert condition: the report check, kept across runs so checks rotate through every
   /// due round even while Telegram is down (Codex T2.0d r1).
   evidence: Record<string, Evidence>;
+  /// Where the next Healthchecks failure body starts in the alert lines, so a body larger than Healthchecks
+  /// stores pages through every line across runs instead of repeating the same prefix (Codex T2.0d r3).
+  hcCursor: number;
   lastStatus: string | null;
   lastRunAt: number | null;
 }
@@ -50,6 +53,7 @@ export const INITIAL_META: Meta = {
   noPrice: {},
   alerted: {},
   evidence: {},
+  hcCursor: 0,
   lastStatus: null,
   lastRunAt: null,
 };

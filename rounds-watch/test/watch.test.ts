@@ -359,3 +359,26 @@ describe('more active rounds than one read covers', () => {
     for (let id = 1; id <= 45; id++) expect(all).toContain(`Round ${id} is UNSETTLED`);
   });
 });
+
+// Codex T2.0d r3 regression: with Telegram down, a backlog larger than Healthchecks stores must page through
+// every alert line across pings, not repeat the same prefix.
+describe('Healthchecks pages through a backlog larger than it stores', () => {
+  it('shows the tail round with both report states in a later ping, every body within 100,000 bytes', async () => {
+    const N = 800;
+    w.rounds = Array.from({ length: N }, () => ({ start: C - 900, status: STATUS.Refunded, reason: REFUND_REASON.NoPrice, up: 1n, down: 1n }));
+    w.telegramOk = false;
+    at(C, 86_400 + 60);
+    // 4 report checks a run, re-checked after 30 minutes: runs a minute apart so checks keep pace.
+    for (let i = 0; i < Math.ceil(N / 4) + 4; i++) {
+      await run();
+      w.now += 60_000;
+    }
+    const sizes = w.pings.map((p) => new TextEncoder().encode(p.body).length);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(100_000);
+    const total = w.pings.at(-1)?.body.match(/: (\d+) of (\d+) alert lines/);
+    expect(Number(total?.[2])).toBe(N); // every line has its report check by now
+    expect(Number(total?.[1])).toBeLessThan(N); // and one ping cannot carry them all
+    const tail = new RegExp(`Round ${N} REFUNDED NoPrice\\. At [^\\n]*start \\S+ exists, close \\S+ exists\\.`);
+    expect(w.pings.slice(-3).some((p) => tail.test(p.body))).toBe(true);
+  }, 120_000);
+});

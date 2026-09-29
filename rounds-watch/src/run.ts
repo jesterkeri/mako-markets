@@ -34,6 +34,10 @@ export const MAX_ACTIVE_READ = 40;
 export const MAX_CHECKS_PER_RUN = 4;
 /// A report check this old is repeated, so an "unknown" or "missing" is not kept forever.
 export const EVIDENCE_TTL_MS = 30 * 60_000;
+/// Healthchecks stores the first 100,000 bytes of a ping body (healthchecks.io/docs/attaching_logs). The
+/// failure body is built to fit: a capped condition summary, then a page of whole alert lines.
+export const HC_BODY_BYTES = 100_000;
+const HC_SUMMARY_BYTES = 10_000;
 
 export interface WatchConfig {
   roundsAddress: Hex;
@@ -61,6 +65,8 @@ export interface WatchOutcome {
   status: WatchStatus;
   /// The alert lines this run tried to deliver (secret-free).
   lines: string[];
+  /// The alert lines for this run's Healthchecks failure body: a page that rotates across runs.
+  hcPage?: string[];
   /// Rounds currently in an alert condition, delivered or not.
   conditions: string[];
 }
@@ -94,6 +100,7 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
     noPrice: { ...(m.noPrice ?? {}) },
     alerted: { ...(m.alerted ?? {}) },
     evidence: { ...(m.evidence ?? {}) },
+    hcCursor: m.hcCursor ?? 0,
     lastStatus: m.lastStatus ?? null,
     lastRunAt: m.lastRunAt ?? null,
   };
@@ -115,8 +122,7 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
   // worth an email.
   if (outcome.status === 'rpc-error' || outcome.status === 'lease-lost') return outcome;
   if (outcome.status === 'telegram-failed' || outcome.conditions.length > 0) {
-    const body = ['mako-rounds-watch', ...outcome.conditions, ...(outcome.status === 'telegram-failed' ? ['TELEGRAM DELIVERY FAILED:', ...outcome.lines] : [])];
-    await deps.ping('fail', body.join('\n'));
+    await deps.ping('fail', failureBody(outcome));
   } else {
     await deps.ping('ok', 'mako-rounds-watch quiet');
   }
@@ -241,12 +247,29 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     }
   }
 
+  // The Healthchecks page: whole lines from the saved cursor, wrapping, as many as fit; the cursor moves on
+  // so the next run starts where this one stopped. Built whether or not Telegram worked, used when it did not.
+  const pageBudget = HC_BODY_BYTES - HC_SUMMARY_BYTES - 200;
+  const hcPage: string[] = [];
+  if (lines.length > 0) {
+    const from = meta.hcCursor % lines.length;
+    let used = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[(from + i) % lines.length];
+      const size = bytes(l) + 1;
+      if (used + size > pageBudget) break;
+      hcPage.push(l);
+      used += size;
+    }
+    meta.hcCursor = (from + hcPage.length) % lines.length;
+  }
+
   // Forget alert and evidence records only for rounds that are neither active nor waiting on a NoPrice alert.
   const keep = new Set([...meta.active.map(String), ...Object.keys(meta.noPrice)]);
   for (const k of Object.keys(meta.alerted)) if (!keep.has(k)) delete meta.alerted[k];
   for (const k of Object.keys(meta.evidence)) if (!keep.has(k)) delete meta.evidence[k];
 
-  return { status, lines, conditions };
+  return { status, lines, conditions, hcPage };
 }
 
 const noPriceView = (id: number, p: PendingNoPrice): RoundView => ({
@@ -257,6 +280,29 @@ const noPriceView = (id: number, p: PendingNoPrice): RoundView => ({
   closeTime: p.closeTime,
   twoSided: true,
 });
+
+const bytes = (s: string): number => new TextEncoder().encode(s).length;
+
+/// The Healthchecks failure body, always within HC_BODY_BYTES: a capped summary of every condition, then,
+/// if Telegram failed, this run's page of full alert lines and which part of the whole it is.
+export function failureBody(o: WatchOutcome): string {
+  const out = ['mako-rounds-watch'];
+  let used = bytes(out[0]) + 1;
+  let shown = 0;
+  for (const c of o.conditions) {
+    if (used + bytes(c) + 1 > HC_SUMMARY_BYTES - 100) break;
+    out.push(c);
+    used += bytes(c) + 1;
+    shown++;
+  }
+  if (shown < o.conditions.length) out.push(`+${o.conditions.length - shown} more conditions`);
+  if (o.status === 'telegram-failed') {
+    const page = o.hcPage ?? [];
+    out.push(`TELEGRAM DELIVERY FAILED: ${page.length} of ${o.lines.length} alert lines in this ping; the rest rotate into the next pings.`);
+    out.push(...page);
+  }
+  return out.join('\n');
+}
 
 async function reportState(cfg: WatchConfig, deps: WatchDeps, boundary: number): Promise<ReportState> {
   const path = reportPath(boundary);

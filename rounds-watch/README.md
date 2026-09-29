@@ -17,8 +17,9 @@ after the refund cannot say why the refund happened.
 forward, so a round left open for days never hides a newer one. A NoPrice refund goes into a queue once seen
 and stays there until Telegram confirms its alert: a refunded round never changes, so it is not re-read.
 Report checks are kept per round and rotate (never checked first, then the oldest), so every alerting round
-gets its check within a few runs even while Telegram is down. Healthchecks receives every alert line, up to
-the 100,000 bytes it stores per ping.
+gets its check within a few runs even while Telegram is down. Healthchecks stores 100,000 bytes per ping, so
+the failure body is a capped summary plus a page of whole alert lines that rotates from ping to ping: every
+line reaches Healthchecks within a few pings however large the backlog.
 
 A one-sided round is not flagged: it never settles by design and refunds OneSided.
 
