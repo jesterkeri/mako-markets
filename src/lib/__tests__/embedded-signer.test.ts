@@ -7,6 +7,7 @@ import type { Address, Hex } from 'viem';
 import { buildSafeOpEnvelope } from '../aa-signature';
 import {
   clearEmbeddedSigner,
+  EmbeddedSignerCancelled,
   EmbeddedSignerMismatch,
   EmbeddedSignerMissing,
   markEmbeddedSignerMissing,
@@ -118,6 +119,47 @@ describe('embedded signer', () => {
     mark();
     const outcome = await settleWithoutTimers(pending);
     expect(outcome).toBeInstanceOf(Err);
+  });
+
+  // Codex T2.2 r3: sign-out cancels. The operation below began before the sign-out; the same account signing
+  // in again must not resume it.
+  it('an operation waiting when the user signs out is refused, and the next sign-in does not sign it', async () => {
+    vi.useFakeTimers();
+    const p = provider();
+    const outcome = settleWithoutTimers(signSafeOpHash(args));
+    clearEmbeddedSigner();
+    registerEmbeddedSigner(OWNER, p);
+    expect(await outcome).toBeInstanceOf(EmbeddedSignerCancelled);
+    expect(p.calls).toEqual([]);
+  });
+
+  it('an operation already being signed when the user signs out is refused when its signature returns', async () => {
+    let release!: (sig: string) => void;
+    const calls: unknown[] = [];
+    const slow = {
+      request: (a: { method: string; params?: unknown[] }) => {
+        calls.push(a);
+        return new Promise<unknown>((resolve) => {
+          release = resolve;
+        });
+      },
+    };
+    registerEmbeddedSigner(OWNER, slow);
+    const pending = signSafeOpHash(args);
+    const assertion = expect(pending).rejects.toBeInstanceOf(EmbeddedSignerCancelled);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    clearEmbeddedSigner();
+    registerEmbeddedSigner(OWNER, provider());
+    release(RAW);
+    await assertion;
+  });
+
+  it('an operation started after sign-out waits for the next sign-in and signs', async () => {
+    registerEmbeddedSigner(OWNER, provider());
+    clearEmbeddedSigner();
+    const pending = signSafeOpHash(args);
+    registerEmbeddedSigner(OWNER, provider());
+    await expect(pending).resolves.toMatch(/^0x/);
   });
 
   it('a wallet registered after being reported unavailable signs normally', async () => {

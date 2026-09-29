@@ -34,6 +34,9 @@ let active: Signer | null = null;
 /// Privy failed to hand it over ('unavailable').
 let failure: 'missing' | 'unavailable' | null = null;
 let waiters: Waiter[] = [];
+/// Bumped by every sign-out. A signing operation remembers the value it started under and is cancelled if it
+/// changes, so nothing started before a sign-out completes after it.
+let signInGeneration = 0;
 
 /// Called by the Privy bridge when the embedded wallet that owns this account is ready (and again if it
 /// changes). The bridge registers only the wallet whose address is the account's signer.
@@ -45,10 +48,17 @@ export function registerEmbeddedSigner(address: Address, provider: Eip1193Provid
   for (const w of ready) w.resolve(active);
 }
 
-/// Called on logout, or when the embedded wallet goes away.
+/// Called on logout, or when the sign-in ends. Sign-out is the user's cancellation boundary (Codex T2.2 r3): an
+/// operation waiting for the wallet is refused now rather than resumed by the next sign-in to the same
+/// account, and one already being signed is refused when its signature returns. An operation started after
+/// this waits for the next sign-in as usual.
 export function clearEmbeddedSigner(): void {
   active = null;
   failure = null;
+  signInGeneration += 1;
+  const pending = waiters;
+  waiters = [];
+  for (const w of pending) w.reject(new EmbeddedSignerCancelled());
 }
 
 /// Called by the bridge when Privy's wallets have loaded but none is the account's signer: signing fails at
@@ -91,6 +101,14 @@ export class EmbeddedSignerUnavailable extends Error {
   constructor() {
     super("Your wallet couldn't be loaded. Reload the page and try again; if it keeps happening, sign out and sign in again.");
     this.name = 'EmbeddedSignerUnavailable';
+  }
+}
+
+/// The sign-in ended while this operation was waiting for the wallet or being signed.
+export class EmbeddedSignerCancelled extends Error {
+  constructor() {
+    super('Your sign-in changed before this could be signed, so it was cancelled. Please try again.');
+    this.name = 'EmbeddedSignerCancelled';
   }
 }
 
@@ -145,6 +163,7 @@ export async function signSafeOpHash(args: {
   if (typeof window === 'undefined') {
     throw new Error('signSafeOpHash() must only run in the browser.');
   }
+  const generation = signInGeneration;
   const signer = await readySigner();
   if (signer.address.toLowerCase() !== args.magicEoa.toLowerCase()) throw new EmbeddedSignerMismatch();
 
@@ -152,6 +171,7 @@ export async function signSafeOpHash(args: {
     method: 'personal_sign',
     params: [args.hash, signer.address.toLowerCase()],
   });
+  if (signInGeneration !== generation) throw new EmbeddedSignerCancelled();
   if (typeof raw !== 'string' || !raw.startsWith('0x')) {
     throw new Error(`signSafeOpHash: the wallet returned a non-hex signature: ${typeof raw}`);
   }
