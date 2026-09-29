@@ -7,6 +7,7 @@ import { sessions, users } from '@/db/schema';
 import {
   consumeSigninChallengeInTx,
   validateSigninChallenge,
+  TOTP_SIGNIN_MOVE_PURPOSE,
 } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
 import { verifyAndConsumeRecoveryCode } from '@/lib/recovery-codes';
@@ -25,6 +26,7 @@ import {
   USER_SESSION_MAX_AGE_SEC,
   createSession,
 } from '@/lib/user-session';
+import { applyEmbeddedMove } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
@@ -190,7 +192,14 @@ export async function POST(req: Request) {
     throw new Error('[user-auth-totp] magic row missing email/magic_eoa');
   }
 
-  if (user.magicEoa.toLowerCase() !== challenge.magicEoa.toLowerCase()) {
+  // A pending-move challenge (Magic-era 2FA account moving to its Privy wallet) names the wallet it moves TO;
+  // the move happens below, only once the second factor has passed. If the account already reached that
+  // wallet some other way there is nothing to move. Any other challenge must match the live signer.
+  const moveTo =
+    challenge.purpose === TOTP_SIGNIN_MOVE_PURPOSE && user.magicEoa.toLowerCase() !== challenge.magicEoa.toLowerCase()
+      ? challenge.magicEoa.toLowerCase()
+      : null;
+  if (challenge.purpose !== TOTP_SIGNIN_MOVE_PURPOSE && user.magicEoa.toLowerCase() !== challenge.magicEoa.toLowerCase()) {
     return Response.json({ error: 'eoa_drift' }, { status: 401 });
   }
 
@@ -310,6 +319,7 @@ export async function POST(req: Request) {
         tx,
         challengeId,
         userId: user.id,
+        purpose: challenge.purpose,
       });
       if (!consumed) throw new ChallengeInvalid();
 
@@ -336,6 +346,14 @@ export async function POST(req: Request) {
         cooldownAvailable && Date.now() < cooldownAvailable
           ? new Date(cooldownAvailable).toISOString()
           : null;
+
+      // Step 6b: the second factor has passed, so a pending move happens now, in this transaction: the
+      // signer (conditional on the one read above), the Safe, and every existing session. If the signer
+      // changed since, nothing moves and the whole sign-in rolls back.
+      if (moveTo !== null) {
+        const moved = await applyEmbeddedMove(tx, { userId: user.id, from: user.magicEoa!, to: moveTo });
+        if (!moved) throw new ChallengeInvalid();
+      }
 
       // Step 7: issue session cookie. createSession participates in the
       // same transaction so a ROLLBACK from any earlier step also drops
@@ -385,12 +403,14 @@ export async function POST(req: Request) {
     maxAge: USER_SESSION_MAX_AGE_SEC,
   });
 
-  const safeAddress = deriveSafeAddress(user.magicEoa as Address);
+  // After a move the account's signer, and so its Safe, is the Privy wallet.
+  const signer = (moveTo ?? user.magicEoa) as Address;
+  const safeAddress = deriveSafeAddress(signer);
 
   return Response.json({
     ok: true,
     authed: true,
-    ...magicUserToWire(user, safeAddress),
+    ...magicUserToWire({ ...user, magicEoa: signer }, safeAddress),
     lastSignInAt: success.lastSignInAt,
     nextEmailChangeAvailableAt: success.nextEmailChangeAvailableAt,
   });

@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => {
     decryptTotpSecret: vi.fn(),
     deriveSafeAddress: vi.fn(),
     createSession: vi.fn(),
+    applyEmbeddedMove: vi.fn(),
     cookiesStore: { set: vi.fn() },
     // db query builders. The route runs:
     //   db.select(...).from(users).where(eq(id)).limit(1)            — load user
@@ -64,7 +65,9 @@ vi.mock('@/lib/csrf', () => ({
   checkSameOrigin: mocks.checkSameOrigin,
 }));
 
+vi.mock('@/lib/user-upsert', () => ({ applyEmbeddedMove: mocks.applyEmbeddedMove }));
 vi.mock('@/lib/auth-challenges', () => ({
+  TOTP_SIGNIN_MOVE_PURPOSE: 'totp_signin_move',
   validateSigninChallenge: mocks.validateSigninChallenge,
   consumeSigninChallengeInTx: mocks.consumeSigninChallengeInTx,
 }));
@@ -704,5 +707,79 @@ describe('POST /api/user/auth/totp', () => {
       POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' })),
     ).rejects.toThrow(/magic row missing email\/magic_eoa/);
     expect(mocks.consumeSigninChallengeInTx).not.toHaveBeenCalled();
+  });
+
+  // Privy move of a Magic-era 2FA account (adversary pass, 2026-09-29): the challenge names the Privy wallet
+  // the account moves TO, and the move happens only after the second factor passes.
+  describe('pending move to a Privy wallet', () => {
+    const PRIVY_EOA = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const moveChallenge = { userId: USER_ID, magicEoa: PRIVY_EOA, purpose: 'totp_signin_move' };
+
+    function succeedFactor() {
+      mocks.checkSameOrigin.mockReturnValue({ ok: true });
+      mocks.validateSigninChallenge.mockResolvedValue(moveChallenge);
+      mocks.selectUser.mockResolvedValue(userRow());
+      mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
+      mocks.updateUserSuccess.mockResolvedValue([{ id: USER_ID }]);
+      mocks.selectPriorSession.mockResolvedValue([]);
+      mocks.consumeSigninChallengeInTx.mockResolvedValue(true);
+      mocks.createSession.mockResolvedValue('signed-session-token');
+      mocks.deriveSafeAddress.mockImplementation((eoa: string) => `safe-of-${eoa}`);
+    }
+
+    it('after a correct code, moves the account to the Privy wallet before issuing the session', async () => {
+      succeedFactor();
+      mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+      mocks.applyEmbeddedMove.mockImplementation(async () => {
+        expect(mocks.createSession).not.toHaveBeenCalled();
+        return { id: USER_ID, magicEoa: PRIVY_EOA };
+      });
+      const { POST } = await import('../../app/api/user/auth/totp/route');
+      const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+      expect(res.status).toBe(200);
+      expect(mocks.applyEmbeddedMove).toHaveBeenCalledWith(expect.anything(), {
+        userId: USER_ID,
+        from: MAGIC_EOA,
+        to: PRIVY_EOA,
+      });
+      expect(mocks.consumeSigninChallengeInTx).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: 'totp_signin_move' }),
+      );
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.magicEoa).toBe(PRIVY_EOA);
+      expect(body.safeAddress).toBe(`safe-of-${PRIVY_EOA}`);
+    });
+
+    it('a wrong code moves nothing', async () => {
+      succeedFactor();
+      mocks.verifyTotpCode.mockReturnValue({ ok: false });
+      mocks.bumpTotpFailedAttempts.mockResolvedValue({ lockedUntil: null });
+      const { POST } = await import('../../app/api/user/auth/totp/route');
+      const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '000000' }));
+      expect(res.status).toBe(401);
+      expect(mocks.applyEmbeddedMove).not.toHaveBeenCalled();
+      expect(mocks.createSession).not.toHaveBeenCalled();
+    });
+
+    it('if the signer changed since the challenge, nothing moves and no session is issued', async () => {
+      succeedFactor();
+      mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+      mocks.applyEmbeddedMove.mockResolvedValue(null);
+      const { POST } = await import('../../app/api/user/auth/totp/route');
+      const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+      expect(res.status).toBe(401);
+      expect(mocks.createSession).not.toHaveBeenCalled();
+      expect(mocks.cookiesStore.set).not.toHaveBeenCalled();
+    });
+
+    it('an ordinary TOTP challenge never moves the account', async () => {
+      succeedFactor();
+      mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA, purpose: 'totp_signin' });
+      mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+      const { POST } = await import('../../app/api/user/auth/totp/route');
+      const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+      expect(res.status).toBe(200);
+      expect(mocks.applyEmbeddedMove).not.toHaveBeenCalled();
+    });
   });
 });

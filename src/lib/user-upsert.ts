@@ -3,7 +3,9 @@ import 'server-only';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { type DbOrTx } from '@/db/client';
-import { users, type User } from '@/db/schema';
+import { sessions, userSafes, users, type User } from '@/db/schema';
+import { SAFE_TRACKED_CHAIN_IDS } from './chain';
+import { deriveSafeAddress } from './safe';
 import { normalizeEmail } from './email';
 
 // ----------------------------------------------------------------------------
@@ -161,8 +163,43 @@ export async function upsertMagicUser(
 export interface EmbeddedUpsert {
   user: User;
   /// True when this sign-in moved an existing account from its old signer (a Magic-era EOA) to the Privy
-  /// wallet: the caller must repoint the account's Safe and revoke its other sessions.
+  /// wallet. The move already repointed the Safe and revoked every session (applyEmbeddedMove).
   moved: boolean;
+  /// Set instead of moving when the account has TOTP on: the Privy wallet it will move to once the second
+  /// factor passes. Nothing about the account has changed; the caller issues a pending-move challenge.
+  pendingMoveTo?: string;
+}
+
+/**
+ * Move an account to a new signer, in the caller's transaction: the signer (conditional on the one read, so a
+ * concurrent move cannot also succeed), the account's Safe on every tracked chain, and every session (they
+ * carry nothing of the old signer, but the owner must sign in again with the new one). Returns false, having
+ * changed nothing, if the signer is no longer `from`.
+ */
+export async function applyEmbeddedMove(
+  tx: DbOrTx,
+  args: { userId: string; from: string | null; to: string },
+): Promise<User | null> {
+  const to = normalizeEoa(args.to);
+  const updated = await tx
+    .update(users)
+    .set({ magicEoa: to })
+    .where(
+      args.from === null
+        ? and(eq(users.id, args.userId), sql`${users.magicEoa} IS NULL`)
+        : and(eq(users.id, args.userId), eq(users.magicEoa, args.from)),
+    )
+    .returning();
+  if (updated.length !== 1) return null;
+  const safeAddress = deriveSafeAddress(to as `0x${string}`);
+  for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
+    await tx
+      .insert(userSafes)
+      .values({ userId: args.userId, chainId, safeAddress })
+      .onConflictDoUpdate({ target: [userSafes.userId, userSafes.chainId], set: { safeAddress } });
+  }
+  await tx.delete(sessions).where(eq(sessions.userId, args.userId));
+  return updated[0];
 }
 
 /**
@@ -198,7 +235,12 @@ export function decideEmbeddedUser(existing: User[], email: string, wallets: str
   return { action: 'move', row, eoa: primary };
 }
 
-export async function upsertEmbeddedUser(tx: DbOrTx, rawEmail: string, rawWallets: string[]): Promise<EmbeddedUpsert> {
+export async function upsertEmbeddedUser(
+  tx: DbOrTx,
+  rawEmail: string,
+  rawWallets: string[],
+  opts: { deferMoveIfTotp?: boolean } = {},
+): Promise<EmbeddedUpsert> {
   const email = normalizeEmail(rawEmail);
   const wallets = rawWallets.map((w) => normalizeEoa(w));
   if (wallets.length === 0) throw new Error('upsertEmbeddedUser: no wallets');
@@ -226,19 +268,12 @@ export async function upsertEmbeddedUser(tx: DbOrTx, rawEmail: string, rawWallet
       throw new IdentityConflictError('email_with_different_eoa');
     }
     case 'move': {
-      // Conditional on the signer we read, so two concurrent sign-ins cannot both move it.
-      const signer = d.row.magicEoa;
-      const updated = await tx
-        .update(users)
-        .set({ magicEoa: d.eoa })
-        .where(
-          signer === null
-            ? and(eq(users.id, d.row.id), sql`${users.magicEoa} IS NULL`)
-            : and(eq(users.id, d.row.id), eq(users.magicEoa, signer)),
-        )
-        .returning();
-      if (updated.length !== 1) throw new IdentityConflictError('email_with_different_eoa');
-      return { user: updated[0], moved: true };
+      // A 2FA account moves only after its second factor: proving the email alone must not change the
+      // account's signer or Safe, or sign its owner out (adversary pass, 2026-09-29).
+      if (opts.deferMoveIfTotp && d.row.totpSecret) return { user: d.row, moved: false, pendingMoveTo: d.eoa };
+      const moved = await applyEmbeddedMove(tx, { userId: d.row.id, from: d.row.magicEoa, to: d.eoa });
+      if (!moved) throw new IdentityConflictError('email_with_different_eoa');
+      return { user: moved, moved: true };
     }
   }
 }

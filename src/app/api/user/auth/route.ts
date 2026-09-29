@@ -1,10 +1,9 @@
-import { eq } from 'drizzle-orm';
 import { cookies } from 'next/headers';
 import { type Address } from 'viem';
 import { db } from '@/db/client';
-import { sessions, userSafes } from '@/db/schema';
+import { userSafes } from '@/db/schema';
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
-import { createSigninChallenge } from '@/lib/auth-challenges';
+import { createSigninChallenge, TOTP_SIGNIN_MOVE_PURPOSE } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
 import { readLastSignIn } from '@/lib/last-sign-in';
@@ -151,26 +150,31 @@ export async function POST(req: Request) {
   let outcome: Outcome;
   try {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
-      const { user, moved } = await upsertEmbeddedUser(tx, email, identity.wallets);
+      const { user, moved, pendingMoveTo } = await upsertEmbeddedUser(tx, email, identity.wallets, {
+        deferMoveIfTotp: true,
+      });
       if (!user.email || !user.magicEoa) {
         throw new Error('[user-auth] embedded row missing email/magic_eoa post-upsert');
+      }
+
+      // A 2FA account due to move to its Privy wallet: nothing changes yet. The challenge records the wallet
+      // it moves TO, and /api/user/auth/totp moves it only after the second factor passes.
+      if (pendingMoveTo) {
+        const challengeId = await createSigninChallenge({
+          tx,
+          userId: user.id,
+          magicEoa: pendingMoveTo,
+          purpose: TOTP_SIGNIN_MOVE_PURPOSE,
+        });
+        return { kind: 'totp_required', challengeId };
       }
       // The Safe belongs to the ACCOUNT's signer, which is not necessarily the wallet Privy listed first
       // (upsertEmbeddedUser keeps an account on the Privy wallet it already has). Pure CREATE2, no RPC.
       const eoa = user.magicEoa as Address;
       const safeAddress = deriveSafeAddress(eoa);
 
-      if (moved) {
-        // A Magic-era account now signed by its Privy wallet: point it at the new wallet's Safe, and end
-        // every session that still carries the old signer.
-        for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
-          await tx
-            .insert(userSafes)
-            .values({ userId: user.id, chainId, safeAddress })
-            .onConflictDoUpdate({ target: [userSafes.userId, userSafes.chainId], set: { safeAddress } });
-        }
-        await tx.delete(sessions).where(eq(sessions.userId, user.id));
-      } else {
+      // A moved account (no 2FA) already has its Safe repointed and its sessions revoked (applyEmbeddedMove).
+      if (!moved) {
         // user_safes is keyed (user_id, chain_id). A returning user already has the row; the value is
         // deterministic per signer, so there is nothing to update.
         for (const chainId of SAFE_TRACKED_CHAIN_IDS) {

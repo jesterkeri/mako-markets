@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 
 import { db, type DbOrTx } from '@/db/client';
 import { authChallenges } from '@/db/schema';
@@ -31,11 +31,17 @@ import { authChallenges } from '@/db/schema';
 // ----------------------------------------------------------------------------
 
 export const TOTP_SIGNIN_PURPOSE = 'totp_signin' as const;
+/// A TOTP sign-in that, once the second factor passes, also moves a Magic-era account to its Privy wallet.
+/// `magic_eoa` holds the Privy wallet it moves TO; nothing about the account changes until TOTP succeeds
+/// (adversary pass 2026-09-29: the first version moved a 2FA account before its second factor).
+export const TOTP_SIGNIN_MOVE_PURPOSE = 'totp_signin_move' as const;
+export type SigninPurpose = typeof TOTP_SIGNIN_PURPOSE | typeof TOTP_SIGNIN_MOVE_PURPOSE;
 export const SIGNIN_CHALLENGE_TTL_SEC = 5 * 60;
 
 export type SigninChallenge = {
   userId: string;
   magicEoa: string;
+  purpose: SigninPurpose;
 };
 
 /// INSERT a fresh totp_signin challenge bound to (userId, magicEoa) and
@@ -47,6 +53,7 @@ export async function createSigninChallenge(args: {
   userId: string;
   magicEoa: string;
   ttlSec?: number;
+  purpose?: SigninPurpose;
 }): Promise<string> {
   const ttlSec = args.ttlSec ?? SIGNIN_CHALLENGE_TTL_SEC;
   const expiresAt = new Date(Date.now() + ttlSec * 1000);
@@ -56,7 +63,7 @@ export async function createSigninChallenge(args: {
     .values({
       userId: args.userId,
       magicEoa: args.magicEoa.toLowerCase(),
-      purpose: TOTP_SIGNIN_PURPOSE,
+      purpose: args.purpose ?? TOTP_SIGNIN_PURPOSE,
       expiresAt,
     })
     .returning({ id: authChallenges.id });
@@ -74,19 +81,20 @@ export async function validateSigninChallenge(args: {
     .select({
       userId: authChallenges.userId,
       magicEoa: authChallenges.magicEoa,
+      purpose: authChallenges.purpose,
     })
     .from(authChallenges)
     .where(
       and(
         eq(authChallenges.id, args.challengeId),
-        eq(authChallenges.purpose, TOTP_SIGNIN_PURPOSE),
+        inArray(authChallenges.purpose, [TOTP_SIGNIN_PURPOSE, TOTP_SIGNIN_MOVE_PURPOSE]),
         isNull(authChallenges.consumedAt),
         gt(authChallenges.expiresAt, sql`now()`),
       ),
     )
     .limit(1);
   if (rows.length === 0) return null;
-  return rows[0];
+  return rows[0] as SigninChallenge;
 }
 
 /// Atomic consume inside the caller's transaction. Returns true on
@@ -99,6 +107,9 @@ export async function consumeSigninChallengeInTx(args: {
   tx: DbOrTx;
   challengeId: string;
   userId: string;
+  /// The purpose the challenge was validated with: consume binds it, so a challenge is consumed only as what
+  /// it was issued for.
+  purpose?: SigninPurpose;
 }): Promise<boolean> {
   const consumed = await args.tx
     .update(authChallenges)
@@ -106,7 +117,7 @@ export async function consumeSigninChallengeInTx(args: {
     .where(
       and(
         eq(authChallenges.id, args.challengeId),
-        eq(authChallenges.purpose, TOTP_SIGNIN_PURPOSE),
+        eq(authChallenges.purpose, args.purpose ?? TOTP_SIGNIN_PURPOSE),
         eq(authChallenges.userId, args.userId),
         isNull(authChallenges.consumedAt),
         gt(authChallenges.expiresAt, sql`now()`),

@@ -57,6 +57,7 @@ vi.mock('@/lib/user-session', () => ({
 }));
 vi.mock('@/lib/auth-challenges', () => ({
   createSigninChallenge: mocks.createSigninChallenge,
+  TOTP_SIGNIN_MOVE_PURPOSE: 'totp_signin_move',
 }));
 vi.mock('@/lib/email', () => ({
   normalizeEmail: (s: string) => s.toLowerCase().trim(),

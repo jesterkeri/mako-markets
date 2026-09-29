@@ -105,20 +105,50 @@ function WalletConnectRedirectGate({
 }
 
 
-/// Privy's hooks need its provider, which exists only when NEXT_PUBLIC_PRIVY_APP_ID is set. Without it there
-/// is no email sign-in, and the page says so rather than showing a form that cannot work.
-export default function SignupPage() {
-  if (!PRIVY_APP_ID) {
-    return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <p className="max-w-md text-center">Email sign-in is not configured on this deployment. Please try again later.</p>
-      </main>
-    );
-  }
-  return <SignupWithPrivy />;
+/// Privy's hooks need its provider, which exists only when NEXT_PUBLIC_PRIVY_APP_ID is set. They live in this
+/// child, mounted only then, so the rest of the page (the wallet sign-in included) always renders; without
+/// Privy, an email submit says sign-in is not configured (adversary pass, 2026-09-29).
+function PrivyEmailLogin(props: {
+  register: (start: ((email: string) => Promise<void>) | null) => void;
+  onToken: (token: string | null) => void;
+  onFailure: (message: string) => void;
+}) {
+  const { register, onToken, onFailure } = props;
+  const { authenticated, getAccessToken, logout } = usePrivy();
+  /// Marks a login THIS page started, so a Privy session restored on page load never posts a token by itself.
+  const pendingRef = useRef(false);
+  const { login } = useLogin({
+    onComplete: async () => {
+      if (!pendingRef.current) return;
+      pendingRef.current = false;
+      onToken(await getAccessToken());
+    },
+    onError: (err) => {
+      if (!pendingRef.current) return;
+      pendingRef.current = false;
+      onFailure(err === 'exited_auth_flow' ? 'Sign-in cancelled' : 'Sign-in failed. Please try again.');
+    },
+  });
+  useEffect(() => {
+    register(async (email: string) => {
+      // A Privy session left over from an earlier visit would skip the email code; end it so the email is
+      // proven now, and so the account signed in is the one typed here.
+      if (authenticated) {
+        try {
+          await logout();
+        } catch (e) {
+          console.warn('Privy logout before sign-in failed', e);
+        }
+      }
+      pendingRef.current = true;
+      login({ loginMethods: ['email'], prefill: { type: 'email', value: email } });
+    });
+    return () => register(null);
+  }, [authenticated, login, logout, register]);
+  return null;
 }
 
-function SignupWithPrivy() {
+export default function SignupPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { disconnect } = useDisconnect();
@@ -181,33 +211,29 @@ function SignupWithPrivy() {
   /// the second click from progressing.
   const inFlightRef = useRef(false);
 
-  /// Privy: the modal verifies the email code and makes the embedded wallet. `pendingEmailRef` marks a login
-  /// THIS page started, so a Privy session restored on page load never posts a token by itself.
-  const { authenticated, getAccessToken, logout: privyLogout } = usePrivy();
-  const pendingEmailRef = useRef(false);
-  const { login } = useLogin({
-    onComplete: async () => {
-      if (!pendingEmailRef.current) return;
-      pendingEmailRef.current = false;
-      const token = await getAccessToken();
-      if (!token) {
-        inFlightRef.current = false;
-        setState({ kind: 'error', message: 'Sign-in returned no token. Please try again.' });
-        return;
-      }
-      try {
-        await postAuthToken(token);
-      } finally {
-        inFlightRef.current = false;
-      }
-    },
-    onError: (err) => {
-      if (!pendingEmailRef.current) return;
-      pendingEmailRef.current = false;
+  /// Privy's email login, registered by <PrivyEmailLogin/> when Privy is configured; null otherwise.
+  const startEmailLoginRef = useRef<((email: string) => Promise<void>) | null>(null);
+  const registerEmailLogin = useCallback((start: ((email: string) => Promise<void>) | null) => {
+    startEmailLoginRef.current = start;
+  }, []);
+  const handlePrivyToken = useCallback(async (token: string | null) => {
+    if (!token) {
       inFlightRef.current = false;
-      setState({ kind: 'error', message: err === 'exited_auth_flow' ? 'Sign-in cancelled' : 'Sign-in failed. Please try again.' });
-    },
-  });
+      setState({ kind: 'error', message: 'Sign-in returned no token. Please try again.' });
+      return;
+    }
+    try {
+      await postAuthToken(token);
+    } finally {
+      inFlightRef.current = false;
+    }
+    // postAuthToken is recreated each render; this handler reads the latest through the child's re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handlePrivyFailure = useCallback((message: string) => {
+    inFlightRef.current = false;
+    setState({ kind: 'error', message });
+  }, []);
 
   async function postAuthToken(authToken: string) {
     setState({ kind: 'verifying', authToken });
@@ -360,18 +386,14 @@ function SignupWithPrivy() {
     // redirect (e.g., user clicked CONNECT A WALLET, then changed
     // their mind and used email instead).
     walletConnectIntentRef.current = false;
-    setState({ kind: 'awaiting_otp' });
-    // A Privy session left over from an earlier visit would skip the email code; end it so the email is
-    // proven now, and so the account signed in is the one typed here.
-    if (authenticated) {
-      try {
-        await privyLogout();
-      } catch (e) {
-        console.warn('Privy logout before sign-in failed', e);
-      }
+    const start = startEmailLoginRef.current;
+    if (!start) {
+      inFlightRef.current = false;
+      setState({ kind: 'error', message: 'Email sign-in is not configured on this deployment. You can still connect a wallet.' });
+      return;
     }
-    pendingEmailRef.current = true;
-    login({ loginMethods: ['email'], prefill: { type: 'email', value: email } });
+    setState({ kind: 'awaiting_otp' });
+    await start(email);
   }
 
   async function handleRetry() {
@@ -543,6 +565,9 @@ function SignupWithPrivy() {
 
   return (
     <main className="flex min-h-screen bg-chrome text-chrome-fg relative selection:bg-mako-red selection:text-white">
+      {PRIVY_APP_ID && (
+        <PrivyEmailLogin register={registerEmailLogin} onToken={handlePrivyToken} onFailure={handlePrivyFailure} />
+      )}
       {/* Theme Toggle in top right */}
       <div className="absolute top-6 right-6 lg:top-8 lg:right-8 z-50">
         <ThemeToggle />
