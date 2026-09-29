@@ -8,6 +8,7 @@ import { decodeFunctionData, encodeAbiParameters, encodeFunctionResult, type Hex
 import { beforeEach, describe, expect, it } from 'vitest';
 import { REFUND_REASON, STATUS, WATCH_ABI } from '../src/abi';
 import { makeNet } from '../src/net';
+import { multicallAnswer } from './multicall-fake';
 import { runWatch, UNSETTLED_ALERT_S, type WatchConfig, type WatchDeps } from '../src/run';
 import { INITIAL_META, type Meta } from '../src/state';
 import fixture from '../../keeper/test/fixtures/fixture-btcusd-1789529160.json';
@@ -42,6 +43,8 @@ let w: {
   meta: Meta;
   rpcDown: boolean;
   dsRequests: number;
+  rpcItems: number;
+  failReads: Set<number>;
 };
 
 function roundResult(r: R) {
@@ -74,15 +77,14 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (url.startsWith(RPC)) {
     if (w.rpcDown) return new Response('down', { status: 503 });
-    const calls = JSON.parse(String(init?.body)) as { id: number; params: [{ data: Hex }] }[];
+    const calls = JSON.parse(String(init?.body)) as { id: number; params: [{ to: Hex; data: Hex }] }[];
+    w.rpcItems += calls.length;
     return Response.json(
       calls.map((c) => {
-        const { functionName, args } = decodeFunctionData({ abi: WATCH_ABI, data: c.params[0].data });
-        let result: Hex;
-        if (functionName === 'roundCount') result = encodeAbiParameters([{ type: 'uint256' }], [BigInt(w.rounds.length)]);
-        else if (functionName === 'DURATION') result = encodeAbiParameters([{ type: 'uint64' }], [900n]);
-        else result = encodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundOf', result: roundResult(w.rounds[Number(args![0]) - 1]) });
-        return { jsonrpc: '2.0', id: c.id, result };
+        // Multicall3: answer each inner read with the same fake, as the real contract would.
+        const mc = multicallAnswer(c.params[0], (inner) => readItem(inner.data));
+        if (mc) return { jsonrpc: '2.0', id: c.id, ...(mc as object) };
+        return { jsonrpc: '2.0', id: c.id, result: answerRead(c.params[0].data) };
       }),
     );
   }
@@ -94,6 +96,21 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   throw new Error('unexpected url');
 }) as typeof fetch;
+
+function readItem(data: Hex): unknown {
+  const { functionName, args } = decodeFunctionData({ abi: WATCH_ABI, data });
+  if (functionName === 'roundOf' && w.failReads.has(Number(args![0]))) return { error: { code: 3, message: 'execution reverted' } };
+  return { result: answerRead(data) };
+}
+
+function answerRead(data: Hex): Hex {
+  const { functionName, args } = decodeFunctionData({ abi: WATCH_ABI, data });
+  let result: Hex;
+  if (functionName === 'roundCount') result = encodeAbiParameters([{ type: 'uint256' }], [BigInt(w.rounds.length)]);
+  else if (functionName === 'DURATION') result = encodeAbiParameters([{ type: 'uint64' }], [900n]);
+  else result = encodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundOf', result: roundResult(w.rounds[Number(args![0]) - 1]) });
+  return result;
+}
 
 function deps(): WatchDeps {
   return {
@@ -120,7 +137,7 @@ const run = () => runWatch(cfg, deps());
 const active = (start: number, up = 1n, down = 1n): R => ({ start, status: STATUS.Active, up, down });
 
 beforeEach(() => {
-  w = { now: 0, rounds: [], missing: new Set(), telegramOk: true, messages: [], pings: [], meta: structuredClone(INITIAL_META), rpcDown: false, dsRequests: 0 };
+  w = { now: 0, rounds: [], missing: new Set(), telegramOk: true, messages: [], pings: [], meta: structuredClone(INITIAL_META), rpcDown: false, dsRequests: 0, rpcItems: 0, failReads: new Set() };
 });
 
 const at = (closeTime: number, afterS: number) => (w.now = (closeTime + afterS) * 1000);
@@ -381,4 +398,27 @@ describe('Healthchecks pages through a backlog larger than it stores', () => {
     const tail = new RegExp(`Round ${N} REFUNDED NoPrice\\. At [^\\n]*start \\S+ exists, close \\S+ exists\\.`);
     expect(w.pings.slice(-3).some((p) => tail.test(p.body))).toBe(true);
   }, 120_000);
+});
+
+// The public Monad RPC refuses JSON-RPC items beyond 15 a second (measured 2026-09-29), so every multi-read
+// goes through one Multicall3 item.
+describe('reads stay within the public RPC limit', () => {
+  it('reads 80 rounds in one run with at most 3 JSON-RPC items', async () => {
+    w.rounds = Array.from({ length: 80 }, () => active(C - 900));
+    at(C, 60);
+    for (let i = 0; i < 3; i++) {
+      w.rpcItems = 0;
+      await run();
+      expect(w.rpcItems).toBeLessThanOrEqual(3);
+      w.now += 300_000;
+    }
+    expect(w.meta.active).toHaveLength(80);
+  });
+
+  it('a failed read of a round that exists fails the run: reported, never skipped', async () => {
+    w.rounds = [active(C - 900), active(C - 900)];
+    w.failReads.add(2);
+    at(C, UNSETTLED_ALERT_S);
+    expect((await run()).status).toBe('rpc-error');
+  });
 });

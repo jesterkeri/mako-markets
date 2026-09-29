@@ -19,6 +19,7 @@ import { decodeFunctionResult, encodeFunctionData, type Hex } from 'viem';
 import { readReport, reportHeaders, reportPath, type HmacHex } from '../../rounds-delivery/src/index';
 import { REFUND_REASON, STATUS, WATCH_ABI } from './abi';
 import { send, type Net } from './net';
+import { aggregate, decodeAggregate } from './multicall';
 import { rpcBatch, type RpcCall } from './rpc';
 import type { AlertKind, Evidence, Meta, PendingNoPrice } from './state';
 
@@ -155,16 +156,18 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
 
   const rounds: RoundView[] = [];
   if (ids.length > 0) {
-    const res = await rpcBatch(
-      deps.net,
-      cfg.rpcUrl,
-      ids.map((id) => call(encodeFunctionData({ abi: WATCH_ABI, functionName: 'roundOf', args: [BigInt(id)] }))),
-    );
-    if (!res.ok) return { status: 'rpc-error', lines: [], conditions: [] };
+    // ONE Multicall3 item for every read: the public Monad RPC refuses JSON-RPC items beyond 15 a second, so
+    // a plain batch of up to 80 reads would fail most of them on every run (measured 2026-09-29). Every id
+    // here exists (fresh ids stop at roundCount), so any failed read fails the run: reported, never skipped.
+    const res = await rpcBatch(deps.net, cfg.rpcUrl, [
+      aggregate(ids.map((id) => ({ target: cfg.roundsAddress, data: encodeFunctionData({ abi: WATCH_ABI, functionName: 'roundOf', args: [BigInt(id)] }) }))),
+    ]);
+    if (!res.ok || !res.items[0].ok) return { status: 'rpc-error', lines: [], conditions: [] };
+    const results = decodeAggregate(res.items[0].result, ids.length);
+    if (results === null) return { status: 'rpc-error', lines: [], conditions: [] };
     for (let i = 0; i < ids.length; i++) {
-      const it = res.items[i];
-      if (!it.ok) return { status: 'rpc-error', lines: [], conditions: [] };
-      const r = decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundOf', args: [0n], data: it.result as Hex });
+      if (!results[i].success) return { status: 'rpc-error', lines: [], conditions: [] };
+      const r = decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundOf', args: [0n], data: results[i].returnData });
       const start = Number(r.startTime);
       rounds.push({
         id: ids[i],
