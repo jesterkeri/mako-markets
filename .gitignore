@@ -70,3 +70,8 @@ HANDOVER*.md
 # below, V5 roadmap separate section. Numbers (#166, #185, …) are
 # the canonical task IDs we reference across chat and commits.
 /TASKS.md
+
+# Design handoff pack (Claude Design): private reference material, never committed. The mascot art stays out of
+# git completely too; the app loads it from Vercel Blob (Joshua, 2026-09-30).
+/design/
+/public/mascot/
