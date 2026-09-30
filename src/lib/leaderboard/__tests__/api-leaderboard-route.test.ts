@@ -123,8 +123,78 @@ function request(params: string): Request {
 describe('GET /api/leaderboard', () => {
   it('rejects bad params', async () => {
     await freshDb();
-    expect((await GET(request('?window=month'))).status).toBe(400);
+    expect((await GET(request('?window=year'))).status).toBe(400);
+    expect((await GET(request('?sort=winrate'))).status).toBe(400);
     expect((await GET(request('?me=not-an-address'))).status).toBe(400);
+  });
+
+  it('accepts the month window and the volume sort, and echoes both', async () => {
+    const t = await freshDb();
+    // ANON wins big on small volume; OFFBOARD stakes more and loses.
+    await insertEvent(t, { actor: ANON, kind: 'bet', amount: '1000000' });
+    await insertEvent(t, { actor: ANON, kind: 'claim', amount: '9000000' });
+    await insertEvent(t, { actor: OFFBOARD, kind: 'bet', amount: '5000000' });
+
+    const byProfit = await (await GET(request('?window=month'))).json();
+    expect(byProfit.window).toBe('month');
+    expect(byProfit.sort).toBe('profit'); // the default
+    expect(byProfit.rows.map((r: { actor: string }) => r.actor)).toEqual([ANON, OFFBOARD]);
+
+    const byVolume = await (await GET(request('?window=month&sort=volume'))).json();
+    expect(byVolume.sort).toBe('volume');
+    expect(byVolume.rows.map((r: { actor: string }) => r.actor)).toEqual([OFFBOARD, ANON]);
+  });
+
+  it('keys the shared board by window and sort, never the caller', async () => {
+    const t = await freshDb();
+    await insertEvent(t, { actor: ANON, kind: 'bet', amount: '1000000' });
+
+    await GET(request(`?window=month&sort=volume&me=${SAFE_CHECKSUMMED}`));
+    await GET(request(`?window=month&sort=profit&me=${SAFE_CHECKSUMMED}`));
+
+    const boardKeys = cacheKeysSeen.filter((k) => k[0] === 'leaderboard-board');
+    expect(boardKeys).toEqual([
+      ['leaderboard-board', 'month', 'volume'],
+      ['leaderboard-board', 'month', 'profit'],
+    ]);
+  });
+
+  it('ranks an off-board viewer by the same sort as the board', async () => {
+    const t = await freshDb();
+    // 101 actors, actor i stakes i USDC and never wins: net = -i. By
+    // profit the 1-USDC actor is #1 (on the board); by volume it is #101,
+    // one past the top-100 board, so the viewer block carries its rank.
+    const actorOf = (i: number) => `0x${i.toString(16).padStart(40, '0')}`;
+    await t.db.insert(makoMarketEvents).values(
+      Array.from({ length: 101 }, (_, k) => {
+        const i = k + 1;
+        return {
+          chainId: CHAIN,
+          contractAddress: CONTRACT as `0x${string}`,
+          version: 'v4' as const,
+          marketId: '1',
+          kind: 'bet' as const,
+          actor: actorOf(i) as `0x${string}`,
+          isYes: true,
+          amount: String(i * 1_000_000),
+          blockNumber: 1000 + i,
+          blockTimestamp: new Date(),
+          txHash: `0x${(5000 + i).toString(16).padStart(64, '0')}` as `0x${string}`,
+          logIndex: 0,
+        };
+      }),
+    );
+    const me = actorOf(1);
+
+    const byProfit = await (await GET(request(`?sort=profit&me=${me}`))).json();
+    expect(byProfit.rows[0].actor).toBe(me);
+    expect('viewer' in byProfit).toBe(false);
+
+    const byVolume = await (await GET(request(`?sort=volume&me=${me}`))).json();
+    expect(byVolume.rows).toHaveLength(100);
+    expect(byVolume.rows.some((r: { actor: string }) => r.actor === me)).toBe(false);
+    expect(byVolume.viewer.rank).toBe(101);
+    expect(byVolume.viewer.staked).toBe('1000000');
   });
 
   it('serves the board with identity labels merged and indexedThrough', async () => {
@@ -250,6 +320,7 @@ describe('GET /api/leaderboard', () => {
     expect(cacheKeysSeen.length).toBeGreaterThan(0);
     for (const key of cacheKeysSeen) {
       expect(key).toContain('week');
+      expect(key).toContain('profit');
       expect(key.join(' ').toLowerCase()).not.toContain(SAFE_LOWER);
     }
   });

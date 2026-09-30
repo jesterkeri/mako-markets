@@ -163,6 +163,26 @@ describe('getLeaderboardRows', () => {
     expect(allTime[0].net).toBe('15000000'); // true PnL
   });
 
+  it('month window is the rolling last 30 days: wider than week, narrower than all', async () => {
+    const { db } = await freshDb();
+    await insertEvent(db, { actor: A, kind: 'bet', amount: '1000000', blockTimestamp: daysAgo(3) });
+    await insertEvent(db, { actor: B, kind: 'bet', amount: '2000000', blockTimestamp: daysAgo(20) });
+    await insertEvent(db, { actor: C, kind: 'bet', amount: '3000000', blockTimestamp: daysAgo(40) });
+
+    const actors = async (window: 'week' | 'month' | 'all') =>
+      (await getLeaderboardRows(db as never, { window })).map((r) => r.actor).sort();
+
+    expect(await actors('week')).toEqual([A]);
+    expect(await actors('month')).toEqual([A, B]);
+    expect(await actors('all')).toEqual([A, B, C]);
+
+    // A 20-day-old bet is in the month but outside the week, for the
+    // caller's rank too.
+    expect(await getCallerRank(db as never, { window: 'month', address: B })).not.toBeNull();
+    expect(await getCallerRank(db as never, { window: 'week', address: B })).toBeNull();
+    expect(await getCallerRank(db as never, { window: 'month', address: C })).toBeNull();
+  });
+
   it("orderBy 'staked' ranks by volume regardless of net", async () => {
     const { db } = await freshDb();
     // A: huge winner, tiny volume. B: big volume, net negative.
@@ -290,6 +310,34 @@ describe('getCallerRank', () => {
     expect(
       (await getCallerRank(db as never, { window: 'all', address: B }))?.rank,
     ).toBe(3);
+  });
+
+  it("orderBy 'staked' ranks the caller by volume, matching the volume board position for position", async () => {
+    const { db } = await freshDb();
+    // By net: A (+89) first. By volume: B and D tie at 50 staked
+    // (B before D on actor ASC), then E (20), then A (1).
+    await insertEvent(db, { actor: A, kind: 'bet', amount: '1000000' });
+    await insertEvent(db, { actor: A, kind: 'claim', amount: '90000000' });
+    await insertEvent(db, { actor: B, kind: 'bet', amount: '50000000' });
+    await insertEvent(db, { actor: D, kind: 'bet', amount: '50000000' });
+    await insertEvent(db, { actor: E, kind: 'bet', amount: '20000000' });
+
+    const byVolume = await getLeaderboardRows(db as never, { window: 'all', orderBy: 'staked' });
+    expect(byVolume.map((r) => r.actor)).toEqual([B, D, E, A]);
+    for (let i = 0; i < byVolume.length; i++) {
+      const r = await getCallerRank(db as never, {
+        window: 'all',
+        address: byVolume[i].actor,
+        orderBy: 'staked',
+      });
+      expect(r?.rank).toBe(i + 1);
+    }
+
+    // The default is still net: A leads.
+    expect((await getCallerRank(db as never, { window: 'all', address: A }))?.rank).toBe(1);
+    expect(
+      (await getCallerRank(db as never, { window: 'all', address: A, orderBy: 'net' }))?.rank,
+    ).toBe(1);
   });
 
   it('normalizes checksummed input addresses', async () => {

@@ -1,9 +1,13 @@
-import LeaderboardClient from './_components/LeaderboardClient';
+import type { Metadata } from 'next';
 
-// Server shell + Client body, same pattern as / and /create (prerender
-// cache must never pin a stale board; the body is wagmi/TanStack-driven).
+import { LeaderboardClient } from './_components/LeaderboardClient';
+
+export const metadata: Metadata = { title: 'Leaderboard · Mako Market' };
+
+// Server shell + client body, as before: a prerendered page must never pin a stale board.
 export const dynamic = 'force-dynamic';
 
+/// Leaderboard (12a).
 export default function LeaderboardPage() {
   return <LeaderboardClient />;
 }

@@ -18,13 +18,14 @@
 // 6dp sums at scale). Sorting happens IN SQL on the numeric expression,
 // so string transport cannot mis-sort.
 //
-// Weekly window buckets each event by its own block_timestamp. Weekly
-// NET is therefore cash-flow, not performance (a user claiming an old
-// win shows stake-less profit). SHIPPED BEHAVIOR (Joshua's open-Q2
-// call, option a): BOTH windows rank by NET; the weekly tab shows NET
-// with an explanatory cash-flow caption in the UI. The
-// orderBy: 'staked' branch below is RETAINED for the deferred
-// volume-ranked alternative (option b) — production never passes it.
+// The 'week' and 'month' windows are ROLLING (last 7 / last 30 days, no
+// reset) and bucket each event by its own block_timestamp. Windowed NET
+// is therefore cash-flow, not performance (a user claiming an old win
+// shows stake-less profit); the UI says each bet and claim counts when
+// it happens. Every window ranks by NET by default (Joshua's open-Q2
+// call, option a). The redesigned board (12a) adds a Volume sort, which
+// passes orderBy: 'staked' to BOTH the board and the caller's rank so a
+// user never holds two ranks for one sort.
 // ----------------------------------------------------------------------------
 
 import { sql } from 'drizzle-orm';
@@ -32,7 +33,9 @@ import { sql } from 'drizzle-orm';
 import type { DbOrTx } from '@/db/client';
 import { normalizeAddressLower } from '@/lib/private-markets/normalize';
 
-export type LeaderboardWindow = 'all' | 'week';
+/// 'week' = the last 7 days, 'month' = the last 30 days (both rolling).
+export type LeaderboardWindow = 'all' | 'week' | 'month';
+/// 'net' = profit, 'staked' = volume.
 export type LeaderboardOrderBy = 'net' | 'staked';
 
 export interface LeaderboardRow {
@@ -50,9 +53,10 @@ export interface LeaderboardRow {
 export interface CallerRank {
   row: LeaderboardRow;
   /// 1-based position under the SAME total order the board renders
-  /// (net DESC, actor ASC) — ties are broken by actor exactly like the
-  /// board's ordinal numbering, so a pinned "YOUR RANK #N" can never
-  /// contradict the board (review MINOR-2).
+  /// (key DESC, actor ASC, where key is net or staked) — ties are
+  /// broken by actor exactly like the board's ordinal numbering, so a
+  /// pinned "YOUR RANK #N" can never contradict the board (review
+  /// MINOR-2).
   rank: number;
 }
 
@@ -77,9 +81,14 @@ function toRow(r: Record<string, unknown>): LeaderboardRow {
 /// Window predicate as a composable SQL fragment. 'all' must still be
 /// valid SQL, hence TRUE.
 function windowPredicate(window: LeaderboardWindow) {
-  return window === 'week'
-    ? sql`block_timestamp >= now() - interval '7 days'`
-    : sql`true`;
+  switch (window) {
+    case 'week':
+      return sql`block_timestamp >= now() - interval '7 days'`;
+    case 'month':
+      return sql`block_timestamp >= now() - interval '30 days'`;
+    case 'all':
+      return sql`true`;
+  }
 }
 
 /// Shared per-actor aggregate CTE body. net is computed as a NUMERIC
@@ -103,9 +112,7 @@ function aggregateCte(window: LeaderboardWindow) {
 
 export interface GetLeaderboardRowsArgs {
   window: LeaderboardWindow;
-  /// Defaults to 'net' — what production uses for BOTH windows.
-  /// 'staked' (volume) is unused in production, retained for the
-  /// deferred option-(b) weekly alternative.
+  /// Defaults to 'net' (the Profit sort). 'staked' is the Volume sort.
   orderBy?: LeaderboardOrderBy;
   /// Board cap. Plan: top-100.
   limit?: number;
@@ -150,18 +157,28 @@ export interface GetCallerRankArgs {
   window: LeaderboardWindow;
   /// Any casing — normalized to the ledger's lowercase form here.
   address: string;
+  /// Must match the board's orderBy. Defaults to 'net'.
+  orderBy?: LeaderboardOrderBy;
 }
 
-/// Caller's own aggregate + 1-based rank by NET. Returns null when the
-/// address has no events in the window. NOTE (plan, Codex r3 MINOR):
-/// this re-runs the full per-actor aggregation uncached per request —
+/// Caller's own aggregate + 1-based rank by the board's sort key (NET by
+/// default, STAKED for the Volume sort). Returns null when the address
+/// has no events in the window. NOTE (plan, Codex r3 MINOR): this
+/// re-runs the full per-actor aggregation uncached per request —
 /// O(all actors). Testnet-fine; if it ever bites, derive rank from the
 /// same cached aggregate the board uses (trading freshness).
 export async function getCallerRank(
   db: DbOrTx,
-  { window, address }: GetCallerRankArgs,
+  { window, address, orderBy = 'net' }: GetCallerRankArgs,
 ): Promise<CallerRank | null> {
   const addressLower = normalizeAddressLower(address);
+  // Counts every actor ahead of the caller under the board's exact
+  // total order (key DESC, actor ASC). Qualified references only: the
+  // outer SELECT aliases the ::text casts to the same names.
+  const ahead =
+    orderBy === 'staked'
+      ? sql`b.staked > a.staked OR (b.staked = a.staked AND b.actor < a.actor)`
+      : sql`b.net > a.net OR (b.net = a.net AND b.actor < a.actor)`;
   const result = await db.execute(sql`
     WITH agg AS (${aggregateCte(window)})
     SELECT
@@ -172,8 +189,7 @@ export async function getCallerRank(
       a.bets::int          AS "bets",
       a.creator_fees::text AS "creatorFees",
       (SELECT COUNT(*) + 1 FROM agg b
-        WHERE b.net > a.net
-           OR (b.net = a.net AND b.actor < a.actor))::int AS "rank"
+        WHERE ${ahead})::int AS "rank"
     FROM agg a
     WHERE a.actor = ${addressLower}
   `);

@@ -7,6 +7,7 @@ import { makoLeaderboardIndexerState } from '@/db/schema';
 import {
   getLeaderboardRows,
   getCallerRank,
+  type LeaderboardOrderBy,
   type LeaderboardRow,
   type LeaderboardWindow,
 } from '@/lib/leaderboard/queries';
@@ -14,7 +15,11 @@ import { resolveLabels } from '@/lib/leaderboard/identity';
 import { LEADERBOARD_CONTRACTS } from '@/lib/leaderboard/contracts';
 
 // ----------------------------------------------------------------------------
-// GET /api/leaderboard?window=all|week[&me=0x…]
+// GET /api/leaderboard?window=all|week|month[&sort=profit|volume][&me=0x…]
+//
+// week = the last 7 days, month = the last 30 days (rolling, no reset).
+// sort=profit ranks by NET (the default), sort=volume by STAKED; the
+// caller's `viewer` rank always uses the same sort as the board.
 //
 // Read-only over the mako_market_events ledger. NEVER writes and never
 // triggers a scan — the cron at /api/cron/leaderboard is the sole
@@ -24,7 +29,8 @@ import { LEADERBOARD_CONTRACTS } from '@/lib/leaderboard/contracts';
 //
 // Split-cache design (plan, Codex r1 MAJOR-3):
 //   - The top-100 board is a SHARED artifact: unstable_cache keyed by
-//     window ONLY (same convention as charts/route.ts), revalidate 45s.
+//     window and sort ONLY (same convention as charts/route.ts),
+//     revalidate 45s.
 //     Identity labels ride inside the cached board — display-name edits
 //     surface within one revalidation window.
 //   - The caller's own rank (`viewer`) is PER-USER and never enters the
@@ -36,12 +42,12 @@ import { LEADERBOARD_CONTRACTS } from '@/lib/leaderboard/contracts';
 // `viewer` field semantics:
 //   - key absent → caller is on the board (or no `me` was passed);
 //   - null      → caller has no events in this window;
-//   - object    → caller's off-board row + 1-based rank by NET.
+//   - object    → caller's off-board row + 1-based rank by the sort.
 //
-// Both windows rank by NET (Joshua's call on plan open-Q2, option (a)):
-// the weekly tab shows NET as cash-flow with an explanatory caption in
-// the UI — a claim made this week counts in this week even if the bet
-// was staked earlier. The math itself is pinned by queries tests.
+// Every window ranks by NET by default (Joshua's call on plan open-Q2,
+// option (a)): the windowed tabs show NET as cash-flow, explained in the
+// UI — a claim made this week counts in this week even if the bet was
+// staked earlier. The math itself is pinned by queries tests.
 // ----------------------------------------------------------------------------
 
 export const runtime = 'nodejs';
@@ -51,7 +57,8 @@ const REVALIDATE_SECONDS = 45;
 const BOARD_LIMIT = 100;
 
 const Query = z.object({
-  window: z.enum(['all', 'week']).default('all'),
+  window: z.enum(['all', 'week', 'month']).default('all'),
+  sort: z.enum(['profit', 'volume']).default('profit'),
   me: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
@@ -85,8 +92,22 @@ interface Board {
   generatedAt: string;
 }
 
-async function buildBoard(window: LeaderboardWindow): Promise<Board> {
-  const rows = await getLeaderboardRows(db, { window, limit: BOARD_LIMIT });
+type LeaderboardSort = 'profit' | 'volume';
+
+const ORDER_BY: Record<LeaderboardSort, LeaderboardOrderBy> = {
+  profit: 'net',
+  volume: 'staked',
+};
+
+async function buildBoard(
+  window: LeaderboardWindow,
+  sort: LeaderboardSort,
+): Promise<Board> {
+  const rows = await getLeaderboardRows(db, {
+    window,
+    orderBy: ORDER_BY[sort],
+    limit: BOARD_LIMIT,
+  });
   const labels = await resolveLabels(
     db,
     rows.map((r) => r.actor),
@@ -141,19 +162,21 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const parsed = Query.safeParse({
     window: url.searchParams.get('window') ?? undefined,
+    sort: url.searchParams.get('sort') ?? undefined,
     me: url.searchParams.get('me') ?? undefined,
   });
   if (!parsed.success) {
     return Response.json({ error: 'bad_params' }, { status: 400 });
   }
-  const { window, me } = parsed.data;
+  const { window, sort, me } = parsed.data;
 
   try {
-    // Shared board: cache key carries the window and NOTHING about the
-    // caller — per-user data must never poison the shared artifact.
+    // Shared board: cache key carries the window and sort and NOTHING
+    // about the caller — per-user data must never poison the shared
+    // artifact.
     const cachedBoard = unstable_cache(
-      () => buildBoard(window),
-      ['leaderboard-board', window],
+      () => buildBoard(window, sort),
+      ['leaderboard-board', window, sort],
       { revalidate: REVALIDATE_SECONDS },
     );
     const board = await cachedBoard();
@@ -163,7 +186,11 @@ export async function GET(req: Request) {
       const meLower = me.toLowerCase() as `0x${string}`;
       const onBoard = board.rows.some((r) => r.actor === meLower);
       if (!onBoard) {
-        const rank = await getCallerRank(db, { window, address: meLower });
+        const rank = await getCallerRank(db, {
+          window,
+          address: meLower,
+          orderBy: ORDER_BY[sort],
+        });
         if (rank === null) {
           viewer = null;
         } else {
@@ -180,6 +207,7 @@ export async function GET(req: Request) {
 
     return Response.json({
       window,
+      sort,
       rows: board.rows,
       ...(viewer !== undefined ? { viewer } : {}),
       indexedThrough: board.indexedThrough,
