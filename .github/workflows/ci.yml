@@ -31,6 +31,8 @@ on:
       - v4-onboarding
       # Privy sign-in work is pushed here before any merge; its CI runs on every push.
       - 'feat/privy'
+      # The redesign (built on the Privy branch) likewise, before any merge.
+      - 'feat/redesign'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
