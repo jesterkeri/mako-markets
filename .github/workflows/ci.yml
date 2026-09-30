@@ -31,6 +31,7 @@ on:
     branches:
       - main
       - v4-onboarding
+      - fix/resolver-one-sided-refund
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
