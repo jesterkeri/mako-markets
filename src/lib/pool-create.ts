@@ -100,6 +100,10 @@ export function buildPool(d: CreateDraft, nowSec: number): BuildResult {
     const symbol = d.symbol.trim().toUpperCase();
     if (!symbol) return { ok: false, reason: 'Pick an asset.' };
     if (!(Number.isFinite(d.strike) && d.strike > 0)) return { ok: false, reason: 'Enter a target price above 0.' };
+    // Forex, commodities and stocks references are read as plain digits (cf-worker/src/index.ts
+    // parsePriceFeedOracleRef, and the sponsor's copy in aa-call-allowlist.ts); String() writes very small or very
+    // large numbers with an exponent, which neither accepts. Crypto references are read with Number(), which does.
+    if (d.kind !== 'crypto' && !/^\d+(\.\d+)?$/.test(String(d.strike))) return { ok: false, reason: 'This target is too small or too large for a pool to settle.' };
     const closeSec = nowSec + Math.min(d.durationSec + TX_LANDING_BUFFER_SEC, MAX_DURATION_SEC - TX_LANDING_BUFFER_SEC);
     const bettingCloseTime = suggestedCryptoBettingCloseTimeMirror(nowSec, closeSec);
     const question =

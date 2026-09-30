@@ -95,13 +95,13 @@ describe('pool page claim, done step', () => {
     // Before: the page offers the contract's payout.
     const claimButtons = screen.getAllByRole('button', { name: /Claim 12\.93 USDC/ });
     fireEvent.click(claimButtons[0]);
-    fireEvent.click(screen.getAllByRole('button', { name: /Confirm · 12\.93 USDC/ })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /Confirm · 12\.933333 USDC/ })[0]);
 
     await waitFor(() => expect(screen.getAllByText('Claimed').length).toBeGreaterThan(0));
     await waitFor(() => expect(refetchBet).toHaveBeenCalled());
 
     // The done step must still say what landed.
     expect(screen.queryAllByText('0.00 USDC is in your balance.')).toHaveLength(0);
-    expect(screen.getAllByText('12.93 USDC is in your balance.').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('12.933333 USDC is in your balance.').length).toBeGreaterThan(0);
   });
 });

@@ -14,7 +14,7 @@ import { MAX_DURATION_SEC, sportsTimestamps } from '@/lib/market-timing';
 import { toBytes32 } from '@/lib/oracle';
 import { MIN_BET, parseAmount } from '@/lib/pool-bet-rules';
 import { buildPool, DURATIONS, type BasketballQuestion, type BuiltPool, type CreateDraft, type CreateKind, type FootballQuestion, type PriceKind } from '@/lib/pool-create';
-import { CAT_STYLE, usdc2, type PoolCat } from '@/lib/pool-list';
+import { CAT_STYLE, usdc2, usdcExact, type PoolCat } from '@/lib/pool-list';
 import { dayTime, poolRules } from '@/lib/pool-rules';
 import { getAssetsByClass } from '@/lib/price-feed-assets';
 import { useLiveNowSec } from '@/lib/use-live-clock';
@@ -171,12 +171,12 @@ export function CreatePoolClient() {
       glyph: '+',
       glyphColor: 'var(--mako-signal)',
       title: 'Create pool',
-      confirmLabel: `Confirm · ${usdc2(seed)} USDC`,
+      confirmLabel: `Confirm · ${usdcExact(seed)} USDC`,
       pendingTitle: 'Creating your pool',
       rows: [
         { label: 'Question', value: pool.question },
         { label: 'Betting closes', value: dayTime(Number(pool.bettingCloseTime)) },
-        { label: 'Your first bet', value: `${usdc2(seed)} USDC on ${side}`, tone: seedYes ? 'up' : 'no' },
+        { label: 'Your first bet', value: `${usdcExact(seed)} USDC on ${side}`, tone: seedYes ? 'up' : 'no' },
       ],
       note: 'Your first bet goes into the pool like any other bet. If nobody takes the other side, everyone is refunded.',
       doneTitle: 'Your pool is live',

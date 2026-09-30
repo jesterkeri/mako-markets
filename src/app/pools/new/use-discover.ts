@@ -10,6 +10,8 @@ export function useDiscover<T>(url: string | null, refetchMs?: number): { data: 
     queryKey: ['discover', url],
     enabled: url !== null,
     refetchInterval: refetchMs,
+    // A refreshing feed (prices) shows the failure at once rather than the last answer through three retries.
+    retry: refetchMs ? false : 2,
     staleTime: 30_000,
     queryFn: async () => {
       const res = await fetch(url as string);

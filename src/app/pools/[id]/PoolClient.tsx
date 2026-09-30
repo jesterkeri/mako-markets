@@ -13,7 +13,7 @@ import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
-import { CAT_STYLE, catTitle, claimable, poolRow, STATE_PILL, usdc2, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
+import { CAT_STYLE, catTitle, claimable, poolRow, STATE_PILL, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
@@ -204,7 +204,7 @@ function confirmSpec(
   claimAmount: bigint | null,
 ): ConfirmSpec {
   if (kind === 'claim') {
-    const amt = usdc2(claimAmount ?? 0n);
+    const amt = usdcExact(claimAmount ?? 0n);
     const refund = row.state === 'refunded';
     return {
       glyph: '$',
@@ -224,7 +224,7 @@ function confirmSpec(
   }
   const isYes = side === 'yes';
   const name = isYes ? labels.yes : labels.no;
-  const amt = usdc2(amount ?? 0n);
+  const amt = usdcExact(amount ?? 0n);
   return {
     glyph: isYes ? 'Y' : 'N',
     glyphColor: isYes ? 'var(--mako-signal)' : 'var(--mako-red)',

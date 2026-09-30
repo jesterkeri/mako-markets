@@ -10,6 +10,7 @@ import { MONAD_TESTNET_ID } from '../chain';
 import { phaseFromOutcome, refusalPhase } from '../confirm-outcome';
 import { MAKO_ADDRESS, MarketType, Outcome, type MarketWithId } from '../contract';
 import { betBlocker, parseAmount, type BetLimits } from '../pool-bet-rules';
+import { usdcExact } from '../pool-list';
 import { parseOracleRef, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC } from '../pool-rules';
 import { USDC_ADDRESS } from '../usdc';
 
@@ -144,6 +145,17 @@ describe('betBlocker follows placeBet, in its order', () => {
   it('parses amounts to base units and refuses anything else', () => {
     expect(['5', '5.5', '0.10', '1.123456'].map(parseAmount)).toEqual([5n * USDC, 5_500_000n, 100_000n, 1_123_456n]);
     expect(['', '-1', '1.1234567', 'abc', '1e3'].map(parseAmount)).toEqual([null, null, null, null, null]);
+  });
+});
+
+describe('usdcExact', () => {
+  it('shows a confirmed amount exactly, never rounded', () => {
+    expect(usdcExact(2_000_000n)).toBe('2.00');
+    expect(usdcExact(1_999_999n)).toBe('1.999999');
+    expect(usdcExact(1_250_500_000n)).toBe('1,250.50');
+    expect(usdcExact(100_000n)).toBe('0.10');
+    expect(usdcExact(1n)).toBe('0.000001');
+    expect(usdcExact(0n)).toBe('0.00');
   });
 });
 

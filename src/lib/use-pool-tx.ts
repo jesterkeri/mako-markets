@@ -8,7 +8,7 @@ import type { ConfirmPhase } from '@/components/ConfirmSheet';
 import { buildBetBody, buildClaimBody, buildCreateBody, runSponsoredRequest } from './aa-client';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
-import { decodeMarketCreatedId, MAKO_ADDRESS, makoContract } from './contract';
+import { createdMarketIdFor, MAKO_ADDRESS, makoContract } from './contract';
 import { toBytes32 } from './oracle';
 import { buildPool, type CreateDraft } from './pool-create';
 import { useEnsureMonadChain } from './hooks';
@@ -77,12 +77,13 @@ export function usePoolTx(onLanded?: () => void) {
     setPhase({ step: 'review' });
   }, []);
 
-  /// The new pool's id from a landed create's receipt.
+  /// The new pool's id from a landed create's receipt, pinned to the creating account (a bundle can hold other
+  /// accounts' creates). The public RPC can lag the bundler by a few seconds, so this waits for the receipt.
   const createdIdFrom = useCallback(
-    async (hash: `0x${string}`): Promise<bigint | null> => {
+    async (hash: `0x${string}`, creator: string): Promise<bigint | null> => {
       if (!publicClient) return null;
       try {
-        return decodeMarketCreatedId(await publicClient.getTransactionReceipt({ hash }));
+        return createdMarketIdFor(await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 }), creator);
       } catch {
         return null;
       }
@@ -146,7 +147,7 @@ export function usePoolTx(onLanded?: () => void) {
         body = buildClaimBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
       }
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
-      if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash));
+      if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
       return phaseFromOutcome(outcome, w);
     }
 
@@ -187,7 +188,7 @@ export function usePoolTx(onLanded?: () => void) {
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           if (receipt.status !== 'success') return undone(w);
-          setCreatedId(decodeMarketCreatedId(receipt));
+          setCreatedId(createdMarketIdFor(receipt, account));
           return { step: 'done', txHash: hash };
         }
         if (t.kind === 'bet') {

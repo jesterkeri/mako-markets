@@ -6,7 +6,7 @@ import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
 import { profitSeries, sumClaims, type MePosition, type MeRange } from '@/lib/me-stats';
-import { usdc2 } from '@/lib/pool-list';
+import { usdcExact } from '@/lib/pool-list';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { usePoolTx } from '@/lib/use-pool-tx';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
@@ -29,7 +29,7 @@ function walletOf(user: AuthedUser): { kind: 'mako' | 'external'; address: strin
 /// The confirm sheet's words for one claim, fixed when it opens: after the claim lands the refetch clears the
 /// claimable amount, and the sheet must still describe what was confirmed.
 function claimSpec(p: MePosition): ConfirmSpec {
-  const amt = usdc2(p.claim ?? 0n);
+  const amt = usdcExact(p.claim ?? 0n);
   const refund = p.state === 'refunded';
   return {
     glyph: '$',

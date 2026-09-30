@@ -211,6 +211,28 @@ export type MarketWithId = Market & { id: bigint };
  * `{ kind: 'sent' }`. Single source of truth so a future v5
  * `MarketCreated` shape change is one diff instead of two.
  */
+/// The id of the pool `creator` made in this receipt: a MarketCreated log emitted by the Pools contract with that
+/// creator. A bundler transaction can carry other accounts' user operations, so the first MarketCreated in the
+/// receipt is not necessarily ours. Null when there is none, or more than one (it cannot tell which).
+export function createdMarketIdFor(receipt: TransactionReceipt, creator: string): bigint | null {
+  const me = creator.toLowerCase();
+  let found: bigint | null = null;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== MAKO_ADDRESS.toLowerCase()) continue;
+    try {
+      const decoded = decodeEventLog({ abi: makoAbi, data: log.data, topics: log.topics });
+      if (decoded.eventName !== 'MarketCreated') continue;
+      const args = decoded.args as { id: bigint; creator: string };
+      if (args.creator.toLowerCase() !== me) continue;
+      if (found !== null) return null;
+      found = args.id;
+    } catch {
+      // Not a Pools event.
+    }
+  }
+  return found;
+}
+
 export function decodeMarketCreatedId(
   receipt: TransactionReceipt,
 ): bigint | null {

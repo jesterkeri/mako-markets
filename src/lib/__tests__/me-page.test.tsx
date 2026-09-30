@@ -175,9 +175,9 @@ describe('Me page', () => {
     runSponsoredRequest.mockResolvedValue({ kind: 'sent', pendingUserOpId: 'p1', txHash: TX, userOpHash: TX });
     renderMe();
     fireEvent.click(screen.getAllByRole('button', { name: 'Claim 12.93 USDC' })[0]);
-    fireEvent.click(screen.getAllByRole('button', { name: /Confirm · 12\.93 USDC/ })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /Confirm · 12\.933333 USDC/ })[0]);
 
-    await waitFor(() => expect(screen.getAllByText('12.93 USDC is in your balance.').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText('12.933333 USDC is in your balance.').length).toBeGreaterThan(0));
     await waitFor(() => expect(refetchBets).toHaveBeenCalled());
     // After the refetch the chain says claimed: nothing left, and the row reads what landed.
     await waitFor(() => expect(totals()['READY TO CLAIM']).toBe('0.00 USDC'));

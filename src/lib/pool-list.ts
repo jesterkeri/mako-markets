@@ -98,6 +98,15 @@ export function claimable(p: Position | null): bigint | null {
 }
 
 /// USDC base units -> "1,240.50".
+/// An amount someone confirms (a bet, a first bet, a claim), exactly: at least 2 decimals, up to all 6, never
+/// rounded. "2.00", "1.999999", "1,250.50".
+export function usdcExact(base: bigint): string {
+  const sign = base < 0n ? '-' : '';
+  const v = base < 0n ? -base : base;
+  const frac = (v % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '').padEnd(2, '0');
+  return `${sign}${(v / 1_000_000n).toLocaleString('en-US')}.${frac}`;
+}
+
 export function usdc2(base: bigint): string {
   return (Number(base) / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
