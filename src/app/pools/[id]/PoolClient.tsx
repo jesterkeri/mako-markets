@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReadContract, useReadContracts } from 'wagmi';
 
-import { CommentsSection } from '@/components/CommentsSection';
+import { PoolCommentsDesktop, PoolCommentsMobile } from '@/components/comments/PoolComments';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
@@ -15,6 +15,7 @@ import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_PILL, usdc2, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC } from '@/lib/pool-rules';
+import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { useMakoLabels } from '@/lib/use-mako-labels';
@@ -404,9 +405,7 @@ function PoolDesktop(v: ViewProps) {
               ))}
             </div>
           </div>
-          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 16 }}>
-            <CommentsSection scope="main" marketId={m.id.toString()} />
-          </div>
+          <PoolCommentsDesktop marketId={m.id.toString()} onSignIn={openSignIn} />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -840,9 +839,7 @@ function PoolMobile(v: ViewProps) {
           </div>
         </div>
 
-        <div style={{ borderRadius: 28, background: 'var(--raise)', padding: '16px 14px', marginTop: 10 }}>
-          <CommentsSection scope="main" marketId={m.id.toString()} />
-        </div>
+        <PoolCommentsMobile marketId={m.id.toString()} onSignIn={openSignIn} />
       </div>
 
       {rulesOpen && (

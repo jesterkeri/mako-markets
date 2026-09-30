@@ -12,7 +12,7 @@ vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));
 vi.mock('next/navigation', () => ({ notFound: () => { throw new Error('notFound'); } }));
-vi.mock('@/components/CommentsSection', () => ({ CommentsSection: () => null }));
+vi.mock('@/components/comments/PoolComments', () => ({ PoolCommentsDesktop: () => null, PoolCommentsMobile: () => null }));
 vi.mock('@/lib/use-mako-labels', () => ({ useMakoLabels: () => ({ data: undefined }) }));
 vi.mock('@/lib/use-address-names', () => ({ useAddressNames: () => new Map() }));
 
