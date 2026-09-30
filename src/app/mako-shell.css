@@ -45,6 +45,19 @@
   --tb-sh: 0 10px 24px rgba(40, 30, 10, 0.22);
 }
 
+/* The design system's category and state accents (colors_and_type.css). globals.css only carries them as
+ * Tailwind `--color-*` theme values, so `var(--mako-teal)` and friends resolved to nothing until now. */
+:root {
+  --mako-orange: #C2410C;
+  --mako-blue: #1D4ED8;
+  --mako-teal: #14B8A6;
+  --mako-gold: #F59E0B;
+  --mako-violet: #8B5CF6;
+  --mako-coral: #FB7185;
+  --mako-cyan: #06B6D4;
+  --mako-fuchsia: #D946EF;
+}
+
 /* Tints of the page colour; they follow whichever theme is active. */
 :root {
   --line: color-mix(in srgb, var(--mako-canvas-fg) 12%, transparent);
@@ -210,6 +223,42 @@ body {
 }
 .mk-press97:active {
   transform: scale(0.97);
+}
+
+/* The design's `style-active="transform:scale(0.96)"`: desktop buttons (140ms) and mobile buttons (160ms). */
+.mk-press96 {
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.mk-press96:active {
+  transform: scale(0.96);
+}
+.m3-scale96 {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+.m3-scale96:active {
+  transform: scale(0.96);
+}
+
+/* A list row that is one link: the row's title link stretches over the whole row, and the row's own buttons sit
+ * above it (`.mk-over`). */
+.mk-row {
+  position: relative;
+  transition: background-color 120ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .mk-row:hover {
+    background-color: var(--raise);
+  }
+}
+.mk-rowlink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.mk-over {
+  position: relative;
+  z-index: 1;
 }
 
 /* Pressed-state tint for mobile controls. */

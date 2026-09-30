@@ -118,6 +118,12 @@ async function fetchUser(): Promise<UserMeResponse> {
   return (await res.json()) as UserMeResponse;
 }
 
+/// The address that holds an account's USDC and positions: the Safe for an email account, the wallet itself for a
+/// wallet account.
+export function accountAddress(user: AuthedUser): `0x${string}` {
+  return (user.authType === 'magic' ? user.safeAddress : user.walletAddress) as `0x${string}`;
+}
+
 export function useUser() {
   const query = useQuery<UserMeResponse>({
     queryKey: USER_QUERY_KEY,

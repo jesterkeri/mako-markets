@@ -10,7 +10,7 @@ import { useLivePrices } from '@/lib/use-live-prices';
 import { activeNav, NAV, SIGN_IN_HREF } from '@/lib/shell-nav';
 import { useTheme } from '@/lib/use-theme';
 import { formatUsdc } from '@/lib/usdc';
-import { useUser, type AuthedUser } from '@/lib/use-user';
+import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
 
 import { pct2, usd2 } from './format';
@@ -18,10 +18,6 @@ import { ICON, StrokeIcon, SunIcon } from './icons';
 import { NotificationsPanel } from './NotificationsPanel';
 import { SignOutConfirm } from './SignOutConfirm';
 import { useDismiss } from './use-dismiss';
-
-export function accountAddress(user: AuthedUser): `0x${string}` {
-  return (user.authType === 'magic' ? user.safeAddress : user.walletAddress) as `0x${string}`;
-}
 
 function BtcPrice() {
   const { live, unavailable } = useLivePrices();

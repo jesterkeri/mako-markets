@@ -6,9 +6,8 @@ import { Logo } from '@/components/Logo';
 import { useUsdcBalance } from '@/lib/hooks';
 import { SIGN_IN_HREF } from '@/lib/shell-nav';
 import { formatUsdc } from '@/lib/usdc';
-import { useUser } from '@/lib/use-user';
+import { accountAddress, useUser } from '@/lib/use-user';
 
-import { accountAddress } from './DesktopHeader';
 import { ICON, StrokeIcon } from './icons';
 
 const roundButton: React.CSSProperties = {

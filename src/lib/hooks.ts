@@ -110,6 +110,7 @@ export function useMarkets() {
   const {
     data: nextIdBn,
     isLoading: isCountLoading,
+    isError: isCountError,
     refetch: refetchCount,
   } = useReadContract({
     ...makoContract,
@@ -124,6 +125,7 @@ export function useMarkets() {
   const {
     data: marketsData,
     isLoading: isMarketsLoading,
+    isError: isMarketsError,
     refetch: refetchMarkets,
   } = useReadContracts({
     contracts: Array.from({ length: count }, (_, i) => ({
@@ -148,6 +150,8 @@ export function useMarkets() {
     markets,
     count,
     isLoading: isCountLoading || (count > 0 && isMarketsLoading),
+    /// The chain read failed and nothing was loaded: an empty `markets` then means "unknown", not "none".
+    isError: (isCountError && nextIdBn === undefined) || (isMarketsError && marketsData === undefined),
     refetch: () => {
       refetchCount();
       refetchMarkets();
