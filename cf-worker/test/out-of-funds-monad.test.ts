@@ -1,6 +1,4 @@
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createWalletClient, defineChain, http } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { makoAbi } from '../src/abi';
@@ -31,9 +29,11 @@ import {
 // to eth_call / eth_estimateGas for an unfunded sender in the same probe:
 //   {"code":-32000,"message":"insufficient balance"}
 //
-// The body is served by a local JSON-RPC stub so viem's real http transport
-// and writeContract build the error exactly as the Worker would receive it.
-// Nothing leaves the machine and nothing is broadcast.
+// The body is served by a JSON-RPC stub passed as the http transport's
+// fetchFn, so viem's real http transport and writeContract build the error
+// exactly as the Worker would receive it. Nothing leaves the machine and
+// nothing is broadcast. (A fetchFn, not a node:http server: the Worker's
+// typecheck has Workers types only, and CI installs cf-worker on its own.)
 // ---------------------------------------------------------------------------
 
 const MONAD_SIGNER_INSUFFICIENT = { code: -32000, message: 'Signer had insufficient balance' };
@@ -45,36 +45,22 @@ const monadTestnet = defineChain({
   rpcUrls: { default: { http: ['http://127.0.0.1'] } },
 });
 
-let server: Server;
-let url = '';
+const RPC_URL = 'http://monad-rpc.stub';
 const seen: string[] = [];
 
-beforeAll(async () => {
-  server = createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => {
-      const one = (m: { id: number; method: string }) => {
-        seen.push(m.method);
-        if (m.method === 'eth_chainId') return { jsonrpc: '2.0', id: m.id, result: '0x279f' };
-        if (m.method === 'eth_sendRawTransaction') {
-          return { jsonrpc: '2.0', id: m.id, error: MONAD_SIGNER_INSUFFICIENT };
-        }
-        return { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: `stub: ${m.method} not served` } };
-      };
-      const parsed = JSON.parse(body);
-      const out = Array.isArray(parsed) ? parsed.map(one) : one(parsed);
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify(out));
-    });
-  });
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
-  url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-});
-
-afterAll(async () => {
-  await new Promise<void>((r) => server.close(() => r()));
-});
+async function stubFetch(_input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const one = (m: { id: number; method: string }) => {
+    seen.push(m.method);
+    if (m.method === 'eth_chainId') return { jsonrpc: '2.0', id: m.id, result: '0x279f' };
+    if (m.method === 'eth_sendRawTransaction') {
+      return { jsonrpc: '2.0', id: m.id, error: MONAD_SIGNER_INSUFFICIENT };
+    }
+    return { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: `stub: ${m.method} not served` } };
+  };
+  const parsed = JSON.parse(String(init?.body));
+  const out = Array.isArray(parsed) ? parsed.map(one) : one(parsed);
+  return new Response(JSON.stringify(out), { headers: { 'content-type': 'application/json' } });
+}
 
 // The Worker's own send, minus the fields a live node would fill in
 // (gas, nonce, fees), which are fixed here so the stub only has to answer
@@ -83,7 +69,7 @@ async function sendLikeTheWorker(functionName: 'resolveMarket' | 'forceRefund', 
   const walletClient = createWalletClient({
     account: privateKeyToAccount(generatePrivateKey()),
     chain: monadTestnet,
-    transport: http(url, { batch: true, retryCount: 0 }),
+    transport: http(RPC_URL, { batch: true, retryCount: 0, fetchFn: stubFetch }),
   });
   return walletClient.writeContract({
     address: '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195',
