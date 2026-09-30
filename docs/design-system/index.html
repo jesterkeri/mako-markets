@@ -69,13 +69,22 @@ p{margin:0;max-width:66ch;text-wrap:pretty}
 .filters a:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 
 /* hero */
-.hero{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:40px 56px;align-items:end;padding-block:clamp(48px,7vw,88px) 8px}
-@media (max-width:960px){.hero{grid-template-columns:minmax(0,1fr)}}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 40px;align-items:end;padding-block:clamp(48px,7vw,88px) 8px}
+.hero-mako{width:clamp(150px,22vw,290px);height:auto;align-self:end;margin-bottom:-4px;transform-origin:50% 95%}
+@media (max-width:640px){.hero{grid-template-columns:minmax(0,1fr)}.hero-mako{grid-row:1;justify-self:end;width:130px;margin-bottom:-24px}}
+@media (prefers-reduced-motion:no-preference){.hero-mako{animation:mako-in .9s var(--ease-out) both .3s,mako-wave 1.3s var(--ease-in-out) 1.25s}}
+@media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference){.hero-mako:hover{animation:mako-wave 1.3s var(--ease-in-out)}}
+@keyframes mako-in{from{opacity:0;transform:translateY(28px) rotate(5deg)}}
+@keyframes mako-wave{0%,100%{transform:rotate(0)}20%{transform:rotate(-5deg)}45%{transform:rotate(3deg)}70%{transform:rotate(-2deg)}}
 .hero-l{display:flex;flex-direction:column;gap:22px;min-width:0}
-.hero h1{font-size:clamp(60px,8.6vw,124px);line-height:.9;letter-spacing:-.055em}
-.hero .lede{font-size:clamp(18px,1.8vw,22px);line-height:1.5;color:var(--ink-2);max-width:40ch}
+.hero h1{font-size:clamp(60px,10vw,148px);line-height:.9;letter-spacing:-.055em}
+.hero .lede{font-size:clamp(18px,1.9vw,23px);line-height:1.5;color:var(--ink-2);max-width:46ch}
 
 /* specimen: the bet panel */
+.callrow{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px 48px;margin-top:clamp(56px,7vw,88px);padding-top:22px;border-top:1px solid var(--ink)}
+@media (max-width:760px){.callrow{grid-template-columns:minmax(0,1fr)}}
+.callrow .panel{max-width:680px}
+.callrow .side{display:flex;flex-direction:column;gap:10px}
 .panel{display:flex;flex-direction:column;gap:14px;min-width:0}
 .panel-top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
 .clock{font-family:var(--display);font-weight:800;font-size:clamp(52px,6vw,76px);line-height:.9;letter-spacing:-.045em;font-variant-numeric:tabular-nums}
@@ -104,7 +113,6 @@ p{margin:0;max-width:66ch;text-wrap:pretty}
 .sign{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding-top:18px;border-top:1px solid var(--line)}
 .sign div{display:flex;flex-direction:column;gap:2px}
 .sign b{font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:-.02em}
-.sign img{width:96px;height:auto;transform-origin:50% 95%}
 
 /* sections, headed like the app's lists */
 section{padding-top:clamp(80px,9vw,120px);display:flex;flex-direction:column;gap:28px;scroll-margin-top:60px}
@@ -247,7 +255,6 @@ section{padding-top:clamp(80px,9vw,120px);display:flex;flex-direction:column;gap
   .pose:hover img[data-m="bob"]{animation:m-bob 1s var(--ease-in-out) infinite}
   .pose:hover img[data-m="shake"]{animation:m-shake .6s var(--ease-in-out) infinite}
   .pose:hover img[data-m="breathe"]{animation:m-breathe 2.4s var(--ease-in-out) infinite}
-  .sign img:hover{animation:m-tilt 1.2s var(--ease-in-out)}
 }
 @keyframes m-tilt{0%,100%{transform:rotate(0)}30%{transform:rotate(-6deg)}70%{transform:rotate(4deg)}}
 @keyframes m-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
@@ -462,18 +469,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
       <h1 class="in" style="--dl:60ms">Everyone has a call.</h1>
       <p class="lede in" style="--dl:160ms">Arsenal on Saturday. Bitcoin in the next fifteen minutes. Whether gold holds its line. People make these calls every day with their friends, and almost none of them ever get to back it.</p>
     </div>
-    <div class="panel in" style="--dl:260ms" aria-label="Specimen of the round bet panel">
-      <div class="panel-top">
-        <div><span class="label">Entries close in</span><div class="clock" data-countdown="248">04:08</div></div>
-        <span class="label">Round <b>#0142</b> · BTC/USD · 15 min</span>
-      </div>
-      <div class="split"><span>UP 59%</span><div class="bar"><i style="background:var(--signal)"></i><i style="background:var(--red)"></i></div><span>DOWN 41%</span></div>
-      <div class="tiles">
-        <div class="tile up"><header><b>UP</b><span>59%</span></header><div class="rows"><div><span>POOL</span><span>402.50 USDC</span></div><div><span>ENTRANTS</span><span>38</span></div><div><span>PAYS PER 1</span><span>1.66x</span></div></div><span class="enter">Enter <span aria-hidden="true">→</span></span></div>
-        <div class="tile down"><header><b>DOWN</b><span>41%</span></header><div class="rows"><div><span>POOL</span><span>277.20 USDC</span></div><div><span>ENTRANTS</span><span>27</span></div><div><span>PAYS PER 1</span><span>2.41x</span></div></div><span class="enter">Enter <span aria-hidden="true">→</span></span></div>
-      </div>
-      <p class="note">Specimen: the bet panel from the home page, built in HTML from the tokens at the end of this page. Figures are from the design mock.</p>
-    </div>
+    <img class="hero-mako" src="mako/mako-wave.png" alt="Mako, the shark mascot, in a yellow sweater and headphones, waving" width="520" height="553">
   </div>
 
   <div class="letter">
@@ -483,7 +479,23 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
       <p>Sportsbooks hold your money and set the odds against you. On-chain markets ask for a wallet, gas and an order book before you can even say what you think. Somewhere between those two, the simple thing got lost: you think you know how this ends, and you want to stand behind it.</p>
       <p>So Mako keeps only what a call really is. Two sides, one pot and a clock. You sign in with an email and pick a side. If you called it, you split what the other side put in. The contract settles it in the open, and if a result never comes, everyone gets their money back without asking anyone.</p>
       <p>This page is how we designed the screens for that. Every choice on it came from one question: would someone putting their own money on a call trust this, and enjoy it?</p>
-      <div class="sign"><div><b>Mako Market’s creative director and founder</b><span class="label">Desktop design system · 2026</span></div><img src="mako/mako-wave.png" alt="Mako, the shark mascot, waving" width="520" height="553"></div>
+      <div class="sign"><div><b>Mako Market’s creative director and founder</b><span class="label">Desktop design system · 2026</span></div></div>
+    </div>
+  </div>
+
+  <div class="callrow">
+    <div class="side"><span class="label">A call, on screen</span><p class="small muted">Two sides, one pot and a clock. This is the bet panel from the home page, built in HTML from the tokens at the end of this page.</p></div>
+    <div class="panel" aria-label="Specimen of the round bet panel">
+      <div class="panel-top">
+        <div><span class="label">Entries close in</span><div class="clock" data-countdown="248">04:08</div></div>
+        <span class="label">Round <b>#0142</b> · BTC/USD · 15 min</span>
+      </div>
+      <div class="split"><span>UP 59%</span><div class="bar"><i style="background:var(--signal)"></i><i style="background:var(--red)"></i></div><span>DOWN 41%</span></div>
+      <div class="tiles">
+        <div class="tile up"><header><b>UP</b><span>59%</span></header><div class="rows"><div><span>POOL</span><span>402.50 USDC</span></div><div><span>ENTRANTS</span><span>38</span></div><div><span>PAYS PER 1</span><span>1.66x</span></div></div><span class="enter">Enter <span aria-hidden="true">→</span></span></div>
+        <div class="tile down"><header><b>DOWN</b><span>41%</span></header><div class="rows"><div><span>POOL</span><span>277.20 USDC</span></div><div><span>ENTRANTS</span><span>27</span></div><div><span>PAYS PER 1</span><span>2.41x</span></div></div><span class="enter">Enter <span aria-hidden="true">→</span></span></div>
+      </div>
+      <p class="note">Figures are from the design mock.</p>
     </div>
   </div>
 
