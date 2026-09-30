@@ -6,71 +6,97 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react';
 
 export type Theme = 'light' | 'dark';
+/// What the user chose. 'auto' follows the device, live (Settings > Appearance: Light / Dark / Auto).
+export type ThemePreference = Theme | 'auto';
 
 const STORAGE_KEY = 'mako-theme';
+const DARK_QUERY = '(prefers-color-scheme: dark)';
 
 type ThemeContextValue = {
+  /// The theme on screen now.
   theme: Theme;
+  /// The user's choice; 'auto' until they pick one.
+  preference: ThemePreference;
+  /// Pick light or dark explicitly (the desktop header switch).
   setTheme: (next: Theme) => void;
+  /// Pick light, dark or auto (Settings > Appearance).
+  setPreference: (next: ThemePreference) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+function systemTheme(): Theme {
+  return window.matchMedia(DARK_QUERY).matches ? 'dark' : 'light';
+}
+
+// The theme lives on <html data-theme data-theme-pref> (the boot script sets it before first paint). React reads
+// it as an external store; every write goes through apply(), which notifies the readers.
+const listeners = new Set<() => void>();
+
+function apply(theme: Theme, preference: ThemePreference): void {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.themePref = preference;
+  for (const notify of listeners) notify();
+}
+
+function subscribe(notify: () => void): () => void {
+  listeners.add(notify);
+  return () => listeners.delete(notify);
+}
+
+const readTheme = (): Theme => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+const readPreference = (): ThemePreference => {
+  const pref = document.documentElement.dataset.themePref;
+  return pref === 'light' || pref === 'dark' ? pref : 'auto';
+};
+
 /**
- * Single source of truth for the active theme. Wraps the app so every
- * `<ThemeToggle />` (mobile header, desktop header, future profile page,
- * etc.) shares one piece of state instead of each holding its own — that
- * was the cause of cross-toggle desync where flipping one pill left the
- * other showing the wrong active half.
+ * Single source of truth for the active theme. Wraps the app so every theme control shares one piece of state
+ * instead of each holding its own (that was the cause of cross-toggle desync).
  *
- * The provider hydrates from `<html data-theme>` (set by THEME_BOOT_SCRIPT
- * before React paints), so SSR and first client render agree on the value.
- *
- * setTheme is the ONLY caller that should write `data-theme` from React;
- * all consumers read from context, not the DOM. The boot script writes the
- * attribute exactly once at load.
+ * Reads `<html data-theme data-theme-pref>` (server render: dark, auto). While the preference is 'auto' it
+ * follows the device's colour scheme as it changes.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // SSR-safe initial: 'dark' is the same fallback the boot script uses if
-  // localStorage and matchMedia both fail. The first effect below corrects
-  // it from the live <html data-theme> on mount.
-  const [theme, setThemeState] = useState<Theme>('dark');
+  const theme = useSyncExternalStore(subscribe, readTheme, () => 'dark' as const);
+  const preference = useSyncExternalStore(subscribe, readPreference, () => 'auto' as const);
 
+  // Auto: follow the device when it switches between light and dark.
   useEffect(() => {
-    const live = (document.documentElement.dataset.theme as Theme) ?? 'dark';
-    if (live !== theme) {
-      setThemeState(live);
-    }
-    // Intentionally one-shot — we own writes from here on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (preference !== 'auto') return;
+    const query = window.matchMedia(DARK_QUERY);
+    const follow = () => apply(systemTheme(), 'auto');
+    query.addEventListener('change', follow);
+    return () => query.removeEventListener('change', follow);
+  }, [preference]);
 
-  const setTheme = useCallback((next: Theme) => {
-    document.documentElement.dataset.theme = next;
+  const setPreference = useCallback((next: ThemePreference) => {
+    apply(next === 'auto' ? systemTheme() : next, next);
     try {
       localStorage.setItem(STORAGE_KEY, next);
     } catch {
-      // storage may be disabled (private mode); data-theme is still
-      // authoritative for the current session
+      // Storage may be disabled (private mode); the attributes still hold for this session.
     }
-    setThemeState(next);
   }, []);
 
-  const value = useMemo(() => ({ theme, setTheme }), [theme, setTheme]);
+  const setTheme = useCallback((next: Theme) => setPreference(next), [setPreference]);
+
+  const value = useMemo(
+    () => ({ theme, preference, setTheme, setPreference }),
+    [theme, preference, setTheme, setPreference],
+  );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 /**
- * Read the current theme + a setter from the nearest ThemeProvider. Throws
- * if used outside the provider — unlike a silent fallback, this catches
- * misplacement at the boundary instead of letting a stale 'dark' default
- * leak into pages that should follow the user's choice.
+ * Read the current theme and setters from the nearest ThemeProvider. Throws if used outside the provider, so a
+ * misplacement fails at the boundary instead of a stale default leaking into pages.
  */
 export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
@@ -81,10 +107,7 @@ export function useTheme(): ThemeContextValue {
 }
 
 /**
- * Inline-script source. Runs in `<head>` before any React render so the
- * correct `data-theme` is on `<html>` on first paint — no flash.
- *
- * Pulled into a constant rather than embedded as a literal because
- * `dangerouslySetInnerHTML` requires the exact string.
+ * Inline-script source. Runs in `<head>` before any React render so the correct `data-theme` is on `<html>` on
+ * first paint, with no flash. A stored 'light' or 'dark' wins; 'auto' or nothing stored follows the device.
  */
-export const THEME_BOOT_SCRIPT = `(function(){try{var s=localStorage.getItem('${STORAGE_KEY}');if(s==='light'||s==='dark'){document.documentElement.dataset.theme=s;return;}var m=window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.theme=m?'dark':'light';}catch(e){document.documentElement.dataset.theme='dark';}})();`;
+export const THEME_BOOT_SCRIPT = `(function(){var d=document.documentElement.dataset;try{var s=localStorage.getItem('${STORAGE_KEY}');if(s==='light'||s==='dark'){d.theme=s;d.themePref=s;return;}d.themePref='auto';d.theme=window.matchMedia('${DARK_QUERY}').matches?'dark':'light';}catch(e){d.theme='dark';d.themePref='auto';}})();`;

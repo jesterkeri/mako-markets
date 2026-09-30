@@ -1,0 +1,316 @@
+/* ============================================================================
+ * The 2a redesign (Claude Design handoff, 2026-09-30).
+ *
+ * Theme variables every redesigned screen reads, the desktop / mobile layout switch, and the shared motion.
+ * Values are lifted from the handoff's design file (the per-board variables are identical on all 84 boards);
+ * motion follows its DESIGN_RULES (the prototype itself has entry animations switched off).
+ * ========================================================================== */
+
+/* In the redesign the light page is the elevated cream, not paper. */
+[data-theme="light"] {
+  --mako-canvas: var(--mako-surface-elevated);
+}
+
+/* ---------- Per-theme variables ----------
+ * --edge is the ink stroke light mode puts on filled elements (none in dark). --tg-* colour the desktop theme
+ * switch, --wick-* the chart candles, --tb-* the mobile tab bar. */
+:root,
+[data-theme="dark"] {
+  --edge: 0 0 0 0 transparent;
+  --edge-c: transparent;
+  --tg-sun: transparent;
+  --tg-sun-fg: var(--dim);
+  --tg-moon: var(--mako-paper);
+  --tg-moon-fg: #000;
+  --wick-up: var(--mako-signal);
+  --wick-dn: var(--mako-red);
+  --up-text: var(--mako-signal);
+  --tb-bg: var(--mako-paper);
+  --tb-fg: rgba(0, 0, 0, 0.5);
+  --tb-sh: inset 0 0 0 1px rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="light"] {
+  --edge: inset 0 0 0 1.5px #000;
+  --edge-c: #000;
+  --tg-sun: var(--mako-ink);
+  --tg-sun-fg: var(--mako-paper);
+  --tg-moon: transparent;
+  --tg-moon-fg: var(--dim);
+  --wick-up: #000;
+  --wick-dn: #000;
+  --up-text: var(--mako-ink);
+  --tb-bg: var(--mako-ink);
+  --tb-fg: rgba(235, 229, 217, 0.55);
+  --tb-sh: 0 10px 24px rgba(40, 30, 10, 0.22);
+}
+
+/* Tints of the page colour; they follow whichever theme is active. */
+:root {
+  --line: color-mix(in srgb, var(--mako-canvas-fg) 12%, transparent);
+  --raise: color-mix(in srgb, var(--mako-canvas-fg) 6%, var(--mako-canvas));
+  --raise2: color-mix(in srgb, var(--mako-canvas-fg) 10%, var(--mako-canvas));
+  --dim: color-mix(in srgb, var(--mako-canvas-fg) 60%, var(--mako-canvas));
+}
+
+/* The redesign's page is a plain canvas: no paper grid. */
+body {
+  background-image: none;
+}
+
+/* Desktop content sits in the design's 1280px frame; mobile pages leave room for the floating tab bar. */
+.mk-desk-frame {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
+  box-sizing: border-box;
+  width: 100%;
+}
+@media (max-width: 1023.98px) {
+  .mk-main {
+    padding-bottom: calc(130px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Mobile tabs shrink a little while pressed. */
+.mk-tab {
+  transition: color 220ms ease, transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.mk-tab:active {
+  transform: scale(0.86);
+}
+
+/* ---------- Two layouts, not one squeezed ----------
+ * Desktop (terminal look) from 1024px, mobile (Material 3 Expressive) below. A page renders both; CSS shows one,
+ * so there is no layout flash and both share the same data hooks. */
+@media (max-width: 1023.98px) {
+  .mk-desk {
+    display: none !important;
+  }
+}
+@media (min-width: 1024px) {
+  .mk-mob {
+    display: none !important;
+  }
+}
+
+/* ---------- Mobile (Material 3 Expressive) ---------- */
+.mk-m {
+  --mk-ccard: var(--raise);
+  --mk-like: var(--mako-canvas);
+}
+[data-theme="dark"] .mk-m {
+  --m3-outline: rgba(235, 229, 217, 0.22);
+  --m3-sec: color-mix(in srgb, var(--mako-signal) 26%, var(--mako-canvas));
+  --m3-card-edge: none;
+  --m3-inv: var(--mako-paper);
+  --m3-inv-fg: #000;
+  --m3-inv-2: rgba(0, 0, 0, 0.08);
+  --m3-btn-edge: inset 0 0 0 1.5px rgba(0, 0, 0, 0.9);
+}
+[data-theme="light"] .mk-m {
+  --m3-outline: rgba(0, 0, 0, 0.22);
+  --m3-sec: color-mix(in srgb, var(--mako-signal) 45%, var(--mako-canvas));
+  --m3-card-edge: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+  --m3-inv: #000;
+  --m3-inv-fg: var(--mako-paper);
+  --m3-inv-2: rgba(235, 229, 217, 0.12);
+  --m3-btn-edge: none;
+}
+/* Mobile never uses mono: numbers are the sans face with tabular figures. */
+.mk-m .mk-mono {
+  font-family: var(--mako-font-sans);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+/* 16px inputs so iOS does not zoom on focus. */
+.mk-m input,
+.mk-m textarea {
+  font-size: 16px;
+}
+.mk-cap::first-letter {
+  text-transform: uppercase;
+}
+
+/* Dark mode turns mobile bottom sheets yellow, with ink text. */
+[data-theme="dark"] .mk-m .mk-ysheet {
+  --mako-canvas: #facc15;
+  --mako-canvas-fg: #000;
+  --raise: rgba(0, 0, 0, 0.08);
+  --raise2: rgba(0, 0, 0, 0.14);
+  --line: rgba(0, 0, 0, 0.16);
+  --dim: rgba(0, 0, 0, 0.62);
+  --up-text: #000;
+  --m3-inv: #000;
+  --m3-inv-fg: #facc15;
+  --m3-outline: rgba(0, 0, 0, 0.3);
+  --mako-signal: #000;
+  --mk-ccard: rgba(0, 0, 0, 0.08);
+  --mk-like: rgba(0, 0, 0, 0.1);
+  color: #000;
+}
+[data-theme="dark"] .mk-m .mk-ysheet .mk-onsig {
+  color: #facc15 !important;
+}
+
+/* Desktop menu rows and pressed buttons. */
+.wm-row:hover,
+.wm-row:focus-visible {
+  background: var(--raise);
+}
+.mk-press97 {
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.mk-press97:active {
+  transform: scale(0.97);
+}
+
+/* Pressed-state tint for mobile controls. */
+.m3-press {
+  position: relative;
+  overflow: hidden;
+}
+.m3-press::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.2, 0, 0, 1);
+  pointer-events: none;
+  border-radius: inherit;
+}
+.m3-press:active::after {
+  opacity: 0.1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .m3-press:hover::after {
+    opacity: 0.06;
+  }
+}
+
+/* The tab bar's sliding indicator. */
+.mk-tabind {
+  transition: transform 440ms cubic-bezier(0.32, 0.72, 0, 1), opacity 200ms ease;
+  will-change: transform;
+}
+
+/* ---------- Pop-ups, sheets, scrims ---------- */
+@keyframes mkPop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes mkSheet {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes mkFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.mk-pop {
+  animation: mkPop 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.mk-sheet {
+  animation: mkSheet 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.mk-scrim {
+  animation: mkFade 180ms ease both;
+}
+
+/* ---------- Mascot (whole-figure motion; never on working screens) ---------- */
+.mkp {
+  display: block;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.mkp-bob { animation: mkpBob 2.4s ease-in-out infinite; }
+.mkp-float { animation: mkpBob 3.2s ease-in-out infinite; }
+.mkp-sway { animation: mkpSway 2.2s ease-in-out infinite; }
+.mkp-jump { animation: mkpJump 1.2s cubic-bezier(0.3, 0, 0.3, 1) infinite; }
+.mkp-vibe { animation: mkpVibe 0.8s ease-in-out infinite; }
+.mkp-look { animation: mkpLook 3s ease-in-out infinite; }
+.mkp-pulse { animation: mkpPulse 1.6s ease-in-out infinite; }
+.mkp-nudgeU { animation: mkpNU 1.4s cubic-bezier(0.3, 0, 0.3, 1) infinite; }
+.mkp-nudgeD { animation: mkpND 1.4s cubic-bezier(0.3, 0, 0.3, 1) infinite; }
+.mkp-run { animation: mkpRun 0.5s ease-in-out infinite; }
+.mkp-droop { animation: mkpDroop 3.4s ease-in-out infinite; }
+.mkp-shake { animation: mkpShake 1.8s ease-in-out infinite; }
+.mkp-tick { animation: mkpTick 1s steps(2, jump-none) infinite; }
+.mkp-pan { animation: mkpPan 3.2s ease-in-out infinite; }
+.mkp-breathe { animation: mkpBreathe 3.4s ease-in-out infinite; }
+.mkp-glitch { animation: mkpGlitch 2.4s steps(1, end) infinite; }
+.mkp-shadow {
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.28);
+  margin: -6px auto 0;
+  width: 52%;
+}
+@keyframes mkpBob { 50% { transform: translateY(-6px); } }
+@keyframes mkpSway { 0%, 100% { transform: rotate(-2.5deg); } 50% { transform: rotate(2.5deg); } }
+@keyframes mkpJump {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  10% { transform: translateY(0) scale(1.05, 0.94); }
+  45% { transform: translateY(-22px) scale(0.97, 1.04); }
+  72% { transform: translateY(0) scale(1.03, 0.97); }
+}
+@keyframes mkpVibe { 0%, 100% { transform: translateY(0) rotate(-1.5deg); } 50% { transform: translateY(-4px) rotate(1.5deg); } }
+@keyframes mkpLook { 0%, 40%, 100% { transform: rotate(0); } 15% { transform: rotate(-4deg); } 65% { transform: rotate(3deg); } }
+@keyframes mkpPulse { 50% { transform: scale(1.035); } }
+@keyframes mkpNU { 40% { transform: translateY(-8px); } }
+@keyframes mkpND { 40% { transform: translateY(4px) scale(1.02, 0.98); } }
+@keyframes mkpRun { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-7px) rotate(1deg); } }
+@keyframes mkpDroop { 50% { transform: translateY(3px) scale(1.01, 0.985); } }
+@keyframes mkpShake {
+  0%, 60%, 100% { transform: rotate(0); }
+  66% { transform: rotate(-2deg); }
+  72% { transform: rotate(2deg); }
+  78% { transform: rotate(-1.5deg); }
+  84% { transform: rotate(1deg); }
+}
+@keyframes mkpTick { 0% { transform: rotate(-1deg); } 100% { transform: rotate(1deg); } }
+@keyframes mkpPan { 0%, 100% { transform: translateX(-5px); } 50% { transform: translateX(5px); } }
+@keyframes mkpBreathe { 50% { transform: scale(1.015, 0.985); } }
+@keyframes mkpGlitch {
+  0%, 70%, 100% { transform: none; }
+  72% { transform: translateX(-4px); }
+  75% { transform: translateX(4px) skewX(-3deg); }
+  78% { transform: translateX(-2px); }
+  81% { transform: none; }
+}
+
+/* ---------- Reduced motion: fade only ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .mk-tabind {
+    transition: opacity 150ms ease;
+  }
+  .mk-pop,
+  .mk-sheet {
+    animation: mkFade 150ms ease both;
+  }
+  .mkp {
+    animation: none !important;
+  }
+}
+
+/* Taps: no double-tap zoom delay, no accidental text selection on controls. */
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
+}
