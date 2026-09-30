@@ -1,0 +1,209 @@
+{
+  "version": "v1",
+  "host": "mimcn9cp2qspbz3f.public.blob.vercel-storage.com",
+  "poses": {
+    "07-lost-map": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/07-lost-map.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 36564,
+      "sha256": "0f41295891b6c360e4f199c26f662d1e3d8797040e9a0a282d1aa29c247a36de"
+    },
+    "08-pointing-up": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/08-pointing-up.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 38070,
+      "sha256": "0e53b4fbd780e0cc8817d578ae2a8a127e4e7b5f9728653384e7d869cadb2cd9"
+    },
+    "09-pointing-down": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/09-pointing-down.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 35630,
+      "sha256": "0cbf48ff248e9d5e4b60030a050e308361fc0236a5323fced880b94971ad446b"
+    },
+    "10-sad-but-okay": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/10-sad-but-okay.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 33070,
+      "sha256": "9b6a9dc392c7598c6b83592cd4e468401d6c18b722b0cbe476b57867e2ef854c"
+    },
+    "11-counting-usdc": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/11-counting-usdc.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 38938,
+      "sha256": "1af0e22e03ef07fe3bf8edf942e7a6d784b99493f50242eeb7902ac55dbe3f67"
+    },
+    "12-faucet": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/12-faucet.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 38276,
+      "sha256": "5ac9db03054b9481dfa4981cc7901fbe072ace56fcea0d97bbc66672b1732899"
+    },
+    "13-crown": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/13-crown.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 34666,
+      "sha256": "452eae38fa623523796c59332ee5f4aafbe2eaa8cba5e3a547a6e51cf2fac0ce"
+    },
+    "14-timer": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/14-timer.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 35608,
+      "sha256": "e9d0db756b6a7d506a7229104e1dec2b5700861bd00bb29d6bcf7a4e7f9106f5"
+    },
+    "15-watching-binoculars": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/15-watching-binoculars.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 39340,
+      "sha256": "badd2a287067d46e8cbf65859ce8103421ede24be27d42945d8269d421bfdf19"
+    },
+    "16-search-magnifying-glass": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/16-search-magnifying-glass.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 41368,
+      "sha256": "1ef17aeeb398f426f1bcf3a9b1d82639b2eb9dd257e86349b7291e5e54d9cfd0"
+    },
+    "17-building": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/17-building.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 41960,
+      "sha256": "536285bd9f32300f7a3e2e4a4d7fb59cfebde059e7edd80a94271b752870ea40"
+    },
+    "18-megaphone": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/18-megaphone.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 42300,
+      "sha256": "d23ca2404554d79ccfc949f149c96b9bdd4f6ce47369c41798ccbea44b108315"
+    },
+    "19-shield-verified": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/19-shield-verified.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 39900,
+      "sha256": "1ac4e5193b300427c06e16d17826f4bf01539aed98903ab7d4e04840c88eb675"
+    },
+    "20-error-cable": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/20-error-cable.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 36534,
+      "sha256": "fbfd476367feaebd3dc131ab8c3b7c653e84d8b022f5061ffa46127d3e12bd3a"
+    },
+    "mako-back": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-back.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 31560,
+      "sha256": "fdfd526100f770538aa9c21d268f76b6a919de749556a604d98333362351037d"
+    },
+    "mako-bear-run": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-bear-run.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 38942,
+      "sha256": "edd7436c7e79be3deaa491a57f2fcec71f747ac567d6d80cfee097ba41d7e0c9"
+    },
+    "mako-blackout": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-blackout.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 10290,
+      "sha256": "d39cf2a65ba51ce0fd3f891877fc5ba94389af21c2c4cf1d23c68b1578c63ee6"
+    },
+    "mako-bull-run": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-bull-run.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 42712,
+      "sha256": "7de30daa314814898e060bbcc3ef5bb79b9410ac8d06e71d1504518d0bb99b94"
+    },
+    "mako-cash-pool": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-cash-pool.webp",
+      "width": 520,
+      "height": 475,
+      "bytes": 49862,
+      "sha256": "36a1251ad74e3797edba820ae36159960706720439b1eeec7024468f8e150014"
+    },
+    "mako-celebrate": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-celebrate.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 36606,
+      "sha256": "4b723f531bd8cc371d6769f58dfacd8ec1a798b380188e16dc924bdc4d7c2b61"
+    },
+    "mako-connect-wallet-tap": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-connect-wallet-tap.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 39016,
+      "sha256": "526eb5578f556d6e3b7c57929d44345b251651280f1c4773ecaa1f616413337a"
+    },
+    "mako-connect-wallet": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-connect-wallet.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 35310,
+      "sha256": "f3feb09d16042434c9d29fc15c47b0683a8ba526c550fc248ff2cc5dc41dd9f1"
+    },
+    "mako-idle": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-idle.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 33754,
+      "sha256": "2a1d4f1824730240e6c88301355b5c7c92acd26c17884c1189d75d2f0eeff80f"
+    },
+    "mako-jump-confetti": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-jump-confetti.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 47624,
+      "sha256": "728b34ffcaca608df81b2168567329af06c3ba4815a16807eedad7b547fb80e4"
+    },
+    "mako-shrug": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-shrug.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 36964,
+      "sha256": "6dd5fc641ef9bf299ece67cb89a457aa27383e8b0bade52c3a1348831e9d3628"
+    },
+    "mako-sleeping": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-sleeping.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 36852,
+      "sha256": "d39c4f7a8605f99b041f54f3f247de4d35cb0cbc244c501d6cf71f330da7f70c"
+    },
+    "mako-thinking": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-thinking.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 31390,
+      "sha256": "386541e1581d40221ce492e0a26d779b55c75228633da1c6155fd56e5f52657e"
+    },
+    "mako-vibing": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-vibing.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 35662,
+      "sha256": "4a51b3403b048c9d7e3adc37b81fdd0adc8dbd96ad6970c947e74bc06718033d"
+    },
+    "mako-wave": {
+      "url": "https://mimcn9cp2qspbz3f.public.blob.vercel-storage.com/mascot/v1/mako-wave.webp",
+      "width": 520,
+      "height": 553,
+      "bytes": 34244,
+      "sha256": "a2743f51008b51c00a20001513a26032270691066c8cfd843468b57f39ca3ebc"
+    }
+  }
+}
