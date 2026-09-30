@@ -61,8 +61,7 @@ export type MeView = {
 };
 
 export const poolHref = (id: bigint) => `/pools/${id}`;
-/// Until the redesigned create flow (10a) replaces it, creating a pool opens the current form.
-export const CREATE_HREF = '/create';
+export const CREATE_HREF = '/pools/new';
 /// Settings (21a) is not built; the existing profile page holds the account settings until it is.
 export const SETTINGS_HREF = '/profile';
 

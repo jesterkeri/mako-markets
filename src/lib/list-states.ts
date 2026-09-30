@@ -52,14 +52,27 @@ const EMPTY: Record<ListKind, ListStateCopy> = {
   },
 };
 
+/// Rounds before the Rounds contract is live: nothing can be scheduled yet, so the empty copy above (which says a
+/// creator can schedule one) would promise something the product cannot do today.
+const ROUNDS_NOT_OPEN: ListStateCopy = {
+  title: 'Rounds open soon',
+  body: 'Rounds are not live on Mako Market yet. Pools are open now.',
+  pose: 'mako-sleeping',
+  motion: 'breathe',
+  primary: { label: 'Browse pools', href: '/pools' },
+  secondary: { label: 'Remind me', comingSoon: true },
+};
+
 const ERROR_BODY: Record<ListKind, [string, string]> = {
   rounds: ['Can’t load rounds right now', 'Mako Market couldn’t reach Monad. Your bets are safe on-chain and nothing was lost.'],
   pools: ['Can’t load pools right now', 'Mako Market couldn’t reach Monad. Your bets are safe on-chain and nothing was lost.'],
   me: ['Can’t load your positions', 'Your balance and winnings are safe on-chain. Mako Market just couldn’t read them right now.'],
 };
 
-/// The empty or error copy for a list. `explorerHref` is the account's explorer page, offered on Me's error.
-export function listStateCopy(kind: ListKind, state: 'empty' | 'error', explorerHref?: string): ListStateCopy {
+/// The empty or error copy for a list, or the Rounds page before rounds exist (`not_open`). `explorerHref` is the
+/// account's explorer page, offered on Me's error.
+export function listStateCopy(kind: ListKind, state: 'empty' | 'error' | 'not_open', explorerHref?: string): ListStateCopy {
+  if (state === 'not_open') return ROUNDS_NOT_OPEN;
   if (state === 'empty') return EMPTY[kind];
   const [title, body] = ERROR_BODY[kind];
   return {

@@ -7,7 +7,7 @@ import { listStateCopy, type ListAction, type ListKind } from '@/lib/list-states
 
 type Props = {
   kind: ListKind;
-  state: 'loading' | 'empty' | 'error';
+  state: 'loading' | 'empty' | 'error' | 'not_open';
   /// Called by "Try again" on an error.
   onRetry?: () => void;
   /// The account's explorer page, offered on Me's error.

@@ -5,7 +5,7 @@ import { CIRCLE_FAUCET_URL, listStateCopy, type ListKind } from '../list-states'
 import manifest from '../mascot-manifest.json';
 
 const KINDS: ListKind[] = ['rounds', 'pools', 'me'];
-const all = KINDS.flatMap((k) => [listStateCopy(k, 'empty'), listStateCopy(k, 'error', explorerUrl('address', '0xabc'))]);
+const all = [...KINDS.flatMap((k) => [listStateCopy(k, 'empty'), listStateCopy(k, 'error', explorerUrl('address', '0xabc'))]), listStateCopy('rounds', 'not_open')];
 const text = (c: ReturnType<typeof listStateCopy>) =>
   [c.title, c.body, c.footer ?? '', c.primary.label, c.secondary.label].join(' ');
 
