@@ -182,7 +182,7 @@ function MarketRow({
       </div>
 
       <Link
-        href={`/market/${m.id}`}
+        href={`/pools/${m.id}`}
         className="block mako-title text-lg leading-tight hover:underline"
       >
         {m.question}

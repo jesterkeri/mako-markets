@@ -295,7 +295,7 @@ export default function AdminCreateMakoPage() {
   /// the admin needs to see the recovery banner.
   useEffect(() => {
     if (effectiveNewId !== null && labelSaveDone && !labelSaveBanner) {
-      router.push(`/market/${effectiveNewId.toString()}`);
+      router.push(`/pools/${effectiveNewId.toString()}`);
     } else if (decodeError && receipt) {
       console.warn(
         '[admin/create-mako] MarketCreated event not found in receipt logs',

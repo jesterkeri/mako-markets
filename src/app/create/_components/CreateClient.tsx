@@ -397,7 +397,7 @@ export default function CreateMarketClient() {
   // Wallet-flow side effect: navigate once the receipt decodes.
   useEffect(() => {
     if (parsedNewId !== null) {
-      router.push(`/market/${parsedNewId.toString()}`);
+      router.push(`/pools/${parsedNewId.toString()}`);
     } else if (decodeError && receipt) {
       console.warn('[create] MarketCreated event not found in receipt logs', receipt);
     }
@@ -424,7 +424,7 @@ export default function CreateMarketClient() {
         case 'created':
           // Magic happy path — hook decoded newId; redirect.
           setMagicStatusBanner(null);
-          router.push(`/market/${result.newId.toString()}`);
+          router.push(`/pools/${result.newId.toString()}`);
           return;
         case 'wallet_submitted':
           // Wallet path — useWaitForTransactionReceipt drives the

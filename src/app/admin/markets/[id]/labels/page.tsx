@@ -332,7 +332,7 @@ export default function AdminMakoLabelsEditPage({
 
         <div className="flex gap-4 justify-center">
           <Link
-            href={`/market/${marketIdParam}`}
+            href={`/pools/${marketIdParam}`}
             className="mako-label text-canvas-fg/70 hover:text-link-hover transition-colors"
           >
             → VIEW MARKET

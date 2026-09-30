@@ -1,53 +1,18 @@
 import { ImageResponse } from 'next/og';
-import { createPublicClient, http } from 'viem';
-import { makoAbi, MarketType, marketTypeLabel, type MarketWithId } from '@/lib/contract';
-import { humanizeUntil } from '@/lib/time';
+
+import { marketTypeLabel } from '@/lib/contract';
+import { poolIdFrom, readPoolForShare, shareStatus } from '@/lib/pool-share';
 
 /**
- * Dynamic OpenGraph thumbnail for /market/[id].
- *
- * Renders 1200x630 PNG generated at request time via Next.js ImageResponse.
- * Pulls the market's question + tag + closeTime from on-chain so the
- * unfurl looks specific to the bet, not a generic Mako logo.
- *
- * Cached for 60s to match the page's revalidate window — share links
- * unfurl cheaply even on a viral post.
+ * The share preview for /pools/[id]: 1200x630, generated per request from the pool on chain (question, category,
+ * status), so an unfurl names the pool rather than showing a generic card. A pool that cannot be read shows the
+ * brand. Moved from /market/[id], where `params` was read as a plain object; in Next 16 it is a Promise, so every
+ * preview there fell back to the brand.
  */
 export const revalidate = 60;
-export const alt = 'Mako Market — prediction market';
+export const alt = 'Mako Market prediction pool';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
-
-const MAKO_ADDRESS = (process.env.NEXT_PUBLIC_MAKO_ADDRESS ??
-  '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195') as `0x${string}`;
-const RPC_URL = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
-
-const monadTestnet = {
-  id: 10143,
-  name: 'Monad Testnet',
-  nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-  rpcUrls: { default: { http: [RPC_URL] }, public: { http: [RPC_URL] } },
-} as const;
-
-async function fetchMarket(id: bigint): Promise<MarketWithId | null> {
-  try {
-    const client = createPublicClient({ chain: monadTestnet, transport: http(RPC_URL) });
-    const m = (await client.readContract({
-      address: MAKO_ADDRESS,
-      abi: makoAbi,
-      functionName: 'getMarket',
-      args: [id],
-    })) as Omit<MarketWithId, 'id'>;
-    if (!m || !m.question) return null;
-    return { ...m, id };
-  } catch {
-    return null;
-  }
-}
-
-function tagFor(mType: MarketType): string {
-  return marketTypeLabel(mType);
-}
 
 // Color tokens mirror globals.css so the OG image feels like the site.
 const COLORS = {
@@ -57,34 +22,14 @@ const COLORS = {
   muted: '#79797A',
 };
 
-export default async function Image({ params }: { params: { id: string } }) {
-  let parsedId: bigint | null = null;
-  try {
-    parsedId = BigInt(params.id);
-  } catch {
-    /* fall through to generic branding */
-  }
+export default async function Image({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const parsedId = poolIdFrom(id);
+  const market = parsedId !== null ? await readPoolForShare(parsedId) : null;
 
-  const market = parsedId !== null ? await fetchMarket(parsedId) : null;
-
-  // Branded fallback for bad ids or chain read failures — better than a blank
-  // square in someone's Discord preview.
   const question = market?.question ?? 'Mako Market';
-  const tag = market ? tagFor(market.mType) : 'MAKO';
-  const nowSec = Math.floor(Date.now() / 1000);
-  // v4 splits "betting still open?" (bettingCloseTime) from "resolution
-  // legal?" (closeTime). The unfurl reads bettingCloseTime so social
-  // previews don't tell readers betting is still open during the
-  // post-bettingClose / pre-resolution window (sports markets sit there
-  // for the duration of the event).
-  const bettingCloseSec = market ? Number(market.bettingCloseTime) : 0;
-  const closeLabel = !market
-    ? 'Short-form prediction markets on Monad'
-    : market.resolved
-      ? 'MARKET RESOLVED'
-      : bettingCloseSec > nowSec
-        ? `BETS CLOSE ${humanizeUntil(bettingCloseSec - nowSec).toUpperCase()}`
-        : 'AWAITING RESOLUTION';
+  const tag = market ? marketTypeLabel(market.mType) : 'MAKO';
+  const closeLabel = market ? shareStatus(market, Math.floor(Date.now() / 1000)).toUpperCase() : 'PREDICTION POOLS ON MONAD';
 
   // Font size tapers with question length so long strings still fit on one
   // card. The 1200x630 canvas comfortably fits ~90 chars at 72px.
@@ -151,7 +96,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                 color: COLORS.muted,
               }}
             >
-              MARKET #{parsedId?.toString() ?? '?'}
+              {`POOL #${parsedId?.toString() ?? '?'}`}
             </div>
           ) : null}
         </div>
@@ -176,7 +121,7 @@ export default async function Image({ params }: { params: { id: string } }) {
               color: COLORS.warning,
               backgroundColor: `${COLORS.warning}22`,
               padding: '8px 16px',
-              width: 'fit-content',
+              alignSelf: 'flex-start',
               marginBottom: 32,
             }}
           >

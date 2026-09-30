@@ -25,5 +25,5 @@ export function getAppOrigin(): string {
 export function getMarketShareUrl(id: bigint | string): string {
   const origin = getAppOrigin();
   const marketId = typeof id === 'bigint' ? id.toString() : id;
-  return origin ? `${origin}/market/${marketId}` : `/market/${marketId}`;
+  return origin ? `${origin}/pools/${marketId}` : `/pools/${marketId}`;
 }
