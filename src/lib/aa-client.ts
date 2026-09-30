@@ -75,7 +75,13 @@ export type SponsorRequestBody =
   | { kind: 'pm_cancel'; chainId: number; call: Call }
   | { kind: 'pm_finalize'; chainId: number; call: Call }
   | { kind: 'pm_finalize_metadata'; chainId: number; call: Call }
-  | { kind: 'pm_edit_metadata'; chainId: number; call: Call };
+  | { kind: 'pm_edit_metadata'; chainId: number; call: Call }
+  // Rounds (MakoRoundsV1): see src/lib/rounds-client.ts.
+  | { kind: 'round_enter'; chainId: number; call: Call }
+  | { kind: 'round_enter_batched'; chainId: number; calls: [Call, Call] }
+  | { kind: 'round_claim'; chainId: number; call: Call }
+  | { kind: 'round_refund'; chainId: number; call: Call }
+  | { kind: 'round_schedule'; chainId: number; call: Call };
 
 /// Successful 200 response from /api/aa/sponsor on the happy path.
 export type SponsorResponse = {
@@ -1119,6 +1125,17 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
     },
   };
 
+  return runSponsoredRequest(body, args.magicEoa);
+}
+
+/// The sponsor -> sign -> send sequence, with its full outcome mapping, shared by claims and the Rounds actions
+/// (extracted unchanged from runClaim). `onStage` reports progress to the confirm sheet: 'signing' when the
+/// signature is requested, 'sending' once signed and the op is on its way to Monad.
+export async function runSponsoredRequest(
+  body: SponsorRequestBody,
+  magicEoa: Address,
+  onStage?: (stage: 'signing' | 'sending') => void,
+): Promise<RunOutcome> {
   // 1. Sponsor. Codex r1 MAJ-1: catch transport throws (network / DNS /
   // aborted fetch) so the helper always resolves a typed RunOutcome.
   let sponsor;
@@ -1179,13 +1196,14 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
   // numeric validity field (string that bypassed the shape check, e.g.
   // 'not-a-number') is caught and produces a typed RunOutcome rather
   // than propagating a SyntaxError.
+  onStage?.('signing');
   let signature;
   try {
     const validAfter = BigInt(sponsored.validAfter);
     const validUntil = BigInt(sponsored.validUntil);
     signature = await signSafeOpHash({
       hash: sponsored.safeOpHash,
-      magicEoa: args.magicEoa,
+      magicEoa,
       validAfter,
       validUntil,
     });
@@ -1202,6 +1220,7 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
   }
 
   // 3. Send. Codex r1 MAJ-1: catch transport throws same as the sponsor.
+  onStage?.('sending');
   let send;
   try {
     send = await postJson('/api/aa/send', {

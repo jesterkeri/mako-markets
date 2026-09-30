@@ -1,6 +1,6 @@
 import { decodeEventLog, getAddress, type TransactionReceipt } from 'viem';
 import { makoAbi } from './MakoMarkets.abi';
-import { usdcContract } from './usdc';
+import { USDC_ADDRESS, usdcContract } from './usdc';
 
 /**
  * Normalize an env-derived address: strip surrounding whitespace
@@ -55,6 +55,30 @@ export const PM_CONTRACT_ADDRESS = normalizeAddress(
     || '0xc9c6575a14d0e84afd5ab21c506916fd2864bb8f',
   'NEXT_PUBLIC_PRIVATE_MARKETS_ADDRESS',
 );
+
+/**
+ * The Rounds contract address from `raw`, or null when Rounds is not live.
+ *
+ * There is deliberately NO fallback: until MakoRoundsV1 is deployed and `NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS` is set,
+ * every Rounds action is refused rather than pointed at a guessed address. A malformed value throws at load, like
+ * the other contract addresses. An address equal to Pools, Private Markets or USDC is treated as unset: Rounds'
+ * `claim(uint256)` has the same selector as the Pools `claim(uint256)`, and the two are told apart only by target.
+ */
+export function resolveRoundsAddress(
+  raw: string | undefined,
+  others: readonly `0x${string}`[] = [MAKO_ADDRESS, PM_CONTRACT_ADDRESS, USDC_ADDRESS],
+): `0x${string}` | null {
+  if (!raw || !raw.trim()) return null;
+  const address = normalizeAddress(raw, 'NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS');
+  if (others.some((o) => o.toLowerCase() === address.toLowerCase())) {
+    console.error('[contract] NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS equals another Mako contract or USDC; Rounds is off');
+    return null;
+  }
+  return address;
+}
+
+/// Deployed MakoRoundsV1 on Monad testnet, or null while Rounds is not live (see resolveRoundsAddress).
+export const ROUNDS_ADDRESS = resolveRoundsAddress(process.env.NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS);
 
 /**
  * Pre-composed contract object for wagmi's useReadContract / useWriteContract.

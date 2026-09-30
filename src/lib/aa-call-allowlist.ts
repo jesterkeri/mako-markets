@@ -105,6 +105,7 @@ import {
   assertPmStakeCallShape,
   isPmTarget,
 } from './private-markets/pm-call-allowlist';
+import { assertRoundsSendBatched, assertRoundsSendCall, isRoundsTarget } from './rounds-call-allowlist';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -207,7 +208,18 @@ export type NotAllowedReason =
   // Chain-state hydration failures (sponsor-chain-state.ts).
   | 'pm_market_not_found'
   | 'pm_state_rpc_failure'
-  | 'pm_bad_state_shape_unknown';
+  | 'pm_bad_state_shape_unknown'
+  // Rounds (MakoRoundsV1; rounds-call-allowlist.ts). round_unavailable: the Rounds address is unset or collides
+  // with another contract, so nothing Rounds is sponsored or sent.
+  | 'round_unavailable'
+  | 'round_bad_target'
+  | 'round_bad_enter_args'
+  | 'round_bad_claim_args'
+  | 'round_bad_refund_args'
+  | 'round_bad_schedule_args'
+  | 'round_bad_approval'
+  | 'round_not_creator'
+  | 'round_state_rpc_failure';
 
 export class NotAllowedError extends Error {
   constructor(
@@ -2074,6 +2086,15 @@ export async function assertSponsoredCallData(args: {
       }
       throw new NotAllowedError('bad_selector');
     }
+    if (isRoundsTarget(to)) {
+      // Rounds (MakoRoundsV1): the same decoders as sponsor time, by selector. Never true while Rounds is not
+      // live, and Rounds' claim shares the Pools claim selector, so the target decides first.
+      if (args.chainId !== MONAD_TESTNET_ID) {
+        throw new NotAllowedError('round_bad_target');
+      }
+      assertRoundsSendCall({ to, value, data });
+      return;
+    }
     throw new NotAllowedError('bad_to');
   }
 
@@ -2195,6 +2216,11 @@ export async function assertSponsoredCallData(args: {
         return;
       }
       throw new NotAllowedError('bad_selector');
+    }
+    if (isRoundsTarget(sub1.to)) {
+      // Rounds: only [approve(ROUNDS, MaxUint256) on USDC, enter(...)].
+      assertRoundsSendBatched(sub0, sub1);
+      return;
     }
     // Unknown sub[1] target. Reject defensively — neither v4 batched
     // bet nor PM batched bet/stake.

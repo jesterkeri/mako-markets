@@ -4,7 +4,17 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { userSafes, type AaPendingUserOp } from '@/db/schema';
 import { makoAbi } from '@/lib/MakoMarkets.abi';
-import { MAKO_ADDRESS } from '@/lib/contract';
+import { MAKO_ADDRESS, ROUNDS_ADDRESS } from '@/lib/contract';
+import { roundsAbi } from '@/lib/rounds-abi';
+import {
+  assertRoundClaimCall,
+  assertRoundEnterBatchedCalls,
+  assertRoundEnterCall,
+  assertRoundRefundCall,
+  assertRoundScheduleCall,
+  assertRoundScheduleShape,
+  assertRoundScheduler,
+} from '@/lib/rounds-call-allowlist';
 import {
   PENDING_TTL_MS,
   VALIDITY_WINDOW_MAX_UINT48,
@@ -301,7 +311,11 @@ export async function POST(req: Request) {
           | 'pm_cancel'
           | 'pm_finalize'
           | 'pm_finalize_metadata'
-          | 'pm_edit_metadata';
+          | 'pm_edit_metadata'
+          | 'round_enter'
+          | 'round_claim'
+          | 'round_refund'
+          | 'round_schedule';
         call: Call;
       }
     | {
@@ -309,7 +323,8 @@ export async function POST(req: Request) {
           | 'bet_batched'
           | 'create_market_batched'
           | 'pm_bet_batched'
-          | 'pm_stake_batched';
+          | 'pm_stake_batched'
+          | 'round_enter_batched';
         calls: readonly [Call, Call];
       };
   try {
@@ -865,6 +880,47 @@ export async function POST(req: Request) {
         buildArgs = { kind: 'pm_edit_metadata', call };
         break;
       }
+      // Rounds (MakoRoundsV1). Refused with round_unavailable while Rounds is not live.
+      case 'round_enter':
+      case 'round_claim':
+      case 'round_refund':
+      case 'round_schedule': {
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        const kind = parsed.data.kind;
+        if (kind === 'round_enter') assertRoundEnterCall({ chainId, call });
+        else if (kind === 'round_claim') assertRoundClaimCall({ chainId, call });
+        else if (kind === 'round_refund') assertRoundRefundCall({ chainId, call });
+        else {
+          // Shape first, with no chain read, so a malformed request (or Rounds not live) never costs an RPC call.
+          // Then the lead window by the latest block's time (the clock the contract uses), then only a creator is
+          // sponsored: schedule() reverts for anyone else.
+          assertRoundScheduleShape({ chainId, call });
+          const client = getAaPublicClient(chainId);
+          const block = await client.getBlock({ blockTag: 'latest' });
+          assertRoundScheduleCall({ chainId, call, nowSec: Number(block.timestamp) });
+          await assertRoundScheduler(safeAddress, (who) =>
+            // The pinned ROUNDS address (non-null here: the validator above refuses when Rounds is not live).
+            client.readContract({ address: ROUNDS_ADDRESS as Address, abi: roundsAbi, functionName: 'isCreator', args: [who] }),
+          );
+        }
+        buildArgs = { kind, call };
+        break;
+      }
+      case 'round_enter_batched': {
+        const [a, b] = parsed.data.calls;
+        const calls: readonly [Call, Call] = [
+          { to: a.to as Address, value: hexToBigInt(a.value as Hex), data: a.data as Hex },
+          { to: b.to as Address, value: hexToBigInt(b.value as Hex), data: b.data as Hex },
+        ];
+        assertRoundEnterBatchedCalls({ chainId, calls });
+        buildArgs = { kind: 'round_enter_batched', calls };
+        break;
+      }
     }
   } catch (e) {
     if (e instanceof NotAllowedError) {
@@ -879,9 +935,11 @@ export async function POST(req: Request) {
         chainId,
         kind: parsed.data.kind,
       });
+      // Rounds not live is not the caller's fault (503); a failed creator read is an upstream failure (502).
+      const status = e.reason === 'round_unavailable' ? 503 : e.reason === 'round_state_rpc_failure' ? 502 : 403;
       return Response.json(
         { error: 'NOT_ALLOWED', reason: e.reason },
-        { status: 403 },
+        { status },
       );
     }
     // codex r1 4f-fe MINOR 1: validators may now do chain reads

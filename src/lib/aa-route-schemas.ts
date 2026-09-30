@@ -362,6 +362,53 @@ const PmEditMetadataRequest = z
   })
   .strict();
 
+// Rounds (MakoRoundsV1), spec mako-design/REDESIGN_S2_ROUNDS_SPONSOR_SPEC.md. Validated in
+// rounds-call-allowlist.ts; every kind is refused while Rounds is not live.
+const RoundEnterRequest = z
+  .object({
+    kind: z.literal('round_enter'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// `enter(roundId, side, amount)` on ROUNDS, allowance already sufficient.
+    call: CallShape,
+  })
+  .strict();
+
+const RoundEnterBatchedRequest = z
+  .object({
+    kind: z.literal('round_enter_batched'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Exactly `[approve(ROUNDS, MaxUint256) on USDC, enter(...)]`, built into a MultiSend by the lib.
+    calls: z.tuple([CallShape, CallShape]),
+  })
+  .strict();
+
+const RoundClaimRequest = z
+  .object({
+    kind: z.literal('round_claim'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// `claim(roundId)` on ROUNDS (same selector as the Pools claim; told apart by target).
+    call: CallShape,
+  })
+  .strict();
+
+const RoundRefundRequest = z
+  .object({
+    kind: z.literal('round_refund'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// `finalizeRefund(roundId)` on ROUNDS; anyone may call it once a round is refundable.
+    call: CallShape,
+  })
+  .strict();
+
+const RoundScheduleRequest = z
+  .object({
+    kind: z.literal('round_schedule'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// `schedule(startTime)` on ROUNDS; the route also requires the Safe to be a creator.
+    call: CallShape,
+  })
+  .strict();
+
 export const SponsorRequest = z.discriminatedUnion('kind', [
   SmokeRequest,
   BetSingleRequest,
@@ -383,6 +430,11 @@ export const SponsorRequest = z.discriminatedUnion('kind', [
   PmFinalizeRequest,
   PmFinalizeMetadataRequest,
   PmEditMetadataRequest,
+  RoundEnterRequest,
+  RoundEnterBatchedRequest,
+  RoundClaimRequest,
+  RoundRefundRequest,
+  RoundScheduleRequest,
 ]);
 
 export type SponsorRequest = z.infer<typeof SponsorRequest>;
@@ -393,6 +445,11 @@ export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
 export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
 export type CreateMarketBatchedRequest = z.infer<typeof CreateMarketBatchedRequest>;
 export type ClaimRequest = z.infer<typeof ClaimRequest>;
+export type RoundEnterRequest = z.infer<typeof RoundEnterRequest>;
+export type RoundEnterBatchedRequest = z.infer<typeof RoundEnterBatchedRequest>;
+export type RoundClaimRequest = z.infer<typeof RoundClaimRequest>;
+export type RoundRefundRequest = z.infer<typeof RoundRefundRequest>;
+export type RoundScheduleRequest = z.infer<typeof RoundScheduleRequest>;
 export type PmCreateMarketRequest = z.infer<typeof PmCreateMarketRequest>;
 export type PmBetRequest = z.infer<typeof PmBetRequest>;
 export type PmBetBatchedRequest = z.infer<typeof PmBetBatchedRequest>;
