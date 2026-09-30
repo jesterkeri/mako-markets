@@ -184,6 +184,19 @@ describe('phaseFromOutcome', () => {
     expect(p.step === 'failed' && p.body).toBe('An email account gets 10 gas-free transactions a day. Try again tomorrow.');
   });
 
+  it('names why the gas sponsor refused a new pool, and keeps the generic wording otherwise', () => {
+    const cw = { noun: 'pool', failTitle: "The pool wasn't created", afterRevert: 'Check the times and try again.' };
+    const refused = (reason: string) => phaseFromOutcome({ kind: 'sponsor_failed', status: 403, error: 'NOT_ALLOWED', reason }, cw);
+    expect(refused('bad_create_daily_cap_exceeded')).toMatchObject({ title: 'Daily limit reached', nothingMoved: true });
+    expect(refused('bad_create_timestamps')).toMatchObject({ title: 'Times no longer fit' });
+    expect(refused('bad_create_seed_too_small')).toMatchObject({ title: 'First bet too small' });
+    expect(refused('bad_create_args')).toMatchObject({ title: "The pool wasn't created", body: "Mako Market can't cover the gas for this pool." });
+    expect(phaseFromOutcome({ kind: 'reverted', pendingUserOpId: id, txHash: tx, userOpHash: tx, failureReason: 'x' }, cw)).toMatchObject({
+      body: 'Monad turned the pool down, so it was undone. Check the times and try again.',
+    });
+    expect(refusalPhase('CreatorDailyCapExceeded', cw)).toMatchObject({ title: 'Daily limit reached', nothingMoved: true });
+  });
+
   it('explains a contract refusal found before sending', () => {
     const p = refusalPhase('BetTooSoon', w);
     expect(p).toMatchObject({ step: 'failed', title: 'Too soon', nothingMoved: true });

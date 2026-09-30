@@ -5,10 +5,12 @@ import { BaseError, ContractFunctionRevertedError, maxUint256 } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 
 import type { ConfirmPhase } from '@/components/ConfirmSheet';
-import { buildBetBody, buildClaimBody, runSponsoredRequest } from './aa-client';
+import { buildBetBody, buildClaimBody, buildCreateBody, runSponsoredRequest } from './aa-client';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
-import { MAKO_ADDRESS, makoContract } from './contract';
+import { decodeMarketCreatedId, MAKO_ADDRESS, makoContract } from './contract';
+import { toBytes32 } from './oracle';
+import { buildPool, type CreateDraft } from './pool-create';
 import { useEnsureMonadChain } from './hooks';
 import { USDC_ADDRESS, usdcContract } from './usdc';
 import { useUser } from './use-user';
@@ -18,11 +20,17 @@ import { useUser } from './use-user';
 // own gas: an approval first if the allowance is short, then the action, each checked by simulation before the
 // wallet is asked.
 
-export type PoolTx = { kind: 'bet'; marketId: bigint; isYes: boolean; amount: bigint } | { kind: 'claim'; marketId: bigint };
+export type PoolTx =
+  | { kind: 'bet'; marketId: bigint; isYes: boolean; amount: bigint }
+  | { kind: 'claim'; marketId: bigint }
+  /// A new pool: built from the draft at the moment of confirming (a price pool runs from then), with the creator's
+  /// first bet (`seed`, at least 1 USDC) on one side.
+  | { kind: 'create'; draft: CreateDraft; seed: bigint; seedYes: boolean };
 
 const WORDS: Record<PoolTx['kind'], OutcomeWords> = {
   bet: { noun: 'bet', failTitle: "Bet didn't go through" },
   claim: { noun: 'claim', failTitle: "Claim didn't go through" },
+  create: { noun: 'pool', failTitle: "The pool wasn't created", afterRevert: 'Check the times and try again.' },
 };
 
 function isUserRejection(err: unknown): boolean {
@@ -50,6 +58,8 @@ export function usePoolTx(onLanded?: () => void) {
 
   const [tx, setTx] = useState<PoolTx | null>(null);
   const [phase, setPhase] = useState<ConfirmPhase>({ step: 'review' });
+  /// The id of the pool a landed create made, read from its receipt (null until then, or if it could not be read).
+  const [createdId, setCreatedId] = useState<bigint | null>(null);
   const inFlight = useRef(false);
 
   /// Opens the sheet on the review step.
@@ -57,6 +67,7 @@ export function usePoolTx(onLanded?: () => void) {
     if (inFlight.current) return;
     setTx(next);
     setPhase({ step: 'review' });
+    setCreatedId(null);
   }, []);
 
   /// Closes the sheet; never while a transaction is on its way.
@@ -66,6 +77,19 @@ export function usePoolTx(onLanded?: () => void) {
     setPhase({ step: 'review' });
   }, []);
 
+  /// The new pool's id from a landed create's receipt.
+  const createdIdFrom = useCallback(
+    async (hash: `0x${string}`): Promise<bigint | null> => {
+      if (!publicClient) return null;
+      try {
+        return decodeMarketCreatedId(await publicClient.getTransactionReceipt({ hash }));
+      } catch {
+        return null;
+      }
+    },
+    [publicClient],
+  );
+
   const run = useCallback(async () => {
     if (!tx || !user || !publicClient || inFlight.current) return;
     inFlight.current = true;
@@ -73,21 +97,7 @@ export function usePoolTx(onLanded?: () => void) {
     let next: ConfirmPhase;
     try {
       if (user.authType === 'magic') {
-        setPhase({ step: 'pending', stage: 'signing' });
-        const onStage = (stage: 'signing' | 'sending' | 'confirming') => setPhase({ step: 'pending', stage });
-        const magicEoa = user.magicEoa as `0x${string}`;
-        let body;
-        if (tx.kind === 'bet') {
-          const currentAllowance = (await publicClient.readContract({
-            ...usdcContract,
-            functionName: 'allowance',
-            args: [user.safeAddress as `0x${string}`, MAKO_ADDRESS],
-          })) as bigint;
-          body = buildBetBody({ chainId: MONAD_TESTNET_ID, marketId: tx.marketId, isYes: tx.isYes, amountUsdc: tx.amount, usdcAddress: USDC_ADDRESS, makoAddress: MAKO_ADDRESS, currentAllowance });
-        } else {
-          body = buildClaimBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: tx.marketId });
-        }
-        next = phaseFromOutcome(await runSponsoredRequest(body, magicEoa, onStage), words);
+        next = await runSponsored(tx, user, words);
       } else {
         next = await runWithWallet(tx, words);
       }
@@ -102,6 +112,43 @@ export function usePoolTx(onLanded?: () => void) {
     }
     setPhase(next);
     if (next.step === 'done') onLanded?.();
+
+    async function runSponsored(t: PoolTx, u: Extract<typeof user, { authType: 'magic' }>, w: OutcomeWords): Promise<ConfirmPhase> {
+      if (!publicClient) {
+        return { step: 'failed', title: w.failTitle, body: 'Monad is not reachable right now.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
+      }
+      setPhase({ step: 'pending', stage: 'signing' });
+      const onStage = (stage: 'signing' | 'sending' | 'confirming') => setPhase({ step: 'pending', stage });
+      const safeAllowance = async () =>
+        (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [u.safeAddress as `0x${string}`, MAKO_ADDRESS] })) as bigint;
+      let body;
+      if (t.kind === 'create') {
+        const built = buildPool(t.draft, Math.floor(Date.now() / 1000));
+        if (!built.ok) {
+          return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
+        }
+        body = buildCreateBody({
+          chainId: MONAD_TESTNET_ID,
+          makoAddress: MAKO_ADDRESS,
+          mType: built.pool.mType,
+          oracleRef: toBytes32(built.pool.oracleRef),
+          bettingCloseTime: built.pool.bettingCloseTime,
+          closeTime: built.pool.closeTime,
+          question: built.pool.question,
+          creatorSeed: t.seed,
+          creatorYes: t.seedYes,
+          usdcAddress: USDC_ADDRESS,
+          currentAllowance: await safeAllowance(),
+        });
+      } else if (t.kind === 'bet') {
+        body = buildBetBody({ chainId: MONAD_TESTNET_ID, marketId: t.marketId, isYes: t.isYes, amountUsdc: t.amount, usdcAddress: USDC_ADDRESS, makoAddress: MAKO_ADDRESS, currentAllowance: await safeAllowance() });
+      } else {
+        body = buildClaimBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
+      }
+      const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
+      if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash));
+      return phaseFromOutcome(outcome, w);
+    }
 
     async function runWithWallet(t: PoolTx, w: OutcomeWords): Promise<ConfirmPhase> {
       const account = connected;
@@ -118,6 +165,31 @@ export function usePoolTx(onLanded?: () => void) {
       /// after the wallet broadcast it, so the sheet can no longer say nothing moved.
       let sent = false;
       try {
+        if (t.kind === 'create') {
+          const built = buildPool(t.draft, Math.floor(Date.now() / 1000));
+          if (!built.ok) return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
+          const args = [built.pool.mType, toBytes32(built.pool.oracleRef), built.pool.bettingCloseTime, built.pool.closeTime, built.pool.question, t.seed, t.seedYes] as const;
+          const allowance = (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [account, MAKO_ADDRESS] })) as bigint;
+          if (allowance < t.seed) {
+            const approveHash = await writeContractAsync({ ...usdcContract, functionName: 'approve', args: [MAKO_ADDRESS, maxUint256], chainId: monadTestnet.id });
+            setPhase({ step: 'pending', stage: 'confirming', txHash: approveHash });
+            const approved = await publicClient.waitForTransactionReceipt({ hash: approveHash });
+            if (approved.status !== 'success') return undone(w, 'Your USDC approval was turned down on Monad, so the pool was not created.');
+          }
+          try {
+            await publicClient.simulateContract({ ...makoContract, functionName: 'createMarket', args, account });
+          } catch (err) {
+            return refusalPhase(revertName(err), w);
+          }
+          setPhase({ step: 'pending', stage: 'signing' });
+          sent = true;
+          const hash = await writeContractAsync({ ...makoContract, functionName: 'createMarket', args, chainId: monadTestnet.id });
+          setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
+          const receipt = await publicClient.waitForTransactionReceipt({ hash });
+          if (receipt.status !== 'success') return undone(w);
+          setCreatedId(decodeMarketCreatedId(receipt));
+          return { step: 'done', txHash: hash };
+        }
         if (t.kind === 'bet') {
           const allowance = (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [account, MAKO_ADDRESS] })) as bigint;
           if (allowance < t.amount) {
@@ -155,7 +227,7 @@ export function usePoolTx(onLanded?: () => void) {
           : { step: 'failed', title: w.failTitle, body: 'Your wallet or the network failed before it was sent.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
       }
     }
-  }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded]);
+  }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
 
-  return { tx, phase, open, close, confirm: run, retry: run };
+  return { tx, phase, createdId, open, close, confirm: run, retry: run };
 }

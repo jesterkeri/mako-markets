@@ -9,8 +9,8 @@ import type { ConfirmPhase } from '@/components/ConfirmSheet';
 type Failed = Extract<ConfirmPhase, { step: 'failed' }>;
 
 /// `noun` names the action in sentences ("bet", "claim"); `failTitle` heads a plain failure ("Bet didn't go
-/// through").
-export type OutcomeWords = { noun: string; failTitle: string };
+/// through"); `afterRevert` is what to do after Monad rolled it back (default: the pool may have changed).
+export type OutcomeWords = { noun: string; failTitle: string; afterRevert?: string };
 
 const close = { label: 'Close' } as const;
 const retry = { label: 'Try again', retry: true } as const;
@@ -19,6 +19,24 @@ const checkMe = { label: 'Check Me', href: '/me' } as const;
 function failed(title: string, body: string, nothingMoved: boolean, primary: Failed['primary'] = retry): Failed {
   return { step: 'failed', title, body, nothingMoved, primary, secondary: close };
 }
+
+/// Why a new pool can be refused, keyed by the contract's error and by the gas sponsor's matching reason (the
+/// sponsor checks the same rules before signing, src/lib/aa-call-allowlist.ts). The other create reasons are
+/// malformed requests this app does not build, so they keep the generic wording.
+const CREATE_REFUSALS: Record<string, [string, string]> = {
+  CreatorDailyCapExceeded: ['Daily limit reached', 'An account can create 10 pools a day (UTC). Try again tomorrow.'],
+  CreatorSeedTooSmall: ['First bet too small', 'Your first bet must be at least 1 USDC.'],
+  BadCloseTime: ['Times no longer fit', "The pool's times no longer fit the rules. Go back and pick the timing again."],
+  BadDuration: ['Times no longer fit', "The pool's times no longer fit the rules. Go back and pick the timing again."],
+  BadQuestion: ['Question not accepted', 'A question must be between 1 and 200 characters.'],
+};
+const SPONSOR_CREATE_REFUSALS: Record<string, [string, string]> = {
+  bad_create_daily_cap_exceeded: CREATE_REFUSALS.CreatorDailyCapExceeded,
+  bad_create_seed_too_small: CREATE_REFUSALS.CreatorSeedTooSmall,
+  bad_create_timestamps: CREATE_REFUSALS.BadCloseTime,
+  bad_create_question: CREATE_REFUSALS.BadQuestion,
+  bad_create_blocked_wallet: ['Account blocked', 'This account is blocked from creating Mako Market pools.'],
+};
 
 /// A contract refusal found before sending (a wallet account's pre-flight simulation), in the pool page's words.
 /// Nothing was sent, so nothing moved.
@@ -34,6 +52,7 @@ export function refusalPhase(errorName: string | undefined, w: OutcomeWords): Co
     NotResolved: ['Not settled yet', 'This pool has no result yet, so there is nothing to claim.'],
     AlreadyClaimed: ['Already claimed', 'This payout was already claimed. Check your balance.'],
     NoPosition: ['Nothing to claim', 'This wallet has no stake to claim in this pool.'],
+    ...CREATE_REFUSALS,
   };
   const [title, body] = (errorName && words[errorName]) ?? [w.failTitle, `Monad would turn the ${w.noun} down${errorName ? ` (${errorName})` : ''}.`];
   return failed(title, body, true, close);
@@ -44,7 +63,7 @@ export function phaseFromOutcome(o: RunOutcome, w: OutcomeWords): ConfirmPhase {
     case 'sent':
       return { step: 'done', txHash: o.txHash };
     case 'reverted':
-      return failed(w.failTitle, `Monad turned the ${w.noun} down, so it was undone. The pool may have changed; check it and try again.`, true);
+      return failed(w.failTitle, `Monad turned the ${w.noun} down, so it was undone. ${w.afterRevert ?? 'The pool may have changed; check it and try again.'}`, true);
     case 'submitted':
       return failed('Still confirming', `Your ${w.noun} was sent, but Monad hasn't confirmed it yet. Check Me in a few minutes before you try again.`, false, checkMe);
     case 'failed_pre_submit':
@@ -59,7 +78,11 @@ export function phaseFromOutcome(o: RunOutcome, w: OutcomeWords): ConfirmPhase {
       if (o.status === 429) return failed('Daily limit reached', 'An email account gets 10 gas-free transactions a day. Try again tomorrow.', true, close);
       if (o.status === 409) return failed('Another transaction is still going', 'Wait for your last transaction to finish, then try again.', true);
       if (o.status === 401) return failed('Signed out', 'Sign in again, then try again.', true, { label: 'Sign in', href: '/signup' });
-      if (o.status === 403) return failed(w.failTitle, `Mako Market can't cover the gas for this ${w.noun}.`, true, close);
+      if (o.status === 403) {
+        const refusal = o.reason ? SPONSOR_CREATE_REFUSALS[o.reason] : undefined;
+        if (refusal) return failed(refusal[0], refusal[1], true, close);
+        return failed(w.failTitle, `Mako Market can't cover the gas for this ${w.noun}.`, true, close);
+      }
       if (o.status === 0) return failed("Can't reach Mako Market", 'Check your connection and try again.', true);
       return failed(w.failTitle, `Mako Market couldn't prepare it.`, true);
     case 'send_failed':

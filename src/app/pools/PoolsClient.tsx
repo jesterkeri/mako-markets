@@ -40,7 +40,7 @@ const NEXT_SORT: Record<PoolSort, PoolSort> = { closing: 'pool', pool: 'bettors'
 
 const poolHref = (id: bigint) => `/pools/${id}`;
 /// Until the redesigned create flow (10a) replaces it, "Create pool" opens the current one.
-const CREATE_HREF = '/create';
+const CREATE_HREF = '/pools/new';
 
 type Labels = { yes: string; no: string };
 type ClosedState = Exclude<PoolRow['state'], 'open'>;

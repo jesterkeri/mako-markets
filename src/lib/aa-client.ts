@@ -944,9 +944,10 @@ export function buildCreateMarketBatchedSponsorRequest(args: {
 /// USDC allowance against the v4 contract is below `creatorSeed` route
 /// to the batched approve+create path. MAKO creates always use the
 /// single-call builder (creatorSeed=0n, no allowance check needed).
-export async function runCreateMarket(
-  args: RunCreateMarketArgs,
-): Promise<RunOutcome> {
+/// The sponsor request for a new pool: `createMarket` alone, or `[approve(MAKO, MaxUint256), createMarket]` when the
+/// Safe's allowance does not cover the creator's seed (never for MAKO house pools). Shared by runCreateMarket and the
+/// redesign's create page.
+export function buildCreateBody(args: Omit<RunCreateMarketArgs, 'magicEoa'>): SponsorRequestBody {
   const useBatched =
     args.mType !== MAKO_MARKET_TYPE &&
     args.currentAllowance < args.creatorSeed;
@@ -978,6 +979,15 @@ export async function runCreateMarket(
     creatorSeed: args.creatorSeed,
     creatorYes: args.creatorYes,
   });
+
+  // The same object, with the batched pair as a plain tuple (the builder types it readonly).
+  return body.kind === 'create_market_batched' ? { ...body, calls: [body.calls[0], body.calls[1]] } : body;
+}
+
+export async function runCreateMarket(
+  args: RunCreateMarketArgs,
+): Promise<RunOutcome> {
+  const body = buildCreateBody(args);
 
   // 1. Sponsor.
   const sponsor = await postJson('/api/aa/sponsor', body);
