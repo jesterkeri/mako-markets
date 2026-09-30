@@ -501,7 +501,9 @@ function deriveFootballOutcome(
 
 function isInsufficientFundsError(message: string): boolean {
   const s = message.toLowerCase();
-  return s.includes('insufficient funds') || s.includes('exceeds balance');
+  // Monad's txpool answers "Signer had insufficient balance" (monad-bft monad-eth-txpool-types), which viem's
+  // InsufficientFundsError pattern does not match.
+  return s.includes('insufficient funds') || s.includes('exceeds balance') || s.includes('insufficient balance');
 }
 
 function isAlreadyResolvedError(message: string): boolean {
@@ -1130,21 +1132,6 @@ export async function runResolver(env: Env): Promise<void> {
   const needsCoinGecko = needsData([MarketType.CRYPTO]);
   const needsPyth = needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
 
-  // CoinGecko (CRYPTO) + Pyth Hermes (FOREX/COMMODITIES/STOCKS) are
-  // independent providers; fetch in parallel so a 1s Hermes call
-  // doesn't add to tick latency.
-  const [prices, pythPrices] = await Promise.all([
-    needsCoinGecko ? fetchPrices() : Promise.resolve<PriceMap>({}),
-    needsPyth ? fetchPythPrices() : Promise.resolve<PythPriceMap>(new Map()),
-  ]);
-  // Banner-shape skip log mirroring `football:skip(no-key)` / `nba:skip(no-key)`
-  // at tick start. Pyth has no API key, so the only condition that warrants
-  // a tick-level flag is an empty map from a failed Hermes fetch. Per-market
-  // misses still log individually under the resolve loop.
-  if (needsPyth && pythPrices.size === 0) {
-    console.warn(`[${ts}] pyth:skip(no-symbols) — hermes fetch returned empty`);
-  }
-
   // No-data settlement (one-sided REFUND + 24h forceRefund keeper). Sends
   // from the same wallet, re-reads each market at the finalized block right
   // before sending, and at most once per market per tick.
@@ -1194,6 +1181,39 @@ export async function runResolver(env: Env): Promise<void> {
   let noDataDeferred = 0;
   let heldTwoSided = 0;
 
+  // No-data actions first, before any price is fetched: each send waits up to RECEIPT_TIMEOUT_MS for its receipt,
+  // and a price fetched before them would be minutes old by the time a two-sided pool used it.
+  for (let i = 0n; i < count && !walletOutOfFunds; i++) {
+    const readResult = marketResults[Number(i)];
+    const action = actions[Number(i)];
+    if (readResult.status !== 'fulfilled') continue;
+    if (action !== 'resolve_one_sided' && action !== 'force_refund') continue;
+    const result = await runNoDataAction(keeperIo, keeperTick, i, action);
+    if (result === 'sent' || result === 'dry_run') {
+      if (action === 'force_refund') forceRefunds++;
+      else oneSidedRefunds++;
+    } else {
+      if (result === 'deferred') noDataDeferred++;
+      if (result === 'out_of_funds') walletOutOfFunds = true;
+    }
+  }
+
+  // CoinGecko (CRYPTO) + Pyth Hermes (FOREX/COMMODITIES/STOCKS) are
+  // independent providers; fetch in parallel so a 1s Hermes call
+  // doesn't add to tick latency.
+  const [prices, pythPrices] = await Promise.all([
+    needsCoinGecko ? fetchPrices() : Promise.resolve<PriceMap>({}),
+    needsPyth ? fetchPythPrices() : Promise.resolve<PythPriceMap>(new Map()),
+  ]);
+  // Banner-shape skip log mirroring `football:skip(no-key)` / `nba:skip(no-key)`
+  // at tick start. Pyth has no API key, so the only condition that warrants
+  // a tick-level flag is an empty map from a failed Hermes fetch. Per-market
+  // misses still log individually under the resolve loop.
+  if (needsPyth && pythPrices.size === 0) {
+    console.warn(`[${ts}] pyth:skip(no-symbols) — hermes fetch returned empty`);
+  }
+
+
   for (let i = 0n; i < count; i++) {
     if (walletOutOfFunds) {
       console.warn(`[${ts}] wallet out of funds earlier in tick — skipping remaining markets`);
@@ -1212,16 +1232,8 @@ export async function runResolver(env: Env): Promise<void> {
 
     if (isHeldTwoSided(market, nowSec, decideOpts)) heldTwoSided++;
 
+    // Handled in the no-data pass above.
     if (action === 'resolve_one_sided' || action === 'force_refund') {
-      const result = await runNoDataAction(keeperIo, keeperTick, i, action);
-      if (result === 'sent' || result === 'dry_run') {
-        if (action === 'force_refund') forceRefunds++;
-        else oneSidedRefunds++;
-      } else {
-        skipped++;
-        if (result === 'deferred') noDataDeferred++;
-        if (result === 'out_of_funds') walletOutOfFunds = true;
-      }
       continue;
     }
 

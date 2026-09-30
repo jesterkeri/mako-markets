@@ -185,6 +185,8 @@ export function revertErrorName(e: unknown): string | null {
 
 export type SendErrorKind = 'already_resolved' | 'not_yet' | 'insufficient_funds' | 'other';
 
+/// Out of MON reads differently per layer: viem's InsufficientFundsError, "insufficient funds" from most nodes, and
+/// Monad's txpool "Signer had insufficient balance" at eth_sendRawTransaction (monad-bft, monad-eth-txpool-types).
 export function classifySendError(e: unknown): SendErrorKind {
   const name = revertErrorName(e);
   if (name === 'AlreadyResolved') return 'already_resolved';
@@ -198,6 +200,7 @@ export function classifySendError(e: unknown): SendErrorKind {
       const s = msg.toLowerCase();
       if (
         s.includes('insufficient funds') ||
+        s.includes('insufficient balance') ||
         s.includes('exceeds balance') ||
         s.includes('exceeds the balance')
       ) {
