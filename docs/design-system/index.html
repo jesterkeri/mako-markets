@@ -244,10 +244,20 @@ section{padding-top:clamp(80px,9vw,120px);display:flex;flex-direction:column;gap
 .dec p b{font-weight:700;color:var(--ink)}
 
 /* mascot */
-.poses{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0}
-@media (max-width:820px){.poses{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pgroup{display:flex;flex-direction:column;gap:6px}
+.pgroup + .pgroup{margin-top:18px}
+.pgroup .ph{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;padding-bottom:6px}
+.poses{display:grid;grid-template-columns:repeat(var(--cols,6),minmax(0,1fr));gap:0}
+.poses.c7{--cols:7}.poses.c3{--cols:3}.poses.c6{--cols:6}
+@media (max-width:900px){.poses.c7{--cols:2}.poses.c6{--cols:3}}
+@media (max-width:560px){.poses.c6{--cols:2}}
+.pose .n{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--dim)}
+.pose .j{font-family:var(--sans);font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--dim);line-height:1.4}
+.pose.sug .j::after{content:" · suggested";font-family:var(--mono);font-size:10px}
+.flagnote{display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start;padding:16px 0;border-block:1px solid var(--line)}
+.flagnote img{width:64px;height:auto}
 .pose{padding:18px 10px 16px;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;min-width:0;border-top:1px solid var(--line)}
-.pose img{height:128px;width:auto;max-width:100%;object-fit:contain;margin-bottom:8px;transform-origin:50% 90%}
+.pose img{height:124px;width:auto;max-width:100%;object-fit:contain;margin-bottom:8px;transform-origin:50% 90%}
 .pose b{font-size:14px}
 .pose span{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);line-height:1.4}
 @media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference){
@@ -255,11 +265,15 @@ section{padding-top:clamp(80px,9vw,120px);display:flex;flex-direction:column;gap
   .pose:hover img[data-m="bob"]{animation:m-bob 1s var(--ease-in-out) infinite}
   .pose:hover img[data-m="shake"]{animation:m-shake .6s var(--ease-in-out) infinite}
   .pose:hover img[data-m="breathe"]{animation:m-breathe 2.4s var(--ease-in-out) infinite}
+  .pose:hover img[data-m="hop"]{animation:m-hop .9s var(--ease-in-out) infinite}
+  .pose:hover img[data-m="run"]{animation:m-run .5s var(--ease-in-out) infinite}
 }
 @keyframes m-tilt{0%,100%{transform:rotate(0)}30%{transform:rotate(-6deg)}70%{transform:rotate(4deg)}}
 @keyframes m-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
 @keyframes m-shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-3deg)}75%{transform:rotate(3deg)}}
 @keyframes m-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+@keyframes m-hop{0%,100%{transform:translateY(0)}40%{transform:translateY(-14px)}60%{transform:translateY(-14px)}}
+@keyframes m-run{0%,100%{transform:translateX(0) rotate(0)}50%{transform:translateX(6px) rotate(2deg)}}
 
 /* tokens */
 .tscroll{overflow-x:auto}
@@ -361,7 +375,7 @@ table.mx{border-collapse:collapse;min-width:720px;width:100%}
 .card p{font-size:13px;color:var(--text-muted);line-height:1.5}
 .card .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
 .card.empty{align-items:center;text-align:center}
-.card.empty img{width:84px;height:auto}
+.card.empty img,.card-mako{width:84px;height:auto}
 .menu{background:var(--surface-raised);border:1.5px solid var(--line-edge);border-radius:14px;padding:6px;font-size:14px;font-weight:600;display:flex;flex-direction:column}
 .menu .who{padding:8px 10px 10px;display:flex;flex-direction:column;gap:2px}
 .menu .who span{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--text-muted);font-weight:700}
@@ -469,7 +483,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
       <h1 class="in" style="--dl:60ms">Everyone has a call.</h1>
       <p class="lede in" style="--dl:160ms">Arsenal on Saturday. Bitcoin in the next fifteen minutes. Whether gold holds its line. People make these calls every day with their friends, and almost none of them ever get to back it.</p>
     </div>
-    <img class="hero-mako" src="mako/mako-wave.png" alt="Mako, the shark mascot, in a yellow sweater and headphones, waving" width="520" height="553">
+    <img class="hero-mako" src="mako/mako-wave.webp" alt="Mako, the shark mascot, in a yellow sweater and headphones, waving" width="520" height="553">
   </div>
 
   <div class="letter">
@@ -650,21 +664,13 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
   </section>
 
   <section id="mako">
-    <header class="sh"><h2>A mascot for moments, not for work.</h2><span class="label">10 poses · 1 motion each</span></header>
+    <header class="sh"><h2>A mascot for moments, not for work.</h2><span class="label">29 poses · 1 motion each</span></header>
     <p class="lede">Mako shows up when something happens to you: a win, a loss, an empty list, an error, a wait. He stays off the screens where you’re placing a bet or reading a table.</p>
     <p class="small muted">Each pose has one job and one simple motion, and all of it stops for people who turn motion off. Hover a pose to see its motion.</p>
-    <div class="poses">
-      <div class="pose"><img src="mako/mako-wave.png" data-m="tilt" alt="Mako waving" loading="lazy" width="520" height="553"><b>Wave</b><span>Signed in, tour start</span></div>
-      <div class="pose"><img src="mako/14-timer.png" data-m="shake" alt="Mako with a timer" loading="lazy"><b>Timer</b><span>Entries closing</span></div>
-      <div class="pose"><img src="mako/mako-cash-pool.png" data-m="bob" alt="Mako in a pool of cash" loading="lazy"><b>Cash pool</b><span>Pools, big pots</span></div>
-      <div class="pose"><img src="mako/11-counting-usdc.png" data-m="bob" alt="Mako counting USDC"><b>Counting</b><span>Claims</span></div>
-      <div class="pose"><img src="mako/13-crown.png" data-m="bob" alt="Mako wearing a crown" loading="lazy"><b>Crown</b><span>Leaderboard</span></div>
-      <div class="pose"><img src="mako/12-faucet.png" data-m="tilt" alt="Mako with a faucet" loading="lazy"><b>Faucet</b><span>Test USDC</span></div>
-      <div class="pose"><img src="mako/17-building.png" data-m="shake" alt="Mako building" loading="lazy"><b>Building</b><span>Create a pool</span></div>
-      <div class="pose"><img src="mako/mako-sleeping.png" data-m="breathe" alt="Mako sleeping" loading="lazy"><b>Sleeping</b><span>Empty lists</span></div>
-      <div class="pose"><img src="mako/16-search-magnifying-glass.png" data-m="tilt" alt="Mako with a magnifying glass" loading="lazy"><b>Search</b><span>No results</span></div>
-      <div class="pose"><img src="mako/07-lost-map.png" data-m="tilt" alt="Mako with a map" loading="lazy"><b>Lost</b><span>404</span></div>
-    </div>
+    <div class="pgroup"><div class="ph"><span class="label"><b>App states</b> · 07–20</span><span class="label">One pose per screen state</span></div><div class="poses c7"><div class="pose"><img src="mako/07-lost-map.webp" data-m="tilt" alt="Mako: lost" loading="lazy" width="526" height="560"><span class="n">07</span><b>Lost</b><span class="j">404, a page that isn’t there</span></div><div class="pose"><img src="mako/08-pointing-up.webp" data-m="bob" alt="Mako: pointing up" loading="lazy" width="526" height="560"><span class="n">08</span><b>Pointing up</b><span class="j">Invite to pick UP</span></div><div class="pose"><img src="mako/09-pointing-down.webp" data-m="bob" alt="Mako: pointing down" loading="lazy" width="526" height="560"><span class="n">09</span><b>Pointing down</b><span class="j">Invite to pick DOWN</span></div><div class="pose"><img src="mako/10-sad-but-okay.webp" data-m="breathe" alt="Mako: sad but okay" loading="lazy" width="526" height="560"><span class="n">10</span><b>Sad but okay</b><span class="j">A lost round, said gently</span></div><div class="pose"><img src="mako/11-counting-usdc.webp" data-m="shake" alt="Mako: counting" loading="lazy" width="526" height="560"><span class="n">11</span><b>Counting</b><span class="j">Claim winnings</span></div><div class="pose"><img src="mako/12-faucet.webp" data-m="tilt" alt="Mako: faucet" loading="lazy" width="526" height="560"><span class="n">12</span><b>Faucet</b><span class="j">Test USDC from the faucet</span></div><div class="pose"><img src="mako/13-crown.webp" data-m="bob" alt="Mako: crown" loading="lazy" width="526" height="560"><span class="n">13</span><b>Crown</b><span class="j">Leaderboard, number one</span></div><div class="pose"><img src="mako/14-timer.webp" data-m="shake" alt="Mako: timer" loading="lazy" width="526" height="560"><span class="n">14</span><b>Timer</b><span class="j">Entries closing</span></div><div class="pose"><img src="mako/15-watching-binoculars.webp" data-m="tilt" alt="Mako: watching" loading="lazy" width="526" height="560"><span class="n">15</span><b>Watching</b><span class="j">Live rounds</span></div><div class="pose"><img src="mako/16-search-magnifying-glass.webp" data-m="tilt" alt="Mako: search" loading="lazy" width="526" height="560"><span class="n">16</span><b>Search</b><span class="j">Search, or no results</span></div><div class="pose"><img src="mako/17-building.webp" data-m="shake" alt="Mako: building" loading="lazy" width="527" height="560"><span class="n">17</span><b>Building</b><span class="j">Create a pool</span></div><div class="pose"><img src="mako/18-megaphone.webp" data-m="shake" alt="Mako: megaphone" loading="lazy" width="526" height="560"><span class="n">18</span><b>Megaphone</b><span class="j">Share, invite QR</span></div><div class="pose"><img src="mako/19-shield-verified.webp" data-m="bob" alt="Mako: shield" loading="lazy" width="526" height="560"><span class="n">19</span><b>Shield</b><span class="j">Chainlink verified, wallet connected</span></div><div class="pose"><img src="mako/20-error-cable.webp" data-m="shake" alt="Mako: error" loading="lazy" width="526" height="560"><span class="n">20</span><b>Error</b><span class="j">Failed transaction</span></div></div></div>
+    <div class="pgroup"><div class="ph"><span class="label"><b>Market moods</b></span><span class="label">Market direction and pools</span></div><div class="poses c3"><div class="pose"><img src="mako/mako-bull-run.webp" data-m="run" alt="Mako: bull run" loading="lazy" width="526" height="560"><b>Bull run</b><span class="j">Market moving up</span></div><div class="pose"><img src="mako/mako-bear-run.webp" data-m="run" alt="Mako: bear run" loading="lazy" width="526" height="560"><b>Bear run</b><span class="j">Market moving down</span></div><div class="pose"><img src="mako/mako-cash-pool.webp" data-m="bob" alt="Mako: cash pool" loading="lazy" width="560" height="512"><b>Cash pool</b><span class="j">Pools, big pots</span></div></div></div>
+    <div class="pgroup"><div class="ph"><span class="label"><b>Everyday Mako</b></span><span class="label">Jobs marked suggested are ours to confirm</span></div><div class="poses c6"><div class="pose"><img src="mako/mako-wave.webp" data-m="tilt" alt="Mako: wave" loading="lazy" width="526" height="560"><b>Wave</b><span class="j">Signed in, tour start</span></div><div class="pose"><img src="mako/mako-sleeping.webp" data-m="breathe" alt="Mako: sleeping" loading="lazy" width="526" height="560"><b>Sleeping</b><span class="j">Empty lists</span></div><div class="pose sug"><img src="mako/mako-idle.webp" data-m="breathe" alt="Mako: idle" loading="lazy" width="527" height="560"><b>Idle</b><span class="j">Waiting on a page to load</span></div><div class="pose sug"><img src="mako/mako-thinking.webp" data-m="tilt" alt="Mako: thinking" loading="lazy" width="526" height="560"><b>Thinking</b><span class="j">Confirming a transaction</span></div><div class="pose sug"><img src="mako/mako-celebrate.webp" data-m="hop" alt="Mako: celebrate" loading="lazy" width="526" height="560"><b>Celebrate</b><span class="j">You won</span></div><div class="pose sug"><img src="mako/mako-jump-confetti.webp" data-m="hop" alt="Mako: confetti" loading="lazy" width="526" height="560"><b>Confetti</b><span class="j">First win, big win</span></div><div class="pose sug"><img src="mako/mako-vibing.webp" data-m="tilt" alt="Mako: vibing" loading="lazy" width="526" height="560"><b>Vibing</b><span class="j">A round you’re in is live</span></div><div class="pose sug"><img src="mako/mako-shrug.webp" data-m="tilt" alt="Mako: shrug" loading="lazy" width="526" height="560"><b>Shrug</b><span class="j">A tie, everyone refunded</span></div><div class="pose sug"><img src="mako/mako-connect-wallet.webp" data-m="bob" alt="Mako: connect wallet" loading="lazy" width="526" height="560"><b>Connect wallet</b><span class="j">Connect a wallet</span></div><div class="pose sug"><img src="mako/mako-connect-wallet-tap.webp" data-m="shake" alt="Mako: tap to connect" loading="lazy" width="527" height="560"><b>Tap to connect</b><span class="j">Wallet connecting</span></div><div class="pose sug"><img src="mako/mako-back.webp" data-m="breathe" alt="Mako: back turned" loading="lazy" width="527" height="560"><b>Back turned</b><span class="j">Signed out, see you soon</span></div><div class="pose sug"><img src="mako/mako-blackout.webp" data-m="breathe" alt="Mako: silhouette" loading="lazy" width="526" height="560"><b>Silhouette</b><span class="j">Locked or coming soon</span></div></div></div>
+    <div class="flagnote"><img src="mako/08-pointing-up.webp" alt="" loading="lazy" width="526" height="560"><p class="small"><b>One open item.</b> <span class="muted">The arrow in Pointing up, the candles in Bull run and the tick on Shield are green. In Mako, UP is yellow, so a green arrow says “up” in someone else’s colours. Recolour those three to Signal yellow before they ship.</span></p></div>
 
     <figure class="shot"><button type="button" class="frame" aria-label="Open the 404 page full size"><img src="img/notfound.jpg" alt="404 page with Mako holding a map on a yellow circle: Even Mako can't find this page." width="1280" height="838" loading="lazy"></button><figcaption><b>404.</b> A scoreboard-sized 404, a map with a dotted route that ends in an ×, and ways back to rounds and pools.</figcaption></figure>
   </section>
@@ -798,8 +804,8 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
         <div>
           <span class="bl">Errors, empty and the account menu</span>
           <div class="fb">
-            <div class="card"><span class="xicon" aria-hidden="true">×</span><h4>Couldn’t confirm your bet</h4><p>Your 5.00 USDC didn’t move. The network didn’t answer in time, so nothing was charged.</p><div class="acts"><span class="b p">Try again</span><span class="b s">Cancel</span></div></div>
-            <div class="card empty"><img src="mako/mako-sleeping.png" alt="" width="520" height="553"><h4>No rounds open right now</h4><p>The next one opens at 09:30.</p><div class="acts"><span class="b s">Browse pools</span></div></div>
+            <div class="card"><img class="card-mako" src="mako/20-error-cable.webp" alt="" width="560" height="560"><h4>Couldn’t confirm your bet</h4><p>Your 5.00 USDC didn’t move. The network didn’t answer in time, so nothing was charged.</p><div class="acts"><span class="b p">Try again</span><span class="b s">Cancel</span></div></div>
+            <div class="card empty"><img src="mako/mako-sleeping.webp" alt="" width="520" height="553"><h4>No rounds open right now</h4><p>The next one opens at 09:30.</p><div class="acts"><span class="b s">Browse pools</span></div></div>
             <div class="menu"><div class="who"><span>SIGNED IN · EMAIL</span><b>0xC8BF…90F1</b></div><hr><div class="it"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-6 8-6s6.5 2 8 6"/></svg>Profile</div><div class="it"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>Settings</div><div class="it"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5M12 17h.01"/></svg>How to play</div><hr><div class="it hv"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Sign out</div></div>
           </div>
           <p class="legend">A failed transaction says what happened to the money first. Empty states give the next real time and a way forward. Sign out stays neutral under a rule, where the header screenshot in Parts still shows the old red.</p>
@@ -913,7 +919,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
   <div class="close">
     <div class="close-head">
       <div><span class="label">Why this frontend</span><h2 style="margin-top:12px">Your money. Your call. A screen that tells you the truth.</h2></div>
-      <img src="mako/11-counting-usdc.png" alt="Mako counting USDC">
+      <img src="mako/11-counting-usdc.webp" alt="Mako counting USDC">
     </div>
     <div class="why">
       <div><span class="label"><b>The clock is running</b></span><p>Someone on Mako is watching a price move with money on one side. So the screen reads like a terminal: numbers line up, labels stay put, and nothing moves unless it means something.</p></div>
