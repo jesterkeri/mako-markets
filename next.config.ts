@@ -12,6 +12,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: PROJECT_ROOT,
   },
+  // The design system site is a static page in public/designsystem/. Serve
+  // it at /designsystem as well as /designsystem/index.html.
+  async rewrites() {
+    return [{ source: "/designsystem", destination: "/designsystem/index.html" }];
+  },
 };
 
 export default nextConfig;
