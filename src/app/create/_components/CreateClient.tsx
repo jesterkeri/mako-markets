@@ -139,7 +139,7 @@ type DiscoverBasketballResponse = {
 
 type BasketballQuestionType = 'home_win' | 'away_win' | 'over' | 'under';
 
-type CryptoPrice = { usd: number; change24h: number; testnet?: boolean };
+type CryptoPrice = { usd: number; change24h: number | null; testnet?: boolean };
 type CryptoPrices = Partial<Record<CryptoSymbol, CryptoPrice>>;
 
 type CreateArgs = {
@@ -739,7 +739,11 @@ function CryptoTab({ onSubmit, isBusy, statusText, drifted, dailyCapHit, onChart
     const fetchPrices = async () => {
       try {
         const res = await fetch('/api/discover/crypto', { cache: 'no-store' });
-        if (!res.ok) return;
+        // No live prices: clear them, so no strike is suggested from an older answer.
+        if (!res.ok) {
+          if (!cancelled) setPrices({});
+          return;
+        }
         const data = (await res.json()) as { prices?: CryptoPrices; error?: string };
         if (!cancelled) setPrices(data.prices ?? {});
       } catch (e) {
