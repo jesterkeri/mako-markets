@@ -12,10 +12,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: PROJECT_ROOT,
   },
-  // The design system site is a static page in public/design/. Serve it at
-  // /design as well as /design/index.html.
+  // The design system site is a static page in public/designsystem/. Serve
+  // it at /designsystem as well as /designsystem/index.html.
   async rewrites() {
-    return [{ source: "/design", destination: "/design/index.html" }];
+    return [{ source: "/designsystem", destination: "/designsystem/index.html" }];
   },
 };
 
