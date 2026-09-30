@@ -456,7 +456,9 @@ export type RunPlaceBetArgs = {
 ///     for single-owner Safes (1D scope).
 ///   - approve amount is always MaxUint256 (matches existing wagmi flow,
 ///     reduces gas-per-bet vs per-bet approval, audit-validated contract).
-export async function runPlaceBet(args: RunPlaceBetArgs): Promise<RunOutcome> {
+/// The sponsor request for a pool bet: `placeBet` alone when the Safe's allowance covers the stake, otherwise
+/// `[approve(MAKO, MaxUint256), placeBet]` batched. Shared by runPlaceBet and the redesign's pool page.
+export function buildBetBody(args: Omit<RunPlaceBetArgs, 'magicEoa'>): SponsorRequestBody {
   const placeBetData = encodeFunctionData({
     abi: PLACEBET_ABI,
     functionName: 'placeBet',
@@ -494,8 +496,13 @@ export async function runPlaceBet(args: RunPlaceBetArgs): Promise<RunOutcome> {
               value: '0x0' as Hex,
               data: placeBetData,
             },
-          ] as const,
+          ] as [Call, Call],
         };
+  return body;
+}
+
+export async function runPlaceBet(args: RunPlaceBetArgs): Promise<RunOutcome> {
+  const body = buildBetBody(args);
 
   // 1. Sponsor.
   const sponsor = await postJson('/api/aa/sponsor', body);
@@ -1108,14 +1115,15 @@ const CLAIM_ABI = [
 /// (kind='claim') → Magic personal_sign → /api/aa/send.
 /// Outcome shape matches `runSendUsdc` so the UI hook can dispatch
 /// status without per-orchestrator branching.
-export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
+/// The sponsor request for a pool claim (winnings or a refund).
+export function buildClaimBody(args: Omit<RunClaimArgs, 'magicEoa'>): SponsorRequestBody {
   const callData = encodeFunctionData({
     abi: CLAIM_ABI,
     functionName: 'claim',
     args: [args.marketId],
   });
 
-  const body: SponsorRequestBody = {
+  return {
     kind: 'claim',
     chainId: args.chainId,
     call: {
@@ -1124,8 +1132,10 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
       data: callData,
     },
   };
+}
 
-  return runSponsoredRequest(body, args.magicEoa);
+export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
+  return runSponsoredRequest(buildClaimBody(args), args.magicEoa);
 }
 
 /// The sponsor -> sign -> send sequence, with its full outcome mapping, shared by claims and the Rounds actions

@@ -38,8 +38,8 @@ const SORTS: readonly { key: PoolSort; label: string }[] = [
 ];
 const NEXT_SORT: Record<PoolSort, PoolSort> = { closing: 'pool', pool: 'bettors', bettors: 'closing' };
 
-/// Until the redesigned pool page (9a) and create flow (10a) replace them, rows and buttons open the current ones.
-const poolHref = (id: bigint) => `/market/${id}`;
+const poolHref = (id: bigint) => `/pools/${id}`;
+/// Until the redesigned create flow (10a) replaces it, "Create pool" opens the current one.
 const CREATE_HREF = '/create';
 
 type Labels = { yes: string; no: string };

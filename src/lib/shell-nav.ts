@@ -21,5 +21,11 @@ export function activeNav(pathname: string): NavKey | null {
   return null;
 }
 
+/// Detail pages (one pool, one round) bring their own mobile header and bottom bar in place of the shell's
+/// header and tab bar, as the design draws them (9a, 5a).
+export function isMobileDetail(pathname: string): boolean {
+  return /^\/(pools|rounds)\/\d+\/?$/.test(pathname);
+}
+
 /// Where "Sign in" goes. The redesigned /signin (14a) replaces /signup in a later step; until then it is /signup.
 export const SIGN_IN_HREF = '/signup';

@@ -163,7 +163,7 @@ export function useMarkets() {
  * Read a single market by id. Used by the detail page.
  */
 export function useMarket(id: bigint) {
-  const { data, isLoading, refetch } = useReadContract({
+  const { data, isLoading, isError, refetch } = useReadContract({
     ...makoContract,
     functionName: 'getMarket',
     args: [id],
@@ -174,7 +174,8 @@ export function useMarket(id: bigint) {
 
   const market: MarketWithId | undefined = data ? decodeMarket(data, id) : undefined;
 
-  return { market, isLoading, refetch };
+  /// isError: the read failed and nothing was loaded (a later refetch failing keeps the last market).
+  return { market, isLoading, isError: isError && data === undefined, refetch };
 }
 
 // ---------------------------------------------------------------

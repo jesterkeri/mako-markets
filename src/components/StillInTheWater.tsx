@@ -47,7 +47,7 @@ export function StillInTheWaterDesktop() {
           {pools.map((m) => (
             <Link
               key={m.id.toString()}
-              href={`/market/${m.id}`}
+              href={`/pools/${m.id}`}
               className="mk-press97"
               style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '18px 0', boxShadow: 'inset 0 -1px 0 var(--line)', textAlign: 'left', color: 'var(--mako-canvas-fg)', textDecoration: 'none' }}
             >
@@ -83,7 +83,7 @@ export function StillInTheWaterMobile() {
           {pools.map((m) => (
             <Link
               key={m.id.toString()}
-              href={`/market/${m.id}`}
+              href={`/pools/${m.id}`}
               className="m3-press"
               style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 24, background: 'var(--raise)', padding: '12px 12px 12px 16px', color: 'var(--mako-canvas-fg)', textDecoration: 'none' }}
             >
