@@ -170,9 +170,18 @@ function serializeExistingInFlight(args: {
   existing: AaPendingUserOp;
   sessionUserId: string;
   chainId: number;
+  /// The Safe wrapper callData this request would build (wrapperCallDataFor). The pending op is handed back only
+  /// when it is this same request; any other request gets IN_FLIGHT, on every path that reaches here (step 6's
+  /// reload after a missed retire, and step 9's race loss), so a signature can never be answered with a different
+  /// action (adversary passes on the pool page, 2026-09-30).
+  expectedCallData: Hex;
 }): ServerError {
   const { existing, sessionUserId, chainId } = args;
-  if (existing.userId === sessionUserId && existing.status === 'pending') {
+  if (
+    existing.userId === sessionUserId &&
+    existing.status === 'pending' &&
+    existing.userOp.callData.toLowerCase() === args.expectedCallData.toLowerCase()
+  ) {
     const userOpHash = computeUserOpHash({
       userOp: storedToPacked(existing.userOp),
       chainId,
@@ -972,12 +981,13 @@ export async function POST(req: Request) {
   // than the one on screen (adversary pass on the pool page, 2026-09-30). The old op was never signed, so nothing
   // of it can reach the chain; the send route refuses an expired row. If another request started sending it in
   // the meantime, the retire misses and the caller gets the usual in-flight answer.
+  const expectedCallData = wrapperCallDataFor(buildArgs);
   let preExisting = await loadInFlightForSafe({ chainId, safeAddress });
   if (
     preExisting &&
     preExisting.userId === session.userId &&
     preExisting.status === 'pending' &&
-    preExisting.userOp.callData.toLowerCase() !== wrapperCallDataFor(buildArgs).toLowerCase()
+    preExisting.userOp.callData.toLowerCase() !== expectedCallData.toLowerCase()
   ) {
     const retired = await transitionPendingToExpired({ rowId: preExisting.id, sessionUserId: session.userId });
     preExisting = retired === 'transitioned' ? null : await loadInFlightForSafe({ chainId, safeAddress });
@@ -987,6 +997,7 @@ export async function POST(req: Request) {
       existing: preExisting,
       sessionUserId: session.userId,
       chainId,
+      expectedCallData,
     });
     return Response.json(result.body, { status: result.status });
   }
@@ -1073,6 +1084,7 @@ export async function POST(req: Request) {
       existing: winner,
       sessionUserId: session.userId,
       chainId,
+      expectedCallData,
     });
     return Response.json(result.body, { status: result.status });
   }

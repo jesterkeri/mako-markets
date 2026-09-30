@@ -123,7 +123,9 @@ vi.mock('@/lib/aa-sponsor-limits', () => ({
   decrementForRefund: (args: unknown) => mocks.decrementForRefund(args),
 }));
 
-vi.mock('@/lib/user-op', () => ({
+// The real wrapper encoder (the route compares pending ops with it); only the builder is mocked.
+vi.mock('@/lib/user-op', async (importActual) => ({
+  ...(await importActual<typeof import('../user-op')>()),
   buildSponsoredUserOp: (args: unknown) => mocks.buildSponsoredUserOp(args),
 }));
 

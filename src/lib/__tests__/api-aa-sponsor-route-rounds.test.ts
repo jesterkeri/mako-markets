@@ -35,7 +35,7 @@ vi.mock('@/lib/aa-sponsor-limits', () => ({
   incrementOrReject: (a: unknown) => mocks.incrementOrReject(a),
   decrementForRefund: (a: unknown) => mocks.decrementForRefund(a),
 }));
-vi.mock('@/lib/user-op', () => ({ buildSponsoredUserOp: (a: unknown) => mocks.buildSponsoredUserOp(a) }));
+vi.mock('@/lib/user-op', async (importActual) => ({ ...(await importActual<typeof import('../user-op')>()), buildSponsoredUserOp: (a: unknown) => mocks.buildSponsoredUserOp(a) }));
 vi.mock('@/lib/aa-public-client', () => ({
   getAaPublicClient: () => ({ getBlock: (a: unknown) => mocks.getBlock(a), readContract: (a: unknown) => mocks.readContract(a) }),
 }));
