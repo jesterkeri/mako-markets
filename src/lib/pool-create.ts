@@ -3,7 +3,6 @@
 // CreateClient.tsx) and the resolver parses (cf-worker/src/index.ts parse*OracleRef; for football over/under it
 // also matches the question text), so a pool made here settles exactly like one made there.
 
-import { formatStrikeForDisplay } from './crypto-assets';
 import { MarketType } from './contract';
 import {
   MAX_DURATION_SEC,
@@ -62,6 +61,15 @@ export type BuildResult = { ok: true; pool: BuiltPool } | { ok: false; reason: s
 
 const durationLabel = (sec: number) => DURATIONS.find((d) => d.seconds === sec)?.label ?? `${sec}s`;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
+
+/// The target as the question shows it: exactly the digits the reference carries (the resolver settles on those),
+/// grouped the same way in every browser: "84,546", "9.70545", "0.0275". The question is stored on chain, so it must
+/// not depend on the creator's locale. Null when String() writes the number with an exponent, which the forex,
+/// commodities and stocks parsers refuse and a question cannot show plainly.
+function plainStrike(n: number): string | null {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(String(n));
+  return m ? `${BigInt(m[1]).toLocaleString('en-US')}${m[2] ? `.${m[2]}` : ''}` : null;
+}
 const MAX_QUESTION_BYTES = 200;
 
 /// Everything the create call needs, or the reason it cannot be made yet. `nowSec` is the moment of submitting:
@@ -100,15 +108,13 @@ export function buildPool(d: CreateDraft, nowSec: number): BuildResult {
     const symbol = d.symbol.trim().toUpperCase();
     if (!symbol) return { ok: false, reason: 'Pick an asset.' };
     if (!(Number.isFinite(d.strike) && d.strike > 0)) return { ok: false, reason: 'Enter a target price above 0.' };
-    // Forex, commodities and stocks references are read as plain digits (cf-worker/src/index.ts
-    // parsePriceFeedOracleRef, and the sponsor's copy in aa-call-allowlist.ts); String() writes very small or very
-    // large numbers with an exponent, which neither accepts. Crypto references are read with Number(), which does.
-    if (d.kind !== 'crypto' && !/^\d+(\.\d+)?$/.test(String(d.strike))) return { ok: false, reason: 'This target is too small or too large for a pool to settle.' };
+    const shown = plainStrike(d.strike);
+    if (shown === null) return { ok: false, reason: 'This target is too small or too large for a pool to settle.' };
     const closeSec = nowSec + Math.min(d.durationSec + TX_LANDING_BUFFER_SEC, MAX_DURATION_SEC - TX_LANDING_BUFFER_SEC);
     const bettingCloseTime = suggestedCryptoBettingCloseTimeMirror(nowSec, closeSec);
     const question =
       d.kind === 'crypto'
-        ? `Will ${symbol} ${d.direction === 'above' ? 'close above' : 'close below'} $${formatStrikeForDisplay(d.strike)} in ${durationLabel(d.durationSec)}?`
+        ? `Will ${symbol} ${d.direction === 'above' ? 'close above' : 'close below'} $${shown} in ${durationLabel(d.durationSec)}?`
         : `Will ${symbol} ${PRICE_VERB[d.kind]} ${d.direction} ${d.strike} in ${durationLabel(d.durationSec)}?`;
     pool = { mType: PRICE_TYPE[d.kind], question, oracleRef: `${symbol}:${d.direction === 'above' ? 'gt' : 'lt'}:${d.strike}`, bettingCloseTime, closeTime: BigInt(closeSec) };
   }

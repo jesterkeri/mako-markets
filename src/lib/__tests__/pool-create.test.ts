@@ -41,6 +41,13 @@ describe('price pools', () => {
     expect(week.closeTime).toBe(BigInt(NOW + 604800 - 60));
   });
 
+  it('shows the exact target, grouped the same way in every browser, and refuses one it cannot show plainly', () => {
+    const q = (strike: number) => buildPool({ kind: 'crypto', symbol: 'BTC', direction: 'above', strike, durationSec: 3600 }, NOW);
+    expect(q(1234567.891)).toMatchObject({ ok: true, pool: { question: 'Will BTC close above $1,234,567.891 in 1 hour?', oracleRef: 'BTC:gt:1234567.891' } });
+    expect(q(9.70545)).toMatchObject({ ok: true, pool: { question: 'Will BTC close above $9.70545 in 1 hour?' } });
+    expect(q(0.0000001)).toEqual({ ok: false, reason: 'This target is too small or too large for a pool to settle.' });
+  });
+
   it('refuses a missing asset or a target of zero', () => {
     expect(buildPool({ kind: 'crypto', symbol: ' ', direction: 'above', strike: 1, durationSec: 300 }, NOW)).toEqual({ ok: false, reason: 'Pick an asset.' });
     expect(buildPool({ kind: 'stocks', symbol: 'AAPL', direction: 'above', strike: 0, durationSec: 300 }, NOW)).toEqual({ ok: false, reason: 'Enter a target price above 0.' });
