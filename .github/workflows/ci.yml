@@ -8,6 +8,8 @@
 #   4. build    — `pnpm build` (catches Next-side errors that tsc misses;
 #                  client bundle composition, route-segment config, etc.)
 #
+# A separate `cf-worker` job typechecks and tests the resolver Worker.
+#
 # Build step uses safe placeholder NEXT_PUBLIC_* env vars. Real values live
 # in Vercel project env (production + preview); CI only needs values that
 # satisfy `process.env.X` reads at build time, not values that work
@@ -91,3 +93,39 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # The resolver Worker (cf-worker/) is its own package with its own
+  # lockfile, not a pnpm workspace member, so it installs separately.
+  # Typecheck covers src/ and test/; the tests cover the no-data settlement
+  # and 24h refund keeper decisions (cf-worker/src/settlement.ts).
+  cf-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cf-worker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: cf-worker/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test

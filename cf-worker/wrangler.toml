@@ -15,6 +15,14 @@ MONAD_RPC_URL = "https://testnet-rpc.monad.xyz/"
 # crons in vercel.json; the Worker fills the gap by acting as the
 # scheduler and HTTP-pinging the cron routes with Bearer CRON_SECRET.
 MAKO_APP_URL = "https://mako-markets.vercel.app"
+# Refund keeper scope (src/settlement.ts). At closeTime + 24h the Worker
+# calls forceRefund on every unresolved ONE-sided pool (every type, MAKO
+# included). "1" would also force-refund TWO-sided pools at the deadline.
+# Kept "0": V4 has no settlement deadline and no on-chain lock, so an owner
+# or resolver settlement of a two-sided pool can already be in flight, and
+# a refund landing first takes the winners' payout. Change only on an
+# explicit decision.
+FORCE_REFUND_TWO_SIDED = "0"
 
 # Cron: every minute. CF cron is reliable to the minute (unlike GitHub
 # Actions cron which drifts to 1-2 hours under load). Markets with

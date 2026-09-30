@@ -7,7 +7,8 @@
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail --format pretty",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --poolOptions.forks.maxForks=2 --poolOptions.forks.minForks=1"
   },
   "dependencies": {
     "viem": "^2.47.12"
@@ -15,6 +16,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241106.0",
     "typescript": "^5",
+    "vitest": "2.1.9",
     "wrangler": "^4.0.0"
   }
 }
