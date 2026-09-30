@@ -32,7 +32,8 @@
     "db:studio": "drizzle-kit studio",
     "verify:aa-tables": "tsx scripts/verify-aa-tables.mts",
     "resolve:ambiguous": "tsx scripts/resolve-ambiguous-op.mts",
-    "scrub:avatars": "tsx scripts/scrub-avatars.mts"
+    "scrub:avatars": "tsx scripts/scrub-avatars.mts",
+    "upload:mascots": "tsx scripts/upload-mascots.ts"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",
