@@ -976,30 +976,36 @@ export async function POST(req: Request) {
   // Step 6: PRECHECK in-flight.
   //
   // The caller's own unsigned `pending` op is handed back only when it IS this request (a retry after a dropped
-  // response): same Safe wrapper callData. A different request retires it first (`pending` -> `expired`, atomic
-  // on status), so a signature the user cancelled can never be answered with the old op and land an action other
-  // than the one on screen (adversary pass on the pool page, 2026-09-30). The old op was never signed, so nothing
-  // of it can reach the chain; the send route refuses an expired row. If another request started sending it in
-  // the meantime, the retire misses and the caller gets the usual in-flight answer.
-  const expectedCallData = wrapperCallDataFor(buildArgs);
-  let preExisting = await loadInFlightForSafe({ chainId, safeAddress });
-  if (
-    preExisting &&
-    preExisting.userId === session.userId &&
-    preExisting.status === 'pending' &&
-    preExisting.userOp.callData.toLowerCase() !== expectedCallData.toLowerCase()
-  ) {
-    const retired = await transitionPendingToExpired({ rowId: preExisting.id, sessionUserId: session.userId });
-    preExisting = retired === 'transitioned' ? null : await loadInFlightForSafe({ chainId, safeAddress });
+  // response): same Safe wrapper callData (serializeExistingInFlight compares, on every path). A different request
+  // supersedes it, but only once its own replacement is built: the old op is retired right before step 9's insert,
+  // so a request that then fails the daily cap or the build leaves the old op alone. Retiring is atomic on
+  // `pending`; the old op was never signed, so nothing of it can reach the chain, and the send route refuses an
+  // expired row (adversary passes on the pool page, 2026-09-30).
+  let expectedCallData: Hex;
+  try {
+    expectedCallData = wrapperCallDataFor(buildArgs);
+  } catch {
+    // An address the allowlist accepts case-insensitively but viem cannot encode.
+    return Response.json({ error: 'bad_body' }, { status: 400 });
   }
+  let supersede: AaPendingUserOp | null = null;
+  const preExisting = await loadInFlightForSafe({ chainId, safeAddress });
   if (preExisting) {
-    const result = serializeExistingInFlight({
-      existing: preExisting,
-      sessionUserId: session.userId,
-      chainId,
-      expectedCallData,
-    });
-    return Response.json(result.body, { status: result.status });
+    if (
+      preExisting.userId === session.userId &&
+      preExisting.status === 'pending' &&
+      preExisting.userOp.callData.toLowerCase() !== expectedCallData.toLowerCase()
+    ) {
+      supersede = preExisting;
+    } else {
+      const result = serializeExistingInFlight({
+        existing: preExisting,
+        sessionUserId: session.userId,
+        chainId,
+        expectedCallData,
+      });
+      return Response.json(result.body, { status: result.status });
+    }
   }
 
   // Step 7: atomic rate-limit increment.
@@ -1044,6 +1050,12 @@ export async function POST(req: Request) {
     console.error('[aa.sponsor.build_failed]', summary);
     const mapped = mapBuildErrorToResponse(e);
     return Response.json(mapped.body, { status: mapped.status });
+  }
+
+  // Step 8b: the replacement exists, so retire the op it supersedes. If another request started sending that op
+  // meanwhile, the retire misses, step 9's insert conflicts, and the caller gets IN_FLIGHT like any race loser.
+  if (supersede) {
+    await transitionPendingToExpired({ rowId: supersede.id, sessionUserId: session.userId });
   }
 
   // Step 9: INSERT pending row; partial unique index is the final

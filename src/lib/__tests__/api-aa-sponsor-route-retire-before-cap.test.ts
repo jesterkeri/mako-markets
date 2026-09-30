@@ -1,6 +1,7 @@
-// /api/aa/sponsor step 6: the caller's own unsigned pending op is handed back only for the same request. A
-// different request retires it and gets a new op, so a cancelled signature can never land an action other than the
-// one on screen (adversary pass on the pool page, 2026-09-30).
+// /api/aa/sponsor step 6 retires the caller's own pending op BEFORE the rate-limit increment (step 7) and the build
+// (step 8). A different request that then fails at step 7 or 8 has destroyed the caller's live op and handed back
+// neither a fresh op nor IN_FLIGHT, so the Safe is left with nothing to sign and, at the daily cap, no way to rebuild
+// the op that already consumed a cap slot. Adversary pass, 2026-09-30.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeFunctionData, type Address, type Hex } from 'viem';
@@ -39,7 +40,7 @@ vi.mock('@/lib/aa-sponsor-limits', () => ({
   incrementOrReject: (a: unknown) => mocks.incrementOrReject(a),
   decrementForRefund: (a: unknown) => mocks.decrementForRefund(a),
 }));
-// The real wrapper encoder: the comparison must use exactly what the builder would produce.
+// The real wrapper encoder, as in the step 6 test.
 vi.mock('@/lib/user-op', async (importActual) => ({
   ...(await importActual<typeof import('../user-op')>()),
   buildSponsoredUserOp: (a: unknown) => mocks.buildSponsoredUserOp(a),
@@ -96,62 +97,38 @@ function happyPath() {
 
 afterEach(() => vi.clearAllMocks());
 
-describe('/api/aa/sponsor step 6: a pending op is returned only for the same request', () => {
+describe('/api/aa/sponsor step 6: a request that builds nothing leaves the pending op alone and is always answered', () => {
   const fifty = wrapperCallDataFor({ call: { to: MAKO_ADDRESS, value: 0n, data: placeBet(90n, true, 50_000_000n) } });
 
-  it('hands back the pending op for an identical retry, and builds nothing', async () => {
-    happyPath();
-    mocks.loadInFlightForSafe.mockResolvedValue(pendingRow(fifty));
-    const res = await POST(req(betBody(true, 50_000_000n)));
-    expect(res.status).toBe(200);
-    expect((await res.json()).recovered).toBe(true);
-    expect(mocks.transitionPendingToExpired).not.toHaveBeenCalled();
-    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
-  });
-
-  it('retires the pending op and builds a new one for a different request', async () => {
+  it('at the daily cap: a different request gets 429 and must leave the pending op alone', async () => {
     happyPath();
     mocks.loadInFlightForSafe.mockResolvedValue(pendingRow(fifty));
     mocks.transitionPendingToExpired.mockResolvedValue('transitioned');
+    mocks.incrementOrReject.mockResolvedValue({ kind: 'cap_exceeded', count: 11 });
     const res = await POST(req(betBody(false, 1_000_000n)));
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.recovered).toBeUndefined();
-    expect(mocks.transitionPendingToExpired).toHaveBeenCalledWith({ rowId: '00000000-0000-0000-0000-0000000000aa', sessionUserId: 'user-1' });
-    expect(mocks.buildSponsoredUserOp).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(429);
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+    expect(mocks.transitionPendingToExpired).not.toHaveBeenCalled();
   });
 
-  it('answers in flight when another request started sending the old op first', async () => {
-    happyPath();
-    // The old op moved to `sending` before the retire: the retire misses, and the partial unique index makes the
-    // insert conflict (the DB does this; the mock states it), so the caller is a race loser.
-    mocks.loadInFlightForSafe.mockResolvedValueOnce(pendingRow(fifty)).mockResolvedValueOnce(pendingRow(fifty, { status: 'sending' }));
-    mocks.transitionPendingToExpired.mockResolvedValue('already_claimed');
-    mocks.insertPending.mockResolvedValue({ kind: 'conflict' });
-    const res = await POST(req(betBody(false, 1_000_000n)));
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe('IN_FLIGHT');
-  });
-
-  it('retires the old op only after the replacement is built', async () => {
+  it('bundler rejects the build: a different request gets 503 and must leave the pending op alone', async () => {
     happyPath();
     mocks.loadInFlightForSafe.mockResolvedValue(pendingRow(fifty));
     mocks.transitionPendingToExpired.mockResolvedValue('transitioned');
-    await POST(req(betBody(false, 1_000_000n)));
-    const built = mocks.buildSponsoredUserOp.mock.invocationCallOrder[0];
-    const retired = mocks.transitionPendingToExpired.mock.invocationCallOrder[0];
-    const inserted = mocks.insertPending.mock.invocationCallOrder[0];
-    expect(built).toBeLessThan(retired);
-    expect(retired).toBeLessThan(inserted);
+    const { JsonRpcRejectError } = await import('../aa-rpc');
+    mocks.buildSponsoredUserOp.mockRejectedValue(new JsonRpcRejectError({ method: 'pm_sponsorUserOperation', code: -32500, message: 'sponsor refused' }));
+    const res = await POST(req(betBody(false, 1_000_000n)));
+    expect([502, 503]).toContain(res.status);
+    expect(mocks.insertPending).not.toHaveBeenCalled();
+    expect(mocks.transitionPendingToExpired).not.toHaveBeenCalled();
   });
 
-  it('never retires an op that is already sending or belongs to someone else', async () => {
+  it('a non-checksummed target that the allowlist accepts is answered, not thrown, at step 6', async () => {
     happyPath();
-    mocks.loadInFlightForSafe.mockResolvedValue(pendingRow(fifty, { status: 'sending' }));
-    expect((await POST(req(betBody(false, 1_000_000n)))).status).toBe(409);
-    mocks.loadInFlightForSafe.mockResolvedValue(pendingRow(fifty, { userId: 'user-2' }));
-    expect((await POST(req(betBody(false, 1_000_000n)))).status).toBe(409);
-    expect(mocks.transitionPendingToExpired).not.toHaveBeenCalled();
-    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+    mocks.loadInFlightForSafe.mockResolvedValue(pendingRow(fifty));
+    const upper = ('0x' + MAKO_ADDRESS.slice(2).toUpperCase()) as Address;
+    const body = { kind: 'bet_single', chainId: 10143, call: { to: upper, value: '0x0', data: placeBet(90n, false, 1_000_000n) } };
+    const res = await POST(req(body)).catch((e: unknown) => e);
+    expect(res).toBeInstanceOf(Response);
   });
 });
