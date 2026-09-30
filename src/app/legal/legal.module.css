@@ -1,0 +1,67 @@
+/* Terms, privacy and risk (23a): the tab states inline styles cannot express (hover, focus, the current tab). */
+
+/* ---- Desktop: a side list of mono pills; the current one sits on the raised tint. ---- */
+.deskTab {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--mako-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  transition: background-color 120ms ease, color 120ms ease, transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.deskTab:active {
+  transform: scale(0.96);
+}
+@media (hover: hover) and (pointer: fine) {
+  .deskTab:hover {
+    color: var(--mako-canvas-fg);
+  }
+}
+.deskTab[aria-current="page"] {
+  background: var(--raise);
+  color: var(--mako-canvas-fg);
+}
+.deskTab:focus-visible,
+.mobTab:focus-visible {
+  outline: 2px solid var(--mako-canvas-fg);
+  outline-offset: 2px;
+}
+
+/* ---- Mobile: a segmented pill; the current segment is the inverse colour with the ink edge. ---- */
+.mobTab {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--mako-canvas-fg);
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+  transition: background-color 200ms cubic-bezier(0.2, 0, 0, 1), color 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+.mobTab[aria-current="page"] {
+  background: var(--m3-inv);
+  color: var(--m3-inv-fg);
+  box-shadow: var(--edge);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deskTab,
+  .mobTab {
+    transition: none;
+  }
+  .deskTab:active {
+    transform: none;
+  }
+}
