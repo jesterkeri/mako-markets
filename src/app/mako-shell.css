@@ -153,6 +153,53 @@ body {
   color: #facc15 !important;
 }
 
+/* The confirm-in-wallet dialog on desktop keeps the terminal look: mono uppercase keys, hairline table. */
+.wl-dlg {
+  --m3-inv: #000;
+  --m3-inv-fg: var(--mako-paper);
+  --m3-outline: rgba(0, 0, 0, 0.3);
+  border-radius: 16px !important;
+}
+[data-theme="dark"] .wl-dlg {
+  --m3-inv: var(--mako-paper);
+  --m3-inv-fg: #000;
+  box-shadow: inset 0 0 0 1.5px rgba(235, 229, 217, 0.22), 0 40px 100px rgba(0, 0, 0, 0.6) !important;
+}
+.wl-dlg .wl-tbl {
+  background: transparent !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  box-shadow: inset 0 1px 0 var(--line);
+}
+.wl-dlg .wl-k,
+.wl-dlg .wl-eyebrow {
+  font-family: var(--mako-font-mono);
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.wl-dlg .wl-v {
+  font-family: var(--mako-font-mono);
+  font-size: 13px !important;
+}
+.wl-dlg .wl-tile {
+  border-radius: 12px !important;
+}
+.wl-spin {
+  animation: wlSpin 0.9s linear infinite;
+}
+@keyframes wlSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wl-spin {
+    animation: none;
+  }
+}
+
 /* Desktop menu rows and pressed buttons. */
 .wm-row:hover,
 .wm-row:focus-visible {
