@@ -114,6 +114,8 @@ export function usePoolTx(onLanded?: () => void) {
       } catch {
         return { step: 'cancelled' };
       }
+      /// Set once the action itself is handed to the wallet: from then on an error other than a refusal may come
+      /// after the wallet broadcast it, so the sheet can no longer say nothing moved.
       let sent = false;
       try {
         if (t.kind === 'bet') {
@@ -130,8 +132,8 @@ export function usePoolTx(onLanded?: () => void) {
             return refusalPhase(revertName(err), w);
           }
           setPhase({ step: 'pending', stage: 'signing' });
-          const hash = await writeContractAsync({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], chainId: monadTestnet.id });
           sent = true;
+          const hash = await writeContractAsync({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], chainId: monadTestnet.id });
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
@@ -141,15 +143,15 @@ export function usePoolTx(onLanded?: () => void) {
         } catch (err) {
           return refusalPhase(revertName(err), w);
         }
-        const hash = await writeContractAsync({ ...makoContract, functionName: 'claim', args: [t.marketId], chainId: monadTestnet.id });
         sent = true;
+        const hash = await writeContractAsync({ ...makoContract, functionName: 'claim', args: [t.marketId], chainId: monadTestnet.id });
         setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
         const receipt = await publicClient.waitForTransactionReceipt({ hash });
         return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
       } catch (err) {
         if (isUserRejection(err)) return { step: 'cancelled' };
         return sent
-          ? { step: 'failed', title: 'Lost track of it', body: `Your ${w.noun} was sent, but its confirmation didn't come back. Check Me before you try again.`, nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } }
+          ? { step: 'failed', title: 'Lost track of it', body: `Your ${w.noun} may have been sent, but its confirmation didn't come back. Check Me before you try again.`, nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } }
           : { step: 'failed', title: w.failTitle, body: 'Your wallet or the network failed before it was sent.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
       }
     }

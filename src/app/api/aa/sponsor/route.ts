@@ -64,6 +64,7 @@ import { summarizeAaErrorWithCause } from '@/lib/aa-errors';
 import {
   insertPending,
   loadInFlightForSafe,
+  transitionPendingToExpired,
 } from '@/lib/aa-pending-user-ops';
 import { SponsorRequest } from '@/lib/aa-route-schemas';
 import {
@@ -74,7 +75,7 @@ import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { checkSameOrigin } from '@/lib/csrf';
 import { isJsonRpcReject } from '@/lib/aa-rpc';
 import { getUserSession } from '@/lib/user-session';
-import { buildSponsoredUserOp } from '@/lib/user-op';
+import { buildSponsoredUserOp, wrapperCallDataFor } from '@/lib/user-op';
 import { computeUserOpHash } from '@/lib/user-op-hash';
 import { storedToPacked } from '@/lib/user-op-types';
 import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
@@ -964,7 +965,23 @@ export async function POST(req: Request) {
   }
 
   // Step 6: PRECHECK in-flight.
-  const preExisting = await loadInFlightForSafe({ chainId, safeAddress });
+  //
+  // The caller's own unsigned `pending` op is handed back only when it IS this request (a retry after a dropped
+  // response): same Safe wrapper callData. A different request retires it first (`pending` -> `expired`, atomic
+  // on status), so a signature the user cancelled can never be answered with the old op and land an action other
+  // than the one on screen (adversary pass on the pool page, 2026-09-30). The old op was never signed, so nothing
+  // of it can reach the chain; the send route refuses an expired row. If another request started sending it in
+  // the meantime, the retire misses and the caller gets the usual in-flight answer.
+  let preExisting = await loadInFlightForSafe({ chainId, safeAddress });
+  if (
+    preExisting &&
+    preExisting.userId === session.userId &&
+    preExisting.status === 'pending' &&
+    preExisting.userOp.callData.toLowerCase() !== wrapperCallDataFor(buildArgs).toLowerCase()
+  ) {
+    const retired = await transitionPendingToExpired({ rowId: preExisting.id, sessionUserId: session.userId });
+    preExisting = retired === 'transitioned' ? null : await loadInFlightForSafe({ chainId, safeAddress });
+  }
   if (preExisting) {
     const result = serializeExistingInFlight({
       existing: preExisting,

@@ -235,6 +235,25 @@ export function encodeBatchedExecuteUserOpCallData(
   });
 }
 
+/// The Safe wrapper callData a sponsored op carries for its inner call(s): the single-call wrapper, or the
+/// MultiSendCallOnly wrapper for a batched pair. buildSponsoredUserOp builds with it, and /api/aa/sponsor compares a
+/// stored pending op against a new request with it, so the two can never disagree.
+export function wrapperCallDataFor(args: {
+  call?: { to: Address; value: bigint; data: Hex };
+  calls?: readonly [{ to: Address; value: bigint; data: Hex }, { to: Address; value: bigint; data: Hex }];
+}): Hex {
+  const hasSingle = args.call !== undefined;
+  const hasBatched = args.calls !== undefined;
+  if (hasSingle === hasBatched) {
+    throw new Error(
+      'user-op: buildSponsoredUserOp requires exactly one of `call` or `calls` (got ' +
+        (hasSingle ? 'both' : 'neither') +
+        ').',
+    );
+  }
+  return hasSingle ? encodeSingleExecuteUserOpCallData(args.call!) : encodeBatchedExecuteUserOpCallData(args.calls!);
+}
+
 // ── buildSponsoredUserOp ─────────────────────────────────────────────────────
 
 /// Inner-call shape shared between the single + batched arg variants.
@@ -351,18 +370,7 @@ export async function buildSponsoredUserOp(
   //    Safe must delegatecall MultiSendCallOnly to dispatch into its
   //    sub-calls. MultiSendCallOnly enforces sub-call op=0 internally,
   //    so there's no escalation surface.
-  const hasSingle = args.call !== undefined;
-  const hasBatched = args.calls !== undefined;
-  if (hasSingle === hasBatched) {
-    throw new Error(
-      'user-op: buildSponsoredUserOp requires exactly one of `call` or `calls` (got ' +
-        (hasSingle ? 'both' : 'neither') +
-        ').',
-    );
-  }
-  const wrapperCallData: Hex = hasSingle
-    ? encodeSingleExecuteUserOpCallData(args.call!)
-    : encodeBatchedExecuteUserOpCallData(args.calls!);
+  const wrapperCallData: Hex = wrapperCallDataFor(args);
 
   // 5. Base userOp scaffold — no gas, no paymaster yet. Sponsor will
   //    fill both. Field shape mirrors `scripts/probe-pimlico.mts`.

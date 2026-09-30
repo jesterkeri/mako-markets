@@ -105,6 +105,9 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   }, [userBet]);
   const [amountText, setAmountText] = useState('5');
   const [rulesOpen, setRulesOpen] = useState(false);
+  /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
+  /// sheet must still describe the action that was confirmed.
+  const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
 
   if (market && market.closeTime === 0n) notFound();
 
@@ -123,13 +126,16 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const estimate = amount && amount > 0n ? computePreviewPayout(market.totalYes, market.totalNo, amount, side === 'yes', BigInt(market.protocolFeeBpsSnapshot), BigInt(market.creatorFeeBpsSnapshot)) : null;
   const creatorStats = creatorStatsOf(markets, market);
 
+  const claimAmount = claimable(row.position);
   const openBet = () => {
-    if (amount === null || why) return;
+    if (amount === null || why || tx.tx) return;
+    setSheetSpec(confirmSpec('bet', market, row, labels, amount, side, estimate, claimAmount));
     tx.open({ kind: 'bet', marketId: id, isYes: side === 'yes', amount });
   };
-  const claimAmount = claimable(row.position);
   const openClaim = () => {
-    if (claimAmount !== null) tx.open({ kind: 'claim', marketId: id });
+    if (claimAmount === null || tx.tx) return;
+    setSheetSpec(confirmSpec('claim', market, row, labels, amount, side, estimate, claimAmount));
+    tx.open({ kind: 'claim', marketId: id });
   };
 
   const view: ViewProps = {
@@ -159,7 +165,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     setRulesOpen,
   };
 
-  const spec = tx.tx ? confirmSpec(tx.tx.kind, market, row, labels, amount, side, estimate, claimAmount) : null;
+  const spec = tx.tx ? sheetSpec : null;
 
   return (
     <>
