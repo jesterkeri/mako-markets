@@ -1,8 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useBlockNumber } from 'wagmi';
 
-import { buildBoardView, DEFAULT_PERIOD, type BoardPeriod, type BoardScope, type BoardSort } from '@/lib/leaderboard/board-view';
+import { monadTestnet } from '@/lib/chain';
+import { buildBoardView, DEFAULT_PERIOD, indexBehind, type BoardPeriod, type BoardScope, type BoardSort } from '@/lib/leaderboard/board-view';
 import { accountAddress, useUser } from '@/lib/use-user';
 
 import { BoardDesktop } from './BoardDesktop';
@@ -24,6 +26,9 @@ export function LeaderboardClient() {
   const [sort, setSort] = useState<BoardSort>('profit');
 
   const { data, isError, refetch } = useBoard(period, sort, account, !userLoading);
+  // The API knows whether the indexer finished its last run, not whether it is still running: compare with the
+  // chain head so a stalled index reads as incomplete instead of "nobody bet".
+  const { data: head } = useBlockNumber({ chainId: monadTestnet.id, query: { refetchInterval: 60_000 } });
   const view = useMemo(() => (data ? buildBoardView(data, account) : null), [data, account]);
 
   const state: BoardProps['state'] = view ? (view.empty ? 'empty' : 'ready') : isError ? 'error' : 'loading';
@@ -37,7 +42,7 @@ export function LeaderboardClient() {
     setPeriod,
     sort,
     setSort,
-    syncing: data?.syncing ?? false,
+    syncing: (data?.syncing ?? false) || indexBehind(data?.indexedThrough ?? null, head),
     retry: () => void refetch(),
   };
   return (

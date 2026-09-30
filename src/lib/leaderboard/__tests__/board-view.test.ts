@@ -11,6 +11,8 @@ import {
   betsText,
   buildBoardView,
   gapToPass,
+  INDEX_BEHIND_BLOCKS,
+  indexBehind,
   initialOf,
   nextLine,
   playerNames,
@@ -256,5 +258,14 @@ describe('buildBoardView: the pinned row', () => {
   it('ignores a viewer block that belongs to another address', () => {
     const viewer: BoardWireViewer = { ...row(0xee), rank: 9 };
     expect(buildBoardView(wire(ranked(3), { viewer }), addr(0xff)).me).toBeNull();
+  });
+});
+
+describe('indexBehind', () => {
+  it('is behind only past INDEX_BEHIND_BLOCKS, and never when either side is unknown', () => {
+    expect(indexBehind(1_000, 1_000n + INDEX_BEHIND_BLOCKS)).toBe(false);
+    expect(indexBehind(1_000, 1_000n + INDEX_BEHIND_BLOCKS + 1n)).toBe(true);
+    expect(indexBehind(null, 10n ** 9n)).toBe(false);
+    expect(indexBehind(1_000, undefined)).toBe(false);
   });
 });

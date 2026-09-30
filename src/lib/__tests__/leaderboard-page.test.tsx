@@ -24,6 +24,10 @@ vi.mock('@/lib/use-user', () => ({
   accountAddress: (u: { walletAddress: string }) => u.walletAddress,
 }));
 
+// The chain head the page compares the ledger with. 150 is within INDEX_BEHIND_BLOCKS of indexedThrough 100.
+let head: bigint | undefined = 150n;
+vi.mock('wagmi', () => ({ useBlockNumber: () => ({ data: head }) }));
+
 const { LeaderboardClient } = await import('@/app/leaderboard/_components/LeaderboardClient');
 
 const U = 1_000_000;
@@ -159,8 +163,17 @@ describe('Leaderboard page', () => {
   it('an empty board while past bets are indexed says it is catching up, not that nobody bet', async () => {
     respond = (url) => ({ status: 200, body: board(url, { rows: [], syncing: true }) });
     mount();
-    expect((await screen.findAllByText('The board is still catching up')).length).toBe(2);
+    expect((await screen.findAllByText('The board is behind')).length).toBe(2);
     expect(screen.queryByText(/No one on the board/)).toBeNull();
+  });
+
+  it('a stalled index reads as behind even when the indexer reports its last run complete', async () => {
+    head = 100n + 20_001n;
+    respond = (url) => ({ status: 200, body: board(url, { rows: [], syncing: false }) });
+    mount();
+    expect((await screen.findAllByText('The board is behind')).length).toBe(2);
+    expect(screen.queryByText(/No bets in the last 7 days/)).toBeNull();
+    head = 150n;
   });
 
   it('an empty week offers all time', async () => {

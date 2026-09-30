@@ -26,7 +26,7 @@ export const BOARD_COPY = {
   nobodyElse: 'No one else on the board yet.',
   footnote: 'Profit is claimed winnings and refunds minus stakes. Each counts when it happens, so a win shows once it is claimed.',
   cadence: 'Updates about every 30 minutes.',
-  syncing: 'Still indexing past bets, so this board is incomplete for now.',
+  syncing: 'Recent bets are not counted yet, so this board is incomplete for now.',
   loading: 'LOADING…',
 } as const;
 
@@ -68,8 +68,8 @@ export function boardStateCopy(state: 'empty' | 'error', ctx: { period: BoardPer
   }
   if (ctx.syncing) {
     return {
-      title: 'The board is still catching up',
-      body: 'Past bets are still being indexed. Players show up here as they are.',
+      title: 'The board is behind',
+      body: 'Recent bets are not counted yet. Players show up here once they are.',
       pose: 'mako-vibing',
       motion: 'vibe',
       primary: BROWSE_POOLS,

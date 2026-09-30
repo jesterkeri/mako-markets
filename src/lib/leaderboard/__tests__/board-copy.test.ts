@@ -81,7 +81,7 @@ describe('leaderboard copy', () => {
     expect(error.body).toMatch(/safe on-chain/);
 
     const syncing = boardStateCopy('empty', { period: 'all', syncing: true });
-    expect(syncing.title).toMatch(/catching up/); // never "no one has bet" while indexing
+    expect(syncing.title).toBe('The board is behind'); // never "no one has bet" while indexing
     expect(boardStateCopy('empty', { period: 'week', syncing: true }).title).toBe(syncing.title);
 
     expect(boardStateCopy('empty', { period: 'week', syncing: false }).title).toBe('No bets in the last 7 days');
