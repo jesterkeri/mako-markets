@@ -17,6 +17,8 @@
   --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --gutter:clamp(16px,4vw,40px);
   --shadow:5px 5px 0 var(--ink);
+  --ease-out:cubic-bezier(0.23,1,0.32,1);
+  --ease-in-out:cubic-bezier(0.77,0,0.175,1);
   color-scheme:light;
 }
 *{box-sizing:border-box}
@@ -64,7 +66,7 @@ p{margin:0;max-width:64ch;text-wrap:pretty}
 .letter-body{display:flex;flex-direction:column;gap:22px;font-size:clamp(18px,1.9vw,21px);line-height:1.62;min-width:0}
 .letter-body p{max-width:60ch}
 .letter-body .open{font-family:var(--display);font-weight:700;font-size:clamp(24px,2.8vw,32px);line-height:1.2;letter-spacing:-.025em}
-.letter-body em{font-style:normal;background:linear-gradient(transparent 58%,rgba(250,204,21,.8) 58%)}
+.letter-body em{font-style:normal}
 .sign{display:flex;flex-direction:column;gap:4px;padding-top:6px;font-family:var(--mono);font-size:13px;color:var(--dim)}
 .sign b{font-family:var(--display);font-size:20px;letter-spacing:-.02em;color:var(--ink)}
 .term{font-family:var(--mono);font-weight:800;font-size:.8em;letter-spacing:-.06em;white-space:nowrap}
@@ -81,22 +83,29 @@ p{margin:0;max-width:64ch;text-wrap:pretty}
 .shot{margin:0;display:flex;flex-direction:column;gap:12px;min-width:0}
 .shot figcaption{font-size:14px;line-height:1.5;color:var(--dim);max-width:78ch}
 .shot figcaption b{color:var(--ink);font-weight:700}
-.frame{display:block;width:100%;padding:0;margin:0;border:2px solid var(--ink);border-radius:14px;overflow:hidden;background:var(--ink);box-shadow:var(--shadow);cursor:zoom-in;font:inherit;color:inherit;transition:transform .16s cubic-bezier(.2,.8,.2,1),box-shadow .16s cubic-bezier(.2,.8,.2,1)}
+.frame{display:block;width:100%;padding:0;margin:0;border:2px solid var(--ink);border-radius:14px;overflow:hidden;background:var(--ink);box-shadow:var(--shadow);cursor:zoom-in;font:inherit;color:inherit;transition:transform .16s var(--ease-out),box-shadow .16s var(--ease-out)}
 .frame img{display:block;width:100%;height:auto}
 .frame.crop img{aspect-ratio:var(--ar,1280/800);object-fit:cover;object-position:var(--pos,top)}
 .frame:focus-visible{outline:3px solid var(--red);outline-offset:5px}
 @media (hover:hover) and (prefers-reduced-motion:no-preference){
   .frame:hover{transform:translate(-2px,-2px);box-shadow:7px 7px 0 var(--ink)}
-  .frame:active{transform:translate(3px,3px);box-shadow:2px 2px 0 var(--ink)}
+  .frame:active{transform:translate(3px,3px);box-shadow:2px 2px 0 var(--ink);transition-duration:.1s}
 }
 .window{border:2px solid var(--ink);border-radius:16px;overflow:hidden;background:var(--ink);box-shadow:8px 8px 0 var(--ink)}
 .window .frame{border:0;border-radius:0;box-shadow:none}
 .window .frame:hover,.window .frame:active{transform:none;box-shadow:none}
 .win-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 12px 10px 16px;background:var(--paper);border-bottom:2px solid var(--ink)}
 .win-bar .eyebrow{color:var(--ink)}
-.seg{display:flex;gap:4px;padding:3px;border-radius:9999px;background:var(--paper-3)}
-.seg button{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border:0;border-radius:9999px;padding:6px 14px;background:transparent;color:var(--ink);cursor:pointer}
-.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:3px;border-radius:9999px;background:var(--paper-3)}
+.seg::before{content:"";position:absolute;top:3px;bottom:3px;left:3px;width:calc(50% - 5px);border-radius:9999px;background:var(--ink);transition:transform .24s var(--ease-out)}
+.seg[data-on="1"]::before{transform:translateX(calc(100% + 4px))}
+.seg button{position:relative;font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border:0;border-radius:9999px;padding:6px 14px;background:transparent;color:var(--ink);cursor:pointer}
+.seg button{transition:color .2s ease}
+.seg button[aria-pressed="true"]{color:var(--paper)}
+.frame{position:relative}
+.xfade{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity .28s ease}
+.frame.crop .xfade{aspect-ratio:auto;height:100%;object-fit:cover;object-position:var(--pos,top)}
+.frame:not(.crop) .xfade{height:auto}
 .seg button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
 .hint{font-family:var(--mono);font-size:12px;color:var(--dim)}
 
@@ -176,7 +185,11 @@ section{padding-top:clamp(88px,11vw,136px);display:flex;flex-direction:column;ga
 .life{display:flex;flex-direction:column;gap:14px}
 .flow{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;counter-reset:step}
 @media (max-width:720px){.flow{grid-auto-flow:row}}
-.step{padding:16px 18px;border-radius:14px;background:var(--paper-2);display:flex;flex-direction:column;gap:8px;min-width:0;position:relative}
+.step{padding:14px 16px;border:2px solid transparent;border-radius:14px;background:var(--paper-2);display:flex;flex-direction:column;gap:8px;min-width:0;position:relative;transition:transform .32s var(--ease-out),box-shadow .32s var(--ease-out),background-color .32s ease,border-color .32s ease}
+.step.on{background:var(--paper);border-color:var(--ink);box-shadow:4px 4px 0 var(--ink);transform:translate(-2px,-2px)}
+.step .bar{transform-origin:0 50%}
+.step.on .bar{animation:fill .9s var(--ease-out)}
+@keyframes fill{from{transform:scaleX(.35)}}
 .step .bar{height:8px;border-radius:9999px;border:2px solid var(--ink)}
 .step b{font-size:16px}
 .step span{font-size:13px;color:var(--dim);line-height:1.45}
@@ -188,14 +201,27 @@ section{padding-top:clamp(88px,11vw,136px);display:flex;flex-direction:column;ga
 .dec article{padding:24px 0;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px;min-width:0}
 .dec h3{font-size:21px}
 .dec p{font-size:15px;color:var(--ink-2)}
-.dec p b{font-weight:700;background:linear-gradient(transparent 58%,rgba(250,204,21,.75) 58%)}
+.dec p b{font-weight:700}
+.mark{background-image:linear-gradient(rgba(250,204,21,.85),rgba(250,204,21,.85));background-repeat:no-repeat;background-position:0 90%;background-size:100% 44%}
+.mark.pending{background-size:0% 44%}
+.mark.sweep{transition:background-size .9s var(--ease-out) var(--d,0ms)}
 
 /* mascot */
 .poses{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
 @media (max-width:820px){.poses{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .pose{border-radius:16px;background:var(--paper-2);padding:16px 10px 14px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;min-width:0}
 .pose img{height:136px;width:auto;max-width:100%;object-fit:contain;margin-bottom:6px}
-@media (hover:hover) and (prefers-reduced-motion:no-preference){.pose img{transition:transform .25s cubic-bezier(.2,.8,.2,1)}.pose:hover img{transform:translateY(-6px) rotate(-3deg)}}
+.pose img{transform-origin:50% 90%}
+@media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference){
+  .pose:hover img[data-m="tilt"]{animation:m-tilt 1.2s var(--ease-in-out) infinite}
+  .pose:hover img[data-m="bob"]{animation:m-bob 1s var(--ease-in-out) infinite}
+  .pose:hover img[data-m="shake"]{animation:m-shake .6s var(--ease-in-out) infinite}
+  .pose:hover img[data-m="breathe"]{animation:m-breathe 2.4s var(--ease-in-out) infinite}
+}
+@keyframes m-tilt{0%,100%{transform:rotate(0)}30%{transform:rotate(-6deg)}70%{transform:rotate(4deg)}}
+@keyframes m-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes m-shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-3deg)}75%{transform:rotate(3deg)}}
+@keyframes m-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
 .pose b{font-size:14px}
 .pose span{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);line-height:1.4}
 
@@ -221,6 +247,44 @@ section{padding-top:clamp(88px,11vw,136px);display:flex;flex-direction:column;ga
 .end .closing p{font-family:var(--display);font-weight:700;font-size:clamp(20px,2.4vw,28px);line-height:1.25;letter-spacing:-.02em;max-width:40ch}
 @media (max-width:640px){.end-head{grid-template-columns:minmax(0,1fr)}.end-head img{justify-self:end;width:120px;grid-row:1}}
 .foot{margin-top:40px;padding-top:18px;border-top:2px solid var(--ink);display:flex;flex-wrap:wrap;gap:8px 24px;font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+
+/* motion */
+.flat{transform:translate(var(--lift,5px),var(--lift,5px))!important;box-shadow:0 0 0 var(--ink)!important}
+.stamping{transition:transform .55s var(--ease-out),box-shadow .55s var(--ease-out)!important}
+.window,.end{--lift:8px}
+.digit{display:inline-block}
+@media (prefers-reduced-motion:no-preference){
+  .hero h1 .w{display:inline-block;animation:rise .8s var(--ease-out) both;animation-delay:calc(var(--i) * 70ms + 60ms)}
+  .hero h1 .hi{animation:land .7s var(--ease-out) both .38s}
+  .hero .eyebrow{animation:fade .6s ease both}
+  .hero .lede{animation:rise .8s var(--ease-out) both .5s}
+  .hero-mako{transform-origin:50% 95%;animation:mako-in .9s var(--ease-out) both .3s,mako-wave 1.3s var(--ease-in-out) 1.25s}
+  .digit.roll{animation:roll .28s var(--ease-out)}
+  dialog.lb[open]{animation:lb-in .24s var(--ease-out)}
+  dialog.lb[open]::backdrop{animation:fade .24s ease}
+}
+@media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference){
+  .hero-mako:hover{animation:mako-wave 1.3s var(--ease-in-out)}
+}
+@keyframes fade{from{opacity:0}}
+@keyframes rise{from{opacity:0;transform:translateY(.4em)}}
+@keyframes land{from{opacity:0;transform:translateY(-.3em) rotate(-12deg) scale(.94)}}
+@keyframes mako-in{from{opacity:0;transform:translateY(28px) rotate(5deg)}}
+@keyframes mako-wave{0%,100%{transform:rotate(0)}20%{transform:rotate(-5deg)}45%{transform:rotate(3deg)}70%{transform:rotate(-2deg)}}
+@keyframes roll{from{opacity:0;transform:translateY(-.3em)}}
+@keyframes lb-in{from{opacity:0;transform:scale(.97)}}
+.toc-in{position:relative}
+.toc-hl{position:absolute;top:0;left:0;height:100%;display:flex;gap:6px;padding-block:10px;pointer-events:none;clip-path:inset(0 100% 0 0 round 9999px)}
+.toc-hl.ready{transition:clip-path .38s var(--ease-out)}
+.toc-hl span.p{flex:none;font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:7px 13px;border-radius:9999px;background:var(--ink);color:var(--paper);white-space:nowrap}
+.toc-hl span.p i{font-style:normal;color:var(--signal);margin-right:6px}
+.toc.has-hl a[aria-current="true"]{background:var(--paper-2);color:var(--ink)}
+.toc::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--ink);transform-origin:0 50%;transform:scaleX(0)}
+@supports (animation-timeline: scroll()){
+  @media (prefers-reduced-motion:no-preference){.toc::after{animation:progress linear both;animation-timeline:scroll(root)}}
+}
+@keyframes progress{to{transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){.toc-hl.ready,.seg::before,.step,.mark.sweep,.stamping{transition:none!important}}
 
 /* lightbox */
 dialog.lb{width:min(1320px,calc(100vw - 24px));max-width:none;max-height:calc(100dvh - 24px);padding:0;border:2px solid var(--ink);border-radius:16px;background:var(--paper);color:var(--ink);box-shadow:8px 8px 0 var(--ink);overflow:hidden}
@@ -264,7 +328,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
   <div class="hero">
     <div class="hero-copy">
       <span class="eyebrow">Mako Market · design system and process · 2026</span>
-      <h1>Everyone has a <span class="hi">call</span>.</h1>
+      <h1><span class="w" style="--i:0">Everyone</span> <span class="w" style="--i:1">has</span> <span class="w" style="--i:2">a</span> <span class="hi">call</span><span class="w" style="--i:6">.</span></h1>
       <p class="lede">Arsenal on Saturday. Bitcoin in the next fifteen minutes. Whether gold holds its line. People make these calls every day with their friends, and almost none of them ever get to back it.</p>
     </div>
     <img class="hero-mako" src="mako/mako-wave.png" alt="Mako, the shark mascot, in a yellow sweater and headphones, waving" width="520" height="553">
@@ -274,9 +338,9 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
     <span class="eyebrow">A note before the screens</span>
     <div class="letter-body">
       <p class="open">We started Mako because the places to back a call were never built for most people.</p>
-      <p>Sportsbooks hold your money and set the odds against you. On-chain markets ask for a wallet, gas and an order book before you can even say what you think. Somewhere between those two, the simple thing got lost: <em>you think you know how this ends, and you want to stand behind it.</em></p>
+      <p>Sportsbooks hold your money and set the odds against you. On-chain markets ask for a wallet, gas and an order book before you can even say what you think. Somewhere between those two, the simple thing got lost: <em class="mark">you think you know how this ends, and you want to stand behind it.</em></p>
       <p>So Mako keeps only what a call really is. Two sides, one pot and a clock. You sign in with an email and pick a side. If you called it, you split what the other side put in. The contract settles it in the open, and if a result never comes, everyone gets their money back without asking anyone.</p>
-      <p>This page is how we designed the screens for that. Every choice on it came from one question: <em>would someone putting their own money on a call trust this, and enjoy it?</em></p>
+      <p>This page is how we designed the screens for that. Every choice on it came from one question: <em class="mark">would someone putting their own money on a call trust this, and enjoy it?</em></p>
       <div class="sign"><b>Mako Market’s creative director and founder</b><span>21 pages · dark and light · desktop at 1280</span></div>
     </div>
   </div>
@@ -285,7 +349,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
     <div class="window" data-window>
       <div class="win-bar">
         <span class="eyebrow">Home · round #0142</span>
-        <div class="seg" role="group" aria-label="Theme for the home page">
+        <div class="seg" data-on="0" role="group" aria-label="Theme for the home page">
           <button type="button" aria-pressed="true" data-src="img/home.jpg" data-h="1168" data-alt="Mako Market home page on desktop in dark mode: next BTC round countdown, UP and DOWN panels, rounds and pools lists, market intel.">Dark</button>
           <button type="button" aria-pressed="false" data-src="img/home-light.jpg" data-h="1166" data-alt="Mako Market home page on desktop in light mode: next BTC round countdown, UP and DOWN panels, rounds and pools lists, market intel.">Light</button>
         </div>
@@ -318,7 +382,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
       <div class="window" data-window>
         <div class="win-bar">
           <span class="eyebrow">Round #0142</span>
-          <div class="seg" role="group" aria-label="Theme for the round page">
+          <div class="seg" data-on="0" role="group" aria-label="Theme for the round page">
             <button type="button" aria-pressed="true" data-src="img/round.jpg" data-h="1507" data-alt="Round #0142 page in dark mode: countdown, live candle chart, UP and DOWN payouts, bet panel and comments.">Dark</button>
             <button type="button" aria-pressed="false" data-src="img/round-light.jpg" data-h="1507" data-alt="Round #0142 page in light mode: countdown, live candle chart, UP and DOWN payouts, bet panel and comments.">Light</button>
           </div>
@@ -410,14 +474,14 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
   <section id="decisions">
     <div class="sec-head"><span class="n">08 · Decisions</span><h2>What we chose, and why.</h2></div>
     <div class="dec">
-      <article><h3>Two colours for the game</h3><p>We kept <b>yellow for UP and YES, red for DOWN and NO</b>, and nothing else competes with them. An early version of the wallet confirm used a teal success tile; we dropped it because Mako already had its colours. Success is ink on paper now.</p></article>
-      <article><h3>Every button goes somewhere</h3><p>Before a page was called done, <b>every control on it had to lead to a designed page, sheet or state</b>. That’s how we ended up with the claim flow, the wallet states, the 404 and every empty state.</p></article>
-      <article><h3>One confirm for every transaction</h3><p>Betting, creating, claiming and the faucet all go through <b>the same confirm dialog</b>, so people learn it once. “Free · gas covered” sits in it as a pill because not paying gas is a feature worth seeing.</p></article>
-      <article><h3>Results the way the contract works</h3><p>We first drew a pool flow with creator reports, challenges and bonds. The live contract doesn’t work that way, so <b>we redrew it to match</b>: Mako’s resolver settles, and anything unsettled after 24H refunds itself. The screen never promises something the chain can’t do.</p></article>
-      <article><h3>Share the market, not the brag</h3><p>For now <b>you can only share an invite card</b>: the bet, a QR code and a link that opens the exact market. We designed a lot of win cards and parked them all; none felt right yet.</p></article>
-      <article><h3>Real data only</h3><p><b>No fake numbers in the product.</b> Where there’s no data yet, you see a designed empty, loading or error state with Mako, never a placeholder pretending to be real.</p></article>
-      <article><h3>A tour that uses the real pages</h3><p>How to play opens <b>each page it explains</b>: Home, Rounds, Pools, Create, Leaderboard, Me. The card sits next to what it’s talking about, and on desktop the page stays sharp behind it. We tried blurring it and took it out; the page is the lesson.</p></article>
-      <article><h3>Light mode on every page</h3><p>Every page was drawn <b>in dark and light from the start</b>, with ink outlines on filled shapes in light mode so yellow and red keep their edges on paper.</p></article>
+      <article><h3>Two colours for the game</h3><p>We kept <b class="mark">yellow for UP and YES, red for DOWN and NO</b>, and nothing else competes with them. An early version of the wallet confirm used a teal success tile; we dropped it because Mako already had its colours. Success is ink on paper now.</p></article>
+      <article><h3>Every button goes somewhere</h3><p>Before a page was called done, <b class="mark">every control on it had to lead to a designed page, sheet or state</b>. That’s how we ended up with the claim flow, the wallet states, the 404 and every empty state.</p></article>
+      <article><h3>One confirm for every transaction</h3><p>Betting, creating, claiming and the faucet all go through <b class="mark">the same confirm dialog</b>, so people learn it once. “Free · gas covered” sits in it as a pill because not paying gas is a feature worth seeing.</p></article>
+      <article><h3>Results the way the contract works</h3><p>We first drew a pool flow with creator reports, challenges and bonds. The live contract doesn’t work that way, so <b class="mark">we redrew it to match</b>: Mako’s resolver settles, and anything unsettled after 24H refunds itself. The screen never promises something the chain can’t do.</p></article>
+      <article><h3>Share the market, not the brag</h3><p>For now <b class="mark">you can only share an invite card</b>: the bet, a QR code and a link that opens the exact market. We designed a lot of win cards and parked them all; none felt right yet.</p></article>
+      <article><h3>Real data only</h3><p><b class="mark">No fake numbers in the product.</b> Where there’s no data yet, you see a designed empty, loading or error state with Mako, never a placeholder pretending to be real.</p></article>
+      <article><h3>A tour that uses the real pages</h3><p>How to play opens <b class="mark">each page it explains</b>: Home, Rounds, Pools, Create, Leaderboard, Me. The card sits next to what it’s talking about, and on desktop the page stays sharp behind it. We tried blurring it and took it out; the page is the lesson.</p></article>
+      <article><h3>Light mode on every page</h3><p>Every page was drawn <b class="mark">in dark and light from the start</b>, with ink outlines on filled shapes in light mode so yellow and red keep their edges on paper.</p></article>
     </div>
     <div class="grid2">
       <figure class="shot"><button type="button" class="frame crop" style="--ar:1280/820" aria-label="Open the how to play tour full size"><img src="img/tour-rounds.jpg" alt="How to play tour, step 2 of 7, with the card under the Rounds tab." width="1280" height="1106" loading="lazy"></button><figcaption><b>How to play, step 2.</b> The tab being explained lights up, the card sits under it with an arrow, and Mako moves with it.</figcaption></figure>
@@ -430,16 +494,16 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
     <p class="lede">Mako shows up when something happens to you: a win, a loss, an empty list, an error, a wait. He stays off the screens where you’re placing a bet or reading a table.</p>
     <p class="note">Each pose has one job and one simple motion, and all of it stops for people who turn motion off.</p>
     <div class="poses">
-      <div class="pose"><img src="mako/mako-wave.png" alt="Mako waving" loading="lazy" width="520" height="553"><b>Wave</b><span>Signed in, tour start</span></div>
-      <div class="pose"><img src="mako/14-timer.png" alt="Mako with a timer" loading="lazy"><b>Timer</b><span>Entries closing</span></div>
-      <div class="pose"><img src="mako/mako-cash-pool.png" alt="Mako in a pool of cash" loading="lazy"><b>Cash pool</b><span>Pools, big pots</span></div>
-      <div class="pose"><img src="mako/11-counting-usdc.png" alt="Mako counting USDC"><b>Counting</b><span>Claims</span></div>
-      <div class="pose"><img src="mako/13-crown.png" alt="Mako wearing a crown" loading="lazy"><b>Crown</b><span>Leaderboard</span></div>
-      <div class="pose"><img src="mako/12-faucet.png" alt="Mako with a faucet" loading="lazy"><b>Faucet</b><span>Test USDC</span></div>
-      <div class="pose"><img src="mako/17-building.png" alt="Mako building" loading="lazy"><b>Building</b><span>Create a pool</span></div>
-      <div class="pose"><img src="mako/mako-sleeping.png" alt="Mako sleeping" loading="lazy"><b>Sleeping</b><span>Empty lists</span></div>
-      <div class="pose"><img src="mako/16-search-magnifying-glass.png" alt="Mako with a magnifying glass" loading="lazy"><b>Search</b><span>No results</span></div>
-      <div class="pose"><img src="mako/07-lost-map.png" alt="Mako with a map" loading="lazy"><b>Lost</b><span>404</span></div>
+      <div class="pose"><img src="mako/mako-wave.png" data-m="tilt" alt="Mako waving" loading="lazy" width="520" height="553"><b>Wave</b><span>Signed in, tour start</span></div>
+      <div class="pose"><img src="mako/14-timer.png" data-m="shake" alt="Mako with a timer" loading="lazy"><b>Timer</b><span>Entries closing</span></div>
+      <div class="pose"><img src="mako/mako-cash-pool.png" data-m="bob" alt="Mako in a pool of cash" loading="lazy"><b>Cash pool</b><span>Pools, big pots</span></div>
+      <div class="pose"><img src="mako/11-counting-usdc.png" data-m="bob" alt="Mako counting USDC"><b>Counting</b><span>Claims</span></div>
+      <div class="pose"><img src="mako/13-crown.png" data-m="bob" alt="Mako wearing a crown" loading="lazy"><b>Crown</b><span>Leaderboard</span></div>
+      <div class="pose"><img src="mako/12-faucet.png" data-m="tilt" alt="Mako with a faucet" loading="lazy"><b>Faucet</b><span>Test USDC</span></div>
+      <div class="pose"><img src="mako/17-building.png" data-m="shake" alt="Mako building" loading="lazy"><b>Building</b><span>Create a pool</span></div>
+      <div class="pose"><img src="mako/mako-sleeping.png" data-m="breathe" alt="Mako sleeping" loading="lazy"><b>Sleeping</b><span>Empty lists</span></div>
+      <div class="pose"><img src="mako/16-search-magnifying-glass.png" data-m="tilt" alt="Mako with a magnifying glass" loading="lazy"><b>Search</b><span>No results</span></div>
+      <div class="pose"><img src="mako/07-lost-map.png" data-m="tilt" alt="Mako with a map" loading="lazy"><b>Lost</b><span>404</span></div>
     </div>
     <figure class="shot"><button type="button" class="frame" aria-label="Open the 404 page full size"><img src="img/notfound.jpg" alt="404 page with Mako holding a map on a yellow circle: Even Mako can't find this page." width="1280" height="838" loading="lazy"></button><figcaption><b>404.</b> A scoreboard-sized 404, a map with a dotted route that ends in an ×, and ways back to rounds and pools.</figcaption></figure>
   </section>
@@ -451,7 +515,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
       <div class="window" data-window>
         <div class="win-bar">
           <span class="eyebrow">Pool · Arsenal v Chelsea</span>
-          <div class="seg" role="group" aria-label="Theme for the pool page">
+          <div class="seg" data-on="1" role="group" aria-label="Theme for the pool page">
             <button type="button" aria-pressed="false" data-src="img/pool.jpg" data-h="1658" data-alt="Pool page in dark mode: YES share over time, both payouts, bet panel, rules and comments.">Dark</button>
             <button type="button" aria-pressed="true" data-src="img/pool-light.jpg" data-h="1658" data-alt="Pool page in light mode: YES share over time, both payouts, bet panel, rules and comments.">Light</button>
           </div>
@@ -507,16 +571,51 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
 
 <script>
 (function(){
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Crossfade a framed screen to a new image so dark to light never flashes
+  function swap(img, src, alt, h){
+    var frame = img.parentNode, old = frame.querySelector('.xfade');
+    if (old) old.remove();
+    function commit(){ img.src = src; img.alt = alt; img.height = h; }
+    if (reduce) { commit(); return; }
+    var next = new Image(); next.className = 'xfade'; next.alt = ''; next.src = src;
+    frame.appendChild(next);
+    (next.decode ? next.decode() : Promise.resolve()).catch(function(){}).then(function(){
+      if (!next.isConnected) return;
+      requestAnimationFrame(function(){ next.style.opacity = '1'; });
+      setTimeout(function(){ if (next.isConnected) { commit(); next.remove(); } }, 300);
+    });
+  }
+
   // Dark / light switches on framed pages
   document.querySelectorAll('[data-window]').forEach(function(win){
     var img = win.querySelector('.frame img');
     win.querySelectorAll('.seg button').forEach(function(btn){
       btn.addEventListener('click', function(){
-        win.querySelectorAll('.seg button').forEach(function(b){ b.setAttribute('aria-pressed', String(b === btn)); });
-        img.src = btn.dataset.src; img.alt = btn.dataset.alt; img.height = +btn.dataset.h;
+        if (btn.getAttribute('aria-pressed') === 'true') return;
+        var btns = Array.prototype.slice.call(win.querySelectorAll('.seg button'));
+        btns.forEach(function(b){ b.setAttribute('aria-pressed', String(b === btn)); });
+        win.querySelector('.seg').dataset.on = String(btns.indexOf(btn));
+        swap(img, btn.dataset.src, btn.dataset.alt, +btn.dataset.h);
       });
     });
   });
+
+  // Digits roll in one at a time, only the ones that changed
+  function render(el, text){
+    var spans = el.querySelectorAll('.digit');
+    if (spans.length !== text.length) {
+      el.textContent = '';
+      for (var i = 0; i < text.length; i++) { var sp = document.createElement('span'); sp.className = 'digit'; sp.textContent = text[i]; el.appendChild(sp); }
+      return;
+    }
+    for (var j = 0; j < text.length; j++) {
+      if (spans[j].textContent === text[j]) continue;
+      var n = document.createElement('span'); n.className = 'digit roll'; n.textContent = text[j];
+      el.replaceChild(n, spans[j]);
+    }
+  }
 
   // Live countdown in the type specimen
   document.querySelectorAll('[data-countdown]').forEach(function(el){
@@ -524,12 +623,29 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
     setInterval(function(){
       left = left <= 0 ? start : left - 1;
       var m = Math.floor(left / 60), s = left % 60;
-      el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+      render(el, String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0'));
     }, 1000);
   });
 
-  // Section nav: mark the section in view
+  // Section nav: mark the section in view, with an ink pill that slides between items
   var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  var tocIn = document.querySelector('.toc-in'), hl = document.createElement('div');
+  hl.className = 'toc-hl'; hl.setAttribute('aria-hidden', 'true');
+  links.forEach(function(a){
+    var p = document.createElement('span'); p.className = 'p';
+    p.innerHTML = '<i>' + a.querySelector('span').textContent + '</i>' + a.lastChild.textContent;
+    hl.appendChild(p);
+  });
+  tocIn.appendChild(hl);
+  document.querySelector('.toc').classList.add('has-hl');
+  function moveHl(a){
+    hl.style.width = tocIn.scrollWidth + 'px';
+    var L = a.offsetLeft, R = tocIn.scrollWidth - (a.offsetLeft + a.offsetWidth);
+    hl.style.clipPath = 'inset(0 ' + R + 'px 0 ' + L + 'px round 9999px)';
+  }
+  hl.style.clipPath = 'inset(0 100% 0 0 round 9999px)';
+  requestAnimationFrame(function(){ hl.classList.add('ready'); });
+  window.addEventListener('resize', function(){ var c = tocIn.querySelector('a[aria-current="true"]'); if (c) moveHl(c); });
   var byId = {}; links.forEach(function(a){ byId[a.getAttribute('href').slice(1)] = a; });
   if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function(entries){
@@ -538,11 +654,52 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
         links.forEach(function(a){ a.removeAttribute('aria-current'); });
         var a = byId[e.target.id]; if (!a) return;
         a.setAttribute('aria-current','true');
+        if (!hl.classList.contains('ready')) hl.classList.add('ready');
+        moveHl(a);
         var bar = a.parentNode, l = a.offsetLeft - 16;
         if (l < bar.scrollLeft || a.offsetLeft + a.offsetWidth > bar.scrollLeft + bar.clientWidth) bar.scrollTo({left: l, behavior: 'smooth'});
       });
     }, {rootMargin: '-45% 0px -50% 0px'});
     document.querySelectorAll('section[id]').forEach(function(s){ io.observe(s); });
+  }
+
+  // Screens below the fold start flat on the paper and stamp up as they arrive.
+  // Highlighter marks sweep in the same way. Nothing is hidden: the resting state is fully readable.
+  if (!reduce && 'IntersectionObserver' in window) {
+    var fold = window.innerHeight;
+    var stampEls = Array.prototype.slice.call(document.querySelectorAll('.window, .frame, .end')).filter(function(el){
+      return !el.closest('.window .frame') || el.classList.contains('window');
+    }).filter(function(el){ return !(el.classList.contains('frame') && el.closest('.window')); });
+    var marks = Array.prototype.slice.call(document.querySelectorAll('.mark'));
+    var pending = stampEls.concat(marks).filter(function(el){ return el.getBoundingClientRect().top > fold * 0.9; });
+    pending.forEach(function(el){ el.classList.add(el.classList.contains('mark') ? 'pending' : 'flat'); });
+    var ro = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (!e.isIntersecting) return;
+        var el = e.target; ro.unobserve(el);
+        if (el.classList.contains('mark')) {
+          el.classList.add('sweep');
+          requestAnimationFrame(function(){ el.classList.remove('pending'); });
+        } else {
+          el.classList.add('stamping');
+          requestAnimationFrame(function(){ requestAnimationFrame(function(){ el.classList.remove('flat'); }); });
+          setTimeout(function(){ el.classList.remove('stamping'); }, 650);
+        }
+      });
+    }, {rootMargin: '0px 0px -12% 0px'});
+    pending.forEach(function(el, i){ if (el.classList.contains('mark')) el.style.setProperty('--d', (i % 3) * 120 + 'ms'); ro.observe(el); });
+
+    // Lifecycle: a playhead walks each flow while it is on screen
+    document.querySelectorAll('.flow').forEach(function(flow){
+      var steps = flow.querySelectorAll('.step'), k = -1, t = null;
+      function tick(){ if (k >= 0) steps[k].classList.remove('on'); k = (k + 1) % steps.length; steps[k].classList.add('on'); }
+      new IntersectionObserver(function(entries){
+        entries.forEach(function(e){
+          if (e.isIntersecting && !t) { tick(); t = setInterval(tick, 1500); }
+          if (!e.isIntersecting && t) { clearInterval(t); t = null; }
+        });
+      }, {threshold: 0.6}).observe(flow);
+    });
   }
 
   // Lightbox: every framed screen opens full size, arrows step through them
@@ -553,7 +710,7 @@ dialog.lb::backdrop{background:rgba(26,25,23,.72)}
   var idx = 0;
   function show(i){
     idx = (i + frames.length) % frames.length;
-    var f = frames[idx], img = f.querySelector('img'), cap = f.closest('figure').querySelector('figcaption');
+    var f = frames[idx], img = f.querySelector('img:not(.xfade)'), cap = f.closest('figure').querySelector('figcaption');
     lbImg.src = img.getAttribute('src'); lbImg.alt = img.alt;
     lbImg.className = img.naturalWidth && img.naturalWidth < 900 ? 'narrow' : '';
     lbTitle.innerHTML = cap ? cap.innerHTML.replace(/<span class="hint">.*?<\/span>/, '') : '';
