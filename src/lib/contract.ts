@@ -60,17 +60,26 @@ export const PM_CONTRACT_ADDRESS = normalizeAddress(
  * The Rounds contract address from `raw`, or null when Rounds is not live.
  *
  * There is deliberately NO fallback: until MakoRoundsV1 is deployed and `NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS` is set,
- * every Rounds action is refused rather than pointed at a guessed address. A malformed value throws at load, like
- * the other contract addresses. An address equal to Pools, Private Markets or USDC is treated as unset: Rounds'
- * `claim(uint256)` has the same selector as the Pools `claim(uint256)`, and the two are told apart only by target.
+ * every Rounds action is refused rather than pointed at a guessed address. A malformed value is logged and treated
+ * as unset rather than thrown: a typo in the setting for a feature that is not live must switch Rounds off, not
+ * stop Pools and Private Markets loading. An address equal to Pools, Private Markets or USDC is treated as unset:
+ * Rounds' `claim(uint256)` has the same selector as the Pools `claim(uint256)`, and the two are told apart only by
+ * target.
  */
 export function resolveRoundsAddress(
   raw: string | undefined,
   others: readonly `0x${string}`[] = [MAKO_ADDRESS, PM_CONTRACT_ADDRESS, USDC_ADDRESS],
 ): `0x${string}` | null {
   if (!raw || !raw.trim()) return null;
-  const address = normalizeAddress(raw, 'NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS');
-  if (others.some((o) => o.toLowerCase() === address.toLowerCase())) {
+  let address: `0x${string}`;
+  try {
+    address = normalizeAddress(raw, 'NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS');
+  } catch {
+    console.error('[contract] NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS is not a valid address; Rounds is off');
+    return null;
+  }
+  // `others` trimmed: USDC_ADDRESS comes from the env untrimmed, and padding must not hide a collision.
+  if (others.some((o) => o.trim().toLowerCase() === address.toLowerCase())) {
     console.error('[contract] NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS equals another Mako contract or USDC; Rounds is off');
     return null;
   }

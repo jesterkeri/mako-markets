@@ -4,12 +4,12 @@
 
 import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
 
-import { runSponsoredRequest, type RunOutcome, type SponsorRequestBody } from './aa-client';
+import { runSponsoredRequest, type RunOutcome, type SponsoredStage, type SponsorRequestBody } from './aa-client';
 import { ROUNDS_ADDRESS } from './contract';
 import { roundsAbi } from './rounds-abi';
 import { USDC_ADDRESS } from './usdc';
 
-export type RoundsStage = 'signing' | 'sending';
+export type RoundsStage = SponsoredStage;
 export type RoundSide = 'up' | 'down';
 
 type Common = {

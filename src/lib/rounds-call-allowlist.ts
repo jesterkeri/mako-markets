@@ -41,6 +41,7 @@ export const ROUND_MIN_LEAD = 600n;
 export const ROUND_MAX_LEAD = 7n * 24n * 60n * 60n;
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
+const MAX_UINT_64 = (1n << 64n) - 1n;
 const SIDE_UP = 1;
 const SIDE_DOWN = 2;
 
@@ -98,6 +99,9 @@ function scheduleStartTime(call: RoundsCall, rounds: Address): bigint {
   const d = decodeRounds(call, rounds);
   if (d.functionName !== 'schedule') throw new NotAllowedError('round_bad_schedule_args');
   const [startTime] = d.args as readonly [bigint];
+  // viem reads a uint64 argument as a full 256-bit word without a range check; the contract's ABI decoder reverts
+  // on anything wider, so it is refused here, at sponsor time and at send time alike.
+  if (startTime < 0n || startTime > MAX_UINT_64) throw new NotAllowedError('round_bad_schedule_args', 'uint64');
   if (startTime % ROUND_BOUNDARY_STEP !== 0n) throw new NotAllowedError('round_bad_schedule_args', 'boundary');
   return startTime;
 }

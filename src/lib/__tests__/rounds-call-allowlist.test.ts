@@ -66,10 +66,19 @@ describe('Rounds address', () => {
     expect(resolveRoundsAddress(other.toLowerCase())).toBeNull();
   });
 
-  it('unset or blank is not live; a malformed value fails loudly', () => {
+  it('unset, blank or malformed is not live, and a malformed value switches Rounds off rather than throwing', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(resolveRoundsAddress(undefined)).toBeNull();
     expect(resolveRoundsAddress('  ')).toBeNull();
-    expect(() => resolveRoundsAddress('0xnot-an-address')).toThrow(/NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS/);
+    expect(resolveRoundsAddress('0xnot-an-address')).toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/not a valid address; Rounds is off/));
+    log.mockRestore();
+  });
+
+  it('a collision is found even when the other address carries whitespace (the USDC env value is untrimmed)', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(resolveRoundsAddress(ROUNDS, [` ${ROUNDS.toLowerCase()}\n` as `0x${string}`])).toBeNull();
+    log.mockRestore();
   });
 
   it('pins the selectors the spec names', () => {

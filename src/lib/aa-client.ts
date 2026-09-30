@@ -1130,11 +1130,14 @@ export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
 
 /// The sponsor -> sign -> send sequence, with its full outcome mapping, shared by claims and the Rounds actions
 /// (extracted unchanged from runClaim). `onStage` reports progress to the confirm sheet: 'signing' when the
-/// signature is requested, 'sending' once signed and the op is on its way to Monad.
+/// signature is requested, 'sending' once signed and the op is on its way to Monad, and 'confirming' when the send
+/// route answers that the op was submitted and is waiting for a block.
+export type SponsoredStage = 'signing' | 'sending' | 'confirming';
+
 export async function runSponsoredRequest(
   body: SponsorRequestBody,
   magicEoa: Address,
-  onStage?: (stage: 'signing' | 'sending') => void,
+  onStage?: (stage: SponsoredStage) => void,
 ): Promise<RunOutcome> {
   // 1. Sponsor. Codex r1 MAJ-1: catch transport throws (network / DNS /
   // aborted fetch) so the helper always resolves a typed RunOutcome.
@@ -1319,6 +1322,7 @@ export async function runSponsoredRequest(
         failureReason: sendBody.failureReason ?? 'on-chain revert',
       };
     case 'submitted':
+      onStage?.('confirming');
       return {
         kind: 'submitted',
         pendingUserOpId: sponsored.pendingUserOpId,
