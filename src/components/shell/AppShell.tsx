@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 
+import { SignInDialog } from '@/components/signin/SignInDialog';
 import { isMobileDetail } from '@/lib/shell-nav';
 import { DesktopHeader } from './DesktopHeader';
 import { MobileHeader } from './MobileHeader';
@@ -34,6 +35,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <TabBar />
         </div>
       )}
+      <SignInDialog />
     </div>
   );
 }

@@ -7,7 +7,8 @@ import { usePathname } from 'next/navigation';
 import { Logo } from '@/components/Logo';
 import { useUsdcBalance } from '@/lib/hooks';
 import { useLivePrices } from '@/lib/use-live-prices';
-import { activeNav, NAV, SIGN_IN_HREF } from '@/lib/shell-nav';
+import { activeNav, NAV } from '@/lib/shell-nav';
+import { SignInLink } from '@/components/signin/SignInLink';
 import { useTheme } from '@/lib/use-theme';
 import { formatUsdc } from '@/lib/usdc';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
@@ -274,13 +275,12 @@ export function DesktopHeader() {
             <Wallet user={user} />
           </>
         ) : isLoading ? null : (
-          <Link
-            href={SIGN_IN_HREF}
+          <SignInLink
             className="mk-press97"
             style={{ height: 40, display: 'flex', alignItems: 'center', padding: '0 20px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 15, textDecoration: 'none' }}
           >
             Sign in
-          </Link>
+          </SignInLink>
         )}
       </div>
     </header>

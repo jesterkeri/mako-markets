@@ -27,5 +27,5 @@ export function isMobileDetail(pathname: string): boolean {
   return /^\/(pools|rounds)\/\d+\/?$/.test(pathname);
 }
 
-/// Where "Sign in" goes. The redesigned /signin (14a) replaces /signup in a later step; until then it is /signup.
-export const SIGN_IN_HREF = '/signup';
+/// The sign-in route (14a). "Sign in" buttons open the dialog in place; this is where they link to.
+export const SIGN_IN_HREF = '/signin';

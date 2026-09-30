@@ -7,6 +7,7 @@ import { useReadContract, useReadContracts } from 'wagmi';
 
 import { CommentsSection } from '@/components/CommentsSection';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
 import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
@@ -14,7 +15,6 @@ import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_PILL, usdc2, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC } from '@/lib/pool-rules';
-import { SIGN_IN_HREF } from '@/lib/shell-nav';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { useMakoLabels } from '@/lib/use-mako-labels';
@@ -647,9 +647,9 @@ function BetFormDesktop(v: ViewProps) {
       </div>
       <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--dim)' }}>{feeNote(m)}</div>
       {!signedIn ? (
-        <Link href={SIGN_IN_HREF} className="mk-press96" style={{ ...button, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>
+        <SignInLink className="mk-press96" style={{ ...button, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>
           Sign in to bet
-        </Link>
+        </SignInLink>
       ) : (
         <button
           onClick={openBet}
@@ -730,9 +730,9 @@ function PoolMobile(v: ViewProps) {
           {signedIn ? (
             <span style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 14px', borderRadius: 9999, background: 'var(--raise)', fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{balance === null ? '…' : `${usdc2(balance)} USDC`}</span>
           ) : (
-            <Link href={SIGN_IN_HREF} style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 16px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 15, fontWeight: 800, textDecoration: 'none' }}>
+            <SignInLink style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 16px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 15, fontWeight: 800, textDecoration: 'none' }}>
               Sign in
-            </Link>
+            </SignInLink>
           )}
         </span>
       </header>
@@ -914,9 +914,9 @@ function MobileBottom(v: ViewProps) {
           </div>
           {why && <div style={{ fontSize: 13, lineHeight: 1.4, color: 'var(--dim)' }}>{why}</div>}
           {!signedIn ? (
-            <Link href={SIGN_IN_HREF} className="m3-press m3-scale96" style={{ ...big, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>
+            <SignInLink className="m3-press m3-scale96" style={{ ...big, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>
               Sign in to bet
-            </Link>
+            </SignInLink>
           ) : (
             <button
               onClick={openBet}

@@ -4,7 +4,8 @@ import Link from 'next/link';
 
 import { Logo } from '@/components/Logo';
 import { useUsdcBalance } from '@/lib/hooks';
-import { SIGN_IN_HREF } from '@/lib/shell-nav';
+
+import { SignInLink } from '@/components/signin/SignInLink';
 import { formatUsdc } from '@/lib/usdc';
 import { accountAddress, useUser } from '@/lib/use-user';
 
@@ -63,13 +64,12 @@ export function MobileHeader({ onSearch }: Props) {
           </Link>
         </>
       ) : isLoading ? null : (
-        <Link
-          href={SIGN_IN_HREF}
+        <SignInLink
           className="m3-press"
           style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 20px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 15, fontWeight: 800, textDecoration: 'none' }}
         >
           Sign in
-        </Link>
+        </SignInLink>
       )}
     </header>
   );
