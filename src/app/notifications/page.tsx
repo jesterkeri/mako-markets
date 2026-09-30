@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-export const metadata: Metadata = { title: 'Notifications · Mako Market' };
+export const metadata: Metadata = { title: 'Notifications · Mako Market Beta' };
 
 /// Notifications (22a). Not built yet; per the founder's decision (2026-09-30) the page says "coming soon"
 /// rather than hiding the bell or showing made-up items.

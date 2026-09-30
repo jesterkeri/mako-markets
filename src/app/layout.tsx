@@ -12,7 +12,7 @@ import { THEME_BOOT_SCRIPT } from '@/lib/use-theme';
 // fontsource (see globals.css).
 
 export const metadata: Metadata = {
-  title: 'Mako Market',
+  title: 'Mako Market Beta',
   description: 'Short-form prediction markets on Monad',
 };
 

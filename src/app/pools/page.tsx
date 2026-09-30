@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { PoolsClient } from './PoolsClient';
 
-export const metadata: Metadata = { title: 'Pools · Mako Market' };
+export const metadata: Metadata = { title: 'Pools · Mako Market Beta' };
 
 export default function PoolsPage() {
   return <PoolsClient />;

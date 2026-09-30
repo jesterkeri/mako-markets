@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { PoolClient } from './PoolClient';
 
-export const metadata: Metadata = { title: 'Pool · Mako Market' };
+export const metadata: Metadata = { title: 'Pool · Mako Market Beta' };
 
 /// /pools/[id] (9a). `?side=yes|no` preselects the bet side (the Pools list's YES and NO buttons).
 export default async function PoolPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ side?: string }> }) {

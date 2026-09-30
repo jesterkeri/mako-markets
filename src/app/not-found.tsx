@@ -6,7 +6,7 @@ import { StillInTheWaterDesktop, StillInTheWaterMobile } from '@/components/Stil
 
 import s from './not-found.module.css';
 
-export const metadata: Metadata = { title: 'Page not found · Mako Market' };
+export const metadata: Metadata = { title: 'Page not found · Mako Market Beta' };
 
 const pill: React.CSSProperties = {
   display: 'inline-flex',

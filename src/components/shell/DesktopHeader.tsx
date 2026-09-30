@@ -15,6 +15,7 @@ import { formatAddress } from '@/lib/user-display';
 
 import { pct2, usd2 } from './format';
 import { ICON, StrokeIcon, SunIcon } from './icons';
+import { BetaTag } from './BetaTag';
 import { NotificationsPanel } from './NotificationsPanel';
 import { SignOutConfirm } from './SignOutConfirm';
 import { useDismiss } from './use-dismiss';
@@ -231,9 +232,10 @@ export function DesktopHeader() {
   const { user, isLoading } = useUser();
   return (
     <header style={{ height: 68, display: 'flex', alignItems: 'center', gap: 28 }}>
-      <Link href="/" aria-label="Mako Market home" style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'inherit', textDecoration: 'none' }}>
+      <Link href="/" aria-label="Mako Market Beta home" style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'inherit', textDecoration: 'none' }}>
         <Logo size={28} />
         <span style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 20, letterSpacing: '-0.03em' }}>Mako Market</span>
+        <BetaTag />
       </Link>
       <nav aria-label="Main" style={{ display: 'flex', gap: 2, padding: 4, borderRadius: 9999, background: 'var(--raise)' }}>
         {NAV.map((n) => {

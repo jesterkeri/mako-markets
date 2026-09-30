@@ -8,6 +8,7 @@ import { SIGN_IN_HREF } from '@/lib/shell-nav';
 import { formatUsdc } from '@/lib/usdc';
 import { accountAddress, useUser } from '@/lib/use-user';
 
+import { BetaTag } from './BetaTag';
 import { ICON, StrokeIcon } from './icons';
 
 const roundButton: React.CSSProperties = {
@@ -35,8 +36,9 @@ export function MobileHeader({ onSearch }: Props) {
   const balance = typeof balanceQuery.data === 'bigint' ? formatUsdc(balanceQuery.data) : null;
   return (
     <header style={{ height: 68, display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px 0 20px' }}>
-      <Link href="/" aria-label="Mako Market home" style={{ display: 'flex', color: 'inherit' }}>
+      <Link href="/" aria-label="Mako Market Beta home" style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'inherit', textDecoration: 'none' }}>
         <Logo size={28} />
+        <BetaTag size="mobile" />
       </Link>
       <span style={{ marginLeft: 'auto' }} />
       {onSearch && (
