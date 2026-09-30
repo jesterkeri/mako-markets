@@ -17,7 +17,7 @@ type Props = { searchParams: Promise<{ [key: string]: string | string[] | undefi
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const tab = parseLegalTab((await searchParams).tab);
-  return { title: `${LEGAL_DOCS[tab].title} · Mako Market` };
+  return { title: `${LEGAL_DOCS[tab].title} · Mako Market Beta` };
 }
 
 /// Terms, privacy and risk (23a): one page, three tabs picked by `?tab=` (an unknown value opens Terms). Each tab

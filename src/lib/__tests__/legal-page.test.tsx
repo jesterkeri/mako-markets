@@ -67,7 +67,7 @@ describe('legal page', () => {
   });
 
   it('titles the browser tab after the open legal tab', async () => {
-    expect(await generateMetadata({ searchParams: Promise.resolve({ tab: 'privacy' }) })).toEqual({ title: 'Privacy · Mako Market' });
-    expect(await generateMetadata({ searchParams: Promise.resolve({}) })).toEqual({ title: 'Terms of use · Mako Market' });
+    expect(await generateMetadata({ searchParams: Promise.resolve({ tab: 'privacy' }) })).toEqual({ title: 'Privacy · Mako Market Beta' });
+    expect(await generateMetadata({ searchParams: Promise.resolve({}) })).toEqual({ title: 'Terms of use · Mako Market Beta' });
   });
 });
