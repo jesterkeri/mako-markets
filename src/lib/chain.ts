@@ -14,8 +14,10 @@ export const monadTestnet = {
     default: { http: ['https://testnet-rpc.monad.xyz/'] },
     public: { http: ['https://testnet-rpc.monad.xyz/'] },
   },
+  // testnet.monad.xyz redirects to Monad's developer page, not an explorer; testnet.monadexplorer.com now
+  // redirects here (checked 2026-09-30).
   blockExplorers: {
-    default: { name: 'Monad Explorer', url: 'https://testnet.monad.xyz/' },
+    default: { name: 'MonadVision', url: 'https://testnet.monadvision.com' },
   },
   contracts: {
     multicall3: {
@@ -39,3 +41,8 @@ export const SAFE_TRACKED_CHAIN_IDS = [
   MONAD_TESTNET_ID,
   BASE_SEPOLIA_ID,
 ] as const;
+
+/// A MonadVision link for a transaction or an address on Monad testnet.
+export function explorerUrl(kind: 'tx' | 'address', value: string): string {
+  return `${monadTestnet.blockExplorers.default.url}/${kind}/${value}`;
+}
