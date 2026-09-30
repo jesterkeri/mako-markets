@@ -15,6 +15,8 @@ const eslintConfig = defineConfig([
     // Gemini's staged reference components — not wired into the app yet.
     // Lint when integrated. See memory: "Isolate Gemini staged components".
     "staged-gemini/**",
+    // The Claude Design handoff pack: private reference material, gitignored, never built or shipped.
+    "design/**",
   ]),
 ]);
 

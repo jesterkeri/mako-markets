@@ -2,10 +2,10 @@
 // first paint; the provider takes over from there, and Auto follows the device live.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import * as React from 'react';
 
-import { THEME_BOOT_SCRIPT, ThemeProvider, useTheme, type ThemePreference } from '../use-theme';
+import { THEME_BOOT_SCRIPT, ThemeProvider, useTheme } from '../use-theme';
 
 /// A controllable prefers-color-scheme: flip `dark` and fire `change`.
 function mockDevice(initialDark: boolean) {
@@ -28,11 +28,8 @@ function mockDevice(initialDark: boolean) {
 const boot = () => new Function(THEME_BOOT_SCRIPT)();
 const html = () => document.documentElement.dataset;
 
-let seen: { theme: string; preference: ThemePreference; setTheme: (t: 'light' | 'dark') => void; setPreference: (p: ThemePreference) => void };
-function Probe() {
-  seen = useTheme();
-  return null;
-}
+const wrapper = ({ children }: { children: React.ReactNode }) => <ThemeProvider>{children}</ThemeProvider>;
+const mount = () => renderHook(() => useTheme(), { wrapper }).result;
 
 beforeEach(() => {
   localStorage.clear();
@@ -81,26 +78,26 @@ describe('ThemeProvider', () => {
     mockDevice(true);
     localStorage.setItem('mako-theme', 'light');
     boot();
-    render(<ThemeProvider><Probe /></ThemeProvider>);
-    expect([seen.theme, seen.preference]).toEqual(['light', 'light']);
+    const seen = mount();
+    expect([seen.current.theme, seen.current.preference]).toEqual(['light', 'light']);
   });
 
   it('on auto, follows the device when it switches', () => {
     const device = mockDevice(true);
     boot();
-    render(<ThemeProvider><Probe /></ThemeProvider>);
-    expect([seen.theme, seen.preference]).toEqual(['dark', 'auto']);
+    const seen = mount();
+    expect([seen.current.theme, seen.current.preference]).toEqual(['dark', 'auto']);
     act(() => device.set(false));
-    expect(seen.theme).toBe('light');
+    expect(seen.current.theme).toBe('light');
     expect(html().theme).toBe('light');
   });
 
   it('an explicit choice stops following the device, and is stored', () => {
     const device = mockDevice(true);
     boot();
-    render(<ThemeProvider><Probe /></ThemeProvider>);
-    act(() => seen.setTheme('light'));
-    expect([seen.theme, seen.preference, localStorage.getItem('mako-theme')]).toEqual(['light', 'light', 'light']);
+    const seen = mount();
+    act(() => seen.current.setTheme('light'));
+    expect([seen.current.theme, seen.current.preference, localStorage.getItem('mako-theme')]).toEqual(['light', 'light', 'light']);
     expect(device.listenerCount()).toBe(0);
     act(() => device.set(true));
     expect(html().theme).toBe('light');
@@ -110,9 +107,9 @@ describe('ThemeProvider', () => {
     mockDevice(false);
     localStorage.setItem('mako-theme', 'dark');
     boot();
-    render(<ThemeProvider><Probe /></ThemeProvider>);
-    act(() => seen.setPreference('auto'));
-    expect([seen.theme, seen.preference, html().theme, html().themePref]).toEqual(['light', 'auto', 'light', 'auto']);
+    const seen = mount();
+    act(() => seen.current.setPreference('auto'));
+    expect([seen.current.theme, seen.current.preference, html().theme, html().themePref]).toEqual(['light', 'auto', 'light', 'auto']);
     expect(localStorage.getItem('mako-theme')).toBe('auto');
   });
 });
