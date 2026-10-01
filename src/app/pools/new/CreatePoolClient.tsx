@@ -315,18 +315,18 @@ type ViewProps = {
 // ---------------------------------------------------------------------------------------------------------------
 // Pieces
 
-function Pill({ on, onClick, children, tone }: { on: boolean; onClick: () => void; children: React.ReactNode; tone?: 'yes' | 'no' }) {
+function Pill({ on, onClick, children, tone, tourPoint }: { on: boolean; onClick: () => void; children: React.ReactNode; tone?: 'yes' | 'no'; tourPoint?: string }) {
   const bg = on ? (tone === 'no' ? 'var(--mako-red)' : tone === 'yes' ? 'var(--mako-signal)' : 'var(--mako-signal)') : 'var(--raise)';
   return (
-    <button type="button" onClick={onClick} aria-pressed={on} className="mk-press96" style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: bg, color: on ? '#000' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...mono, fontSize: 12, fontWeight: 700 }}>
+    <button type="button" onClick={onClick} aria-pressed={on} data-tour-point={tourPoint} className="mk-press96" style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: bg, color: on ? '#000' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...mono, fontSize: 12, fontWeight: 700 }}>
       {children}
     </button>
   );
 }
 
-function Field({ title, children, hint }: { title: React.ReactNode; children: React.ReactNode; hint?: React.ReactNode }) {
+function Field({ title, children, hint, tourAnchor }: { title: React.ReactNode; children: React.ReactNode; hint?: React.ReactNode; tourAnchor?: string }) {
   return (
-    <div style={{ marginTop: 18 }}>
+    <div data-tour-anchor={tourAnchor} style={{ marginTop: 18 }}>
       <div style={label}>{title}</div>
       <div style={{ marginTop: 8 }}>{children}</div>
       {hint && <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', marginTop: 6 }}>{hint}</div>}
@@ -362,10 +362,10 @@ function Steps({ step }: { step: Step }) {
 function StepMarket(v: ViewProps) {
   return (
     <>
-      <Field title="CATEGORY">
+      <Field title="CATEGORY" tourAnchor="create-form">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {KINDS.map((k) => (
-            <Pill key={k.key} on={v.kind === k.key} onClick={() => v.setKind(k.key)}>
+          {KINDS.map((k, i) => (
+            <Pill key={k.key} on={v.kind === k.key} onClick={() => v.setKind(k.key)} tourPoint={i === 0 ? 'create-form' : undefined}>
               {k.label}
             </Pill>
           ))}

@@ -14,6 +14,7 @@ import { formatUsdc } from '@/lib/usdc';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
 import { openFeedback } from '@/lib/feedback-store';
+import { TOUR_STEPS, useTourStep } from '@/lib/tour';
 
 import { pct2, usd2 } from './format';
 import { ICON, StrokeIcon, SunIcon } from './icons';
@@ -243,7 +244,11 @@ function Wallet({ user }: { user: AuthedUser }) {
 
 /// The desktop header (2a): logo, the four destinations, live BTC price, theme switch, and the account.
 export function DesktopHeader() {
-  const active = activeNav(usePathname() ?? '/');
+  const routeActive = activeNav(usePathname() ?? '/');
+  const tourStep = useTourStep();
+  // During How to play the tab the step explains lights yellow (Home lights none).
+  const touring = tourStep !== null;
+  const active = touring ? TOUR_STEPS[tourStep].tab : routeActive;
   const { user, isLoading } = useUser();
   return (
     <header style={{ height: 68, display: 'flex', alignItems: 'center', gap: 28 }}>
@@ -270,8 +275,8 @@ export function DesktopHeader() {
                 fontWeight: 800,
                 fontSize: 15,
                 textDecoration: 'none',
-                background: on ? 'var(--mako-canvas-fg)' : 'transparent',
-                color: on ? 'var(--mako-canvas)' : 'var(--dim)',
+                background: on ? (touring ? 'var(--mako-signal)' : 'var(--mako-canvas-fg)') : 'transparent',
+                color: on ? (touring ? '#000' : 'var(--mako-canvas)') : 'var(--dim)',
                 transition: 'background-color 200ms ease',
               }}
             >

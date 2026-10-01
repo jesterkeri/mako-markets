@@ -11,12 +11,13 @@ import { TotpDisableModal } from '@/components/profile/TotpDisableModal';
 import { TotpEnrollmentModal } from '@/components/profile/TotpEnrollmentModal';
 import { maskEmail, SignOutConfirm } from '@/components/shell/SignOutConfirm';
 import { SignInLink } from '@/components/signin/SignInLink';
+import { tourHref } from '@/lib/tour';
 import { formatAddress } from '@/lib/user-display';
 import { useTheme, type ThemePreference } from '@/lib/use-theme';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 
 // Settings (21a). Account, security, appearance, network and sign out. What the product does not do yet
-// (notifications, the how-to-play tour) is shown as coming soon, never as a working switch. Security follows the
+// (notifications) is shown as coming soon, never as a working switch. Security follows the
 // design corrections list: two-factor authentication and key export for email accounts.
 
 const SECTIONS = [
@@ -72,7 +73,6 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
   };
 
   const pill: React.CSSProperties = { height: 30, padding: '0 12px', borderRadius: 9999, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', ...mono, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', textDecoration: 'none', whiteSpace: 'nowrap' };
-  const soon: React.CSSProperties = { ...pill, opacity: 0.55, cursor: 'not-allowed' };
   const note: React.CSSProperties = { fontSize: 13, color: 'var(--dim)', lineHeight: 1.45 };
 
   const rows: Record<(typeof SECTIONS)[number]['id'], { k: string; v: React.ReactNode }[]> = {
@@ -114,9 +114,10 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
         k: 'How to play',
         v: (
           <>
-            <button type="button" disabled aria-disabled="true" style={soon}>
-              Replay tour · coming soon
-            </button>
+            <Link href={tourHref(0)} className="mk-press96" style={pill}>
+              Replay tour
+            </Link>
+            <span style={note}>The 7-step intro to Mako Market.</span>
           </>
         ),
       },

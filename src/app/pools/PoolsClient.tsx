@@ -136,14 +136,15 @@ function PoolsDesktop({ list, state, filter, setFilter, sort, setSort, labelsOf,
 
       {state === 'ready' && list ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '14px 4px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
-            {POOL_FILTERS.map((c) => {
+          <div data-tour-anchor="pools-topics" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '14px 4px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
+            {POOL_FILTERS.map((c, i) => {
               const on = c === filter;
               return (
                 <button
                   key={c}
                   onClick={() => setFilter(c)}
                   aria-pressed={on}
+                  data-tour-point={i === 1 ? 'pools-topics' : undefined}
                   className="mk-press96"
                   style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: on ? 'var(--mako-canvas-fg)' : 'var(--raise)', color: on ? 'var(--mako-canvas)' : 'var(--mako-canvas-fg)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, letterSpacing: '0.12em' }}
                 >
@@ -314,14 +315,15 @@ function PoolsMobile({ list, state, filter, setFilter, sort, setSort, labelsOf, 
               <div style={{ fontSize: 14, fontWeight: 700, marginTop: 8 }}>USDC in play</div>
             </div>
           </div>
-          <div className="no-scrollbar" style={{ display: 'flex', gap: 8, padding: '18px 16px 4px', overflowX: 'auto', scrollbarWidth: 'none' }}>
-            {POOL_FILTERS.map((c) => {
+          <div data-tour-anchor="pools-topics" className="no-scrollbar" style={{ display: 'flex', gap: 8, padding: '18px 16px 4px', overflowX: 'auto', scrollbarWidth: 'none' }}>
+            {POOL_FILTERS.map((c, i) => {
               const on = c === filter;
               return (
                 <button
                   key={c}
                   onClick={() => setFilter(c)}
                   aria-pressed={on}
+                  data-tour-point={i === 1 ? 'pools-topics' : undefined}
                   className="m3-press"
                   style={{ flex: 'none', height: 40, display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px', borderRadius: 9999, background: on ? 'var(--m3-inv)' : 'var(--raise)', color: on ? 'var(--m3-inv-fg)' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', fontSize: 14, fontWeight: 700, transition: 'background-color 250ms cubic-bezier(0.2,0,0,1)' }}
                 >

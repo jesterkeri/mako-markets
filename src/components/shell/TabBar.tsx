@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { activeNav, NAV } from '@/lib/shell-nav';
+import { tabBarHidden, useTourStep } from '@/lib/tour';
 
 import { TAB_ICON } from './icons';
 
@@ -12,6 +13,9 @@ import { TAB_ICON } from './icons';
 export function TabBar() {
   const active = activeNav(usePathname() ?? '/');
   const index = NAV.findIndex((n) => n.key === active);
+  const tourStep = useTourStep();
+  // How to play hides the bar on its Home and Create steps, as the design draws them.
+  if (tabBarHidden(tourStep)) return null;
   return (
     <>
       <div

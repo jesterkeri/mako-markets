@@ -95,11 +95,11 @@ describe('Settings', () => {
     expect(screen.queryAllByText('Covered by Mako Market')).toHaveLength(0);
   });
 
-  it('notifications and the tour are not working switches, and sign out opens the confirm', () => {
+  it('notifications are not working switches, Replay tour starts How to play, and sign out opens the confirm', () => {
     mocks.user = emailUser();
     render(<SettingsClient />);
     for (const s of screen.getAllByRole('switch')) expect(s.getAttribute('aria-disabled')).toBe('true');
-    expect((screen.getAllByRole('button', { name: 'Replay tour · coming soon' })[0] as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByRole('link', { name: 'Replay tour' })[0].getAttribute('href')).toBe('/?tour=1');
     fireEvent.click(screen.getAllByRole('button', { name: 'Sign out' })[0]);
     expect(screen.getByText('sign-out-confirm')).toBeTruthy();
   });

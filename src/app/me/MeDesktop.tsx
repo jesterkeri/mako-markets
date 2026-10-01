@@ -7,6 +7,7 @@ import { ListStateDesktop } from '@/components/ListState';
 import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, positionMeta, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { usdc2 } from '@/lib/pool-list';
+import { tourHref } from '@/lib/tour';
 import { formatAddress } from '@/lib/user-display';
 
 import {
@@ -33,6 +34,8 @@ import { validateDisplayName } from './profile-rules';
 // Me on desktop (11a), in the terminal look: identity and test USDC, the four totals, profit and badges, then the
 // positions beside Ready to claim.
 
+/// How to play from its first step.
+const TOUR_START = tourHref(0);
 const COLS = 'minmax(0,1fr) 90px 110px 150px 120px 20px';
 
 export function MeDesktop(v: MeView) {
@@ -93,6 +96,10 @@ function Identity(v: MeView) {
             <button type="button" onClick={v.startEdit} style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, boxShadow: 'inset 0 0 0 1px var(--line)', ...mono, fontSize: 12, fontWeight: 700 }}>
               {name ? 'EDIT' : 'SET NAME'}
             </button>
+            <Link href={TOUR_START} style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, boxShadow: 'inset 0 0 0 1px var(--line)', ...mono, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, color: 'inherit', textDecoration: 'none' }}>
+              <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--mako-signal)' }} />
+              HOW TO PLAY
+            </Link>
           </div>
         ) : (
           <>
@@ -144,7 +151,7 @@ function Identity(v: MeView) {
 /// Test USDC comes from Circle's faucet, which asks for the account's address: the address and Copy sit beside it.
 function TestUsdc({ account }: { account: `0x${string}` }) {
   return (
-    <div style={{ flex: 'none', width: 380, padding: '16px 18px', borderRadius: 14, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
+    <div data-tour-anchor="test-usdc" style={{ flex: 'none', width: 380, padding: '16px 18px', borderRadius: 14, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ ...display, fontSize: 20 }}>Test USDC</span>
         <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>MONAD TESTNET</span>

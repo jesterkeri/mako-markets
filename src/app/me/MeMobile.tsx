@@ -6,6 +6,7 @@ import { useRef } from 'react';
 import { ListStateMobile } from '@/components/ListState';
 import { ICON } from '@/components/shell/icons';
 import { openFeedback } from '@/lib/feedback-store';
+import { tourHref } from '@/lib/tour';
 import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { CAT_STYLE, usdc2 } from '@/lib/pool-list';
@@ -38,6 +39,8 @@ const PLUS = 'M12 5.5v13M5.5 12h13';
 const CHEVRON = 'M9 6l6 6-6 6';
 const GEAR =
   'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z';
+/// How to play from its first step.
+const TOUR_START = tourHref(0);
 const UPLOAD = 'M12 16V5M7.5 9.5L12 5l4.5 4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3';
 
 export function MeMobile(v: MeView) {
@@ -48,6 +51,9 @@ export function MeMobile(v: MeView) {
       <TestUsdc account={v.account} />
       <div style={{ padding: '10px 16px 0' }}>
         <RowLink href={CREATE_HREF} icon={<Svg d={PLUS} size={20} />} iconBg="var(--mako-signal)" title="Create a pool" sub={v.chain.status === 'ready' ? createdLine(v.chain.created) : 'Anyone can create one'} />
+      </div>
+      <div style={{ padding: '8px 16px 0' }}>
+        <RowLink href={TOUR_START} icon={<Svg d={ICON.help} size={18} />} iconBg="var(--raise2)" title="How to play" sub="The 7-step intro to Mako Market" />
       </div>
       <div style={{ padding: '8px 16px 0' }}>
         <RowLink href={SETTINGS_HREF} icon={<Svg d={GEAR} size={18} />} iconBg="var(--raise2)" title="Settings" sub="Account, security, send and receive, appearance, sign out" />
@@ -163,7 +169,7 @@ function Tiles(v: MeView) {
 function TestUsdc({ account }: { account: `0x${string}` }) {
   return (
     <div style={{ padding: '10px 16px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 28, background: 'var(--mako-violet)', color: '#000', boxShadow: 'var(--edge)', padding: '14px 14px 14px 18px' }}>
+      <div data-tour-anchor="test-usdc" style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 28, background: 'var(--mako-violet)', color: '#000', boxShadow: 'var(--edge)', padding: '14px 14px 14px 18px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 800 }}>Get test USDC</div>
           <CopyButton text={account} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, fontSize: 13, fontWeight: 600, color: 'rgba(0,0,0,0.75)', fontVariantNumeric: 'tabular-nums' }}>
@@ -178,6 +184,7 @@ function TestUsdc({ account }: { account: `0x${string}` }) {
           href={CIRCLE_FAUCET_URL}
           target="_blank"
           rel="noopener noreferrer"
+          data-tour-point="test-usdc"
           className="m3-press m3-scale96"
           style={{ flex: 'none', height: 44, display: 'flex', alignItems: 'center', padding: '0 16px', borderRadius: 9999, background: '#000', color: '#fff', fontSize: 14, fontWeight: 800, textDecoration: 'none' }}
         >

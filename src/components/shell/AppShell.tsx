@@ -8,6 +8,7 @@ import { SignInDialog } from '@/components/signin/SignInDialog';
 import { isMobileDetail } from '@/lib/shell-nav';
 import { DesktopHeader } from './DesktopHeader';
 import { FeedbackButton } from './FeedbackButton';
+import { HowToPlay } from './HowToPlay';
 import { MobileHeader } from './MobileHeader';
 import { RefCapture } from './RefCapture';
 import { StatusStrip } from './StatusStrip';
@@ -45,8 +46,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
       <SignInDialog />
       <FeedbackSheet />
+      {/* RefCapture and the tour read the URL's query, which needs a Suspense boundary on prerendered pages. */}
       <Suspense fallback={null}>
         <RefCapture />
+        <HowToPlay />
       </Suspense>
     </div>
   );

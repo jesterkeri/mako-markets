@@ -166,6 +166,7 @@ function MeGate({ kind, onRetry }: { kind: 'loading' | 'signed-out' | 'error'; o
     kind === 'error'
       ? 'Mako Market couldn’t reach its server just now. Your balance and bets are safe on-chain.'
       : 'Sign in to see your balance, your bets and anything you can claim.';
+  const tourAnchor = kind === 'signed-out' ? 'test-usdc' : undefined;
   const action = (className: string, style: React.CSSProperties) =>
     kind === 'error' ? (
       <button type="button" onClick={onRetry} className={className} style={style}>
@@ -204,14 +205,17 @@ function MeGate({ kind, onRetry }: { kind: 'loading' | 'signed-out' | 'error'; o
     <>
       <div className="mk-desk mk-desk-frame">
         <div role={kind === 'error' ? 'alert' : undefined} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '72px 4px 80px' }}>
-          <h1 style={{ margin: 0, ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.04em' }}>{title}</h1>
-          <div style={{ fontSize: 16, lineHeight: 1.55, color: 'var(--dim)', marginTop: 12, maxWidth: 520 }}>{body}</div>
-          {action('mk-press97', { height: 52, display: 'inline-flex', alignItems: 'center', padding: '0 24px', marginTop: 26, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', ...display, fontSize: 16, textDecoration: 'none' })}
+          {/* Signed out, How to play's test-USDC step points here: the address it needs comes with signing in. */}
+          <div data-tour-anchor={tourAnchor} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <h1 style={{ margin: 0, ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.04em' }}>{title}</h1>
+            <div style={{ fontSize: 16, lineHeight: 1.55, color: 'var(--dim)', marginTop: 12, maxWidth: 520 }}>{body}</div>
+            {action('mk-press97', { height: 52, display: 'inline-flex', alignItems: 'center', padding: '0 24px', marginTop: 26, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', ...display, fontSize: 16, textDecoration: 'none' })}
+          </div>
         </div>
       </div>
       <div className="mk-mob mk-m">
         <div style={{ padding: '18px 12px 0' }}>
-          <div role={kind === 'error' ? 'alert' : undefined} style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '26px 20px 20px', textAlign: 'center' }}>
+          <div role={kind === 'error' ? 'alert' : undefined} data-tour-anchor={tourAnchor} style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '26px 20px 20px', textAlign: 'center' }}>
             <h1 style={{ margin: 0, ...display, fontSize: 30, lineHeight: 1.1, letterSpacing: '-0.02em' }}>{title}</h1>
             <div style={{ fontSize: 15, lineHeight: 1.5, opacity: 0.72, marginTop: 8 }}>{body}</div>
             {action('m3-press', { width: '100%', height: 54, marginTop: 18, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' })}
