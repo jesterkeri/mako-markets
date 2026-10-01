@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Mascot } from '@/components/Mascot';
+import { prefersReducedMotion, useReducedMotion } from '@/lib/use-media-query';
 import { NAV } from '@/lib/shell-nav';
 import {
   publishTourStep,
@@ -24,6 +25,10 @@ import {
 // against the elements that carry `data-tour-anchor` / `data-tour-point`, the nav links and the tab bar.
 
 const EASE = 'cubic-bezier(0.65,0,0.35,1)';
+/// The card and its arrow slide to their next place, except for someone who asked for less motion (fade only).
+function useSlide(): string | undefined {
+  return useReducedMotion() ? undefined : `left 650ms ${EASE}`;
+}
 const DESK_CARD_SHADOW = 'var(--edge), inset 0 0 0 1px var(--line), 0 0 0 5px var(--mako-canvas), 0 24px 60px rgba(0,0,0,.45)';
 const MOB_CARD_SHADOW = 'var(--edge), 0 18px 40px rgba(0,0,0,.35)';
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
@@ -129,7 +134,7 @@ function Tour({ index }: { index: number }) {
         if (anchor) {
           scrolled.current = index;
           const r = anchor.getBoundingClientRect();
-          if (r.top < 0 || r.bottom > window.innerHeight - 280) window.scrollTo({ top: Math.max(0, window.scrollY + r.top - 120), behavior: 'smooth' });
+          if (r.top < 0 || r.bottom > window.innerHeight - 280) window.scrollTo({ top: Math.max(0, window.scrollY + r.top - 120), behavior: prefersReducedMotion() ? 'instant' : 'smooth' });
         }
       }
     };
@@ -221,15 +226,17 @@ function DeskButtons({ actions, height, nextRef }: { actions: Actions; height: n
 }
 
 function YellowCaret({ left }: { left: number }) {
+  const slide = useSlide();
   return (
     <span
       aria-hidden="true"
-      style={{ position: 'absolute', top: -9, left, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderBottom: '10px solid var(--mako-signal)', transition: `left 650ms ${EASE}` }}
+      style={{ position: 'absolute', top: -9, left, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderBottom: '10px solid var(--mako-signal)', transition: slide }}
     />
   );
 }
 
 function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place: DeskPlace | null; actions: Actions; nextRef: React.RefObject<HTMLElement | null> }) {
+  const slide = useSlide();
   const frameRight = 'max(0px, (100vw - 1280px) / 2)';
   if (step.style === 'mako') {
     return (
@@ -257,7 +264,7 @@ function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place:
         role="dialog"
         aria-label="How to play"
         className="wl-dlg mk-pop"
-        style={{ position: 'absolute', top: place.top, left: place.left, width: 620, boxSizing: 'border-box', zIndex: 45, borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', transition: `left 650ms ${EASE}` }}
+        style={{ position: 'absolute', top: place.top, left: place.left, width: 620, boxSizing: 'border-box', zIndex: 45, borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', transition: slide }}
       >
         {place.caret !== null && <YellowCaret left={place.caret} />}
         <div style={{ position: 'relative', margin: '8px 0 0 8px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minHeight: 300 }}>
@@ -313,13 +320,14 @@ function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place:
 // Mobile: cream on dark / black on light, no border or ring; Mako inside the card beside the text, facing it.
 
 function MobileCard({ step, place, actions, nextRef }: { step: TourStep; place: MobPlace | null; actions: Actions; nextRef: React.RefObject<HTMLElement | null> }) {
+  const slide = useSlide();
   if (!place) return null;
   const tint = 'color-mix(in srgb, var(--m3-inv-fg) 12%, transparent)';
   const pos: React.CSSProperties = place.mode === 'fixed' ? { position: 'fixed', bottom: `calc(${place.bottom}px + env(safe-area-inset-bottom))` } : { position: 'absolute', top: place.top };
   return (
     <div role="dialog" aria-label="How to play" className="mk-pop" style={{ ...pos, left: 12, right: 12, zIndex: 45, boxSizing: 'border-box', borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: MOB_CARD_SHADOW, padding: '14px 16px' }}>
       {place.caret !== null && place.mode === 'fixed' && (
-        <span aria-hidden="true" style={{ position: 'absolute', bottom: -9, left: place.caret, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderTop: '10px solid var(--m3-inv)', transition: `left 650ms ${EASE}` }} />
+        <span aria-hidden="true" style={{ position: 'absolute', bottom: -9, left: place.caret, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderTop: '10px solid var(--m3-inv)', transition: slide }} />
       )}
       {place.caret !== null && place.mode === 'page' && (
         <span aria-hidden="true" style={{ position: 'absolute', top: -9, left: place.caret, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderBottom: '10px solid var(--m3-inv)' }} />

@@ -187,3 +187,79 @@ describe('the copy is true today', () => {
     }
   });
 });
+
+// Reduced motion is fade only (DESIGN_RULES; Codex S7 r1): a pointer target below the fold is scrolled to at once,
+// and the card and its arrow do not slide. Without the preference both keep their motion.
+describe('reduced motion', () => {
+  function media({ desktop, reduced }: { desktop: boolean; reduced: boolean }) {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (q: string) => ({ matches: q.includes('reduce') ? reduced : desktop, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList,
+    );
+  }
+  // jsdom lays nothing out: report every element as rendered, the anchors far below the fold.
+  function layout() {
+    vi.spyOn(HTMLElement.prototype, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ top: 2000, bottom: 2040, left: 300, right: 420, width: 120, height: 40, x: 300, y: 2000, toJSON() {} } as DOMRect);
+  }
+  function page(path: string, search: string, extra: React.ReactNode) {
+    nav.path = path;
+    nav.search = search;
+    return render(
+      <>
+        {extra}
+        <HowToPlay />
+      </>,
+    );
+  }
+  const slidingIn = (root: HTMLElement) => [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))].filter((el) => el.style.transition.includes('left'));
+
+  for (const reduced of [true, false]) {
+    it(`${reduced ? 'with' : 'without'} it, a below-fold pointer target scrolls ${reduced ? 'instantly' : 'smoothly'}`, () => {
+      media({ desktop: true, reduced });
+      layout();
+      const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+      page(
+        '/pools',
+        'tour=3',
+        <div className="mk-desk">
+          <div data-tour-anchor="pools-topics">
+            <button data-tour-point="pools-topics">CRYPTO</button>
+          </div>
+        </div>,
+      );
+      expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ behavior: reduced ? 'instant' : 'smooth' }));
+    });
+
+    it(`${reduced ? 'with' : 'without'} it, the desktop tab card and its arrow ${reduced ? 'do not slide' : 'slide'}`, () => {
+      media({ desktop: true, reduced });
+      layout();
+      page(
+        '/rounds',
+        'tour=2',
+        <div className="mk-desk">
+          <nav aria-label="Main">
+            <a href="/rounds">Rounds</a>
+          </nav>
+        </div>,
+      );
+      const card = screen.getAllByRole('dialog', { name: 'How to play' })[0];
+      expect(slidingIn(card)).toHaveLength(reduced ? 0 : 2);
+    });
+
+    it(`${reduced ? 'with' : 'without'} it, the mobile card's arrow ${reduced ? 'does not slide' : 'slides'}`, () => {
+      media({ desktop: false, reduced });
+      layout();
+      page(
+        '/rounds',
+        'tour=2',
+        <div className="mk-mob">
+          <nav aria-label="Main">
+            <a href="/rounds">Rounds</a>
+          </nav>
+        </div>,
+      );
+      const card = screen.getAllByRole('dialog', { name: 'How to play' })[0];
+      expect(slidingIn(card)).toHaveLength(reduced ? 0 : 1);
+    });
+  }
+});
