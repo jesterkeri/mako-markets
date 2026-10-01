@@ -12,14 +12,17 @@ import {
   MAX_BROADCASTS_PER_TICK,
   OUTCOME_REFUND,
   RESOLUTION_GRACE_SEC,
+  canSend,
   classifySendError,
   decideAction,
+  deferReason,
   isHeldTwoSided,
   isOneSided,
   newKeeperTick,
   refundDeadline,
   revertErrorName,
   runNoDataAction,
+  sendOnce,
   txFor,
   type DecideOptions,
   type FinalizedRead,
@@ -266,13 +269,14 @@ type FakeOpts = {
   reads?: Array<FinalizedRead | Error>;
   sendResult?: Hex | Error;
   receipt?: Receipt | 'timeout' | Error;
-  /// The resolver wallet's transaction count at latest / finalized (default 7 and 7).
+  /// The resolver wallet's transaction count at latest / at the re-read's finalized block (default 7 and 7).
   nonce?: { latest: number; finalized: number } | Error;
 };
 
 function fakeIo(o: FakeOpts = {}) {
   const sends: NoDataTx[] = [];
   const nonces: number[] = [];
+  const nonceTags: Array<'latest' | bigint> = [];
   const reads: bigint[] = [];
   const lines: string[] = [];
   const queue = [...(o.reads ?? [])];
@@ -285,9 +289,10 @@ function fakeIo(o: FakeOpts = {}) {
       return next;
     },
     async nonceAt(tag) {
+      nonceTags.push(tag);
       const n = o.nonce ?? { latest: 7, finalized: 7 };
       if (n instanceof Error) throw n;
-      return n[tag];
+      return tag === 'latest' ? n.latest : n.finalized;
     },
     async send(tx, nonce) {
       sends.push(tx);
@@ -304,7 +309,7 @@ function fakeIo(o: FakeOpts = {}) {
     log: (l) => lines.push(l),
     warn: (l) => lines.push(l),
   };
-  return { io, sends, nonces, reads, lines };
+  return { io, sends, nonces, nonceTags, reads, lines };
 }
 
 const at = (market: SettlementView, blockTimestamp: bigint, blockNumber = 1000n): FinalizedRead => ({
@@ -434,13 +439,15 @@ describe('runNoDataAction', () => {
   });
 
   it('pins the nonce to the latest count, and sends nothing while a resolver transaction is not final', async () => {
-    const ok = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], nonce: { latest: 252, finalized: 252 } });
+    const ok = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n, 4321n)], nonce: { latest: 252, finalized: 252 } });
     expect(await runNoDataAction(ok.io, newKeeperTick('t', false, OFF), 92n, 'resolve_one_sided')).toBe('sent');
     expect(ok.nonces).toEqual([252]);
+    // The count is compared at the very block the market was re-read at, not at a separately fetched `finalized`.
+    expect(ok.nonceTags).toEqual(['latest', 4321n]);
     const busy = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], nonce: { latest: 253, finalized: 252 } });
     expect(await runNoDataAction(busy.io, newKeeperTick('t', false, OFF), 92n, 'resolve_one_sided')).toBe('deferred');
     expect(busy.sends).toHaveLength(0);
-    expect(busy.lines.join('\n')).toMatch(/not final yet \(nonce 253 latest, 252 finalized\)/);
+    expect(busy.lines.join('\n')).toMatch(/not final yet \(nonce 253 at latest, 252 at the finalized block\); nothing more is sent this tick/);
     const unreadable = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], nonce: new Error('rpc down') });
     expect(await runNoDataAction(unreadable.io, newKeeperTick('t', false, OFF), 92n, 'resolve_one_sided')).toBe('failed');
     expect(unreadable.sends).toHaveLength(0);
@@ -540,5 +547,61 @@ describe('runNoDataAction', () => {
     for (const line of all) {
       expect(line).toMatch(/^[\x20-\x7E]*$/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sendOnce: the tick's stops, and the re-read the decision rests on
+// ---------------------------------------------------------------------------
+
+describe('sendOnce', () => {
+  const resolve9 = { functionName: 'resolveMarket', args: [9n, 1] } as const;
+
+  it('a re-read that no longer calls for the send is "stale": no nonce read, nothing sent, slot still free', async () => {
+    const f = fakeIo({ reads: [at(twoSided({ resolved: true }), CLOSE + 60n, 777n)] });
+    const tick = newKeeperTick('t', false, OFF);
+    const r = await sendOnce(f.io, tick.gate, resolve9, (read) => (read.market.resolved ? 'resolved at finalized' : null));
+    expect(r).toEqual({ kind: 'stale', reason: 'resolved at finalized', blockNumber: 777n });
+    expect(f.reads).toEqual([9n]);
+    expect(f.nonceTags).toEqual([]);
+    expect(f.sends).toHaveLength(0);
+    expect(canSend(tick.gate)).toBe(true);
+  });
+
+  it('once a gap between latest and finalized is seen, every later send this tick stops without reading anything', async () => {
+    const f = fakeIo({ reads: [at(twoSided(), CLOSE + 60n)], nonce: { latest: 9, finalized: 8 } });
+    const tick = newKeeperTick('t', false, OFF);
+    expect(await sendOnce(f.io, tick.gate, resolve9, () => null)).toEqual({ kind: 'unfinalized', latest: 9, finalized: 8 });
+    expect(canSend(tick.gate)).toBe(false);
+    expect(deferReason(tick.gate)).toBe('a resolver transaction is not final yet');
+    const later = fakeIo({ reads: [at(twoSided(), CLOSE + 60n)] });
+    expect(await sendOnce(later.io, tick.gate, { functionName: 'forceRefund', args: [3n] }, () => null)).toEqual({
+      kind: 'unfinalized',
+      latest: 9,
+      finalized: 8,
+    });
+    expect(later.reads).toHaveLength(0);
+    expect(later.nonceTags).toHaveLength(0);
+    expect(later.sends).toHaveLength(0);
+    // And on the no-data path, before its own re-read.
+    expect(await runNoDataAction(later.io, tick, 4n, 'resolve_one_sided')).toBe('deferred');
+    expect(later.reads).toHaveLength(0);
+  });
+
+  it('a failed re-read sends nothing and leaves the slot free', async () => {
+    const f = fakeIo({ reads: [new Error('429')] });
+    const tick = newKeeperTick('t', false, OFF);
+    expect(await sendOnce(f.io, tick.gate, resolve9, () => null)).toEqual({ kind: 'reread_failed', message: '429' });
+    expect(f.sends).toHaveLength(0);
+    expect(canSend(tick.gate)).toBe(true);
+  });
+
+  it('canSend and deferReason name each stop', () => {
+    const tick = newKeeperTick('t', false, OFF);
+    expect(canSend(tick.gate)).toBe(true);
+    tick.gate.broadcasts = MAX_BROADCASTS_PER_TICK;
+    expect([canSend(tick.gate), deferReason(tick.gate)]).toEqual([false, 'one transaction per tick']);
+    tick.gate.outOfFunds = true;
+    expect([canSend(tick.gate), deferReason(tick.gate)]).toEqual([false, 'resolver wallet out of MON']);
   });
 });

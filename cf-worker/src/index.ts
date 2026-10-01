@@ -48,9 +48,10 @@ import {
   PYTH_ID_TO_SYMBOL,
 } from './price-feed-assets';
 import {
+  canSend,
   decideAction,
+  deferReason,
   isHeldTwoSided,
-  MAX_BROADCASTS_PER_TICK,
   newKeeperTick,
   runNoDataAction,
   sendOnce,
@@ -1138,7 +1139,10 @@ export async function runResolver(env: Env): Promise<void> {
       })) as Market;
       return { market, blockNumber: block.number, blockTimestamp: block.timestamp };
     },
-    nonceAt: (blockTag) => publicClient.getTransactionCount({ address: account.address, blockTag }),
+    nonceAt: (block) =>
+      block === 'latest'
+        ? publicClient.getTransactionCount({ address: account.address, blockTag: 'latest' })
+        : publicClient.getTransactionCount({ address: account.address, blockNumber: block }),
     send: (tx, nonce) =>
       walletClient.writeContract({
         address: cfg.makoAddress,
@@ -1194,9 +1198,10 @@ export async function runResolver(env: Env): Promise<void> {
   // CoinGecko (CRYPTO) + Pyth Hermes (FOREX/COMMODITIES/STOCKS) are
   // independent providers; fetch in parallel so a 1s Hermes call
   // doesn't add to tick latency.
-  // The tick's one broadcast may already be spent by the no-data pass (or the wallet is out of MON): then no price
-  // pool can be sent this tick either, so no provider is called.
-  const canStillSend = keeperTick.gate.broadcasts < MAX_BROADCASTS_PER_TICK && !walletOutOfFunds;
+  // The tick's one broadcast may already be spent by the no-data pass, the wallet may be out of MON, or a resolver
+  // transaction may be landed but not final: then no price pool can be sent this tick either, so no provider is
+  // called.
+  const canStillSend = canSend(keeperTick.gate) && !walletOutOfFunds;
   const [prices, pythPrices] = await Promise.all([
     needsCoinGecko && canStillSend ? fetchPrices() : Promise.resolve<PriceMap>({}),
     needsPyth && canStillSend ? fetchPythPrices() : Promise.resolve<PythPriceMap>(new Map()),
@@ -1236,6 +1241,13 @@ export async function runResolver(env: Env): Promise<void> {
     // 'skip': resolved, not closed yet, or a MAKO pool (hand-resolved).
     if (action !== 'fetch_and_resolve') {
       skipped++;
+      continue;
+    }
+
+    // Nothing more can be sent this tick: defer before any price or result is fetched for this pool.
+    if (!cfg.dryRun && !canSend(keeperTick.gate)) {
+      console.log(`[${ts}] market ${i}: resolveMarket deferred to the next tick (${deferReason(keeperTick.gate)})`);
+      deferredPrice++;
       continue;
     }
 
@@ -1437,8 +1449,14 @@ export async function runResolver(env: Env): Promise<void> {
 
     console.log(`[${ts}] market ${i}: ${reason} · ${label}`);
 
-    // The same sender as the no-data path (one broadcast per tick, pinned nonce, one error classifier).
-    const sent = await sendOnce(keeperIo, keeperTick.gate, { functionName: 'resolveMarket', args: [i, outcome] });
+    // The same sender as the no-data path (one broadcast per tick, nonce and re-read pinned to one finalized block,
+    // one error classifier). The re-read must still call for a price or result settlement.
+    const sent = await sendOnce(keeperIo, keeperTick.gate, { functionName: 'resolveMarket', args: [i, outcome] }, (read) => {
+      const again = decideAction(read.market, read.blockTimestamp, decideOpts);
+      return again === 'fetch_and_resolve'
+        ? null
+        : `re-read at finalized block ${read.blockNumber} (time ${read.blockTimestamp}) gives ${again}`;
+    });
     if (sent.kind === 'landed') {
       console.log(`[${ts}] market ${i}: RESOLVED ${label} · block ${sent.blockNumber} · tx ${sent.hash} · nonce ${sent.nonce}`);
       resolvedCount++;
@@ -1449,9 +1467,13 @@ export async function runResolver(env: Env): Promise<void> {
       console.warn(`[${ts}] market ${i}: already resolved elsewhere — continuing`);
     } else if (sent.kind === 'slot_taken' || sent.kind === 'unfinalized') {
       console.log(
-        `[${ts}] market ${i}: resolveMarket deferred to the next tick (${sent.kind === 'slot_taken' ? 'one transaction per tick' : `a resolver transaction is not final yet, nonce ${sent.latest} latest, ${sent.finalized} finalized`})`,
+        `[${ts}] market ${i}: resolveMarket deferred to the next tick (${sent.kind === 'slot_taken' ? 'one transaction per tick' : `a resolver transaction is not final yet, nonce ${sent.latest} at latest, ${sent.finalized} at the finalized block; nothing more is sent this tick`})`,
       );
       deferredPrice++;
+    } else if (sent.kind === 'stale') {
+      console.log(`[${ts}] market ${i}: ${sent.reason}; not sending this tick`);
+    } else if (sent.kind === 'reread_failed') {
+      console.warn(`[${ts}] market ${i}: re-read before resolveMarket failed (${sent.message}), not sending this tick`);
     } else if (sent.kind === 'receipt_timeout') {
       console.warn(
         `[${ts}] market ${i}: tx ${sent.hash} (nonce ${sent.nonce}) has no receipt yet; a later send reuses this nonce, so it cannot be paid twice`,
@@ -1486,7 +1508,7 @@ export async function runResolver(env: Env): Promise<void> {
   }
   console.log(
     `[${ts}] tick done${modeTag} · scanned ${scanned} · skipped ${skipped} · resolved ${resolvedCount} · refunds ${refundCount}` +
-      `${deferredPrice > 0 ? ` · price settlements deferred ${deferredPrice} (one transaction per tick)` : ''}`,
+      `${deferredPrice > 0 ? ` · price settlements deferred ${deferredPrice} (${deferReason(keeperTick.gate)})` : ''}`,
   );
 }
 

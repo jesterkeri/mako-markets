@@ -233,8 +233,10 @@ export type FinalizedRead = {
 
 /// What the one sender needs from the chain.
 export interface SenderIo {
-  /// The resolver wallet's transaction count at `latest` or at `finalized`.
-  nonceAt(tag: 'latest' | 'finalized'): Promise<number>;
+  /// `getMarket(id)` at the finalized block, with that block's number and time.
+  readFinalized(id: bigint): Promise<FinalizedRead>;
+  /// The resolver wallet's transaction count at `latest`, or at one block number.
+  nonceAt(block: 'latest' | bigint): Promise<number>;
   /// Sign and broadcast with exactly this nonce (viem `writeContract`, which estimates gas first, so a revert throws
   /// here before anything is broadcast).
   send(tx: ResolverTx, nonce: number): Promise<Hex>;
@@ -243,9 +245,6 @@ export interface SenderIo {
 }
 
 export interface KeeperIo extends SenderIo {
-  /// Fresh read made immediately before any send, pinned to the finalized
-  /// block (see the header comment for why not "latest").
-  readFinalized(id: bigint): Promise<FinalizedRead>;
   log(line: string): void;
   warn(line: string): void;
 }
@@ -254,7 +253,7 @@ export type KeeperTick = {
   ts: string;
   dryRun: boolean;
   opts: DecideOptions;
-  /// The tick's one send slot and its out-of-funds stop, shared by every send path.
+  /// The tick's one send slot and its stops, shared by every send path.
   gate: SendGate;
   /// Market ids a send was attempted for this tick (dry run included).
   sent: Set<bigint>;
@@ -274,11 +273,28 @@ export function newKeeperTick(ts: string, dryRun: boolean, opts: DecideOptions):
 // The one sender (spec "Send discipline")
 // --------------------------------------------------------------------------
 
-/// Per tick: whether its one broadcast slot is taken, and whether the wallet reported it is out of MON.
-export type SendGate = { broadcasts: number; outOfFunds: boolean };
+/// Per tick: whether its one broadcast slot is taken, whether the wallet reported it is out of MON, and whether a
+/// resolver transaction was seen landed but not final (then nothing more is sent this tick).
+export type SendGate = {
+  broadcasts: number;
+  outOfFunds: boolean;
+  unfinalized: { latest: number; finalized: number } | null;
+};
 
 export function newSendGate(): SendGate {
-  return { broadcasts: 0, outOfFunds: false };
+  return { broadcasts: 0, outOfFunds: false, unfinalized: null };
+}
+
+/// Whether anything can still be sent this tick. Callers check it before fetching prices or results for a send.
+export function canSend(gate: SendGate): boolean {
+  return !gate.outOfFunds && gate.unfinalized === null && gate.broadcasts < MAX_BROADCASTS_PER_TICK;
+}
+
+/// Why a send waits for the next tick, for the log.
+export function deferReason(gate: SendGate): string {
+  if (gate.outOfFunds) return 'resolver wallet out of MON';
+  if (gate.unfinalized) return 'a resolver transaction is not final yet';
+  return 'one transaction per tick';
 }
 
 export type SendResult =
@@ -290,8 +306,11 @@ export type SendResult =
   | { kind: 'out_of_funds' }
   /// The tick's broadcast slot is already taken: try next tick.
   | { kind: 'slot_taken' }
-  /// A resolver transaction has landed but is not final yet: try next tick.
+  /// A resolver transaction has landed but is not final yet: nothing more is sent this tick.
   | { kind: 'unfinalized'; latest: number; finalized: number }
+  /// The finalized re-read says the action no longer applies (`reason` says why): nothing was sent.
+  | { kind: 'stale'; reason: string; blockNumber: bigint }
+  | { kind: 'reread_failed'; message: string }
   | { kind: 'nonce_unreadable'; message: string }
   | { kind: 'failed'; message: string; nonce: number };
 
@@ -299,24 +318,47 @@ export type SendResult =
 ///
 /// - At most MAX_BROADCASTS_PER_TICK broadcasts per tick. A send that viem refuses at gas estimation (the contract
 ///   would revert AlreadyResolved / StillInGrace / MarketNotClosed) broadcast nothing and gives the slot back.
-/// - The nonce is pinned to the wallet's transaction count at `latest`, and nothing is sent while that differs from
-///   the count at `finalized` (a resolver transaction has landed but is not final, so the finalized re-reads cannot
-///   see it yet). A transaction from an earlier tick still waiting in the mempool holds that same nonce (Monad's
-///   `pending` tag equals `latest`), so a re-send competes with it for one nonce and at most one is ever included and
-///   paid for. This is what makes a receipt timeout safe across ticks without any stored state.
+/// - The decision and the nonce rest on ONE finalized block B. The market is re-read at B and `stillWanted` decides
+///   on that read (null to send, else the reason not to). The wallet's transaction count is read at B and at
+///   `latest`; if they differ, a resolver transaction has landed after B, so B cannot see its effect, and nothing
+///   more is sent this tick. If they are equal (n), every resolver transaction below nonce n is in a block at or
+///   before B, so the re-read already reflects it, and the send goes out at nonce n. A transaction from an earlier
+///   tick still waiting in the mempool holds that same nonce (Monad's `pending` tag equals `latest`), so a re-send
+///   competes with it for one nonce and at most one is ever included and paid for. This is what makes a receipt
+///   timeout safe across ticks without any stored state. Reading both at B, rather than one after the other at
+///   `finalized`, leaves no window for finality to move between the read and the nonce.
 /// - Errors are classified on the original error, cause chain included, so Monad's "Signer had insufficient
 ///   balance" stops every path, not just one.
-export async function sendOnce(io: SenderIo, gate: SendGate, tx: ResolverTx): Promise<SendResult> {
+export async function sendOnce(
+  io: SenderIo,
+  gate: SendGate,
+  tx: ResolverTx,
+  stillWanted: (read: FinalizedRead) => string | null,
+): Promise<SendResult> {
   if (gate.outOfFunds) return { kind: 'out_of_funds' };
+  if (gate.unfinalized) return { kind: 'unfinalized', ...gate.unfinalized };
   if (gate.broadcasts >= MAX_BROADCASTS_PER_TICK) return { kind: 'slot_taken' };
+
+  let read: FinalizedRead;
+  try {
+    read = await io.readFinalized(tx.args[0]);
+  } catch (e) {
+    return { kind: 'reread_failed', message: shortMessage(e) };
+  }
+  const reason = stillWanted(read);
+  if (reason !== null) return { kind: 'stale', reason, blockNumber: read.blockNumber };
+
   let latest: number;
   let finalized: number;
   try {
-    [latest, finalized] = await Promise.all([io.nonceAt('latest'), io.nonceAt('finalized')]);
+    [latest, finalized] = await Promise.all([io.nonceAt('latest'), io.nonceAt(read.blockNumber)]);
   } catch (e) {
     return { kind: 'nonce_unreadable', message: shortMessage(e) };
   }
-  if (latest !== finalized) return { kind: 'unfinalized', latest, finalized };
+  if (latest !== finalized) {
+    gate.unfinalized = { latest, finalized };
+    return { kind: 'unfinalized', latest, finalized };
+  }
 
   gate.broadcasts += 1;
   let hash: Hex;
@@ -396,45 +438,54 @@ export async function runNoDataAction(
     return 'duplicate';
   }
   if (tick.gate.outOfFunds) return 'out_of_funds';
-  if (tick.gate.broadcasts >= MAX_BROADCASTS_PER_TICK) {
-    io.log(`${p} ${fn} deferred to the next tick (one transaction per tick)`);
+  if (!canSend(tick.gate)) {
+    io.log(`${p} ${fn} deferred to the next tick (${deferReason(tick.gate)})`);
     return 'deferred';
   }
 
-  // Re-read state immediately before sending. The scan's copy can be many
-  // seconds old by now (earlier sends in this tick wait for receipts), and an
-  // admin or another tick may have settled the market in between. The scan
-  // decided on the worker clock; the send decides on the finalized block's
-  // own timestamp, so a pool is only called one-sided once it can no longer
-  // take a bet, and forceRefund is only sent once the chain is past the
-  // deadline.
-  let read: FinalizedRead;
-  try {
-    read = await io.readFinalized(id);
-  } catch (e) {
-    io.warn(`${p} re-read before ${fn} failed (${shortMessage(e)}), not sending this tick`);
-    return 'reread_failed';
-  }
-  const fresh = read.market;
-  const again = decideAction(fresh, read.blockTimestamp, tick.opts);
-  if (again !== planned) {
-    io.log(
-      `${p} re-read at finalized block ${read.blockNumber} (time ${read.blockTimestamp}) gives ${again}, not ${planned}; not sending this tick`,
-    );
-    return 'state_changed';
-  }
-
-  tick.sent.add(id);
-  const what = describe(planned, fresh);
+  // Decide on a fresh read, never on the scan's copy. The scan's copy can be
+  // many seconds old by now (earlier sends in this tick wait for receipts),
+  // and an admin or another tick may have settled the market in between. The
+  // scan decided on the worker clock; the send decides on the finalized
+  // block's own timestamp, so a pool is only called one-sided once it can no
+  // longer take a bet, and forceRefund is only sent once the chain is past
+  // the deadline. On a live tick the sender makes this read itself, at the
+  // block its nonce is pinned to.
+  const check = (read: FinalizedRead): string | null => {
+    const again = decideAction(read.market, read.blockTimestamp, tick.opts);
+    if (again !== planned) {
+      return `re-read at finalized block ${read.blockNumber} (time ${read.blockTimestamp}) gives ${again}, not ${planned}`;
+    }
+    io.log(`${p} ${describe(planned, read.market)}${tick.dryRun ? ', [DRY RUN, not written]' : ''}`);
+    return null;
+  };
 
   if (tick.dryRun) {
-    io.log(`${p} ${what}, [DRY RUN, not written]`);
+    let read: FinalizedRead;
+    try {
+      read = await io.readFinalized(id);
+    } catch (e) {
+      io.warn(`${p} re-read before ${fn} failed (${shortMessage(e)}), not sending this tick`);
+      return 'reread_failed';
+    }
+    const reason = check(read);
+    if (reason !== null) {
+      io.log(`${p} ${reason}; not sending this tick`);
+      return 'state_changed';
+    }
+    tick.sent.add(id);
     return 'dry_run';
   }
-  io.log(`${p} ${what}`);
 
-  const r = await sendOnce(io, tick.gate, txFor(planned, id));
+  const r = await sendOnce(io, tick.gate, txFor(planned, id), check);
+  if (r.kind !== 'stale' && r.kind !== 'reread_failed') tick.sent.add(id);
   switch (r.kind) {
+    case 'stale':
+      io.log(`${p} ${r.reason}; not sending this tick`);
+      return 'state_changed';
+    case 'reread_failed':
+      io.warn(`${p} re-read before ${fn} failed (${r.message}), not sending this tick`);
+      return 'reread_failed';
     case 'already_resolved':
       io.warn(`${p} ${fn} reverted AlreadyResolved, settled elsewhere, continuing`);
       return 'already_resolved';
@@ -448,7 +499,9 @@ export async function runNoDataAction(
       io.log(`${p} ${fn} deferred to the next tick (one transaction per tick)`);
       return 'deferred';
     case 'unfinalized':
-      io.log(`${p} ${fn} deferred: a resolver transaction is not final yet (nonce ${r.latest} latest, ${r.finalized} finalized)`);
+      io.log(
+        `${p} ${fn} deferred: a resolver transaction is not final yet (nonce ${r.latest} at latest, ${r.finalized} at the finalized block); nothing more is sent this tick`,
+      );
       return 'deferred';
     case 'nonce_unreadable':
       io.warn(`${p} could not read the resolver nonce (${r.message}), not sending this tick`);
