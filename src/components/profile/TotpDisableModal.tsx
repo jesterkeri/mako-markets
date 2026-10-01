@@ -19,6 +19,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useFocusTrap } from '@/lib/use-focus-trap';
 import { useModalCloseArbitrator } from '@/lib/modal-close-arbitrator';
 import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
+import { alertLine, CLOSE_ICON, CodeBoxes, fieldLabel, Icon, lead, LockedNote, overlayInput, primaryButton, secondaryButton, textField } from './TwoFactorUi';
 
 // ----------------------------------------------------------------------------
 // TotpDisableModal
@@ -235,110 +236,116 @@ export function TotpDisableModal({ open, onClose }: Props) {
 
   const submitDisabled = phase === 'submitting' || phase === 'locked';
 
+  const codeInput = (style: React.CSSProperties, className?: string) => (
+    <input
+      id="totp-disable-input"
+      ref={initialFocusRef}
+      type="text"
+      inputMode={factorMode === 'totp' ? 'numeric' : 'text'}
+      pattern={factorMode === 'totp' ? '[0-9]*' : undefined}
+      maxLength={factorMode === 'totp' ? 6 : 32}
+      autoComplete={factorMode === 'totp' ? 'one-time-code' : 'off'}
+      value={code}
+      onChange={(e) => setCode(e.target.value)}
+      className={className}
+      style={style}
+      disabled={phase === 'submitting'}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          void handleSubmit();
+        }
+      }}
+    />
+  );
+  const factorPill = (on: boolean): React.CSSProperties => ({ height: 32, display: 'flex', alignItems: 'center', padding: '0 14px', borderRadius: 9999, background: on ? 'var(--mako-canvas-fg)' : 'transparent', color: on ? 'var(--mako-canvas)' : 'var(--dim)', fontFamily: 'var(--mako-font-mono)', fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', cursor: 'pointer' });
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="totp-disable-title"
       aria-describedby="totp-disable-desc"
-      className="fixed inset-0 z-[100] bg-[var(--color-background)]/80 flex items-center justify-center p-4 backdrop-blur-sm"
+      className="mk-2fa-scrim mk-scrim"
       onClick={arbiter.onBackdropClick}
     >
       <div
         ref={dialogRef}
-        className="mako-card w-full max-w-md flex flex-col p-0 overflow-hidden text-ink"
+        className="mk-2fa"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-6 border-b-2 border-ink bg-surface-elevated flex items-center justify-between gap-3">
-          <h2 id="totp-disable-title" className="mako-display text-2xl text-mako-red">
-            DISABLE 2FA
-          </h2>
-          <button
-            type="button"
-            onClick={arbiter.requestClose}
-            className="mako-label text-[10px] text-ink opacity-60 hover:opacity-100 hover:underline"
-            aria-label="Close"
-          >
-            CLOSE
-          </button>
-        </div>
+        <div className="mk-2fa-handle" aria-hidden="true" />
+        <button
+          type="button"
+          onClick={arbiter.requestClose}
+          className="mk-2fa-close"
+          aria-label="Close"
+        >
+          <Icon d={CLOSE_ICON} size={15} />
+        </button>
+        <h2 id="totp-disable-title" className="mk-2fa-title">
+          Turn off two-factor
+        </h2>
 
-        <div className="p-6 flex flex-col gap-4">
-          <p id="totp-disable-desc" className="mako-body text-sm text-ink leading-relaxed">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 10 }}>
+          <p id="totp-disable-desc" style={lead}>
             Confirm with your authenticator code or one of your recovery
             codes. After disabling, your saved recovery codes are deleted.
           </p>
 
           {phase === 'locked' ? (
-            <div
-              role="status"
-              aria-live="polite"
-              className="bg-mako-red/10 border-2 border-mako-red p-4 rounded-xl flex flex-col gap-2"
-            >
-              <p className="mako-label text-mako-red">LOCKED</p>
-              <p className="mako-body text-sm text-ink">
-                Too many failed attempts. Try again in{' '}
-                <span className="mako-mono font-bold">{formattedCountdown}</span>
-                .
-              </p>
-            </div>
+            <LockedNote>
+              Too many failed attempts. Try again in{' '}
+              <span style={{ fontFamily: 'var(--mako-font-mono)', fontWeight: 700 }}>{formattedCountdown}</span>
+              .
+            </LockedNote>
           ) : (
             <>
-              <div role="radiogroup" aria-label="Factor type" className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
+              <div role="radiogroup" aria-label="Factor type" style={{ alignSelf: 'flex-start', display: 'flex', gap: 2, padding: 3, borderRadius: 9999, boxShadow: 'inset 0 0 0 1px var(--line)' }}>
+                <label style={factorPill(factorMode === 'totp')}>
                   <input
                     type="radio"
                     name="factor"
                     checked={factorMode === 'totp'}
                     onChange={() => changeFactorMode('totp')}
                     disabled={phase === 'submitting'}
+                    className="sr-only"
                   />
-                  <span className="mako-label text-[10px]">AUTHENTICATOR CODE</span>
+                  <span>AUTHENTICATOR CODE</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label style={factorPill(factorMode === 'recovery')}>
                   <input
                     type="radio"
                     name="factor"
                     checked={factorMode === 'recovery'}
                     onChange={() => changeFactorMode('recovery')}
                     disabled={phase === 'submitting'}
+                    className="sr-only"
                   />
-                  <span className="mako-label text-[10px]">RECOVERY CODE</span>
+                  <span>RECOVERY CODE</span>
                 </label>
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <label
-                  className="mako-label text-[10px] text-ink"
+                  style={fieldLabel}
                   htmlFor="totp-disable-input"
                 >
                   {factorMode === 'totp' ? '6-DIGIT CODE' : 'RECOVERY CODE'}
                 </label>
-                <input
-                  id="totp-disable-input"
-                  ref={initialFocusRef}
-                  type="text"
-                  inputMode={factorMode === 'totp' ? 'numeric' : 'text'}
-                  pattern={factorMode === 'totp' ? '[0-9]*' : undefined}
-                  maxLength={factorMode === 'totp' ? 6 : 32}
-                  autoComplete={factorMode === 'totp' ? 'one-time-code' : 'off'}
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  className="mako-input mako-mono text-sm bg-white"
-                  disabled={phase === 'submitting'}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void handleSubmit();
-                    }
-                  }}
-                />
+                {factorMode === 'totp' ? (
+                  <CodeBoxes value={code} invalid={!!errorMsg}>
+                    {codeInput(overlayInput)}
+                  </CodeBoxes>
+                ) : (
+                  codeInput(textField(!!errorMsg), 'mk-2fa-field')
+                )}
               </div>
 
               {errorMsg && (
                 <p
                   role="alert"
-                  className="mako-body text-xs font-medium text-mako-red"
+                  style={alertLine}
                 >
                   {errorMsg}
                 </p>
@@ -346,12 +353,13 @@ export function TotpDisableModal({ open, onClose }: Props) {
             </>
           )}
 
-          <div className="flex gap-3 mt-2">
+          <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
             <button
               type="button"
               onClick={() => void handleSubmit()}
               disabled={submitDisabled}
-              className="mako-button mako-button--no flex-1"
+              className="m3-press m3-scale96"
+              style={{ ...primaryButton(!submitDisabled), flex: 1, ...(submitDisabled ? null : { background: 'var(--mako-red)' }) }}
             >
               {phase === 'submitting' ? 'DISABLING…' : 'DISABLE'}
             </button>
@@ -359,7 +367,8 @@ export function TotpDisableModal({ open, onClose }: Props) {
               type="button"
               onClick={arbiter.requestClose}
               disabled={phase === 'submitting'}
-              className="mako-button mako-button--ghost flex-1"
+              className="m3-press m3-scale96"
+              style={{ ...secondaryButton(phase !== 'submitting'), flex: 'none', width: 120, height: 56 }}
             >
               CANCEL
             </button>

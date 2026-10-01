@@ -328,6 +328,121 @@ body {
   animation: mkFade 180ms ease both;
 }
 
+/* ---------- Two-factor dialogs (enable, disable, new recovery codes) ----------
+ * One tree for both widths, in the sign-in dialog's look (14a, its 2FA step): a centred dialog from 1024px, a bottom
+ * sheet below it. The scrim is the element with role="dialog" (its click is the backdrop close). */
+.mk-2fa-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+}
+.mk-2fa {
+  position: relative;
+  width: 480px;
+  max-width: 100%;
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  border-radius: 20px;
+  padding: 44px 40px 36px;
+  background: var(--mako-canvas);
+  color: var(--mako-canvas-fg);
+  box-shadow: var(--edge), inset 0 0 0 1px var(--line), 0 40px 100px rgba(0, 0, 0, 0.55);
+  font-family: var(--mako-font-sans);
+  animation: mkPop 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.mk-2fa-handle {
+  display: none;
+}
+.mk-2fa-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background: var(--raise2);
+  color: var(--mako-canvas-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mk-2fa-close:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.mk-2fa-title {
+  margin: 0;
+  padding-right: 44px;
+  font-family: var(--mako-font-display);
+  font-weight: 800;
+  font-size: 34px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+.mk-2fa-box {
+  height: 60px;
+  border-radius: 12px;
+}
+.mk-2fa-field {
+  border-radius: 14px;
+}
+@media (max-width: 1023.98px) {
+  .mk-2fa-scrim {
+    align-items: flex-end;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: none;
+  }
+  .mk-2fa {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 32px 32px 0 0;
+    padding: 12px 20px calc(30px + env(safe-area-inset-bottom));
+    box-shadow: 0 -1px 0 var(--line), 0 -20px 50px rgba(0, 0, 0, 0.4);
+    animation: mkSheet 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  }
+  .mk-2fa-handle {
+    display: block;
+    width: 40px;
+    height: 4px;
+    border-radius: 9999px;
+    margin: 0 auto 18px;
+    background: color-mix(in srgb, var(--mako-canvas-fg) 22%, transparent);
+  }
+  .mk-2fa-close {
+    top: 22px;
+    right: 16px;
+  }
+  .mk-2fa-title {
+    font-size: 26px;
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+  }
+  .mk-2fa-box {
+    height: 54px;
+    border-radius: 16px;
+  }
+  .mk-2fa-field {
+    border-radius: 20px;
+  }
+  .mk-2fa input,
+  .mk-2fa textarea {
+    font-size: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-2fa {
+    animation: mkFade 150ms ease both;
+  }
+}
+
 /* ---------- Mascot (whole-figure motion; never on working screens) ---------- */
 .mkp {
   display: block;

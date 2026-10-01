@@ -92,33 +92,36 @@ export function RecoveryCodesPanel({ codes }: RecoveryCodesPanelProps) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <ol className="grid grid-cols-2 gap-2 mako-mono text-sm">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, fontFamily: 'var(--mako-font-mono)', fontSize: 14 }}>
         {codes.map((code, i) => (
           <li
             key={`${i}-${code}`}
-            className="flex items-baseline gap-3 bg-paper border-2 border-ink rounded-xl px-3 py-2"
+            className="mk-2fa-field"
+            style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '10px 12px', background: 'var(--raise)', boxShadow: 'inset 0 0 0 1px var(--line)', minWidth: 0 }}
           >
-            <span className="mako-label text-[10px] text-muted w-5 shrink-0">
+            <span style={{ flex: 'none', width: 18, fontSize: 11, color: 'var(--dim)' }}>
               {String(i + 1).padStart(2, '0')}
             </span>
-            <code className="text-ink">{code}</code>
+            <code style={{ color: 'var(--mako-canvas-fg)', fontFamily: 'inherit', fontWeight: 700, overflowWrap: 'anywhere' }}>{code}</code>
           </li>
         ))}
       </ol>
 
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div style={{ display: 'flex', gap: 10 }}>
         <button
           type="button"
           onClick={handleCopy}
-          className="mako-button mako-label flex-1"
+          className="m3-press m3-scale96"
+          style={{ flex: 1, height: 44, border: 0, borderRadius: 9999, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, letterSpacing: '0.06em' }}
         >
           {copied ? 'COPIED!' : 'COPY ALL'}
         </button>
         <button
           type="button"
           onClick={handleDownload}
-          className="mako-button mako-label flex-1"
+          className="m3-press m3-scale96"
+          style={{ flex: 1, height: 44, border: 0, borderRadius: 9999, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, letterSpacing: '0.06em' }}
         >
           DOWNLOAD .TXT
         </button>

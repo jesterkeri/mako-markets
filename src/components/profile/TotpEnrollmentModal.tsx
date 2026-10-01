@@ -17,6 +17,7 @@ import { useFocusTrap } from '@/lib/use-focus-trap';
 import { useModalCloseArbitrator } from '@/lib/modal-close-arbitrator';
 import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 import { RecoveryCodesPanel } from './RecoveryCodesPanel';
+import { alertLine, CLOSE_ICON, CodeBoxes, fieldLabel, Icon, lead, overlayInput, primaryButton, secondaryButton } from './TwoFactorUi';
 
 // ----------------------------------------------------------------------------
 // TotpEnrollmentModal
@@ -316,30 +317,29 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
       aria-modal="true"
       aria-labelledby="totp-enroll-title"
       aria-describedby="totp-enroll-desc"
-      className="fixed inset-0 z-[100] bg-[var(--color-background)]/80 flex items-center justify-center p-4 backdrop-blur-sm"
+      className="mk-2fa-scrim mk-scrim"
       onClick={arbiter.onBackdropClick}
     >
       <div
         ref={dialogRef}
-        className="mako-card w-full max-w-lg flex flex-col p-0 overflow-hidden text-ink max-h-[90vh] overflow-y-auto"
+        className="mk-2fa"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-6 border-b-2 border-ink bg-surface-elevated flex items-center justify-between gap-3">
-          <h2 id="totp-enroll-title" className="mako-display text-2xl">
-            ENABLE 2FA
-          </h2>
-          <button
-            type="button"
-            onClick={arbiter.requestClose}
-            disabled={phase === 'recovery_codes' && !savedConfirmed}
-            aria-label="Close"
-            className="mako-label text-[10px] text-ink opacity-60 hover:opacity-100 hover:underline disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            CLOSE
-          </button>
-        </div>
+        <div className="mk-2fa-handle" aria-hidden="true" />
+        <button
+          type="button"
+          onClick={arbiter.requestClose}
+          disabled={phase === 'recovery_codes' && !savedConfirmed}
+          aria-label="Close"
+          className="mk-2fa-close"
+        >
+          <Icon d={CLOSE_ICON} size={15} />
+        </button>
+        <h2 id="totp-enroll-title" className="mk-2fa-title">
+          Turn on two-factor
+        </h2>
 
-        <div className="p-6 flex flex-col gap-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 10 }}>
           {/* Stable aria-describedby target — id stays mounted
               regardless of phase (codex round-1 MINOR 2 on Sub-C).
               The text is a phase-aware screen-reader-only string;
@@ -356,7 +356,7 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
             <p
               role="status"
               aria-live="polite"
-              className="mako-body text-sm text-ink"
+              style={lead}
             >
               Preparing setup…
             </p>
@@ -364,30 +364,31 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
 
           {phase === 'scan' && otpauthUri && (
             <>
-              <p className="mako-body text-sm text-ink leading-relaxed">
+              <p style={lead}>
                 Scan this QR code in your authenticator app, then enter the
                 6-digit code it generates to confirm.
               </p>
-              <div className="flex justify-center bg-paper border-2 border-ink rounded-xl p-4">
+              <div style={{ display: 'flex', justifyContent: 'center', padding: 16, borderRadius: 14, background: '#fff', boxShadow: 'var(--edge)' }}>
                 <QRCodeSVG value={otpauthUri} size={240} level="M" />
               </div>
               {secret && (
-                <details className="mako-body text-xs text-muted">
-                  <summary className="cursor-pointer hover:text-ink">
+                <details style={{ fontSize: 13, color: 'var(--dim)' }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 700, textDecoration: 'underline' }}>
                     Can&apos;t scan? Show the secret instead.
                   </summary>
-                  <div className="mt-2 flex flex-col gap-2">
-                    <code className="mako-mono text-sm bg-paper border-2 border-ink p-3 rounded-xl break-all">
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <code className="mk-2fa-field" style={{ display: 'block', padding: '12px 14px', background: 'var(--raise)', boxShadow: 'inset 0 0 0 1px var(--line)', color: 'var(--mako-canvas-fg)', fontFamily: 'var(--mako-font-mono)', fontSize: 14, wordBreak: 'break-all' }}>
                       {secret}
                     </code>
                     <button
                       type="button"
                       onClick={() => navigator.clipboard.writeText(secret)}
-                      className="mako-button mako-label text-[10px] self-start"
+                      className="m3-press"
+                      style={{ ...secondaryButton(), alignSelf: 'flex-start', height: 34, padding: '0 14px' }}
                     >
                       COPY SECRET
                     </button>
-                    <p className="mako-body text-[11px] text-muted leading-snug">
+                    <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45 }}>
                       Tip: also save this secret to a password manager or
                       encrypted drive (e.g., Proton Drive, 1Password). It
                       lets you restore the same code on a new phone if you
@@ -396,36 +397,38 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
                   </div>
                 </details>
               )}
-              <div className="flex flex-col gap-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <label
-                  className="mako-label text-[10px] text-ink"
+                  style={fieldLabel}
                   htmlFor="totp-enroll-code"
                 >
                   6-DIGIT CODE
                 </label>
-                <input
-                  id="totp-enroll-code"
-                  ref={codeInputRef}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  className="mako-input mako-mono text-lg bg-white tracking-widest text-center"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void handleVerify();
-                    }
-                  }}
-                />
+                <CodeBoxes value={code} invalid={!!errorMsg}>
+                  <input
+                    id="totp-enroll-code"
+                    ref={codeInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    autoComplete="one-time-code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    style={overlayInput}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleVerify();
+                      }
+                    }}
+                  />
+                </CodeBoxes>
               </div>
               {errorMsg && (
                 <p
                   role="alert"
-                  className="mako-body text-xs font-medium text-mako-red"
+                  style={alertLine}
                 >
                   {errorMsg}
                 </p>
@@ -434,7 +437,8 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
                 type="button"
                 onClick={() => void handleVerify()}
                 disabled={code.replace(/\D/g, '').length !== 6}
-                className="mako-button mako-button--action"
+                className="mako-button--action m3-press m3-scale96"
+                style={primaryButton(code.replace(/\D/g, '').length === 6)}
               >
                 VERIFY
               </button>
@@ -445,7 +449,7 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
             <p
               role="status"
               aria-live="polite"
-              className="mako-body text-sm text-ink"
+              style={lead}
             >
               Verifying code…
             </p>
@@ -455,14 +459,15 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
             <>
               <p
                 role="alert"
-                className="mako-body text-sm font-medium text-mako-red"
+                style={{ ...alertLine, fontSize: 15 }}
               >
                 {errorMsg}
               </p>
               <button
                 type="button"
                 onClick={arbiter.requestClose}
-                className="mako-button mako-button--ghost self-start"
+                className="m3-press m3-scale96"
+                style={{ ...secondaryButton(), alignSelf: 'flex-start' }}
               >
                 CLOSE
               </button>
@@ -471,23 +476,23 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
 
           {phase === 'recovery_codes' && (
             <>
-              <p className="mako-body text-sm text-ink leading-relaxed">
-                <strong>Save these recovery codes now.</strong> They are
-                shown <strong>only once</strong>. Each code lets you sign in
+              <p style={lead}>
+                <strong style={{ color: 'var(--mako-canvas-fg)' }}>Save these recovery codes now.</strong> They are
+                shown <strong style={{ color: 'var(--mako-canvas-fg)' }}>only once</strong>. Each code lets you sign in
                 if you lose access to your authenticator. Store them in a
                 password manager, encrypted drive (e.g., Proton Drive), or
-                print them and keep the paper somewhere safe — not in the
-                same email account that signs in to Mako.
+                print them and keep the paper somewhere safe, not in the
+                same email account that signs in to Mako Market.
               </p>
               <RecoveryCodesPanel codes={recoveryCodes} />
-              <label className="flex items-start gap-3 cursor-pointer mt-2">
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, cursor: 'pointer', marginTop: 2 }}>
                 <input
                   type="checkbox"
                   checked={savedConfirmed}
                   onChange={(e) => setSavedConfirmed(e.target.checked)}
-                  className="mt-1"
+                  style={{ marginTop: 2, width: 18, height: 18, accentColor: 'var(--mako-signal)' }}
                 />
-                <span className="mako-body text-sm text-ink">
+                <span style={{ fontSize: 14, lineHeight: 1.45, fontWeight: 600 }}>
                   I have saved these backup codes somewhere safe.
                 </span>
               </label>
@@ -495,7 +500,8 @@ export function TotpEnrollmentModal({ open, onClose }: Props) {
                 type="button"
                 onClick={arbiter.requestClose}
                 disabled={!savedConfirmed}
-                className="mako-button mako-button--action disabled:opacity-50 disabled:cursor-not-allowed"
+                className="mako-button--action m3-press m3-scale96"
+                style={primaryButton(savedConfirmed)}
               >
                 {savedConfirmed ? 'CLOSE' : 'CHECK THE BOX TO CONTINUE'}
               </button>

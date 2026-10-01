@@ -14,6 +14,7 @@ import { useFocusTrap } from '@/lib/use-focus-trap';
 import { useModalCloseArbitrator } from '@/lib/modal-close-arbitrator';
 import { USER_QUERY_KEY } from '@/lib/use-user';
 import { RecoveryCodesPanel } from './RecoveryCodesPanel';
+import { alertLine, CLOSE_ICON, CodeBoxes, fieldLabel, Icon, lead, LockedNote, overlayInput, primaryButton, secondaryButton } from './TwoFactorUi';
 
 // ----------------------------------------------------------------------------
 // RegenerateRecoveryCodesModal
@@ -261,30 +262,29 @@ export function RegenerateRecoveryCodesModal({ open, onClose }: Props) {
       aria-modal="true"
       aria-labelledby="totp-regen-title"
       aria-describedby="totp-regen-desc"
-      className="fixed inset-0 z-[100] bg-[var(--color-background)]/80 flex items-center justify-center p-4 backdrop-blur-sm"
+      className="mk-2fa-scrim mk-scrim"
       onClick={arbiter.onBackdropClick}
     >
       <div
         ref={dialogRef}
-        className="mako-card w-full max-w-lg flex flex-col p-0 overflow-hidden text-ink max-h-[90vh] overflow-y-auto"
+        className="mk-2fa"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-6 border-b-2 border-ink bg-surface-elevated flex items-center justify-between gap-3">
-          <h2 id="totp-regen-title" className="mako-display text-2xl">
-            REGENERATE RECOVERY CODES
-          </h2>
-          <button
-            type="button"
-            onClick={arbiter.requestClose}
-            disabled={phase === 'recovery_codes' && !savedConfirmed}
-            aria-label="Close"
-            className="mako-label text-[10px] text-ink opacity-60 hover:opacity-100 hover:underline disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            CLOSE
-          </button>
-        </div>
+        <div className="mk-2fa-handle" aria-hidden="true" />
+        <button
+          type="button"
+          onClick={arbiter.requestClose}
+          disabled={phase === 'recovery_codes' && !savedConfirmed}
+          aria-label="Close"
+          className="mk-2fa-close"
+        >
+          <Icon d={CLOSE_ICON} size={15} />
+        </button>
+        <h2 id="totp-regen-title" className="mk-2fa-title">
+          New recovery codes
+        </h2>
 
-        <div className="p-6 flex flex-col gap-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 10 }}>
           {/* Stable aria-describedby target — always mounted, phase-
               aware screen-reader copy (codex round-1 MINOR 2 on
               Sub-C). */}
@@ -298,42 +298,44 @@ export function RegenerateRecoveryCodesModal({ open, onClose }: Props) {
 
           {phase === 'idle' || phase === 'submitting' ? (
             <>
-              <p className="mako-body text-sm text-ink leading-relaxed">
+              <p style={lead}>
                 This generates a new batch of 10 recovery codes and{' '}
-                <strong>invalidates the previous batch</strong>. Confirm with
+                <strong style={{ color: 'var(--mako-canvas-fg)' }}>invalidates the previous batch</strong>. Confirm with
                 your authenticator code.
               </p>
-              <div className="flex flex-col gap-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <label
-                  className="mako-label text-[10px] text-ink"
+                  style={fieldLabel}
                   htmlFor="totp-regen-code"
                 >
                   6-DIGIT CODE
                 </label>
-                <input
-                  id="totp-regen-code"
-                  ref={codeInputRef}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  disabled={phase === 'submitting'}
-                  className="mako-input mako-mono text-lg bg-white tracking-widest text-center"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void handleSubmit();
-                    }
-                  }}
-                />
+                <CodeBoxes value={code} invalid={!!errorMsg}>
+                  <input
+                    id="totp-regen-code"
+                    ref={codeInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    autoComplete="one-time-code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    disabled={phase === 'submitting'}
+                    style={overlayInput}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleSubmit();
+                      }
+                    }}
+                  />
+                </CodeBoxes>
               </div>
               {errorMsg && (
                 <p
                   role="alert"
-                  className="mako-body text-xs font-medium text-mako-red"
+                  style={alertLine}
                 >
                   {errorMsg}
                 </p>
@@ -344,7 +346,8 @@ export function RegenerateRecoveryCodesModal({ open, onClose }: Props) {
                 disabled={
                   phase === 'submitting' || code.replace(/\D/g, '').length !== 6
                 }
-                className="mako-button mako-button--action"
+                className="mako-button--action m3-press m3-scale96"
+                style={primaryButton(phase !== 'submitting' && code.replace(/\D/g, '').length === 6)}
               >
                 {phase === 'submitting' ? 'GENERATING…' : 'GENERATE NEW CODES'}
               </button>
@@ -352,32 +355,26 @@ export function RegenerateRecoveryCodesModal({ open, onClose }: Props) {
           ) : null}
 
           {phase === 'locked' && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="bg-mako-red/10 border-2 border-mako-red p-4 rounded-xl flex flex-col gap-2"
-            >
-              <p className="mako-label text-mako-red">LOCKED</p>
-              <p className="mako-body text-sm text-ink">
-                Too many failed attempts. Try again in{' '}
-                <span className="mako-mono font-bold">{formattedCountdown}</span>
-                .
-              </p>
-            </div>
+            <LockedNote>
+              Too many failed attempts. Try again in{' '}
+              <span style={{ fontFamily: 'var(--mako-font-mono)', fontWeight: 700 }}>{formattedCountdown}</span>
+              .
+            </LockedNote>
           )}
 
           {phase === 'error' && (
             <>
               <p
                 role="alert"
-                className="mako-body text-sm font-medium text-mako-red"
+                style={{ ...alertLine, fontSize: 15 }}
               >
                 {errorMsg}
               </p>
               <button
                 type="button"
                 onClick={arbiter.requestClose}
-                className="mako-button mako-button--ghost self-start"
+                className="m3-press m3-scale96"
+                style={{ ...secondaryButton(), alignSelf: 'flex-start' }}
               >
                 CLOSE
               </button>
@@ -386,22 +383,22 @@ export function RegenerateRecoveryCodesModal({ open, onClose }: Props) {
 
           {phase === 'recovery_codes' && (
             <>
-              <p className="mako-body text-sm text-ink leading-relaxed">
-                <strong>Save these new recovery codes now.</strong> They are
-                shown <strong>only once</strong>. Your previous codes no
+              <p style={lead}>
+                <strong style={{ color: 'var(--mako-canvas-fg)' }}>Save these new recovery codes now.</strong> They are
+                shown <strong style={{ color: 'var(--mako-canvas-fg)' }}>only once</strong>. Your previous codes no
                 longer work. Store them in a password manager, encrypted
-                drive (e.g., Proton Drive), or print them — not in the
-                same email account that signs in to Mako.
+                drive (e.g., Proton Drive), or print them, not in the
+                same email account that signs in to Mako Market.
               </p>
               <RecoveryCodesPanel codes={recoveryCodes} />
-              <label className="flex items-start gap-3 cursor-pointer mt-2">
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, cursor: 'pointer', marginTop: 2 }}>
                 <input
                   type="checkbox"
                   checked={savedConfirmed}
                   onChange={(e) => setSavedConfirmed(e.target.checked)}
-                  className="mt-1"
+                  style={{ marginTop: 2, width: 18, height: 18, accentColor: 'var(--mako-signal)' }}
                 />
-                <span className="mako-body text-sm text-ink">
+                <span style={{ fontSize: 14, lineHeight: 1.45, fontWeight: 600 }}>
                   I have saved these backup codes somewhere safe.
                 </span>
               </label>
@@ -409,7 +406,8 @@ export function RegenerateRecoveryCodesModal({ open, onClose }: Props) {
                 type="button"
                 onClick={arbiter.requestClose}
                 disabled={!savedConfirmed}
-                className="mako-button mako-button--action disabled:opacity-50 disabled:cursor-not-allowed"
+                className="mako-button--action m3-press m3-scale96"
+                style={primaryButton(savedConfirmed)}
               >
                 {savedConfirmed ? 'CLOSE' : 'CHECK THE BOX TO CONTINUE'}
               </button>
