@@ -62,8 +62,7 @@ export type MeView = {
 
 export const poolHref = (id: bigint) => `/pools/${id}`;
 export const CREATE_HREF = '/pools/new';
-/// Settings (21a) is not built; the existing profile page holds the account settings until it is.
-export const SETTINGS_HREF = '/profile';
+export const SETTINGS_HREF = '/settings';
 
 export const PENCIL = 'M4 16.5V20h3.5L18 9.5 14.5 6 4 16.5zM13 7.5l3.5 3.5';
 

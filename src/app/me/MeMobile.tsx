@@ -48,7 +48,7 @@ export function MeMobile(v: MeView) {
         <RowLink href={CREATE_HREF} icon={<Svg d={PLUS} size={20} />} iconBg="var(--mako-signal)" title="Create a pool" sub={v.chain.status === 'ready' ? createdLine(v.chain.created) : 'Anyone can create one'} />
       </div>
       <div style={{ padding: '8px 16px 0' }}>
-        <RowLink href={SETTINGS_HREF} icon={<Svg d={GEAR} size={18} />} iconBg="var(--raise2)" title="Settings" sub="Account, security, send and receive, sign out" />
+        <RowLink href={SETTINGS_HREF} icon={<Svg d={GEAR} size={18} />} iconBg="var(--raise2)" title="Settings" sub="Account, security, send and receive, appearance, sign out" />
       </div>
       {v.chain.status === 'ready' ? (
         <>
