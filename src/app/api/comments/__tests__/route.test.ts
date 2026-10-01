@@ -138,18 +138,27 @@ describe('POST /api/comments — gate order', () => {
     expect(page.comments[0].body).toBe('hello');
   });
   it('429 on the 5th attempt in a minute, and the market RPC is never reached (throttle before create)', async () => {
-    state.session = { userId: await makeUser() };
-    state.existsMarkets.add('5');
-    for (let i = 0; i < 4; i++) {
-      expect((await POST(postReq({ scope: 'main', marketId: '5', body: `c${i}` }))).status).toBe(201);
+    // The limit counts per clock minute (floor(epoch / 60)). Five posts against a real database take seconds in CI,
+    // so on the real clock they could straddle a minute boundary and the 5th would start a fresh window. Only Date
+    // is pinned, to the first second of a minute; the database driver's timers stay real.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T12:00:00.000Z'));
+    try {
+      state.session = { userId: await makeUser() };
+      state.existsMarkets.add('5');
+      for (let i = 0; i < 4; i++) {
+        expect((await POST(postReq({ scope: 'main', marketId: '5', body: `c${i}` }))).status).toBe(201);
+      }
+      // Reset the spy so we measure only the throttled attempt below.
+      state.checkMainMarket.mockClear();
+      expect((await POST(postReq({ scope: 'main', marketId: '5', body: 'x' }))).status).toBe(429);
+      // Gate-order proof: a throttled POST short-circuits at 429 and never calls
+      // checkMainMarket. A refactor that moved the RPC before the throttle would
+      // fail here even though the "429 on 5th attempt" assertion still passed.
+      expect(state.checkMainMarket).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
     }
-    // Reset the spy so we measure only the throttled attempt below.
-    state.checkMainMarket.mockClear();
-    expect((await POST(postReq({ scope: 'main', marketId: '5', body: 'x' }))).status).toBe(429);
-    // Gate-order proof: a throttled POST short-circuits at 429 and never calls
-    // checkMainMarket. A refactor that moved the RPC before the throttle would
-    // fail here even though the "429 on 5th attempt" assertion still passed.
-    expect(state.checkMainMarket).not.toHaveBeenCalled();
   });
 });
 
