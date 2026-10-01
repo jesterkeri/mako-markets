@@ -27,5 +27,11 @@ export function isMobileDetail(pathname: string): boolean {
   return /^\/(pools|rounds)\/\d+\/?$/.test(pathname);
 }
 
+/// Pages that draw their own mobile header (a back button and a centred title) but keep the tab bar: Market intel
+/// (3a).
+export function hasOwnMobileHeader(pathname: string): boolean {
+  return /^\/news\/?$/.test(pathname);
+}
+
 /// The sign-in route (14a). "Sign in" buttons open the dialog in place; this is where they link to.
 export const SIGN_IN_HREF = '/signin';

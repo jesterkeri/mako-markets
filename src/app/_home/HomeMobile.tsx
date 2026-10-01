@@ -41,7 +41,10 @@ export function HomeMobile({ pools, labelsOf, retry, news, nowMs }: Props) {
           <h2 id="home-intel-m" style={h2}>
             Market intel
           </h2>
-          <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>Latest</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>Latest</span>
+          <Link href="/news" className="m3-press" style={{ marginLeft: 'auto', flex: 'none', height: 34, display: 'flex', alignItems: 'center', padding: '0 14px', borderRadius: 9999, background: 'var(--raise)', fontSize: 13, fontWeight: 700, color: 'inherit', textDecoration: 'none' }}>
+            All news
+          </Link>
         </div>
         {news.status === 'unavailable' ? (
           <p style={{ margin: 0, padding: '0 20px', fontSize: 15, lineHeight: 1.5, color: 'var(--dim)' }}>News is unavailable right now.</p>

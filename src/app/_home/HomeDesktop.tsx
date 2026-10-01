@@ -205,7 +205,7 @@ function SkeletonRow() {
 }
 
 /// 2a's Market intel: the newest four headlines. Not a live feed (the route caches for 15 minutes), so it is labelled
-/// LATEST, and there is no "All news" link because there is no news page.
+/// LATEST; "All news" opens the whole feed (3a).
 function MarketIntel({ news, nowMs }: { news: NewsView; nowMs: number | null }) {
   return (
     <section aria-labelledby="home-intel" style={{ marginTop: 22, borderTop: '1px solid var(--line)' }}>
@@ -214,6 +214,9 @@ function MarketIntel({ news, nowMs }: { news: NewsView; nowMs: number | null }) 
           Market intel
         </h2>
         <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>LATEST</span>
+        <Link href="/news" className="mk-press96" style={{ marginLeft: 'auto', ...display, fontSize: 15, color: 'inherit', textDecoration: 'none' }}>
+          All news →
+        </Link>
       </div>
       {news.status === 'unavailable' ? (
         <p style={{ margin: 0, padding: '14px 20px 18px', boxShadow: 'inset 0 1px 0 var(--line)', fontSize: 14, color: 'var(--dim)' }}>News is unavailable right now.</p>

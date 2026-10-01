@@ -9,9 +9,10 @@ export type NewsView = { status: 'loading' } | { status: 'unavailable' } | { sta
 /// How many headlines Home shows (2a: four across on desktop, a scrolling strip of the same four on mobile).
 export const INTEL_COUNT = 4;
 
-/// Home's market intel from `GET /api/news`, re-read every 5 minutes. A failed read, or a feed with no usable
-/// item (every upstream failed), is "unavailable": never an empty list that looks like there is no news.
-export function useNews(): NewsView {
+/// The whole feed from `GET /api/news`, re-read every 5 minutes; Home and /news share it. A failed read, or a feed
+/// with no usable item (every upstream failed), is "unavailable": never an empty list that looks like there is no
+/// news.
+export function useNewsFeed(): NewsView {
   const q = useQuery({
     queryKey: ['home-news'],
     queryFn: async () => {
@@ -25,6 +26,12 @@ export function useNews(): NewsView {
     staleTime: 60_000,
     retry: 1,
   });
-  if (q.data) return q.data.length > 0 ? { status: 'ready', items: latestIntel(q.data, INTEL_COUNT) } : { status: 'unavailable' };
+  if (q.data) return q.data.length > 0 ? { status: 'ready', items: q.data } : { status: 'unavailable' };
   return q.isError ? { status: 'unavailable' } : { status: 'loading' };
+}
+
+/// Home's market intel: the newest INTEL_COUNT items of the feed.
+export function useNews(): NewsView {
+  const feed = useNewsFeed();
+  return feed.status === 'ready' ? { status: 'ready', items: latestIntel(feed.items, INTEL_COUNT) } : feed;
 }

@@ -49,6 +49,31 @@ export function latestIntel(items: readonly IntelItem[], n: number): IntelItem[]
   return items.slice(0, Math.max(0, Math.floor(n)));
 }
 
+/// The categories the feed has (Market intel's pills, after ALL), in the design's order.
+export const INTEL_TAGS: readonly IntelTag[] = ['CRYPTO', 'FOOTBALL', 'NBA'];
+
+/// Where a story was published, from its own link ("espn.com"), or null for a story without one (the feed's game
+/// results and price moves).
+export function newsSource(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host.replace(/^www\./, '') || null;
+  } catch {
+    return null;
+  }
+}
+
+/// Market intel's sections: the last hour, earlier the same local day, and anything older or undated.
+export type NewsGroup = 'last' | 'today' | 'earlier';
+
+export function newsGroup(publishedAt: string | undefined, nowMs: number): NewsGroup {
+  const t = publishedAt ? Date.parse(publishedAt) : Number.NaN;
+  if (!Number.isFinite(t) || !Number.isFinite(nowMs) || t - nowMs > FUTURE_SKEW_MS) return 'earlier';
+  if (nowMs - t < 3_600_000) return 'last';
+  return new Date(t).toDateString() === new Date(nowMs).toDateString() ? 'today' : 'earlier';
+}
+
 /// Clocks disagree a little; a date this far ahead of the browser's clock is bad data rather than skew.
 const FUTURE_SKEW_MS = 60_000;
 

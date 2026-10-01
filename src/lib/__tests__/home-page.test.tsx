@@ -206,7 +206,7 @@ describe('Home market intel', () => {
     await within(intel).findByText('Bitcoin holds above $75K');
     expect(within(intel).getByText('LATEST')).toBeTruthy();
     expect(screen.queryByText(/LIVE FEED/)).toBeNull();
-    expect(screen.queryByText(/All news/)).toBeNull();
+    expect(within(intel).getByRole('link', { name: 'All news →' }).getAttribute('href')).toBe('/news');
     expect(screen.queryAllByText('Fifth item never shows')).toEqual([]);
 
     const btc = within(intel).getByRole('link', { name: 'Bitcoin holds above $75K' });
