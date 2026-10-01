@@ -5,6 +5,7 @@
 
 import type { RunOutcome } from './aa-client';
 import type { ConfirmPhase } from '@/components/ConfirmSheet';
+import { SIGN_IN_HREF } from './shell-nav';
 
 type Failed = Extract<ConfirmPhase, { step: 'failed' }>;
 
@@ -77,7 +78,7 @@ export function phaseFromOutcome(o: RunOutcome, w: OutcomeWords): ConfirmPhase {
     case 'sponsor_failed':
       if (o.status === 429) return failed('Daily limit reached', 'An email account gets 10 gas-free transactions a day. Try again tomorrow.', true, close);
       if (o.status === 409) return failed('Another transaction is still going', 'Wait for your last transaction to finish, then try again.', true);
-      if (o.status === 401) return failed('Signed out', 'Sign in again, then try again.', true, { label: 'Sign in', href: '/signup' });
+      if (o.status === 401) return failed('Signed out', 'Sign in again, then try again.', true, { label: 'Sign in', href: SIGN_IN_HREF });
       if (o.status === 403) {
         const refusal = o.reason ? SPONSOR_CREATE_REFUSALS[o.reason] : undefined;
         if (refusal) return failed(refusal[0], refusal[1], true, close);

@@ -191,6 +191,10 @@ describe('phaseFromOutcome', () => {
     expect(phase({ kind: 'send_failed', status: 0, error: 'sign_rejected' })).toEqual({ step: 'cancelled' });
   });
 
+  it('sends a signed-out account to the redesigned sign-in', () => {
+    expect(phase({ kind: 'sponsor_failed', status: 401, error: 'UNAUTHORIZED' })).toMatchObject({ title: 'Signed out', primary: { label: 'Sign in', href: '/signin' } });
+  });
+
   it('names the daily gas-free limit', () => {
     const p = phase({ kind: 'sponsor_failed', status: 429, error: 'CAP_EXCEEDED' });
     expect(p.step === 'failed' && p.body).toBe('An email account gets 10 gas-free transactions a day. Try again tomorrow.');
