@@ -14,7 +14,8 @@ const refCookie = () => document.cookie.split('; ').find((c) => c.startsWith('ma
 
 afterEach(() => {
   cleanup();
-  document.cookie = 'mako_ref=; Max-Age=0; Path=/';
+  // A past expiry, not Max-Age=0: jsdom can keep a Max-Age=0 cookie (with an empty value) within the same millisecond.
+  document.cookie = 'mako_ref=; expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/';
 });
 
 describe('RefCapture', () => {

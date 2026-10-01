@@ -71,11 +71,11 @@ vi.mock('@/lib/hooks', () => ({ useMarkets: () => ({ ...marketsState, refetch })
 
 let newsResponse: () => Promise<Response>;
 const NEWS_ITEMS = [
-  { kind: 'headline', tag: 'CRYPTO', title: 'Bitcoin holds above $75K', time: '43M AGO', url: 'https://www.coindesk.com/markets/btc', publishedAt: new Date(Date.now() - 3 * HOUR * 1000).toISOString() },
+  { kind: 'headline', tag: 'CRYPTO', title: 'Bitcoin holds above $75K', time: '43M AGO', url: 'https://www.coindesk.com/markets/btc', publishedAt: new Date((NOW - 3 * HOUR - 30) * 1000).toISOString() },
   { kind: 'event', tag: 'FOOTBALL', title: 'Arsenal 2-1 Chelsea · FT', time: 'RECENT' },
-  { kind: 'headline', tag: 'NBA', title: 'Lakers sign a guard', time: '1H AGO', url: 'javascript:alert(1)', publishedAt: new Date(Date.now() - 2 * HOUR * 1000).toISOString() },
-  { kind: 'headline', tag: 'CRYPTO', title: 'ETH leads majors', time: '2H AGO', url: 'https://www.coindesk.com/eth', publishedAt: new Date(Date.now() - 90 * 60 * 1000).toISOString() },
-  { kind: 'headline', tag: 'CRYPTO', title: 'Fifth item never shows', time: '3H AGO', publishedAt: new Date(Date.now() - 4 * HOUR * 1000).toISOString() },
+  { kind: 'headline', tag: 'NBA', title: 'Lakers sign a guard', time: '1H AGO', url: 'javascript:alert(1)', publishedAt: new Date((NOW - 2 * HOUR - 30) * 1000).toISOString() },
+  { kind: 'headline', tag: 'CRYPTO', title: 'ETH leads majors', time: '2H AGO', url: 'https://www.coindesk.com/eth', publishedAt: new Date((NOW - 90 * 60 - 30) * 1000).toISOString() },
+  { kind: 'headline', tag: 'CRYPTO', title: 'Fifth item never shows', time: '3H AGO', publishedAt: new Date((NOW - 4 * HOUR - 30) * 1000).toISOString() },
 ];
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
 
