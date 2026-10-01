@@ -12,13 +12,13 @@ import { isInternal } from '../internal-wallets';
 import { categoryOf, dayOf, positionId, statusOf, walletDayId } from '../totals';
 
 const GLOBAL_ID = 'global';
-const fields = { block: ['timestamp'], transaction: ['hash'] } as const;
 
 async function loadGlobal(context: HandlerContext): Promise<GlobalStats> {
   return (
     (await context.GlobalStats.get(GLOBAL_ID)) ?? {
       id: GLOBAL_ID,
       wallets: 0,
+      bettors: 0,
       bets: 0,
       volume: 0n,
       pools: 0,
@@ -96,7 +96,7 @@ function stamp(global: GlobalStats, timestamp: number, block: number): GlobalSta
   return { ...global, updatedAt: timestamp, updatedBlock: block };
 }
 
-indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketCreated', fields }, async ({ event, context }) => {
+indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketCreated' }, async ({ event, context }) => {
   const ts = event.block.timestamp;
   const poolId = event.params.id.toString();
   const category = categoryOf(event.params.mType);
@@ -144,7 +144,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketCreated', fields }, a
   context.GlobalStats.set(stamp(global, ts, event.block.number));
 });
 
-indexer.onEvent({ contract: 'MakoMarketsV4', event: 'BetPlaced', fields }, async ({ event, context }) => {
+indexer.onEvent({ contract: 'MakoMarketsV4', event: 'BetPlaced' }, async ({ event, context }) => {
   const ts = event.block.timestamp;
   const poolId = event.params.id.toString();
   const { isYes, amount } = event.params;
@@ -193,7 +193,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'BetPlaced', fields }, async
     lastActiveAt: ts,
   };
   if (!wallet.internal) {
-    global = { ...global, bets: global.bets + 1, volume: global.volume + amount };
+    global = { ...global, bettors: global.bettors + (wallet.betCount === 1 ? 1 : 0), bets: global.bets + 1, volume: global.volume + amount };
     day = { ...day, bets: day.bets + 1, volume: day.volume + amount };
     const cat = (await context.CategoryStats.get(pool.category)) ?? { id: pool.category, category: pool.category, pools: 0, bets: 0, volume: 0n };
     context.CategoryStats.set({ ...cat, bets: cat.bets + 1, volume: cat.volume + amount });
@@ -205,7 +205,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'BetPlaced', fields }, async
   context.GlobalStats.set(stamp(global, ts, event.block.number));
 });
 
-indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketResolved', fields }, async ({ event, context }) => {
+indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketResolved' }, async ({ event, context }) => {
   const ts = event.block.timestamp;
   const poolId = event.params.id.toString();
   const pool = await context.Pool.get(poolId);
@@ -223,7 +223,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketResolved', fields }, 
   );
 });
 
-indexer.onEvent({ contract: 'MakoMarketsV4', event: 'Claimed', fields }, async ({ event, context }) => {
+indexer.onEvent({ contract: 'MakoMarketsV4', event: 'Claimed' }, async ({ event, context }) => {
   const ts = event.block.timestamp;
   const poolId = event.params.id.toString();
   const { amount } = event.params;
@@ -262,7 +262,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'Claimed', fields }, async (
   context.GlobalStats.set(stamp(global, ts, event.block.number));
 });
 
-indexer.onEvent({ contract: 'MakoMarketsV4', event: 'CreatorFeePaid', fields }, async ({ event, context }) => {
+indexer.onEvent({ contract: 'MakoMarketsV4', event: 'CreatorFeePaid' }, async ({ event, context }) => {
   const ts = event.block.timestamp;
   const poolId = event.params.id.toString();
   const { amount } = event.params;
@@ -282,7 +282,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'CreatorFeePaid', fields }, 
   context.GlobalStats.set(stamp(global, ts, event.block.number));
 });
 
-indexer.onEvent({ contract: 'MakoMarketsV4', event: 'CreatorFeeForfeited', fields }, async ({ event, context }) => {
+indexer.onEvent({ contract: 'MakoMarketsV4', event: 'CreatorFeeForfeited' }, async ({ event, context }) => {
   const poolId = event.params.id.toString();
   const pool = await context.Pool.get(poolId);
   if (!pool) throw new Error(`CreatorFeeForfeited for unknown pool ${poolId} (tx ${event.transaction.hash})`);

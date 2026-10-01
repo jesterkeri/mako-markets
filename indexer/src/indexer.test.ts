@@ -5,25 +5,27 @@ import { createTestIndexer } from 'envio';
 
 import { categoryOf, dayOf, statusOf } from './totals';
 
+type Address = `0x${string}`;
+
 const CHAIN = 10143;
-const ALICE = '0x00000000000000000000000000000000000000a1';
-const BOB = '0x00000000000000000000000000000000000000b2';
-const CAROL = '0x00000000000000000000000000000000000000c3';
-const MAKO = '0xC8BF886f73E4371CBd8160EEA7683b8Da98190F1'; // internal: the contract's owner and resolver
+const ALICE: Address = '0x00000000000000000000000000000000000000a1';
+const BOB: Address = '0x00000000000000000000000000000000000000b2';
+const CAROL: Address = '0x00000000000000000000000000000000000000c3';
+const MAKO: Address = '0xC8BF886f73E4371CBd8160EEA7683b8Da98190F1'; // internal: the contract's owner and resolver
 const DAY1 = 1_790_000_000; // 2026-09-21
 const DAY2 = DAY1 + 86_400;
 const USDC = 1_000_000n;
 
 let block = 33_000_000;
-const at = (timestamp: number) => ({ block: { number: ++block, timestamp }, transaction: { hash: `0x${block.toString(16).padStart(64, '0')}` } });
+const at = (timestamp: number) => ({ block: { number: ++block, timestamp }, transaction: { hash: `0x${block.toString(16).padStart(64, '0')}` as Address } });
 
-const created = (id: bigint, creator: string, timestamp: number, mType = 1n) => ({
+const created = (id: bigint, creator: Address, timestamp: number, mType = 1n) => ({
   contract: 'MakoMarketsV4' as const,
   event: 'MarketCreated' as const,
   ...at(timestamp),
   params: { id, creator, mType, oracleRef: `0x${'00'.repeat(32)}`, closeTime: BigInt(timestamp + 3600), question: `Pool ${id}?` },
 });
-const bet = (id: bigint, user: string, isYes: boolean, amount: bigint, timestamp: number) => ({
+const bet = (id: bigint, user: Address, isYes: boolean, amount: bigint, timestamp: number) => ({
   contract: 'MakoMarketsV4' as const,
   event: 'BetPlaced' as const,
   ...at(timestamp),
@@ -35,13 +37,13 @@ const resolved = (id: bigint, outcome: bigint, timestamp: number) => ({
   ...at(timestamp),
   params: { id, outcome },
 });
-const claimed = (id: bigint, user: string, amount: bigint, timestamp: number) => ({
+const claimed = (id: bigint, user: Address, amount: bigint, timestamp: number) => ({
   contract: 'MakoMarketsV4' as const,
   event: 'Claimed' as const,
   ...at(timestamp),
   params: { id, user, amount },
 });
-const feePaid = (id: bigint, creator: string, amount: bigint, timestamp: number) => ({
+const feePaid = (id: bigint, creator: Address, amount: bigint, timestamp: number) => ({
   contract: 'MakoMarketsV4' as const,
   event: 'CreatorFeePaid' as const,
   ...at(timestamp),
@@ -99,6 +101,7 @@ describe('pool lifecycle', () => {
 
     t.expect(await indexer.GlobalStats.getOrThrow('global')).toMatchObject({
       wallets: 2,
+      bettors: 2,
       bets: 3,
       volume: 6n * USDC,
       pools: 1,
@@ -158,6 +161,7 @@ describe("Mako Market's own wallets", () => {
     t.expect(await indexer.Pool.getOrThrow('3')).toMatchObject({ category: 'Mako', totalYes: 5n * USDC, totalNo: USDC });
     t.expect(await indexer.GlobalStats.getOrThrow('global')).toMatchObject({
       wallets: 1,
+      bettors: 1,
       internalWallets: 1,
       bets: 1,
       volume: USDC,

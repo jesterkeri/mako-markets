@@ -140,6 +140,8 @@ type GlobalStats {
   id: ID!
   "Public wallets that placed a bet or created a pool."
   wallets: Int!
+  "Public wallets with at least one bet."
+  bettors: Int!
   bets: Int!
   volume: BigInt!
   "Every pool, including Mako Market's own house pools."

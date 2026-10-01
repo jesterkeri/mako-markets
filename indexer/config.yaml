@@ -4,6 +4,10 @@
 # queries; the site's /stats page and leaderboard read those entities.
 name: mako-market-indexer
 disable_default_cross_chain: true
+# Every handler records the transaction an event came from (the stats link each row to the explorer). A block's
+# number and timestamp are always available.
+field_selection:
+  transaction_fields: [hash]
 chains:
 - id: 10143 # Monad testnet
   start_block: 32603678 # MakoMarketsV4 deployment block (2026-05-18)
