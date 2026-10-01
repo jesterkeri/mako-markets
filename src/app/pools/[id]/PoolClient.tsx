@@ -14,7 +14,7 @@ import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_PILL, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
-import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC } from '@/lib/pool-rules';
+import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
@@ -414,10 +414,35 @@ function PoolDesktop(v: ViewProps) {
           {(row.state === 'betting_closed' || row.state === 'resolving') && (
             <div style={{ borderTop: '1px solid var(--line)', padding: '14px 4px 0', fontSize: 14, lineHeight: 1.5, color: 'var(--dim)' }}>{closedNote(row.state, m, v.now)}</div>
           )}
+          {!open && <HowResultsWork market={m} />}
           <CreatorCard {...v} />
         </div>
       </div>
     </div>
+  );
+}
+
+/// 18a's "How results work", for every pool past its open phase: what happens from betting close to the claim.
+function resultStepsOf(m: MarketWithId) {
+  return resultSteps(m, Number(computeMinLiquidityRatioBps(BigInt(m.creatorFeeBpsSnapshot))));
+}
+
+function HowResultsWork({ market: m }: { market: MarketWithId }) {
+  return (
+    <section aria-labelledby="how-results" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+      <h2 id="how-results" style={{ margin: 0, padding: '0 4px 6px', ...mono, fontSize: 11, fontWeight: 700, color: 'var(--dim)' }}>
+        HOW RESULTS WORK
+      </h2>
+      {resultStepsOf(m).map((s) => (
+        <div key={s.n} style={{ display: 'grid', gridTemplateColumns: '28px minmax(0,1fr)', gap: 6, padding: '11px 4px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
+          <span style={{ ...mono, fontSize: 11, color: 'var(--dim)', paddingTop: 2 }}>{s.n}</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{s.title}</div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--dim)', marginTop: 2 }}>{s.body}</div>
+          </div>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -862,6 +887,20 @@ function PoolMobile(v: ViewProps) {
                 </div>
               ))}
             </div>
+            {row.state !== 'open' && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ ...display, fontSize: 18 }}>How results work</div>
+                {resultStepsOf(m).map((s) => (
+                  <div key={s.n} style={{ display: 'grid', gridTemplateColumns: '28px minmax(0,1fr)', gap: 8, padding: '11px 0', boxShadow: 'inset 0 -1px 0 var(--m3-inv-2)' }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, opacity: 0.7, paddingTop: 2 }}>{s.n}</span>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800 }}>{s.title}</div>
+                      <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.75, marginTop: 2 }}>{s.body}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <button onClick={() => setRulesOpen(false)} className="m3-press" style={{ width: '100%', height: 52, marginTop: 14, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16, fontWeight: 800 }}>
               Got it
             </button>

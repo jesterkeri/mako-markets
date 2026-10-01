@@ -130,6 +130,37 @@ export function poolClock(m: MarketWithId, state: PoolState, nowSec: number, tim
   }
 }
 
+/// "How results work" (18a): the four things that happen after a pool opens, in the words the contract and the
+/// resolver keep. The creator fee is the pool's own snapshot (2% today) of the WHOLE pool, paid only when the
+/// smaller side is at least the minimum ratio of the larger (MakoMarketsV4 `_isCreatorFeeForfeited`); a pool not
+/// settled within RESOLUTION_GRACE of its close can be force-refunded by anyone, and the resolver's keeper does it
+/// for pools with bets on one side only.
+export function resultSteps(m: MarketWithId, minRatioBps: number, timeZone?: string): { n: string; title: string; body: string }[] {
+  const house = m.mType === MarketType.MAKO;
+  const fee = m.creatorFeeBpsSnapshot / 100;
+  return [
+    { n: '01', title: 'Betting closes', body: `At the time set when the pool was created: ${dayTime(Number(m.bettingCloseTime), timeZone)}.` },
+    {
+      n: '02',
+      title: 'Mako Market settles it',
+      body: house ? 'Mako Market settles this house pool by hand.' : 'Mako Market’s resolver settles the result from the pool’s source. Nobody reports or votes.',
+    },
+    {
+      n: '03',
+      title: 'Winners claim',
+      body:
+        m.creatorFeeBpsSnapshot === 0
+          ? 'Claim from the pool page or Me. This pool pays no creator fee.'
+          : `Claim from the pool page or Me. The creator earns ${fee}% of the whole pool when the smaller side is at least ${minRatioBps / 100}% of the larger.`,
+    },
+    {
+      n: '04',
+      title: 'Not settled in 24H',
+      body: 'Anyone can then mark it refunded, and Mako Market’s keeper does so for a pool with bets on one side only. Everyone claims their stake back, no fees.',
+    },
+  ];
+}
+
 /// The four-part step bar under the header: open, betting closes, the wait for the result, the result.
 export function poolSteps(m: MarketWithId, state: PoolState, timeZone?: string) {
   const ref = parseOracleRef(m);
