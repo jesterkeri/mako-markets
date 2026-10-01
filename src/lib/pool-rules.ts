@@ -133,8 +133,8 @@ export function poolClock(m: MarketWithId, state: PoolState, nowSec: number, tim
 /// "How results work" (18a): the four things that happen after a pool opens, in the words the contract and the
 /// resolver keep. The creator fee is the pool's own snapshot (2% today) of the WHOLE pool, paid only when the
 /// smaller side is at least the minimum ratio of the larger (MakoMarketsV4 `_isCreatorFeeForfeited`); a pool not
-/// settled within RESOLUTION_GRACE of its close can be force-refunded by anyone, and the resolver's keeper does it
-/// for pools with bets on one side only.
+/// settled within RESOLUTION_GRACE of its close can be force-refunded by anyone. The resolver's one-sided keeper is
+/// not deployed yet (branch `fix/resolver-one-sided-refund`), so step 04 does not claim it.
 export function resultSteps(m: MarketWithId, minRatioBps: number, timeZone?: string): { n: string; title: string; body: string }[] {
   const house = m.mType === MarketType.MAKO;
   const fee = m.creatorFeeBpsSnapshot / 100;
@@ -156,7 +156,7 @@ export function resultSteps(m: MarketWithId, minRatioBps: number, timeZone?: str
     {
       n: '04',
       title: 'Not settled in 24H',
-      body: 'Anyone can then mark it refunded, and Mako Market’s keeper does so for a pool with bets on one side only. Everyone claims their stake back, no fees.',
+      body: 'Anyone can then mark it refunded. Everyone claims their stake back, no fees.',
     },
   ];
 }

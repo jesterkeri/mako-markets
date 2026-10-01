@@ -393,6 +393,11 @@ body {
 .mk-2fa-field {
   border-radius: 14px;
 }
+/* The factor pills hide their radio inputs, so the pill shows keyboard focus. */
+.mk-2fa [role='radiogroup'] label:has(input:focus-visible) {
+  outline: 2px solid var(--mako-canvas-fg);
+  outline-offset: 2px;
+}
 @media (max-width: 1023.98px) {
   .mk-2fa-scrim {
     align-items: flex-end;

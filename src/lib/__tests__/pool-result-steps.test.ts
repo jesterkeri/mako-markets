@@ -1,7 +1,7 @@
 // Pool result (18a): the "How results work" steps the pool page shows once betting has opened its way to a result.
 // Each line must match the Pools contract and the resolver: the creator's fee is its snapshot of the WHOLE pool,
 // paid only above the contract's minimum side ratio; house pools are settled by hand and pay no creator fee; an
-// unsettled pool can be force-refunded after 24H, automatically only when one side is empty.
+// unsettled pool can be force-refunded by anyone after 24H. The one-sided keeper is not deployed, so it is not claimed.
 
 import { describe, expect, it } from 'vitest';
 import { stringToHex } from 'viem';
@@ -59,11 +59,10 @@ describe('resultSteps', () => {
     expect(steps(pool())[1].body).toBe('Mako Market’s resolver settles the result from the pool’s source. Nobody reports or votes.');
   });
 
-  it('refunds after 24H: anyone may, the keeper does for one-sided pools; never "everyone is refunded automatically"', () => {
+  it('refunds after 24H: anyone may; no keeper is claimed while it is not deployed', () => {
     const body = steps(pool())[3].body;
-    expect(body).toContain('Anyone can then mark it refunded');
-    expect(body).toContain('bets on one side only');
-    expect(body).not.toMatch(/automatically/);
+    expect(body).toBe('Anyone can then mark it refunded. Everyone claims their stake back, no fees.');
+    expect(body).not.toMatch(/keeper|automatically/);
   });
 
   it('betting close is the pool’s own time', () => {
