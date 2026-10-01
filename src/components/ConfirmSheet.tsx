@@ -57,11 +57,11 @@ type Props = {
 };
 
 const WALLET_ICON = 'M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3M4 7.5v10A2.5 2.5 0 0 0 6.5 20H20v-4M4 7.5A2.5 2.5 0 0 0 6.5 10H20v3M16 13h4v3h-4a1.5 1.5 0 0 1 0-3z';
-const CLOSE_ICON = 'M6.5 6.5l11 11M17.5 6.5l-11 11';
-const CHECK_ICON = 'M5 12.5l4.5 4.5L19 7.5';
-const WARN_ICON = 'M12 4l9 16H3zM12 10v4M12 17v.1';
+export const CLOSE_ICON = 'M6.5 6.5l11 11M17.5 6.5l-11 11';
+export const CHECK_ICON = 'M5 12.5l4.5 4.5L19 7.5';
+export const WARN_ICON = 'M12 4l9 16H3zM12 10v4M12 17v.1';
 
-function Svg({ d, size }: { d: string; size: number }) {
+export function Svg({ d, size }: { d: string; size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={d} />
@@ -69,7 +69,7 @@ function Svg({ d, size }: { d: string; size: number }) {
   );
 }
 
-function Spinner({ size }: { size: number }) {
+export function Spinner({ size }: { size: number }) {
   return (
     <svg className="wl-spin" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity=".2" strokeWidth="3" />
@@ -78,7 +78,8 @@ function Spinner({ size }: { size: number }) {
   );
 }
 
-const button = (primary: boolean): React.CSSProperties => ({
+/// The sheet's pill buttons: yellow primary, tinted secondary.
+export const sheetButton = (primary: boolean): React.CSSProperties => ({
   flex: 1,
   height: 54,
   display: 'flex',
@@ -98,20 +99,20 @@ const button = (primary: boolean): React.CSSProperties => ({
 function ActionButton({ action, primary, onRetry, onClose }: { action: ConfirmAction; primary: boolean; onRetry: () => void; onClose: () => void }) {
   if (action.href) {
     return (
-      <Link href={action.href} onClick={onClose} className={primary ? 'm3-press mk-onsig' : 'm3-press'} style={button(primary)}>
+      <Link href={action.href} onClick={onClose} className={primary ? 'm3-press mk-onsig' : 'm3-press'} style={sheetButton(primary)}>
         {action.label}
       </Link>
     );
   }
   return (
-    <button onClick={action.retry ? onRetry : onClose} className={primary ? 'm3-press mk-onsig' : 'm3-press'} style={button(primary)}>
+    <button onClick={action.retry ? onRetry : onClose} className={primary ? 'm3-press mk-onsig' : 'm3-press'} style={sheetButton(primary)}>
       {action.label}
     </button>
   );
 }
 
-const tileTitle: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.02, letterSpacing: '-0.025em' };
-const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, fontWeight: 600, opacity: 0.8, marginTop: 6 };
+export const tileTitle: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.02, letterSpacing: '-0.025em' };
+export const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, fontWeight: 600, opacity: 0.8, marginTop: 6 };
 const chip: React.CSSProperties = { alignSelf: 'flex-start', height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', borderRadius: 9999, background: 'color-mix(in srgb, currentColor 14%, transparent)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'inherit', textDecoration: 'none' };
 
 function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, variant, confirmRef }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null> }) {
@@ -168,10 +169,10 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
           </div>
           <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)' }}>{spec.note}</div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={onCancel} className="m3-press" style={{ ...button(false), flex: 'none', width: 112 }}>
+            <button onClick={onCancel} className="m3-press" style={{ ...sheetButton(false), flex: 'none', width: 112 }}>
               Cancel
             </button>
-            <button ref={confirmRef} onClick={onConfirm} className="m3-press mk-onsig" style={button(true)}>
+            <button ref={confirmRef} onClick={onConfirm} className="m3-press mk-onsig" style={sheetButton(true)}>
               {spec.confirmLabel}
             </button>
           </div>
@@ -229,7 +230,7 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             {spec.doneSecondary && <ActionButton action={spec.doneSecondary} primary={false} onRetry={onRetry} onClose={onClose} />}
-            <button ref={confirmRef} onClick={onClose} className="m3-press mk-onsig" style={button(true)}>
+            <button ref={confirmRef} onClick={onClose} className="m3-press mk-onsig" style={sheetButton(true)}>
               Done
             </button>
           </div>
@@ -248,10 +249,10 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={onClose} className="m3-press" style={button(false)}>
+            <button onClick={onClose} className="m3-press" style={sheetButton(false)}>
               Close
             </button>
-            <button ref={confirmRef} onClick={onRetry} className="m3-press mk-onsig" style={button(true)}>
+            <button ref={confirmRef} onClick={onRetry} className="m3-press mk-onsig" style={sheetButton(true)}>
               Try again
             </button>
           </div>
@@ -306,16 +307,22 @@ export function ConfirmSheet(props: Props) {
   }, [props.phase.step]);
 
   return (
+    <SheetFrame label="Confirm in wallet" onScrim={pending ? undefined : onClose}>
+      {(variant) => <Body {...props} variant={variant} confirmRef={variant === 'desktop' ? desktopConfirm : mobileConfirm} />}
+    </SheetFrame>
+  );
+}
+
+/// The frame every redesigned action sheet shares (19a): a dialog on desktop, a bottom sheet on mobile (yellow in
+/// dark mode), over one scrim. The content renders once per layout; CSS shows one of the two.
+export function SheetFrame({ label, onScrim, children }: { label: string; onScrim?: () => void; children: (variant: 'desktop' | 'mobile') => React.ReactNode }) {
+  return (
     <>
-      <div
-        className="mk-scrim"
-        onClick={pending ? undefined : onClose}
-        style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)' }}
-      />
+      <div className="mk-scrim" onClick={onScrim} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)' }} />
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Confirm in wallet"
+        aria-label={label}
         className="wl-dlg mk-desk mk-pop"
         style={{
           position: 'fixed',
@@ -335,13 +342,13 @@ export function ConfirmSheet(props: Props) {
           gap: 16,
         }}
       >
-        <Body {...props} variant="desktop" confirmRef={desktopConfirm} />
+        {children('desktop')}
       </div>
       <div className="mk-mob mk-m" style={{ position: 'fixed', inset: 0, zIndex: 81, pointerEvents: 'none' }}>
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Confirm in wallet"
+          aria-label={label}
           className="mk-sheet mk-ysheet"
           style={{
             position: 'absolute',
@@ -360,7 +367,7 @@ export function ConfirmSheet(props: Props) {
           }}
         >
           <div style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--m3-outline)', alignSelf: 'center' }} />
-          <Body {...props} variant="mobile" confirmRef={mobileConfirm} />
+          {children('mobile')}
         </div>
       </div>
     </>

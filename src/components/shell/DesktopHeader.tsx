@@ -13,6 +13,7 @@ import { useTheme } from '@/lib/use-theme';
 import { formatUsdc } from '@/lib/usdc';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
+import { openFeedback } from '@/lib/feedback-store';
 
 import { pct2, usd2 } from './format';
 import { ICON, StrokeIcon, SunIcon } from './icons';
@@ -175,6 +176,18 @@ function WalletMenu({ user, balance, onSignOut, onNavigate }: { user: AuthedUser
         <StrokeIcon d={ICON.legal} />
         Terms, privacy and risk
       </Link>
+      <button
+        role="menuitem"
+        onClick={() => {
+          onNavigate();
+          openFeedback();
+        }}
+        className="wm-row"
+        style={menuRow()}
+      >
+        <StrokeIcon d={ICON.feedback} />
+        Feedback
+      </button>
       <div style={{ height: 1, background: 'var(--line)', margin: '6px 4px' }} />
       <button role="menuitem" onClick={onSignOut} className="wm-row" style={menuRow({ fontWeight: 700, color: 'var(--mako-red)' })}>
         <StrokeIcon d={ICON.signOut} />

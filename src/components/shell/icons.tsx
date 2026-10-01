@@ -23,6 +23,7 @@ export const ICON = {
   help: 'M12 17h.01M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z',
   legal: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6',
   signOut: 'M15 17l5-5-5-5M20 12H9M11 4H5v16h6',
+  feedback: 'M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM8 10h8M8 13h5',
 } as const;
 
 type StrokeIconProps = { d: string; size?: number; strokeWidth?: number; className?: string };

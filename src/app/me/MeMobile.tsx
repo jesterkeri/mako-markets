@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useRef } from 'react';
 
 import { ListStateMobile } from '@/components/ListState';
+import { ICON } from '@/components/shell/icons';
+import { openFeedback } from '@/lib/feedback-store';
 import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { CAT_STYLE, usdc2 } from '@/lib/pool-list';
@@ -49,6 +51,9 @@ export function MeMobile(v: MeView) {
       </div>
       <div style={{ padding: '8px 16px 0' }}>
         <RowLink href={SETTINGS_HREF} icon={<Svg d={GEAR} size={18} />} iconBg="var(--raise2)" title="Settings" sub="Account, security, send and receive, appearance, sign out" />
+      </div>
+      <div style={{ padding: '8px 16px 0' }}>
+        <FeedbackRow />
       </div>
       {v.chain.status === 'ready' ? (
         <>
@@ -183,16 +188,36 @@ function TestUsdc({ account }: { account: `0x${string}` }) {
   );
 }
 
-function RowLink({ href, icon, iconBg, title, sub }: { href: string; icon: React.ReactNode; iconBg: string; title: string; sub: string }) {
+const ROW: React.CSSProperties = { width: '100%', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 12, borderRadius: 28, background: 'var(--raise)', padding: '10px 14px 10px 10px', color: 'inherit', textDecoration: 'none', textAlign: 'left' };
+
+function RowInner({ icon, iconBg, title, sub }: { icon: React.ReactNode; iconBg: string; title: string; sub: string }) {
   return (
-    <Link href={href} className="m3-press" style={{ width: '100%', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 12, borderRadius: 28, background: 'var(--raise)', padding: '10px 14px 10px 10px', color: 'inherit', textDecoration: 'none' }}>
+    <>
       <span style={{ flex: 'none', width: 52, height: 52, borderRadius: 9999, background: iconBg, color: iconBg === 'var(--mako-signal)' ? '#000' : 'var(--mako-canvas-fg)', boxShadow: iconBg === 'var(--mako-signal)' ? 'var(--edge)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</span>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'block', fontSize: 16, fontWeight: 800 }}>{title}</span>
         <span style={{ display: 'block', fontSize: 13, color: 'var(--dim)', marginTop: 2 }}>{sub}</span>
       </span>
       <Svg d={CHEVRON} size={18} />
+    </>
+  );
+}
+
+function RowLink({ href, ...row }: { href: string; icon: React.ReactNode; iconBg: string; title: string; sub: string }) {
+  return (
+    <Link href={href} className="m3-press" style={ROW}>
+      <RowInner {...row} />
     </Link>
+  );
+}
+
+/// Opens the feedback sheet. Also shown under the signed-out Me card, since a person who cannot sign in is the one
+/// whose report matters most.
+export function FeedbackRow() {
+  return (
+    <button type="button" onClick={openFeedback} className="m3-press" style={ROW}>
+      <RowInner icon={<Svg d={ICON.feedback} size={18} />} iconBg="var(--raise2)" title="Feedback" sub="Report a problem or an idea" />
+    </button>
   );
 }
 

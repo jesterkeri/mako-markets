@@ -43,7 +43,7 @@ describe('migration 0011', () => {
   it('checks the same rule the code applies', () => {
     const sql = readFileSync(join(__dirname, '../../db/migrations/0011_users_ref.sql'), 'utf8');
     expect(sql).toContain(`CHECK ("ref" IS NULL OR "ref" ~ '^[a-z0-9-]{1,32}$')`);
-    const journal = JSON.parse(readFileSync(join(__dirname, '../../db/migrations/meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe('0011_users_ref');
+    const journal = JSON.parse(readFileSync(join(__dirname, '../../db/migrations/meta/_journal.json'), 'utf8')) as { entries: { idx: number; tag: string }[] };
+    expect(journal.entries.find((e) => e.idx === 11)?.tag).toBe('0011_users_ref');
   });
 });

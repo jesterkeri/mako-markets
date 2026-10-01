@@ -13,7 +13,7 @@ import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
 
 import { MeDesktop } from './MeDesktop';
-import { MeMobile } from './MeMobile';
+import { FeedbackRow, MeMobile } from './MeMobile';
 import { BAR, display, type ClaimItem, type Loadable, type MeTab, type MeView } from './MeParts';
 import { useMeData } from './use-me-data';
 import { useProfileEdit } from './use-profile-edit';
@@ -216,6 +216,9 @@ function MeGate({ kind, onRetry }: { kind: 'loading' | 'signed-out' | 'error'; o
             <div style={{ fontSize: 15, lineHeight: 1.5, opacity: 0.72, marginTop: 8 }}>{body}</div>
             {action('m3-press', { width: '100%', height: 54, marginTop: 18, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' })}
           </div>
+        </div>
+        <div style={{ padding: '10px 12px 0' }}>
+          <FeedbackRow />
         </div>
       </div>
     </>

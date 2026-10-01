@@ -1010,6 +1010,21 @@ export const commentRateLimits = pgTable(
   }),
 );
 
+// Feedback abuse limit (0012): an increment-or-reject counter per (key, clock hour). key = 'u:<users.id>' for a
+// signed-in sender (5 an hour) or the one shared 'anon' key for every signed-out sender (30 an hour); no IP address
+// is stored. window_key = 'h:<floor(epoch/3600)>'. The key/window format CHECKs live in 0012.
+export const feedbackRateLimits = pgTable(
+  'feedback_rate_limits',
+  {
+    key: text('key').notNull(),
+    windowKey: text('window_key').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.key, t.windowKey] }),
+  }),
+);
+
 // ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
@@ -1067,3 +1082,4 @@ export type NewMarketComment = typeof marketComments.$inferInsert;
 export type CommentScope = MarketComment['scope'];
 export type CommentRateLimit = typeof commentRateLimits.$inferSelect;
 export type NewCommentRateLimit = typeof commentRateLimits.$inferInsert;
+export type FeedbackRateLimit = typeof feedbackRateLimits.$inferSelect;
