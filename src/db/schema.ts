@@ -155,6 +155,9 @@ export const users = pgTable('users', {
   /// The Privy user this email account belongs to (migration 0010). NULL until its first Privy sign-in; set
   /// once, and a different Privy user is refused after that. Unique when set (partial index in the SQL).
   privyUserId: text('privy_user_id'),
+  /// The campaign tag (an X post's `utm_campaign` or `ref`) that brought this account, set once when the account is
+  /// created (migration 0011); NULL without one. Same rule as src/lib/ref-tag.ts (CHECK users_ref_format_chk).
+  ref: text('ref'),
   /// Wallet-side identity. NULL for Magic rows. Stored canonical
   /// lowercase (DB CHECK + helper assertion both enforce). Partial
   /// unique index `users_wallet_address_uniq` lives in raw migration

@@ -5,6 +5,7 @@ import { db } from '@/db/client';
 import { monadTestnet } from '@/lib/chain';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
+import { refFromCookieHeader } from '@/lib/ref-tag';
 import { upsertWalletUser } from '@/lib/user-upsert';
 import {
   USER_SESSION_COOKIE,
@@ -152,7 +153,7 @@ export async function POST(req: Request) {
   let sessionCookie: string;
   try {
     [userRow, lastSignInAt, sessionCookie] = await db.transaction(async (tx) => {
-      const upserted = await upsertWalletUser(wallet, { tx });
+      const upserted = await upsertWalletUser(wallet, { tx, ref: refFromCookieHeader(req.headers.get('cookie')) });
       const lastAt = await readLastSignIn(upserted.id, null, { tx });
       const cookie = await createSession(upserted.id, { tx });
       return [upserted, lastAt, cookie];

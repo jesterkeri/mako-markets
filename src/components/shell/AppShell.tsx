@@ -6,6 +6,7 @@ import { SignInDialog } from '@/components/signin/SignInDialog';
 import { isMobileDetail } from '@/lib/shell-nav';
 import { DesktopHeader } from './DesktopHeader';
 import { MobileHeader } from './MobileHeader';
+import { RefCapture } from './RefCapture';
 import { StatusStrip } from './StatusStrip';
 import { TabBar } from './TabBar';
 
@@ -36,6 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
       <SignInDialog />
+      <RefCapture />
     </div>
   );
 }

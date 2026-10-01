@@ -7,6 +7,7 @@ import { sessions, userSafes, users, type User } from '@/db/schema';
 import { SAFE_TRACKED_CHAIN_IDS } from './chain';
 import { deriveSafeAddress } from './safe';
 import { normalizeEmail } from './email';
+import { parseRefTag } from './ref-tag';
 
 // ----------------------------------------------------------------------------
 // src/lib/user-upsert.ts
@@ -253,7 +254,9 @@ export async function upsertEmbeddedUser(
   rawEmail: string,
   rawWallets: string[],
   privyUserId: string,
-  opts: { deferMoveIfTotp?: boolean } = {},
+  /// `ref`: the campaign tag from the visitor's cookie, recorded only if this call CREATES the account; re-checked
+  /// here, so a bad value is dropped rather than failing the sign-in on the CHECK.
+  opts: { deferMoveIfTotp?: boolean; ref?: string | null } = {},
 ): Promise<EmbeddedUpsert> {
   const email = normalizeEmail(rawEmail);
   const wallets = rawWallets.map((w) => normalizeEoa(w));
@@ -275,7 +278,7 @@ export async function upsertEmbeddedUser(
     case 'create': {
       const inserted = await tx
         .insert(users)
-        .values({ email, magicEoa: d.eoa, privyUserId, authType: 'magic' })
+        .values({ email, magicEoa: d.eoa, privyUserId, authType: 'magic', ref: parseRefTag(opts.ref) })
         .onConflictDoNothing()
         .returning();
       if (inserted.length === 1) return { user: inserted[0], moved: false };
@@ -309,7 +312,8 @@ export async function upsertEmbeddedUser(
  */
 export async function upsertWalletUser(
   raw: `0x${string}` | string,
-  opts: { tx: DbOrTx },
+  /// `ref`: as for upsertEmbeddedUser, recorded only when this call creates the account.
+  opts: { tx: DbOrTx; ref?: string | null },
 ): Promise<{ id: string; displayName: string | null; avatarUrl: string | null }> {
   const walletAddress = raw.toLowerCase() as `0x${string}`;
   if (!/^0x[0-9a-f]{40}$/.test(walletAddress)) {
@@ -333,8 +337,8 @@ export async function upsertWalletUser(
     display_name: string | null;
     avatar_url: string | null;
   }>(sql`
-    INSERT INTO users (wallet_address, auth_type)
-    VALUES (${walletAddress}, 'wallet')
+    INSERT INTO users (wallet_address, auth_type, ref)
+    VALUES (${walletAddress}, 'wallet', ${parseRefTag(opts.ref)})
     ON CONFLICT (wallet_address) WHERE wallet_address IS NOT NULL
     DO NOTHING
     RETURNING id, display_name, avatar_url

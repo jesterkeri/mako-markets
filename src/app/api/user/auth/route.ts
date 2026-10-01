@@ -14,6 +14,7 @@ import {
   USER_SESSION_COOKIE,
   USER_SESSION_MAX_AGE_SEC,
 } from '@/lib/user-session';
+import { refFromCookieHeader } from '@/lib/ref-tag';
 import { IdentityConflictError, upsertEmbeddedUser } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
@@ -161,6 +162,7 @@ export async function POST(req: Request) {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
       const { user, moved, pendingMoveTo } = await upsertEmbeddedUser(tx, email, identity.wallets, identity.privyUserId, {
         deferMoveIfTotp: true,
+        ref: refFromCookieHeader(req.headers.get('cookie')),
       });
       if (!user.email || !user.magicEoa) {
         throw new Error('[user-auth] embedded row missing email/magic_eoa post-upsert');

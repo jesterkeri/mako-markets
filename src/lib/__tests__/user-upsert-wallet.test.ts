@@ -121,6 +121,20 @@ describe('upsertWalletUser', () => {
     expect(serialized).not.toContain(ADDR_MIXED);
   });
 
+  it('records a valid campaign tag on the account it creates, and drops an invalid one', async () => {
+    const valid = makeTx({ insertResult: [{ id: 'u4', display_name: null, avatar_url: null }] });
+    await upsertWalletUser(ADDR, { tx: valid.tx, ref: 'Post3' });
+    const sent = JSON.stringify(valid.spies.execute.mock.calls[0][0]);
+    expect(sent).toContain('INSERT INTO users (wallet_address, auth_type, ref)');
+    expect(sent).toContain('"post3"');
+
+    const invalid = makeTx({ insertResult: [{ id: 'u5', display_name: null, avatar_url: null }] });
+    await upsertWalletUser(ADDR, { tx: invalid.tx, ref: "x'; drop table users;--" });
+    const sentInvalid = JSON.stringify(invalid.spies.execute.mock.calls[0][0]);
+    expect(sentInvalid).not.toContain('drop table');
+    expect(sentInvalid).toContain('null');
+  });
+
   it('rejects non-EVM-format input before any SQL is issued', async () => {
     const { tx, spies } = makeTx({
       insertResult: [],

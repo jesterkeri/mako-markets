@@ -243,3 +243,65 @@ describe('POST /api/user/auth: Privy move of a TOTP-enabled Magic-era account', 
     expect(store.sessions.map((r) => r.id)).toEqual(['owner-laptop-session']);
   });
 });
+
+// Ref tags (migration 0011): the campaign tag in the visitor's cookie is recorded only on the account a sign-in
+// CREATES. A returning account keeps whatever it had, whatever cookie it arrives with.
+describe('POST /api/user/auth: the campaign tag', () => {
+  const signInWithCookie = (cookie: string) =>
+    new Request('http://localhost/api/user/auth', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost', cookie },
+      body: JSON.stringify({ privyAccessToken: 'privy-access-token-stub' }),
+    });
+
+  it('is recorded on a new account, and a bad tag is dropped rather than failing the sign-in', async () => {
+    for (const [cookie, expected] of [
+      ['other=1; mako_ref=Post3', 'post3'],
+      ['mako_ref=bad_tag', null],
+    ] as const) {
+      store.users = [];
+      store.userSafes = [];
+      store.sessions = [];
+      mocks.checkSameOrigin.mockReturnValue({ ok: true });
+      mocks.isAllowedForCurrentStage.mockResolvedValue(true);
+      mocks.verifyPrivyLogin.mockResolvedValue({ privyUserId: 'did:privy:new', email: 'new@example.com', wallets: [PRIVY_EOA] });
+      mocks.createSession.mockResolvedValue('signed-session-token');
+
+      const { POST } = await import('../../app/api/user/auth/route');
+      const res = await POST(signInWithCookie(cookie));
+      expect(res.status).toBe(200);
+      expect(store.users).toHaveLength(1);
+      expect(store.users[0].ref).toBe(expected);
+    }
+  });
+
+  it('never changes on a returning account', async () => {
+    store.users = [
+      {
+        id: USER_ID,
+        authType: 'magic',
+        email: EMAIL,
+        magicEoa: PRIVY_EOA,
+        privyUserId: 'did:privy:u1',
+        walletAddress: null,
+        displayName: null,
+        avatarUrl: null,
+        totpSecret: null,
+        totpEnabledAt: null,
+        lastEmailChangedAt: null,
+        ref: 'first-post',
+      },
+    ];
+    store.userSafes = [];
+    store.sessions = [];
+    mocks.checkSameOrigin.mockReturnValue({ ok: true });
+    mocks.isAllowedForCurrentStage.mockResolvedValue(true);
+    mocks.verifyPrivyLogin.mockResolvedValue({ privyUserId: 'did:privy:u1', email: EMAIL, wallets: [PRIVY_EOA] });
+    mocks.createSession.mockResolvedValue('signed-session-token');
+
+    const { POST } = await import('../../app/api/user/auth/route');
+    const res = await POST(signInWithCookie('mako_ref=later-post'));
+    expect(res.status).toBe(200);
+    expect(store.users[0].ref).toBe('first-post');
+  });
+});

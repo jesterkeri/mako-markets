@@ -78,6 +78,13 @@
       "when": 1790670000000,
       "tag": "0010_users_privy_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790812800000,
+      "tag": "0011_users_ref",
+      "breakpoints": true
     }
   ]
 }
