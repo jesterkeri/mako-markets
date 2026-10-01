@@ -11,6 +11,7 @@ import { FeedbackButton } from './FeedbackButton';
 import { HowToPlay } from './HowToPlay';
 import { MobileHeader } from './MobileHeader';
 import { RefCapture } from './RefCapture';
+import { SignOutHost } from './SignOutHost';
 import { StatusStrip } from './StatusStrip';
 import { TabBar } from './TabBar';
 
@@ -48,6 +49,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
       <SignInDialog />
       <FeedbackSheet />
+      <SignOutHost />
       {/* RefCapture and the tour read the URL's query, which needs a Suspense boundary on prerendered pages. */}
       <Suspense fallback={null}>
         <RefCapture />

@@ -9,7 +9,8 @@ import { useEmbeddedActions } from '@/components/PrivyAuth';
 import { RegenerateRecoveryCodesModal } from '@/components/profile/RegenerateRecoveryCodesModal';
 import { TotpDisableModal } from '@/components/profile/TotpDisableModal';
 import { TotpEnrollmentModal } from '@/components/profile/TotpEnrollmentModal';
-import { maskEmail, SignOutConfirm } from '@/components/shell/SignOutConfirm';
+import { maskEmail } from '@/components/shell/SignOutConfirm';
+import { openSignOut } from '@/lib/sign-out-store';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { tourHref } from '@/lib/tour';
 import { formatAddress } from '@/lib/user-display';
@@ -56,7 +57,7 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
   const { preference, setPreference } = useTheme();
   const { data: block } = useBlockNumber({ watch: true });
   const { exportKey } = useEmbeddedActions();
-  const [modal, setModal] = useState<'enroll' | 'disable' | 'regenerate' | 'signout' | null>(null);
+  const [modal, setModal] = useState<'enroll' | 'disable' | 'regenerate' | null>(null);
   const [exportError, setExportError] = useState('');
 
   const email = user.authType === 'magic';
@@ -269,7 +270,7 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
               </section>
             ))}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 30 }}>
-              <button type="button" onClick={() => setModal('signout')} className="mk-press96" style={{ height: 40, padding: '0 18px', borderRadius: 9999, boxShadow: 'inset 0 0 0 1.5px var(--mako-red)', color: 'var(--mako-red)', fontSize: 14, fontWeight: 800 }}>
+              <button type="button" onClick={() => openSignOut(user)} className="mk-press96" style={{ height: 40, padding: '0 18px', borderRadius: 9999, boxShadow: 'inset 0 0 0 1.5px var(--mako-red)', color: 'var(--mako-red)', fontSize: 14, fontWeight: 800 }}>
                 Sign out
               </button>
               <span style={note}>{signOutNote}</span>
@@ -302,7 +303,7 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
               </div>
             </section>
           ))}
-          <button type="button" onClick={() => setModal('signout')} className="m3-press" style={{ width: '100%', height: 52, marginTop: 24, borderRadius: 9999, boxShadow: 'inset 0 0 0 1.5px var(--mako-red)', color: 'var(--mako-red)', fontSize: 16, fontWeight: 800 }}>
+          <button type="button" onClick={() => openSignOut(user)} className="m3-press" style={{ width: '100%', height: 52, marginTop: 24, borderRadius: 9999, boxShadow: 'inset 0 0 0 1.5px var(--mako-red)', color: 'var(--mako-red)', fontSize: 16, fontWeight: 800 }}>
             Sign out
           </button>
           <div style={{ ...note, textAlign: 'center', marginTop: 10 }}>{signOutNote}</div>
@@ -316,7 +317,6 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
           <RegenerateRecoveryCodesModal open={modal === 'regenerate'} onClose={() => setModal(null)} />
         </>
       )}
-      {modal === 'signout' && <SignOutConfirm user={user} onClose={() => setModal(null)} />}
     </>
   );
 }

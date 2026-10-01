@@ -34,7 +34,7 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
-function getFocusable(container: HTMLElement): HTMLElement[] {
+export function getFocusable(container: HTMLElement): HTMLElement[] {
   const all = container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
   return Array.from(all).filter((el) => {
     // Skip hidden / display:none elements.
@@ -44,6 +44,36 @@ function getFocusable(container: HTMLElement): HTMLElement[] {
     if (style.visibility === 'hidden' || style.display === 'none') return false;
     return true;
   });
+}
+
+/// Tab / Shift+Tab inside `container`: wraps at either end, and pulls focus back in if it has escaped.
+export function trapTab(e: KeyboardEvent, container: HTMLElement): void {
+  if (e.key !== 'Tab') return;
+  const focusable = getFocusable(container);
+  if (focusable.length === 0) {
+    e.preventDefault();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+
+  // If focus has escaped the dialog (e.g., a child element was
+  // removed mid-render), treat the next Tab as a wrap. Without
+  // this branch a forward Tab from outside the container would
+  // fall through to the rest of the page. Codex round-1 MINOR.
+  const escaped = !container.contains(active);
+  if (e.shiftKey) {
+    if (escaped || active === first) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else {
+    if (escaped || active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 }
 
 type Args = {
@@ -84,34 +114,7 @@ export function useFocusTrap({
       });
     }
 
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Tab') return;
-      const focusable = getFocusable(container!);
-      if (focusable.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-
-      // If focus has escaped the dialog (e.g., a child element was
-      // removed mid-render), treat the next Tab as a wrap. Without
-      // this branch a forward Tab from outside the container would
-      // fall through to the rest of the page. Codex round-1 MINOR.
-      const escaped = !container!.contains(active);
-      if (e.shiftKey) {
-        if (escaped || active === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (escaped || active === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    }
+    const onKey = (e: KeyboardEvent) => trapTab(e, container);
 
     document.addEventListener('keydown', onKey);
 

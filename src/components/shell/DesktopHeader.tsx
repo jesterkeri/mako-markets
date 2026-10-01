@@ -14,13 +14,13 @@ import { formatUsdc } from '@/lib/usdc';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
 import { openFeedback } from '@/lib/feedback-store';
+import { openSignOut } from '@/lib/sign-out-store';
 import { TOUR_STEPS, useTourStep } from '@/lib/tour';
 
 import { pct2, usd2 } from './format';
 import { ICON, StrokeIcon, SunIcon } from './icons';
 import { BetaTag } from './BetaTag';
 import { NotificationsPanel } from './NotificationsPanel';
-import { SignOutConfirm } from './SignOutConfirm';
 import { useDismiss } from './use-dismiss';
 
 export function BtcPrice() {
@@ -201,7 +201,6 @@ function WalletMenu({ user, balance, onSignOut, onNavigate }: { user: AuthedUser
 
 function Wallet({ user }: { user: AuthedUser }) {
   const [open, setOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -233,11 +232,10 @@ function Wallet({ user }: { user: AuthedUser }) {
           onNavigate={close}
           onSignOut={() => {
             setOpen(false);
-            setConfirming(true);
+            openSignOut(user);
           }}
         />
       )}
-      {confirming && <SignOutConfirm user={user} onClose={() => setConfirming(false)} />}
     </span>
   );
 }

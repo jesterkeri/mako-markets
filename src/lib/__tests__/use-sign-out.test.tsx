@@ -1,6 +1,7 @@
 // Sign-out (S1 review): success only when Mako's session, the Privy session and any wallet connection have all
-// ended. Anything unfinished is reported, can be retried on its own, and the app is shown signed out only once the
-// user is done (so the dialog can report it).
+// ended. Anything unfinished is reported and can be retried on its own. The app shows the account signed out as soon
+// as Mako's session has ended (r2: the dialog that reports the rest belongs to the shell, so that cannot remove it);
+// it goes home once the user is done.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
@@ -83,8 +84,8 @@ describe('useSignOut', () => {
     expect(ok).toBe(false);
     expect(result.current.leftover).toEqual({ privy: true, wallet: false });
     expect(m.push).not.toHaveBeenCalled();
-    // The dialog stays up: the app is not yet shown signed out.
-    expect(client.getQueryData(USER_QUERY_KEY)).toEqual({ authed: true });
+    // Mako's session has ended, so the app says so; the dialog (the shell's) stays up to report the rest.
+    expect(client.getQueryData(USER_QUERY_KEY)).toEqual({ authed: false });
   });
 
   it('a rejected Privy logout and a failed wallet disconnect are both reported, and retry repeats only those', async () => {

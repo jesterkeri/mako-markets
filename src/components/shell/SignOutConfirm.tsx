@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
-import { useFocusTrap } from '@/lib/use-focus-trap';
+import type { SignOutWho } from '@/lib/sign-out-store';
+import { useResponsiveFocusTrap } from '@/lib/use-responsive-focus-trap';
 import { useSignOut } from '@/lib/use-sign-out';
-import type { AuthedUser } from '@/lib/use-user';
 
 /// "joshua@gmail.com" -> "joshua@…mail.com": enough to recognise, not the whole address on screen.
 export function maskEmail(email: string): string {
@@ -14,19 +14,23 @@ export function maskEmail(email: string): string {
   return domain.length > 8 ? `${email.slice(0, at)}@…${domain.slice(-8)}` : email;
 }
 
-type Props = { user: AuthedUser; onClose: () => void };
+type Props = { who: SignOutWho; onClose: () => void };
 
-/// The sign-out confirm (21a): a dialog on desktop, a bottom sheet on mobile (yellow in dark mode).
-export function SignOutConfirm({ user, onClose }: Props) {
+/// The sign-out confirm (21a): a dialog on desktop, a bottom sheet on mobile (yellow in dark mode). Mounted by the
+/// shell's SignOutHost; `who` is the account as it was when the dialog opened, for its wording only.
+export function SignOutConfirm({ who, onClose }: Props) {
   const { signOut, retry, leave, busy, error, leftover } = useSignOut();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const cancelMobileRef = useRef<HTMLButtonElement>(null);
   const deskRef = useRef<HTMLDivElement>(null);
   const mobRef = useRef<HTMLDivElement>(null);
-  // Both variants render; the trap (Tab stays inside, focus returns to the opener on close) goes on the visible one.
-  const [desktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
-  useFocusTrap({ open: desktop, containerRef: deskRef, initialFocusRef: cancelRef });
-  useFocusTrap({ open: !desktop, containerRef: mobRef, initialFocusRef: cancelMobileRef });
+  // Both variants render; Tab stays inside the one on screen, following the window across the breakpoint, and focus
+  // returns to the opener on close.
+  useResponsiveFocusTrap({
+    open: true,
+    desktop: { containerRef: deskRef, initialFocusRef: cancelRef },
+    mobile: { containerRef: mobRef, initialFocusRef: cancelMobileRef },
+  });
 
   // Once Mako's session has ended, closing means leaving signed out; before that, it means cancelling.
   const dismiss = useCallback(() => {
@@ -43,11 +47,11 @@ export function SignOutConfirm({ user, onClose }: Props) {
   }, [dismiss]);
 
   const desktopLine =
-    user.authType === 'magic'
-      ? `Your wallet, balance and bets stay as they are. Sign back in with ${maskEmail(user.email)}.`
+    who.authType === 'magic'
+      ? `Your wallet, balance and bets stay as they are. Sign back in with ${maskEmail(who.email)}.`
       : 'Your wallet, balance and bets stay as they are. Sign back in with the same wallet.';
   const mobileLine =
-    user.authType === 'magic'
+    who.authType === 'magic'
       ? 'Your wallet, balance and bets stay as they are. Sign back in with the same email.'
       : 'Your wallet, balance and bets stay as they are. Sign back in with the same wallet.';
   const confirm = async () => {

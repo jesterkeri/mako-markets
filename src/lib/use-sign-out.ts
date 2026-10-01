@@ -15,11 +15,12 @@ const PRIVY_LOGOUT_BOUND_MS = 4_000;
 export type SignOutLeftover = { privy: boolean; wallet: boolean };
 
 /**
- * Sign out, as the header's wallet menu and Settings do it. Mako's own session ends first and is authoritative:
- * if it fails, nothing else happens and the error is shown. Then the Privy session ends and any connected wallet
- * disconnects. Sign-out reports success only when both have finished; if either did not (a rejection, or Privy not
- * answering within PRIVY_LOGOUT_BOUND_MS), `leftover` says which, and `retry` repeats just those parts. The user is
- * already signed out of Mako at that point, so the app treats them as signed out either way.
+ * Sign out, as the shell's sign-out dialog does it. Mako's own session ends first and is authoritative: if it fails,
+ * nothing else happens and the error is shown. Once it has ended, the app shows the account as signed out at once.
+ * Then the Privy session ends and any connected wallet disconnects. Sign-out reports success only when both have
+ * finished; if either did not (a rejection, or Privy not answering within PRIVY_LOGOUT_BOUND_MS), `leftover` says
+ * which and `retry` repeats just those parts. The dialog that shows `leftover` is mounted by the shell, not by a
+ * signed-in screen, so the signed-out account does not take it away (sign-out-store).
  */
 export function useSignOut() {
   const queryClient = useQueryClient();
@@ -60,13 +61,11 @@ export function useSignOut() {
     [embedded, disconnectAsync],
   );
 
-  /// Shows the app as signed out and goes home. Deferred until sign-out is complete or the user chooses to leave, so
-  /// the dialog (which the header only renders for a signed-in user) stays up to report anything unfinished.
+  /// Sign-out is complete, or the user chose to leave with something unfinished: go home.
   const done = useCallback(() => {
     setLeftover(null);
-    queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
     router.push('/');
-  }, [queryClient, router]);
+  }, [router]);
 
   const finish = useCallback(
     (left: SignOutLeftover): boolean => {
@@ -95,12 +94,13 @@ export function useSignOut() {
         setError('Sign-out failed. Nothing changed; try again.');
         return false;
       }
-      // Mako's session is gone from here on, whatever happens next.
+      // Mako's session is gone from here on, whatever happens next, and the app says so.
+      queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
       return finish(await cleanUp({ privy: true, wallet: isConnected }));
     } finally {
       setBusy(false);
     }
-  }, [cleanUp, finish, isConnected]);
+  }, [cleanUp, finish, isConnected, queryClient]);
 
   /// Repeats only the parts that did not finish.
   const retry = useCallback(async (): Promise<boolean> => {

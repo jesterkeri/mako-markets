@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   user: null as unknown,
   exportKey: vi.fn(async () => {}),
   setPreference: vi.fn(),
+  openSignOut: vi.fn(),
 }));
 
 vi.mock('next/link', () => ({
@@ -24,10 +25,8 @@ vi.mock('@/components/PrivyAuth', () => ({ useEmbeddedActions: () => ({ logout: 
 vi.mock('@/components/profile/TotpEnrollmentModal', () => ({ TotpEnrollmentModal: ({ open }: { open: boolean }) => (open ? <div>enroll-modal</div> : null) }));
 vi.mock('@/components/profile/TotpDisableModal', () => ({ TotpDisableModal: ({ open }: { open: boolean }) => (open ? <div>disable-modal</div> : null) }));
 vi.mock('@/components/profile/RegenerateRecoveryCodesModal', () => ({ RegenerateRecoveryCodesModal: ({ open }: { open: boolean }) => (open ? <div>regenerate-modal</div> : null) }));
-vi.mock('@/components/shell/SignOutConfirm', () => ({
-  maskEmail: (e: string) => e,
-  SignOutConfirm: () => <div>sign-out-confirm</div>,
-}));
+vi.mock('@/components/shell/SignOutConfirm', () => ({ maskEmail: (e: string) => e }));
+vi.mock('@/lib/sign-out-store', () => ({ openSignOut: mocks.openSignOut }));
 vi.mock('@/components/signin/SignInLink', () => ({ SignInLink: ({ children }: { children: React.ReactNode }) => <a href="/signin">{children}</a> }));
 
 import { SettingsClient } from '@/app/settings/SettingsClient';
@@ -101,7 +100,8 @@ describe('Settings', () => {
     for (const s of screen.getAllByRole('switch')) expect(s.getAttribute('aria-disabled')).toBe('true');
     expect(screen.getAllByRole('link', { name: 'Replay tour' })[0].getAttribute('href')).toBe('/?tour=1');
     fireEvent.click(screen.getAllByRole('button', { name: 'Sign out' })[0]);
-    expect(screen.getByText('sign-out-confirm')).toBeTruthy();
+    // The dialog itself is the shell's (SignOutHost), opened for this account.
+    expect(mocks.openSignOut).toHaveBeenCalledWith(expect.objectContaining({ authType: 'magic', email: 'a@b.co' }));
   });
 
   it('the theme choice goes to the theme store', () => {

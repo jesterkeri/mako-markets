@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 import { explorerUrl } from '@/lib/chain';
-import { useFocusTrap } from '@/lib/use-focus-trap';
+import { useResponsiveFocusTrap } from '@/lib/use-responsive-focus-trap';
 import { formatAddress } from '@/lib/user-display';
 
 // Confirm in wallet (19a): the one sheet every on-chain action goes through (enter a round, bet on a pool,
@@ -330,10 +330,13 @@ export function SheetFrame({
 }) {
   const deskRef = useRef<HTMLDivElement>(null);
   const mobRef = useRef<HTMLDivElement>(null);
-  // Both variants render; Tab is kept inside the visible one, and focus returns to the opener on close.
-  const [desktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
-  useFocusTrap({ open: desktop, containerRef: deskRef, initialFocusRef: initialFocus?.desktop });
-  useFocusTrap({ open: !desktop, containerRef: mobRef, initialFocusRef: initialFocus?.mobile });
+  // Both variants render; Tab is kept inside the one on screen, following the window across the breakpoint, and
+  // focus returns to the opener on close.
+  useResponsiveFocusTrap({
+    open: true,
+    desktop: { containerRef: deskRef, initialFocusRef: initialFocus?.desktop },
+    mobile: { containerRef: mobRef, initialFocusRef: initialFocus?.mobile },
+  });
   return (
     <>
       <div className="mk-scrim" onClick={onScrim} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)' }} />
