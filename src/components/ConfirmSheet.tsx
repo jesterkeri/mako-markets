@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 import { explorerUrl } from '@/lib/chain';
+import { useFocusTrap } from '@/lib/use-focus-trap';
 import { formatAddress } from '@/lib/user-display';
 
 // Confirm in wallet (19a): the one sheet every on-chain action goes through (enter a round, bet on a pool,
@@ -307,7 +308,7 @@ export function ConfirmSheet(props: Props) {
   }, [props.phase.step]);
 
   return (
-    <SheetFrame label="Confirm in wallet" onScrim={pending ? undefined : onClose}>
+    <SheetFrame label="Confirm in wallet" onScrim={pending ? undefined : onClose} initialFocus={{ desktop: desktopConfirm, mobile: mobileConfirm }}>
       {(variant) => <Body {...props} variant={variant} confirmRef={variant === 'desktop' ? desktopConfirm : mobileConfirm} />}
     </SheetFrame>
   );
@@ -315,7 +316,24 @@ export function ConfirmSheet(props: Props) {
 
 /// The frame every redesigned action sheet shares (19a): a dialog on desktop, a bottom sheet on mobile (yellow in
 /// dark mode), over one scrim. The content renders once per layout; CSS shows one of the two.
-export function SheetFrame({ label, onScrim, children }: { label: string; onScrim?: () => void; children: (variant: 'desktop' | 'mobile') => React.ReactNode }) {
+export function SheetFrame({
+  label,
+  onScrim,
+  initialFocus,
+  children,
+}: {
+  label: string;
+  onScrim?: () => void;
+  /// What takes focus when the sheet opens, per variant (else its first focusable control).
+  initialFocus?: { desktop: React.RefObject<HTMLElement | null>; mobile: React.RefObject<HTMLElement | null> };
+  children: (variant: 'desktop' | 'mobile') => React.ReactNode;
+}) {
+  const deskRef = useRef<HTMLDivElement>(null);
+  const mobRef = useRef<HTMLDivElement>(null);
+  // Both variants render; Tab is kept inside the visible one, and focus returns to the opener on close.
+  const [desktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
+  useFocusTrap({ open: desktop, containerRef: deskRef, initialFocusRef: initialFocus?.desktop });
+  useFocusTrap({ open: !desktop, containerRef: mobRef, initialFocusRef: initialFocus?.mobile });
   return (
     <>
       <div className="mk-scrim" onClick={onScrim} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)' }} />
@@ -323,6 +341,7 @@ export function SheetFrame({ label, onScrim, children }: { label: string; onScri
         role="dialog"
         aria-modal="true"
         aria-label={label}
+        ref={deskRef}
         className="wl-dlg mk-desk mk-pop"
         style={{
           position: 'fixed',
@@ -349,6 +368,7 @@ export function SheetFrame({ label, onScrim, children }: { label: string; onScri
           role="dialog"
           aria-modal="true"
           aria-label={label}
+          ref={mobRef}
           className="mk-sheet mk-ysheet"
           style={{
             position: 'absolute',

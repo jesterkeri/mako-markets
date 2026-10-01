@@ -108,3 +108,30 @@ describe('ConfirmSheet', () => {
     }
   });
 });
+
+describe('ConfirmSheet focus (S1 review)', () => {
+  it('keeps Tab inside the visible sheet and returns focus to the opener when it closes', async () => {
+    vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+    const opener = document.createElement('button');
+    opener.textContent = 'Open';
+    document.body.appendChild(opener);
+    opener.focus();
+    const handlers = { onConfirm: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(), onClose: vi.fn() };
+    const view = render(<ConfirmSheet spec={SPEC} phase={{ step: 'review' }} wallet={MAKO} {...handlers} />);
+    await Promise.resolve();
+
+    const dialog = screen.getAllByRole('dialog')[0];
+    const inside = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]'));
+    const last = inside[inside.length - 1];
+    last.focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    inside[0].focus();
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    view.unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+});

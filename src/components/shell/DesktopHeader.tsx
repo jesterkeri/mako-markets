@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 
 import { Logo } from '@/components/Logo';
 import { useUsdcBalance } from '@/lib/hooks';
-import { useLivePrices } from '@/lib/use-live-prices';
+import { symbolUnavailable, useLivePrices } from '@/lib/use-live-prices';
 import { activeNav, NAV } from '@/lib/shell-nav';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { useTheme } from '@/lib/use-theme';
@@ -22,9 +22,10 @@ import { NotificationsPanel } from './NotificationsPanel';
 import { SignOutConfirm } from './SignOutConfirm';
 import { useDismiss } from './use-dismiss';
 
-function BtcPrice() {
-  const { live, unavailable } = useLivePrices();
-  const btc = live?.prices.BTC;
+export function BtcPrice() {
+  const prices = useLivePrices();
+  const btc = prices.live?.prices.BTC;
+  const unavailable = symbolUnavailable(prices, 'BTC');
   return (
     <span style={{ height: 40, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', fontFamily: 'var(--mako-font-mono)', fontSize: 13 }}>
       <span style={{ color: 'var(--dim)' }}>BTC</span>

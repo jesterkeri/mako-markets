@@ -1,6 +1,6 @@
 // What a new pool is made of (10a): its question, its settlement reference, and its two times, from the choices a
-// creator makes. Byte-for-byte the formats the current create page produces (src/app/create/_components/
-// CreateClient.tsx) and the resolver parses (cf-worker/src/index.ts parse*OracleRef; for football over/under it
+// creator makes. Byte-for-byte the formats the old create page produced (src/app/create/_components/
+// CreateClient.tsx, removed once /create redirected here) and the resolver parses (cf-worker/src/index.ts parse*OracleRef; for football over/under it
 // also matches the question text), so a pool made here settles exactly like one made there.
 
 import { MarketType } from './contract';

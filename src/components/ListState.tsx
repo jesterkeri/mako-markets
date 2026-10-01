@@ -8,7 +8,7 @@ import { listStateCopy, type ListAction, type ListKind } from '@/lib/list-states
 type Props = {
   kind: ListKind;
   state: 'loading' | 'empty' | 'error' | 'not_open';
-  /// Called by "Try again" on an error.
+  /// Called by "Try again" on an error. Without it, "Try again" is shown disabled.
   onRetry?: () => void;
   /// The account's explorer page, offered on Me's error.
   explorerHref?: string;
@@ -26,8 +26,13 @@ export function ListActionButton({ action, onRetry, style, className }: { action
     );
   }
   if ('retry' in action) {
-    return (
+    // Without a handler the button would look live and do nothing, so it is shown disabled instead.
+    return onRetry ? (
       <button onClick={onRetry} className={className} style={style}>
+        {action.label}
+      </button>
+    ) : (
+      <button disabled aria-disabled="true" className={className} style={{ ...style, opacity: 0.55, cursor: 'not-allowed' }}>
         {action.label}
       </button>
     );

@@ -10,10 +10,24 @@ import { useLiveNowSec } from '@/lib/use-live-clock';
 // Rounds join this list once MakoRoundsV1 is live; until then it shows real open pools only, never a made-up
 // round.
 function usePoolsStillOpen(limit: number) {
-  const { markets, isLoading } = useMarkets();
+  const { markets, count, isLoading, isError, refetch } = useMarkets();
   const now = useLiveNowSec();
   const pools = now === null ? [] : openPools(markets, now).slice(0, limit);
-  return { pools, now, loading: isLoading || now === null };
+  // A failed read, or fewer markets than the count (some reads failed), is unknown, never "nothing is open": the pool
+  // closing first could be the one missing.
+  const failed = isError || (!isLoading && markets.length < count);
+  return { pools, now, loading: !failed && (isLoading || now === null), failed, retry: refetch };
+}
+
+function Unreadable({ onRetry, size }: { onRetry: () => void; size: number }) {
+  return (
+    <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: size, color: 'var(--dim)' }}>
+      <span>Open pools can&apos;t be read from Monad right now.</span>
+      <button type="button" onClick={onRetry} className="mk-press97" style={{ height: 32, padding: '0 14px', borderRadius: 9999, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', fontWeight: 800, fontSize: 13 }}>
+        Try again
+      </button>
+    </div>
+  );
 }
 
 const poolPill: React.CSSProperties = {
@@ -28,7 +42,7 @@ const poolPill: React.CSSProperties = {
 
 /// "Still in the water" (7a): the way back from a dead end, desktop.
 export function StillInTheWaterDesktop() {
-  const { pools, now, loading } = usePoolsStillOpen(3);
+  const { pools, now, loading, failed, retry } = usePoolsStillOpen(3);
   return (
     <div style={{ marginTop: 44, padding: '0 4px' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', paddingBottom: 6, boxShadow: 'inset 0 -1px 0 var(--line)' }}>
@@ -40,7 +54,11 @@ export function StillInTheWaterDesktop() {
           Home →
         </Link>
       </div>
-      {!loading && pools.length === 0 ? (
+      {failed ? (
+        <div style={{ padding: '18px 0' }}>
+          <Unreadable onRetry={retry} size={14} />
+        </div>
+      ) : !loading && pools.length === 0 ? (
         <div style={{ padding: '18px 0', fontSize: 14, color: 'var(--dim)' }}>Nothing is open right now.</div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', columnGap: 32 }}>
@@ -70,13 +88,17 @@ export function StillInTheWaterDesktop() {
 
 /// "Still in the water" (7a), mobile.
 export function StillInTheWaterMobile() {
-  const { pools, now, loading } = usePoolsStillOpen(2);
+  const { pools, now, loading, failed, retry } = usePoolsStillOpen(2);
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 20px 12px' }}>
         <span style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em' }}>Still in the water</span>
       </div>
-      {!loading && pools.length === 0 ? (
+      {failed ? (
+        <div style={{ padding: '0 20px' }}>
+          <Unreadable onRetry={retry} size={15} />
+        </div>
+      ) : !loading && pools.length === 0 ? (
         <div style={{ padding: '0 20px', fontSize: 15, color: 'var(--dim)' }}>Nothing is open right now.</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 12px' }}>

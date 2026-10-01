@@ -5,7 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { DiscoverCryptoResponse } from '@/app/api/discover/crypto/route';
 
 /// Live crypto prices (CoinGecko via /api/discover/crypto), refreshed every 10s. `live` is null while loading
-/// and whenever the latest refresh failed: an older answer is never shown as current.
+/// and whenever the latest refresh failed: an older answer is never shown as current. `unavailable` means the whole
+/// refresh failed; a symbol the route could not price is in `live.unavailable` instead (see `symbolUnavailable`).
 export function useLivePrices() {
   const query = useQuery<DiscoverCryptoResponse>({
     queryKey: ['prices', 'crypto'],
@@ -23,4 +24,9 @@ export function useLivePrices() {
     loading: query.isLoading,
     unavailable: query.isError,
   };
+}
+
+/// True when the latest answer says this symbol has no live price, or the whole refresh failed. False while loading.
+export function symbolUnavailable(prices: ReturnType<typeof useLivePrices>, symbol: keyof DiscoverCryptoResponse['prices']): boolean {
+  return prices.unavailable || (prices.live?.unavailable.includes(symbol) ?? false);
 }
