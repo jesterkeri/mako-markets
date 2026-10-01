@@ -45,6 +45,8 @@ const USERS_STUB_SQL = `
     "id"                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     "email"                 text,
     "magic_eoa"             text,
+    "privy_user_id"         text,
+    "ref"                   text,
     "wallet_address"        text,
     "auth_type"             text NOT NULL DEFAULT 'magic',
     "kyc_status"            text NOT NULL DEFAULT 'none',

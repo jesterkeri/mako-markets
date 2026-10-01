@@ -95,5 +95,10 @@ jobs:
       - name: Run AA tests
         run: pnpm test:aa
 
+      # The comments, leaderboard and private-markets suites were not in CI, so a stale users stub in the comments
+      # test database failed them silently from migration 0010 until 2026-10-01.
+      - name: Run comments, leaderboard and private-markets tests
+        run: pnpm test:comments && pnpm test:lb && pnpm test:pm
+
       - name: Build
         run: pnpm build

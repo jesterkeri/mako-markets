@@ -1,17 +1,18 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useEffect } from 'react';
 
 import { REF_COOKIE, REF_MAX_AGE_SEC, refFromSearch } from '@/lib/ref-tag';
 
 /// Keeps the campaign tag from an X post's link (`?utm_campaign=` or `?ref=`) in a first-party cookie for 30 days,
 /// so the account created at the visitor's first sign-in records which post brought it. The latest valid tag wins;
-/// an invalid one changes nothing. Renders nothing.
+/// an invalid one changes nothing. It re-checks on every query-string change, including an in-app link to the same
+/// page with a new tag. Renders nothing; render it inside <Suspense> (it reads the search params).
 export function RefCapture() {
-  const pathname = usePathname();
+  const search = useSearchParams();
   useEffect(() => {
-    const tag = refFromSearch(window.location.search);
+    const tag = refFromSearch(`?${search?.toString() ?? ''}`);
     if (!tag) return;
     try {
       const secure = window.location.protocol === 'https:' ? '; Secure' : '';
@@ -19,6 +20,6 @@ export function RefCapture() {
     } catch {
       // Cookies blocked: the account simply has no tag.
     }
-  }, [pathname]);
+  }, [search]);
   return null;
 }

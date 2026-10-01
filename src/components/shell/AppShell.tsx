@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { Suspense } from 'react';
 
 import { SignInDialog } from '@/components/signin/SignInDialog';
 import { isMobileDetail } from '@/lib/shell-nav';
@@ -37,7 +38,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
       <SignInDialog />
-      <RefCapture />
+      <Suspense fallback={null}>
+        <RefCapture />
+      </Suspense>
     </div>
   );
 }
