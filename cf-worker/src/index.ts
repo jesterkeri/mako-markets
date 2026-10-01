@@ -50,8 +50,10 @@ import {
 import {
   decideAction,
   isHeldTwoSided,
+  MAX_BROADCASTS_PER_TICK,
   newKeeperTick,
   runNoDataAction,
+  sendOnce,
   type KeeperIo,
   type SettlementAction,
 } from './settlement';
@@ -497,18 +499,6 @@ function deriveFootballOutcome(
     return totalGoals > parsed.param ? Outcome.YES : Outcome.NO;
   }
   return totalGoals < parsed.param ? Outcome.YES : Outcome.NO;
-}
-
-function isInsufficientFundsError(message: string): boolean {
-  const s = message.toLowerCase();
-  // Monad's txpool answers "Signer had insufficient balance" (monad-bft monad-eth-txpool-types), which viem's
-  // InsufficientFundsError pattern does not match.
-  return s.includes('insufficient funds') || s.includes('exceeds balance') || s.includes('insufficient balance');
-}
-
-function isAlreadyResolvedError(message: string): boolean {
-  const s = message.toLowerCase();
-  return s.includes('alreadyresolved') || s.includes('already resolved');
 }
 
 // viem errors include a huge formatted body (URL, Request body, Raw Call
@@ -1148,12 +1138,14 @@ export async function runResolver(env: Env): Promise<void> {
       })) as Market;
       return { market, blockNumber: block.number, blockTimestamp: block.timestamp };
     },
-    send: (tx) =>
+    nonceAt: (blockTag) => publicClient.getTransactionCount({ address: account.address, blockTag }),
+    send: (tx, nonce) =>
       walletClient.writeContract({
         address: cfg.makoAddress,
         abi: makoAbi,
         functionName: tx.functionName,
         args: tx.args,
+        nonce,
       }),
     waitForReceipt: async (hash) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1180,6 +1172,7 @@ export async function runResolver(env: Env): Promise<void> {
   let forceRefunds = 0;
   let noDataDeferred = 0;
   let heldTwoSided = 0;
+  let deferredPrice = 0;
 
   // No-data actions first, before any price is fetched: each send waits up to RECEIPT_TIMEOUT_MS for its receipt,
   // and a price fetched before them would be minutes old by the time a two-sided pool used it.
@@ -1201,15 +1194,18 @@ export async function runResolver(env: Env): Promise<void> {
   // CoinGecko (CRYPTO) + Pyth Hermes (FOREX/COMMODITIES/STOCKS) are
   // independent providers; fetch in parallel so a 1s Hermes call
   // doesn't add to tick latency.
+  // The tick's one broadcast may already be spent by the no-data pass (or the wallet is out of MON): then no price
+  // pool can be sent this tick either, so no provider is called.
+  const canStillSend = keeperTick.gate.broadcasts < MAX_BROADCASTS_PER_TICK && !walletOutOfFunds;
   const [prices, pythPrices] = await Promise.all([
-    needsCoinGecko ? fetchPrices() : Promise.resolve<PriceMap>({}),
-    needsPyth ? fetchPythPrices() : Promise.resolve<PythPriceMap>(new Map()),
+    needsCoinGecko && canStillSend ? fetchPrices() : Promise.resolve<PriceMap>({}),
+    needsPyth && canStillSend ? fetchPythPrices() : Promise.resolve<PythPriceMap>(new Map()),
   ]);
   // Banner-shape skip log mirroring `football:skip(no-key)` / `nba:skip(no-key)`
   // at tick start. Pyth has no API key, so the only condition that warrants
   // a tick-level flag is an empty map from a failed Hermes fetch. Per-market
   // misses still log individually under the resolve loop.
-  if (needsPyth && pythPrices.size === 0) {
+  if (needsPyth && canStillSend && pythPrices.size === 0) {
     console.warn(`[${ts}] pyth:skip(no-symbols) — hermes fetch returned empty`);
   }
 
@@ -1441,42 +1437,33 @@ export async function runResolver(env: Env): Promise<void> {
 
     console.log(`[${ts}] market ${i}: ${reason} · ${label}`);
 
-    try {
-      const hash = await walletClient.writeContract({
-        address: cfg.makoAddress,
-        abi: makoAbi,
-        functionName: 'resolveMarket',
-        args: [i, outcome],
-      });
-      const receipt = await Promise.race([
-        publicClient.waitForTransactionReceipt({ hash }),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error(`receipt timeout after ${RECEIPT_TIMEOUT_MS}ms`)),
-            RECEIPT_TIMEOUT_MS,
-          );
-        }),
-      ]);
-      if (receipt.status !== 'success') {
-        console.warn(`[${ts}] market ${i}: tx reverted (hash ${hash})`);
-        continue;
-      }
-      console.log(
-        `[${ts}] market ${i}: RESOLVED ${label} · block ${receipt.blockNumber} · tx ${hash}`,
-      );
+    // The same sender as the no-data path (one broadcast per tick, pinned nonce, one error classifier).
+    const sent = await sendOnce(keeperIo, keeperTick.gate, { functionName: 'resolveMarket', args: [i, outcome] });
+    if (sent.kind === 'landed') {
+      console.log(`[${ts}] market ${i}: RESOLVED ${label} · block ${sent.blockNumber} · tx ${sent.hash} · nonce ${sent.nonce}`);
       resolvedCount++;
-    } catch (error) {
-      const message = shortErrorMessage(error);
-      if (isAlreadyResolvedError(message)) {
-        console.warn(`[${ts}] market ${i}: already resolved elsewhere — continuing`);
-        continue;
-      }
-      if (isInsufficientFundsError(message)) {
-        console.warn(`[${ts}] market ${i}: resolver wallet out of MON — stopping tick`);
-        walletOutOfFunds = true;
-        continue;
-      }
-      console.warn(`[${ts}] market ${i}: resolveMarket failed: ${message}`);
+    } else if (sent.kind === 'out_of_funds') {
+      console.warn(`[${ts}] market ${i}: resolver wallet out of MON — stopping tick`);
+      walletOutOfFunds = true;
+    } else if (sent.kind === 'already_resolved') {
+      console.warn(`[${ts}] market ${i}: already resolved elsewhere — continuing`);
+    } else if (sent.kind === 'slot_taken' || sent.kind === 'unfinalized') {
+      console.log(
+        `[${ts}] market ${i}: resolveMarket deferred to the next tick (${sent.kind === 'slot_taken' ? 'one transaction per tick' : `a resolver transaction is not final yet, nonce ${sent.latest} latest, ${sent.finalized} finalized`})`,
+      );
+      deferredPrice++;
+    } else if (sent.kind === 'receipt_timeout') {
+      console.warn(
+        `[${ts}] market ${i}: tx ${sent.hash} (nonce ${sent.nonce}) has no receipt yet; a later send reuses this nonce, so it cannot be paid twice`,
+      );
+    } else if (sent.kind === 'reverted') {
+      console.warn(`[${ts}] market ${i}: tx reverted (hash ${sent.hash})`);
+    } else if (sent.kind === 'not_yet') {
+      console.warn(`[${ts}] market ${i}: resolveMarket reverted ${sent.errorName}, retry next tick`);
+    } else if (sent.kind === 'nonce_unreadable') {
+      console.warn(`[${ts}] market ${i}: could not read the resolver nonce (${sent.message}), not sending this tick`);
+    } else {
+      console.warn(`[${ts}] market ${i}: resolveMarket failed at nonce ${sent.nonce}: ${sent.message}`);
     }
   }
 
@@ -1498,7 +1485,8 @@ export async function runResolver(env: Env): Promise<void> {
     );
   }
   console.log(
-    `[${ts}] tick done${modeTag} · scanned ${scanned} · skipped ${skipped} · resolved ${resolvedCount} · refunds ${refundCount}`,
+    `[${ts}] tick done${modeTag} · scanned ${scanned} · skipped ${skipped} · resolved ${resolvedCount} · refunds ${refundCount}` +
+      `${deferredPrice > 0 ? ` · price settlements deferred ${deferredPrice} (one transaction per tick)` : ''}`,
   );
 }
 

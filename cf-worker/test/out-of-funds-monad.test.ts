@@ -5,6 +5,8 @@ import { makoAbi } from '../src/abi';
 import {
   classifySendError,
   newKeeperTick,
+  newSendGate,
+  sendOnce,
   runNoDataAction,
   type KeeperIo,
 } from '../src/settlement';
@@ -65,7 +67,7 @@ async function stubFetch(_input: RequestInfo | URL, init?: RequestInit): Promise
 // The Worker's own send, minus the fields a live node would fill in
 // (gas, nonce, fees), which are fixed here so the stub only has to answer
 // eth_sendRawTransaction.
-async function sendLikeTheWorker(functionName: 'resolveMarket' | 'forceRefund', args: readonly unknown[]) {
+async function sendLikeTheWorker(functionName: 'resolveMarket' | 'forceRefund', args: readonly unknown[], nonce = 0) {
   const walletClient = createWalletClient({
     account: privateKeyToAccount(generatePrivateKey()),
     chain: monadTestnet,
@@ -77,7 +79,7 @@ async function sendLikeTheWorker(functionName: 'resolveMarket' | 'forceRefund', 
     functionName,
     args: args as never,
     gas: 100_000n,
-    nonce: 0,
+    nonce,
     maxFeePerGas: 100_000_000_000n,
     maxPriorityFeePerGas: 2_000_000_000n,
   } as never);
@@ -111,12 +113,32 @@ describe("out-of-funds on Monad's real txpool error", () => {
         blockNumber: 1000n,
         blockTimestamp: 1_790_800_396n + 30n,
       }),
-      send: (tx) => sendLikeTheWorker(tx.functionName, tx.args),
+      nonceAt: async () => 0,
+      send: (tx, nonce) => sendLikeTheWorker(tx.functionName, tx.args, nonce),
       waitForReceipt: async () => 'timeout',
       log: () => {},
       warn: () => {},
     };
     const tick = newKeeperTick('t', false, { forceRefundTwoSided: false });
     expect(await runNoDataAction(io, tick, 92n, 'resolve_one_sided')).toBe('out_of_funds');
+  });
+
+  it('the PRICE path stops on it too, and no later market is sent that tick (Codex r1 F1)', async () => {
+    // The two-sided price/result path sends through the same sendOnce as the no-data path.
+    const sender = {
+      nonceAt: async () => 0,
+      send: (tx: { functionName: 'resolveMarket' | 'forceRefund'; args: readonly unknown[] }, nonce: number) => sendLikeTheWorker(tx.functionName, tx.args, nonce),
+      waitForReceipt: async () => 'timeout' as const,
+    };
+    const gate = newSendGate();
+    const raws = () => seen.filter((m) => m === 'eth_sendRawTransaction').length;
+    const before = raws();
+    expect(await sendOnce(sender, gate, { functionName: 'resolveMarket', args: [90n, 1] })).toEqual({ kind: 'out_of_funds' });
+    expect(gate.outOfFunds).toBe(true);
+    expect(raws()).toBe(before + 1);
+    // The next pool in the same tick, on either path: refused before anything is broadcast.
+    expect(await sendOnce(sender, gate, { functionName: 'resolveMarket', args: [91n, 2] })).toEqual({ kind: 'out_of_funds' });
+    expect(await sendOnce(sender, gate, { functionName: 'forceRefund', args: [92n] })).toEqual({ kind: 'out_of_funds' });
+    expect(raws()).toBe(before + 1);
   });
 });

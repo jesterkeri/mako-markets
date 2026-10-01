@@ -9,8 +9,7 @@ import {
 import { makoAbi } from '../src/abi';
 import {
   MAKO_MARKET_TYPE,
-  MAX_FORCE_REFUNDS_PER_TICK,
-  MAX_ONE_SIDED_RESOLVES_PER_TICK,
+  MAX_BROADCASTS_PER_TICK,
   OUTCOME_REFUND,
   RESOLUTION_GRACE_SEC,
   classifySendError,
@@ -267,10 +266,13 @@ type FakeOpts = {
   reads?: Array<FinalizedRead | Error>;
   sendResult?: Hex | Error;
   receipt?: Receipt | 'timeout' | Error;
+  /// The resolver wallet's transaction count at latest / finalized (default 7 and 7).
+  nonce?: { latest: number; finalized: number } | Error;
 };
 
 function fakeIo(o: FakeOpts = {}) {
   const sends: NoDataTx[] = [];
+  const nonces: number[] = [];
   const reads: bigint[] = [];
   const lines: string[] = [];
   const queue = [...(o.reads ?? [])];
@@ -282,8 +284,14 @@ function fakeIo(o: FakeOpts = {}) {
       if (next instanceof Error) throw next;
       return next;
     },
-    async send(tx) {
+    async nonceAt(tag) {
+      const n = o.nonce ?? { latest: 7, finalized: 7 };
+      if (n instanceof Error) throw n;
+      return n[tag];
+    },
+    async send(tx, nonce) {
       sends.push(tx);
+      nonces.push(nonce);
       const r = o.sendResult ?? ('0xabc' as Hex);
       if (r instanceof Error) throw r;
       return r;
@@ -296,7 +304,7 @@ function fakeIo(o: FakeOpts = {}) {
     log: (l) => lines.push(l),
     warn: (l) => lines.push(l),
   };
-  return { io, sends, reads, lines };
+  return { io, sends, nonces, reads, lines };
 }
 
 const at = (market: SettlementView, blockTimestamp: bigint, blockNumber = 1000n): FinalizedRead => ({
@@ -347,7 +355,7 @@ describe('runNoDataAction', () => {
     const tick = newKeeperTick('t', false, OFF);
     expect(await runNoDataAction(f.io, tick, 88n, 'force_refund')).toBe('state_changed');
     expect(f.sends).toHaveLength(0);
-    expect(tick.budget.force_refund).toBe(MAX_FORCE_REFUNDS_PER_TICK); // no budget spent
+    expect(tick.gate.broadcasts).toBe(0); // nothing broadcast
   });
 
   it('does not call a pool one-sided from a finalized block before close, whatever the worker clock said', async () => {
@@ -403,28 +411,55 @@ describe('runNoDataAction', () => {
     expect(f.lines.join('\n')).toMatch(/\[DRY RUN, not written\]/);
   });
 
-  it('caps sends per tick per action and defers the rest without reading', async () => {
+  it('broadcasts once per tick, whatever the action, and defers the rest without reading', async () => {
     const f = fakeIo({ reads: [at(yesOnly(), DEADLINE + 10n)] });
     const tick = newKeeperTick('t', false, OFF);
     const results = [];
-    for (let id = 0n; id < BigInt(MAX_FORCE_REFUNDS_PER_TICK) + 2n; id++) {
-      results.push(await runNoDataAction(f.io, tick, id, 'force_refund'));
-    }
-    expect(results.filter((r) => r === 'sent')).toHaveLength(MAX_FORCE_REFUNDS_PER_TICK);
-    expect(results.slice(MAX_FORCE_REFUNDS_PER_TICK)).toEqual(['deferred', 'deferred']);
-    expect(f.sends).toHaveLength(MAX_FORCE_REFUNDS_PER_TICK);
-    expect(f.reads).toHaveLength(MAX_FORCE_REFUNDS_PER_TICK);
+    for (let id = 0n; id < 4n; id++) results.push(await runNoDataAction(f.io, tick, id, 'force_refund'));
+    const f2 = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)] });
+    results.push(await runNoDataAction(f2.io, tick, 100n, 'resolve_one_sided'));
+    expect(MAX_BROADCASTS_PER_TICK).toBe(1);
+    expect(results).toEqual(['sent', 'deferred', 'deferred', 'deferred', 'deferred']);
+    expect(f.sends).toHaveLength(1);
+    expect(f.reads).toHaveLength(1);
+    expect(f2.reads).toHaveLength(0);
   });
 
-  it('the two caps are independent', async () => {
+  it('a send refused at gas estimation (AlreadyResolved) broadcast nothing, so the slot stays free', async () => {
     const tick = newKeeperTick('t', false, OFF);
-    const f1 = fakeIo({ reads: [at(yesOnly(), DEADLINE + 10n)] });
-    for (let id = 0n; id < BigInt(MAX_FORCE_REFUNDS_PER_TICK); id++) {
-      await runNoDataAction(f1.io, tick, id, 'force_refund');
-    }
-    const f2 = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)] });
-    expect(await runNoDataAction(f2.io, tick, 100n, 'resolve_one_sided')).toBe('sent');
-    expect(tick.budget.resolve_one_sided).toBe(MAX_ONE_SIDED_RESOLVES_PER_TICK - 1);
+    const a = fakeIo({ reads: [at(yesOnly(), DEADLINE + 10n)], sendResult: revertOf('forceRefund', 'AlreadyResolved', [1n]) });
+    expect(await runNoDataAction(a.io, tick, 1n, 'force_refund')).toBe('already_resolved');
+    const b = fakeIo({ reads: [at(yesOnly(), DEADLINE + 10n)] });
+    expect(await runNoDataAction(b.io, tick, 2n, 'force_refund')).toBe('sent');
+  });
+
+  it('pins the nonce to the latest count, and sends nothing while a resolver transaction is not final', async () => {
+    const ok = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], nonce: { latest: 252, finalized: 252 } });
+    expect(await runNoDataAction(ok.io, newKeeperTick('t', false, OFF), 92n, 'resolve_one_sided')).toBe('sent');
+    expect(ok.nonces).toEqual([252]);
+    const busy = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], nonce: { latest: 253, finalized: 252 } });
+    expect(await runNoDataAction(busy.io, newKeeperTick('t', false, OFF), 92n, 'resolve_one_sided')).toBe('deferred');
+    expect(busy.sends).toHaveLength(0);
+    expect(busy.lines.join('\n')).toMatch(/not final yet \(nonce 253 latest, 252 finalized\)/);
+    const unreadable = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], nonce: new Error('rpc down') });
+    expect(await runNoDataAction(unreadable.io, newKeeperTick('t', false, OFF), 92n, 'resolve_one_sided')).toBe('failed');
+    expect(unreadable.sends).toHaveLength(0);
+  });
+
+  it('a receipt timeout cannot be paid twice: the next tick re-sends at the SAME nonce (Codex r1 F2)', async () => {
+    // Tick 1: broadcast at nonce 40, no receipt within the limit; the transaction sits in the mempool, so the
+    // wallet's count is still 40 at latest and at finalized (Monad: pending = latest).
+    const t1 = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], sendResult: '0xaaa', receipt: 'timeout', nonce: { latest: 40, finalized: 40 } });
+    expect(await runNoDataAction(t1.io, newKeeperTick('12:00:00', false, OFF), 92n, 'resolve_one_sided')).toBe('receipt_timeout');
+    // Tick 2: a fresh Worker invocation with no memory. The market still reads unresolved, so it is sent again, at
+    // the same nonce: the chain includes at most one transaction per nonce, so at most one is ever paid for.
+    const t2 = fakeIo({ reads: [at(yesOnly(), CLOSE + 90n)], nonce: { latest: 40, finalized: 40 } });
+    expect(await runNoDataAction(t2.io, newKeeperTick('12:01:00', false, OFF), 92n, 'resolve_one_sided')).toBe('sent');
+    expect([...t1.nonces, ...t2.nonces]).toEqual([40, 40]);
+    // Tick 2 again, but tick 1's transaction was included and is not final yet: nothing is sent at all.
+    const t2b = fakeIo({ reads: [at(yesOnly(), CLOSE + 90n)], nonce: { latest: 41, finalized: 40 } });
+    expect(await runNoDataAction(t2b.io, newKeeperTick('12:01:00', false, OFF), 92n, 'resolve_one_sided')).toBe('deferred');
+    expect(t2b.sends).toHaveLength(0);
   });
 
   it('AlreadyResolved at send time: continue, no second attempt', async () => {
@@ -469,7 +504,7 @@ describe('runNoDataAction', () => {
     const f = fakeIo({ reads: [at(yesOnly(), CLOSE + 30n)], sendResult: '0xfeed', receipt: 'timeout' });
     const tick = newKeeperTick('t', false, OFF);
     expect(await runNoDataAction(f.io, tick, 92n, 'resolve_one_sided')).toBe('receipt_timeout');
-    expect(f.lines.join('\n')).toMatch(/tx 0xfeed has no receipt yet/);
+    expect(f.lines.join("\n")).toMatch(/tx 0xfeed \(nonce 7\) has no receipt yet/);
   });
 
   it('every log line is plain ASCII (no em-dashes)', async () => {
@@ -496,7 +531,7 @@ describe('runNoDataAction', () => {
       all.push(...f.lines);
     }
     const capped = newKeeperTick('12:00:00', false, OFF);
-    capped.budget.force_refund = 0;
+    capped.gate.broadcasts = MAX_BROADCASTS_PER_TICK;
     const fc = fakeIo({ reads: [at(yesOnly(), DEADLINE)] });
     await runNoDataAction(fc.io, capped, 6n, 'force_refund'); // deferred line
     all.push(...fc.lines);

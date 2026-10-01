@@ -68,11 +68,9 @@ export const OUTCOME_REFUND = 3;
 /// RESOLUTION_GRACE = 24 hours, MakoMarketsV4.sol:138.
 export const RESOLUTION_GRACE_SEC = 86_400n;
 
-/// Per-tick send caps for the two no-data paths. Each send waits up to the
-/// receipt timeout, so the caps keep a tick short when many pools close at
-/// once; anything over the cap is picked up by the next tick (one minute).
-export const MAX_ONE_SIDED_RESOLVES_PER_TICK = 3;
-export const MAX_FORCE_REFUNDS_PER_TICK = 3;
+/// At most this many transactions are broadcast per tick, across every send path (no-data and price/result alike):
+/// see `sendOnce` and the spec's "Send discipline". Anything else waits for the next tick (one minute).
+export const MAX_BROADCASTS_PER_TICK = 1;
 
 /// The fields of the V4 `Market` struct the decision reads.
 export type SettlementView = {
@@ -142,9 +140,11 @@ export function isHeldTwoSided(m: SettlementView, nowSec: bigint, opts: DecideOp
   );
 }
 
-export type NoDataTx =
+/// Every transaction the Worker sends.
+export type ResolverTx =
   | { functionName: 'resolveMarket'; args: readonly [bigint, number] }
   | { functionName: 'forceRefund'; args: readonly [bigint] };
+export type NoDataTx = ResolverTx;
 
 /// The one transaction each no-data action sends.
 export function txFor(action: NoDataAction, id: bigint): NoDataTx {
@@ -231,15 +231,21 @@ export type FinalizedRead = {
   blockTimestamp: bigint;
 };
 
-export interface KeeperIo {
+/// What the one sender needs from the chain.
+export interface SenderIo {
+  /// The resolver wallet's transaction count at `latest` or at `finalized`.
+  nonceAt(tag: 'latest' | 'finalized'): Promise<number>;
+  /// Sign and broadcast with exactly this nonce (viem `writeContract`, which estimates gas first, so a revert throws
+  /// here before anything is broadcast).
+  send(tx: ResolverTx, nonce: number): Promise<Hex>;
+  /// The receipt, or 'timeout' if none arrived within the worker's limit.
+  waitForReceipt(hash: Hex): Promise<Receipt | 'timeout'>;
+}
+
+export interface KeeperIo extends SenderIo {
   /// Fresh read made immediately before any send, pinned to the finalized
   /// block (see the header comment for why not "latest").
   readFinalized(id: bigint): Promise<FinalizedRead>;
-  /// Sign and broadcast (viem `writeContract`, which estimates gas first,
-  /// so a revert throws here before anything is broadcast).
-  send(tx: NoDataTx): Promise<Hex>;
-  /// The receipt, or 'timeout' if none arrived within the worker's limit.
-  waitForReceipt(hash: Hex): Promise<Receipt | 'timeout'>;
   log(line: string): void;
   warn(line: string): void;
 }
@@ -248,8 +254,8 @@ export type KeeperTick = {
   ts: string;
   dryRun: boolean;
   opts: DecideOptions;
-  /// Sends left this tick, per action.
-  budget: Record<NoDataAction, number>;
+  /// The tick's one send slot and its out-of-funds stop, shared by every send path.
+  gate: SendGate;
   /// Market ids a send was attempted for this tick (dry run included).
   sent: Set<bigint>;
 };
@@ -259,12 +265,89 @@ export function newKeeperTick(ts: string, dryRun: boolean, opts: DecideOptions):
     ts,
     dryRun,
     opts,
-    budget: {
-      resolve_one_sided: MAX_ONE_SIDED_RESOLVES_PER_TICK,
-      force_refund: MAX_FORCE_REFUNDS_PER_TICK,
-    },
+    gate: newSendGate(),
     sent: new Set(),
   };
+}
+
+// --------------------------------------------------------------------------
+// The one sender (spec "Send discipline")
+// --------------------------------------------------------------------------
+
+/// Per tick: whether its one broadcast slot is taken, and whether the wallet reported it is out of MON.
+export type SendGate = { broadcasts: number; outOfFunds: boolean };
+
+export function newSendGate(): SendGate {
+  return { broadcasts: 0, outOfFunds: false };
+}
+
+export type SendResult =
+  | { kind: 'landed'; hash: Hex; nonce: number; blockNumber: bigint }
+  | { kind: 'reverted'; hash: Hex; nonce: number }
+  | { kind: 'receipt_timeout'; hash: Hex; nonce: number }
+  | { kind: 'already_resolved' }
+  | { kind: 'not_yet'; errorName: string | null }
+  | { kind: 'out_of_funds' }
+  /// The tick's broadcast slot is already taken: try next tick.
+  | { kind: 'slot_taken' }
+  /// A resolver transaction has landed but is not final yet: try next tick.
+  | { kind: 'unfinalized'; latest: number; finalized: number }
+  | { kind: 'nonce_unreadable'; message: string }
+  | { kind: 'failed'; message: string; nonce: number };
+
+/// Every transaction the Worker sends goes through here.
+///
+/// - At most MAX_BROADCASTS_PER_TICK broadcasts per tick. A send that viem refuses at gas estimation (the contract
+///   would revert AlreadyResolved / StillInGrace / MarketNotClosed) broadcast nothing and gives the slot back.
+/// - The nonce is pinned to the wallet's transaction count at `latest`, and nothing is sent while that differs from
+///   the count at `finalized` (a resolver transaction has landed but is not final, so the finalized re-reads cannot
+///   see it yet). A transaction from an earlier tick still waiting in the mempool holds that same nonce (Monad's
+///   `pending` tag equals `latest`), so a re-send competes with it for one nonce and at most one is ever included and
+///   paid for. This is what makes a receipt timeout safe across ticks without any stored state.
+/// - Errors are classified on the original error, cause chain included, so Monad's "Signer had insufficient
+///   balance" stops every path, not just one.
+export async function sendOnce(io: SenderIo, gate: SendGate, tx: ResolverTx): Promise<SendResult> {
+  if (gate.outOfFunds) return { kind: 'out_of_funds' };
+  if (gate.broadcasts >= MAX_BROADCASTS_PER_TICK) return { kind: 'slot_taken' };
+  let latest: number;
+  let finalized: number;
+  try {
+    [latest, finalized] = await Promise.all([io.nonceAt('latest'), io.nonceAt('finalized')]);
+  } catch (e) {
+    return { kind: 'nonce_unreadable', message: shortMessage(e) };
+  }
+  if (latest !== finalized) return { kind: 'unfinalized', latest, finalized };
+
+  gate.broadcasts += 1;
+  let hash: Hex;
+  try {
+    hash = await io.send(tx, latest);
+  } catch (e) {
+    const kind = classifySendError(e);
+    if (kind === 'already_resolved') {
+      gate.broadcasts -= 1;
+      return { kind: 'already_resolved' };
+    }
+    if (kind === 'not_yet') {
+      gate.broadcasts -= 1;
+      return { kind: 'not_yet', errorName: revertErrorName(e) };
+    }
+    if (kind === 'insufficient_funds') {
+      gate.outOfFunds = true;
+      return { kind: 'out_of_funds' };
+    }
+    return { kind: 'failed', message: shortMessage(e), nonce: latest };
+  }
+
+  let receipt: Receipt | 'timeout';
+  try {
+    receipt = await io.waitForReceipt(hash);
+  } catch {
+    return { kind: 'receipt_timeout', hash, nonce: latest };
+  }
+  if (receipt === 'timeout') return { kind: 'receipt_timeout', hash, nonce: latest };
+  if (receipt.status !== 'success') return { kind: 'reverted', hash, nonce: latest };
+  return { kind: 'landed', hash, nonce: latest, blockNumber: receipt.blockNumber };
 }
 
 export type KeeperOutcome =
@@ -312,8 +395,9 @@ export async function runNoDataAction(
     io.warn(`${p} ${fn} already attempted this tick, not sending again`);
     return 'duplicate';
   }
-  if (tick.budget[planned] <= 0) {
-    io.log(`${p} ${fn} deferred to the next tick (per-tick cap reached)`);
+  if (tick.gate.outOfFunds) return 'out_of_funds';
+  if (tick.gate.broadcasts >= MAX_BROADCASTS_PER_TICK) {
+    io.log(`${p} ${fn} deferred to the next tick (one transaction per tick)`);
     return 'deferred';
   }
 
@@ -340,7 +424,6 @@ export async function runNoDataAction(
     return 'state_changed';
   }
 
-  tick.budget[planned] -= 1;
   tick.sent.add(id);
   const what = describe(planned, fresh);
 
@@ -350,47 +433,41 @@ export async function runNoDataAction(
   }
   io.log(`${p} ${what}`);
 
-  let hash: Hex;
-  try {
-    hash = await io.send(txFor(planned, id));
-  } catch (e) {
-    const kind = classifySendError(e);
-    if (kind === 'already_resolved') {
+  const r = await sendOnce(io, tick.gate, txFor(planned, id));
+  switch (r.kind) {
+    case 'already_resolved':
       io.warn(`${p} ${fn} reverted AlreadyResolved, settled elsewhere, continuing`);
       return 'already_resolved';
-    }
-    if (kind === 'not_yet') {
-      io.warn(
-        `${p} ${fn} reverted ${revertErrorName(e)} (chain time is behind the worker clock), retry next tick`,
-      );
+    case 'not_yet':
+      io.warn(`${p} ${fn} reverted ${r.errorName} (chain time is behind the worker clock), retry next tick`);
       return 'not_yet';
-    }
-    if (kind === 'insufficient_funds') {
+    case 'out_of_funds':
       io.warn(`${p} resolver wallet out of MON, stopping tick`);
       return 'out_of_funds';
-    }
-    io.warn(`${p} ${fn} failed: ${shortMessage(e)}`);
-    return 'failed';
-  }
-
-  let receipt: Receipt | 'timeout';
-  try {
-    receipt = await io.waitForReceipt(hash);
-  } catch (e) {
-    io.warn(
-      `${p} ${fn} tx ${hash} sent but its receipt could not be read (${shortMessage(e)}), the next tick re-reads the market first`,
-    );
-    return 'receipt_timeout';
-  }
-  if (receipt === 'timeout') {
-    io.warn(`${p} ${fn} tx ${hash} has no receipt yet, it may still land, the next tick re-reads the market first`);
-    return 'receipt_timeout';
-  }
-  if (receipt.status !== 'success') {
-    io.warn(`${p} ${fn} tx reverted (hash ${hash})`);
-    return 'reverted';
+    case 'slot_taken':
+      io.log(`${p} ${fn} deferred to the next tick (one transaction per tick)`);
+      return 'deferred';
+    case 'unfinalized':
+      io.log(`${p} ${fn} deferred: a resolver transaction is not final yet (nonce ${r.latest} latest, ${r.finalized} finalized)`);
+      return 'deferred';
+    case 'nonce_unreadable':
+      io.warn(`${p} could not read the resolver nonce (${r.message}), not sending this tick`);
+      return 'failed';
+    case 'failed':
+      io.warn(`${p} ${fn} failed at nonce ${r.nonce}: ${r.message}`);
+      return 'failed';
+    case 'receipt_timeout':
+      io.warn(
+        `${p} ${fn} tx ${r.hash} (nonce ${r.nonce}) has no receipt yet, it may still land; a later send reuses this nonce, so it cannot be paid twice`,
+      );
+      return 'receipt_timeout';
+    case 'reverted':
+      io.warn(`${p} ${fn} tx reverted (hash ${r.hash})`);
+      return 'reverted';
+    case 'landed':
+      break;
   }
   const done = planned === 'force_refund' ? 'FORCE-REFUNDED' : 'RESOLVED REFUND (one-sided)';
-  io.log(`${p} ${done}, block ${receipt.blockNumber}, tx ${hash}`);
+  io.log(`${p} ${done}, block ${r.blockNumber}, tx ${r.hash}, nonce ${r.nonce}`);
   return 'sent';
 }
