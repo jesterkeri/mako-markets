@@ -102,3 +102,36 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # The Envio indexer (indexer/) is its own package with its own lockfile, so it installs alone.
+  indexer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: indexer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Codegen
+        run: pnpm codegen
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Test
+        run: pnpm test

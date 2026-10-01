@@ -17,6 +17,9 @@ const eslintConfig = defineConfig([
     "staged-gemini/**",
     // The Claude Design handoff pack: private reference material, gitignored, never built or shipped.
     "design/**",
+    // The Envio indexer's generated types (codegen output, not committed).
+    "indexer/.envio/**",
+    "indexer/envio-env.d.ts",
   ]),
 ]);
 

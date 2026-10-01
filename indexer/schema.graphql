@@ -1,0 +1,157 @@
+# Mako Market pools on Monad testnet (MakoMarketsV4). Amounts are USDC base units (6 decimals). Times are Unix
+# seconds. Every total below is kept up to date by the event handlers in src/handlers/MakoMarketsV4.ts.
+#
+# "Internal" wallets (Mako Market's own owner, resolver and test accounts, listed in src/internal-wallets.ts) are
+# indexed like any other, but left out of the public counts in GlobalStats, DailyStats and CategoryStats.
+
+enum Category {
+  Football
+  Crypto
+  Basketball
+  Forex
+  Commodities
+  Stocks
+  Mako
+}
+
+enum PoolStatus {
+  Open
+  Yes
+  No
+  Refund
+}
+
+"""A pool: one MakoMarketsV4 market."""
+type Pool {
+  "The market id."
+  id: ID!
+  creator: Wallet! @index
+  category: Category! @index
+  question: String!
+  oracleRef: String!
+  "When betting closes, the result can be settled."
+  closeTime: BigInt!
+  createdAt: Int! @index
+  createdTx: String!
+  totalYes: BigInt!
+  totalNo: BigInt!
+  "Distinct wallets with a stake on each side."
+  yesBettors: Int!
+  noBettors: Int!
+  betCount: Int!
+  status: PoolStatus! @index
+  resolvedAt: Int
+  claimedTotal: BigInt!
+  creatorFeePaid: BigInt!
+  creatorFeeForfeited: BigInt!
+  bets: [Bet!]! @derivedFrom(field: "pool")
+  claims: [Claim!]! @derivedFrom(field: "pool")
+  positions: [Position!]! @derivedFrom(field: "pool")
+}
+
+"""One BetPlaced event (a pool's creator seed is a bet too)."""
+type Bet {
+  id: ID!
+  pool: Pool! @index
+  wallet: Wallet! @index
+  isYes: Boolean!
+  amount: BigInt!
+  timestamp: Int! @index
+  txHash: String!
+}
+
+"""One Claimed event: a payout or a refund."""
+type Claim {
+  id: ID!
+  pool: Pool! @index
+  wallet: Wallet! @index
+  amount: BigInt!
+  timestamp: Int! @index
+  txHash: String!
+}
+
+"""A wallet's stake in one pool."""
+type Position {
+  "wallet-poolId"
+  id: ID!
+  wallet: Wallet! @index
+  pool: Pool! @index
+  yes: BigInt!
+  no: BigInt!
+  claimed: BigInt!
+}
+
+"""
+A wallet that used Mako Market: placed a bet or created a pool. For an email account this is its Safe.
+net = claimed + creatorFees - staked: the same cash-flow PnL as the leaderboard, so a stake still in an open pool
+counts against it until the pool settles and the wallet claims.
+"""
+type Wallet {
+  "Lower-case address."
+  id: ID!
+  internal: Boolean!
+  firstSeenAt: Int! @index
+  lastActiveAt: Int! @index
+  betCount: Int!
+  poolsBet: Int!
+  poolsCreated: Int!
+  staked: BigInt!
+  claimed: BigInt!
+  creatorFees: BigInt!
+  net: BigInt! @index
+  bets: [Bet!]! @derivedFrom(field: "wallet")
+  claims: [Claim!]! @derivedFrom(field: "wallet")
+  positions: [Position!]! @derivedFrom(field: "wallet")
+}
+
+"""Activity on one UTC day, public wallets only. The growth chart reads cumulativeWallets."""
+type DailyStats {
+  "YYYY-MM-DD"
+  id: ID!
+  dayStart: Int! @index
+  newWallets: Int!
+  activeWallets: Int!
+  bets: Int!
+  volume: BigInt!
+  poolsCreated: Int!
+  claims: Int!
+  claimed: BigInt!
+  "Public wallets seen on or before this day."
+  cumulativeWallets: Int!
+}
+
+"""Marks a wallet as active on a day, so DailyStats.activeWallets counts each wallet once."""
+type WalletDay {
+  "wallet-YYYY-MM-DD"
+  id: ID!
+}
+
+"""Totals per category, public wallets only."""
+type CategoryStats {
+  id: ID!
+  category: Category!
+  pools: Int!
+  bets: Int!
+  volume: BigInt!
+}
+
+"""Running totals since the contract was deployed. One row, id "global"."""
+type GlobalStats {
+  id: ID!
+  "Public wallets that placed a bet or created a pool."
+  wallets: Int!
+  bets: Int!
+  volume: BigInt!
+  "Every pool, including Mako Market's own house pools."
+  pools: Int!
+  "Pools created by public wallets."
+  communityPools: Int!
+  poolsSettled: Int!
+  poolsRefunded: Int!
+  claims: Int!
+  claimed: BigInt!
+  creatorFeesPaid: BigInt!
+  internalWallets: Int!
+  updatedAt: Int!
+  updatedBlock: Int!
+}

@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+# Mako Market's pools (MakoMarketsV4) on Monad testnet, indexed with Envio HyperIndex. The handlers in src/ keep
+# running totals (per pool, per wallet, per UTC day, and overall), because Envio Cloud does not expose aggregate
+# queries; the site's /stats page and leaderboard read those entities.
+name: mako-market-indexer
+disable_default_cross_chain: true
+chains:
+- id: 10143 # Monad testnet
+  start_block: 32603678 # MakoMarketsV4 deployment block (2026-05-18)
+  contracts:
+  - name: MakoMarketsV4
+    address:
+    - "0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195"
+    handler: ./src/handlers/MakoMarketsV4.ts
+    events:
+    - event: MarketCreated(uint256 indexed id, address indexed creator, uint8 mType, bytes32 oracleRef, uint64 closeTime, string question)
+    - event: BetPlaced(uint256 indexed id, address indexed user, bool isYes, uint256 amount)
+    - event: MarketResolved(uint256 indexed id, uint8 outcome)
+    - event: Claimed(uint256 indexed id, address indexed user, uint256 amount)
+    - event: CreatorFeePaid(uint256 indexed id, address indexed creator, uint256 amount)
+    - event: CreatorFeeForfeited(uint256 indexed id, address indexed creator, uint256 forgoneAmount)
