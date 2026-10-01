@@ -32,11 +32,14 @@ type NewsItem = {
   kind: 'headline' | 'event';
   tag: Tag;
   title: string;
-  time: string; // "10M AGO" style, precomputed server-side
+  // "10M AGO" style, precomputed server-side when the cache fills, so up to
+  // 15 minutes stale when read. Kept for the old NewsFeed; Home works the
+  // age out in the browser from `publishedAt` instead.
+  time: string;
   url?: string;
-  // Internal sort key — ISO of when the thing happened. Not used by the
-  // client, stripped before response. Keeps the final merge deterministic:
-  // newest first across all sources regardless of tag.
+  // ISO of when the thing happened. The merge sorts on it (newest first
+  // across all sources regardless of tag), and it is returned so a client
+  // can compute an age that does not go stale with the cache.
   publishedAt?: string;
 };
 
@@ -359,9 +362,9 @@ export async function GET() {
   });
   const merged = interleaveCapStreak(sortedByRecency, 2);
 
-  // Strip the internal sort key before returning; client only consumes
-  // the precomputed `time` string.
-  const items = merged.slice(0, 30).map(({ publishedAt: _p, ...rest }) => rest);
+  // `publishedAt` stays on each item: Home computes the age from it in the
+  // browser; the older NewsFeed reads the precomputed `time`.
+  const items = merged.slice(0, 30);
 
   return NextResponse.json({ items });
 }

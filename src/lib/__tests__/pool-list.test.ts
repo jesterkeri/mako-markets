@@ -8,7 +8,10 @@ import {
   buildPoolList,
   claimable,
   CLOSED_WINDOW_SEC,
+  closingSoon,
   formatAgo,
+  formatPays,
+  noOpenPoolsTitle,
   poolRow,
   poolState,
   positionLabel,
@@ -191,5 +194,100 @@ describe('formats', () => {
 
   it('writes time ago in the design units', () => {
     expect([formatAgo(30), formatAgo(12 * 60), formatAgo(6 * HOUR + 5), formatAgo(DAY + 1)]).toEqual(['Just now', '12M ago', '6H ago', '1D ago']);
+  });
+});
+
+describe('closingSoon (Home 2a)', () => {
+  const ids = (rows: { id: bigint }[]) => rows.map((r) => r.id);
+  // Seven open pools closing 5 min to 5 days out, deliberately out of id order, plus pools Home must never show.
+  const open = [
+    pool({ id: 10n, bettingCloseTime: BigInt(NOW + 5 * DAY), closeTime: BigInt(NOW + 5 * DAY + HOUR) }),
+    pool({ id: 11n, bettingCloseTime: BigInt(NOW + 300) }),
+    pool({ id: 12n, mType: MarketType.FOOTBALL, bettingCloseTime: BigInt(NOW + 2 * DAY), closeTime: BigInt(NOW + 2 * DAY + HOUR) }),
+    pool({ id: 13n, bettingCloseTime: BigInt(NOW + 20 * HOUR), closeTime: BigInt(NOW + 21 * HOUR) }),
+    pool({ id: 14n, mType: MarketType.MAKO, bettingCloseTime: BigInt(NOW + 3 * HOUR), closeTime: BigInt(NOW + 4 * HOUR) }),
+    pool({ id: 15n, mType: MarketType.FOOTBALL, bettingCloseTime: BigInt(NOW + 30 * HOUR), closeTime: BigInt(NOW + 31 * HOUR) }),
+    pool({ id: 16n, bettingCloseTime: BigInt(NOW + 4 * DAY), closeTime: BigInt(NOW + 4 * DAY + HOUR) }),
+  ];
+  const notOpen = [
+    pool({ id: 20n, bettingCloseTime: BigInt(NOW), closeTime: BigInt(NOW + HOUR) }), // betting closes this very second
+    pool({ id: 21n, bettingCloseTime: BigInt(NOW - HOUR), closeTime: BigInt(NOW - 60) }), // resolving
+    pool({ id: 22n, bettingCloseTime: BigInt(NOW - DAY), closeTime: BigInt(NOW - DAY + HOUR), resolved: true, outcome: Outcome.YES }),
+    pool({ id: 23n, resolved: true, outcome: Outcome.REFUND }), // refunded early, betting window still in the future
+  ];
+
+  it('lists open pools only, the one closing first at the top, capped at the limit', () => {
+    const sel = closingSoon([...notOpen, ...open], NOW, 'ALL', 6);
+    expect(ids(sel.rows)).toEqual([11n, 14n, 13n, 15n, 12n, 16n]);
+    expect(sel.rows.every((r) => r.state === 'open')).toBe(true);
+    expect(sel.openCount).toBe(7);
+  });
+
+  it('matches the Pools list in its closing-soon order', () => {
+    const list = buildPoolList([...notOpen, ...open], NOW, 'ALL', 'closing');
+    const poolsOrder = list.groups.filter((g) => g.title !== 'Closed').flatMap((g) => g.rows.map((r) => r.id));
+    expect(ids(closingSoon([...notOpen, ...open], NOW, 'ALL', 99).rows)).toEqual(poolsOrder);
+  });
+
+  it('breaks a tie on close time by pool id', () => {
+    const a = pool({ id: 31n, bettingCloseTime: BigInt(NOW + HOUR) });
+    const b = pool({ id: 30n, bettingCloseTime: BigInt(NOW + HOUR) });
+    expect(ids(closingSoon([a, b], NOW, 'ALL', 6).rows)).toEqual([30n, 31n]);
+  });
+
+  it('filters by category but counts every open pool, so an empty category is not an empty Home', () => {
+    expect(ids(closingSoon(open, NOW, 'FOOTBALL', 6).rows)).toEqual([15n, 12n]);
+    expect(ids(closingSoon(open, NOW, 'MAKO', 6).rows)).toEqual([14n]);
+    const none = closingSoon(open, NOW, 'NBA', 6);
+    expect(none.rows).toEqual([]);
+    expect(none.openCount).toBe(7);
+  });
+
+  it('is empty with an open count of 0 when nothing is open', () => {
+    expect(closingSoon(notOpen, NOW, 'ALL', 6)).toEqual({ rows: [], openCount: 0 });
+    expect(closingSoon([], NOW, 'ALL', 6)).toEqual({ rows: [], openCount: 0 });
+  });
+
+  it('never returns more rows than asked, and none for a nonsense limit', () => {
+    expect(closingSoon(open, NOW, 'ALL', 3).rows).toHaveLength(3);
+    expect(closingSoon(open, NOW, 'ALL', 0).rows).toEqual([]);
+    expect(closingSoon(open, NOW, 'ALL', -2).rows).toEqual([]);
+  });
+
+  it('drops a pool from the top the second its betting closes', () => {
+    expect(ids(closingSoon(open, NOW + 299, 'ALL', 1).rows)).toEqual([11n]);
+    expect(ids(closingSoon(open, NOW + 300, 'ALL', 1).rows)).toEqual([14n]);
+  });
+
+  it('fills positions from the account stakes without changing which rows show', () => {
+    const bets = new Map([['13', { yes: 0n, no: 2n * USDC, claimed: false }]]);
+    const withBets = closingSoon(open, NOW, 'ALL', 6, bets);
+    expect(ids(withBets.rows)).toEqual(ids(closingSoon(open, NOW, 'ALL', 6).rows));
+    expect(withBets.rows.find((r) => r.id === 13n)?.position).toEqual({ kind: 'staked', yes: 0n, no: 2n * USDC });
+    expect(withBets.rows.find((r) => r.id === 11n)?.position).toBeNull();
+  });
+
+  it('quotes no payout for a side nobody has bet on (Home prints a dash there)', () => {
+    const oneSided = pool({ id: 40n, totalYes: 5n * USDC, totalNo: 0n, bettingCloseTime: BigInt(NOW + HOUR) });
+    const [row] = closingSoon([oneSided], NOW, 'ALL', 6).rows;
+    expect(row.noPays).toBeNull();
+    expect(formatPays(row.noPays)).toBe('');
+    expect(row.yesPays).toBe(1);
+    expect(formatPays(row.yesPays)).toBe('1.00x');
+  });
+});
+
+describe('pool list copy', () => {
+  it('writes pays per 1 USDC with two decimals', () => {
+    expect(formatPays(1.8249)).toBe('1.82x');
+    expect(formatPays(2)).toBe('2.00x');
+    expect(formatPays(null)).toBe('');
+  });
+
+  it('names the empty category', () => {
+    expect(noOpenPoolsTitle('CRYPTO')).toBe('No crypto pools open right now.');
+    expect(noOpenPoolsTitle('NBA')).toBe('No NBA pools open right now.');
+    expect(noOpenPoolsTitle('MAKO')).toBe('No Mako pools open right now.');
+    expect(noOpenPoolsTitle('COMMODITIES')).toBe('No commodities pools open right now.');
   });
 });

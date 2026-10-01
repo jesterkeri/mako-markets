@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { useReadContracts } from 'wagmi';
 
 import { ListStateDesktop, ListStateMobile } from '@/components/ListState';
-import { makoContract, MarketType } from '@/lib/contract';
+import { PoolMobileCard, poolHref } from '@/components/pools/PoolMobileCard';
+import { MarketType } from '@/lib/contract';
 import { useMarkets } from '@/lib/hooks';
 import {
   buildPoolList,
@@ -13,6 +13,8 @@ import {
   catTitle,
   claimable,
   CLOSED_WINDOW_SEC,
+  formatPays,
+  noOpenPoolsTitle,
   POOL_FILTERS,
   positionLabel,
   STATE_PILL,
@@ -20,12 +22,12 @@ import {
   type PoolFilter,
   type PoolRow,
   type PoolSort,
-  type UserBet,
 } from '@/lib/pool-list';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
-import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
+import { usePoolLabels, type SideLabels } from '@/lib/use-pool-labels';
 import { accountAddress, useUser } from '@/lib/use-user';
+import { useUserBets } from '@/lib/use-user-bets';
 import { formatAddress } from '@/lib/user-display';
 
 // Pools (8a): every V4 pool that is open, grouped by when it closes, plus the ones that closed in the last week.
@@ -38,30 +40,11 @@ const SORTS: readonly { key: PoolSort; label: string }[] = [
 ];
 const NEXT_SORT: Record<PoolSort, PoolSort> = { closing: 'pool', pool: 'bettors', bettors: 'closing' };
 
-const poolHref = (id: bigint) => `/pools/${id}`;
 /// Until the redesigned create flow (10a) replaces it, "Create pool" opens the current one.
 const CREATE_HREF = '/pools/new';
 
-type Labels = { yes: string; no: string };
+type Labels = SideLabels;
 type ClosedState = Exclude<PoolRow['state'], 'open'>;
-
-/// The account's stake in every pool on the page, read in one multicall.
-function useUserBets(ids: readonly bigint[], account: `0x${string}` | null) {
-  const { data } = useReadContracts({
-    contracts: ids.map((id) => ({ ...makoContract, functionName: 'getUserBet' as const, args: [id, account ?? '0x0000000000000000000000000000000000000000'] as const })),
-    query: { enabled: account !== null && ids.length > 0, refetchInterval: 10_000 },
-  });
-  return useMemo(() => {
-    const bets = new Map<string, UserBet>();
-    if (!data) return bets;
-    data.forEach((r, i) => {
-      if (r.status !== 'success' || !r.result) return;
-      const [yes, no, claimed] = r.result as readonly [bigint, bigint, boolean];
-      bets.set(ids[i].toString(), { yes, no, claimed });
-    });
-    return bets;
-  }, [data, ids]);
-}
 
 export function PoolsClient() {
   const { markets, isLoading, isError, refetch } = useMarkets();
@@ -81,14 +64,10 @@ export function PoolsClient() {
   const ids = useMemo(() => onPage.map((m) => m.id), [onPage]);
   const bets = useUserBets(ids, account);
   const makoIds = useMemo(() => onPage.filter((m) => m.mType === MarketType.MAKO).map((m) => m.id.toString()), [onPage]);
-  const { data: makoLabels } = useMakoLabelsBatch(makoIds);
+  const labelsOf = usePoolLabels(makoIds);
   const names = useAddressNames(useMemo(() => onPage.filter((m) => m.mType !== MarketType.MAKO).map((m) => m.creator), [onPage]));
 
   const list = now === null ? null : buildPoolList(markets, now, filter, sort, bets);
-  const labelsOf = (r: PoolRow): Labels => {
-    const l = r.cat === 'MAKO' ? makoLabels?.get(r.id.toString()) : undefined;
-    return l ? { yes: l.label1, no: l.label2 } : { yes: 'YES', no: 'NO' };
-  };
   const byOf = (r: PoolRow) => (r.cat === 'MAKO' ? 'Mako Market' : (names.get(r.creator.toLowerCase()) ?? formatAddress(r.creator)));
 
   const state: 'loading' | 'error' | 'empty' | 'ready' =
@@ -122,10 +101,6 @@ type ViewProps = {
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const COLS = 'minmax(0,1fr) 170px 212px 120px 92px 20px';
-
-function emptyTitle(filter: PoolFilter) {
-  return `No ${filter === 'NBA' ? 'NBA' : filter === 'MAKO' ? 'Mako' : filter.toLowerCase()} pools open right now.`;
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Desktop
@@ -204,7 +179,7 @@ function PoolsDesktop({ list, state, filter, setFilter, sort, setSort, labelsOf,
           </div>
           {list.groups.length === 0 && (
             <div style={{ padding: '56px 4px', boxShadow: 'inset 0 1px 0 var(--line)', textAlign: 'center' }}>
-              <div style={{ ...display, fontSize: 24 }}>{emptyTitle(filter)}</div>
+              <div style={{ ...display, fontSize: 24 }}>{noOpenPoolsTitle(filter)}</div>
               <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>Pools open when a creator makes one. Try another category, or make one yourself.</div>
             </div>
           )}
@@ -231,10 +206,6 @@ function PoolsDesktop({ list, state, filter, setFilter, sort, setSort, labelsOf,
       )}
     </div>
   );
-}
-
-function pays(n: number | null) {
-  return n === null ? '' : `${n.toFixed(2)}x`;
 }
 
 function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: string }) {
@@ -283,10 +254,10 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
         {open ? (
           <>
             <Link href={`${poolHref(r.id)}?side=yes`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-signal)' }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.yes}</span> <span style={{ fontWeight: 500 }}>{pays(r.yesPays)}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.yes}</span> <span style={{ fontWeight: 500 }}>{formatPays(r.yesPays)}</span>
             </Link>
             <Link href={`${poolHref(r.id)}?side=no`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-red)' }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.no}</span> <span style={{ fontWeight: 500 }}>{pays(r.noPays)}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.no}</span> <span style={{ fontWeight: 500 }}>{formatPays(r.noPays)}</span>
             </Link>
           </>
         ) : (
@@ -364,7 +335,7 @@ function PoolsMobile({ list, state, filter, setFilter, sort, setSort, labelsOf, 
           </div>
           {groups.length === 0 && (
             <div style={{ padding: '36px 20px 0', textAlign: 'center' }}>
-              <div style={{ ...display, fontSize: 22 }}>{emptyTitle(filter)}</div>
+              <div style={{ ...display, fontSize: 22 }}>{noOpenPoolsTitle(filter)}</div>
               <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>Pools open when a creator makes one. Try another category, or make one yourself.</div>
             </div>
           )}
@@ -379,7 +350,7 @@ function PoolsMobile({ list, state, filter, setFilter, sort, setSort, labelsOf, 
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '0 12px' }}>
                 {g.rows.map((r) => (
-                  <MobileCard key={r.id.toString()} row={r} labels={labelsOf(r)} />
+                  <PoolMobileCard key={r.id.toString()} row={r} labels={labelsOf(r)} />
                 ))}
               </div>
             </section>
@@ -411,62 +382,5 @@ function CornerArrow({ bg, fg }: { bg: string; fg: string }) {
         <path d={ARROW_UP_RIGHT} />
       </svg>
     </span>
-  );
-}
-
-function MobileCard({ row: r, labels }: { row: PoolRow; labels: Labels }) {
-  const cat = CAT_STYLE[r.cat];
-  const pos = r.position;
-  const side: React.CSSProperties = { flex: 1, minWidth: 0, height: 56, borderRadius: 20, color: '#000', boxShadow: 'var(--m3-btn-edge)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' };
-  const sideName: React.CSSProperties = { maxWidth: '90%', fontSize: 12, fontWeight: 700, opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
-  const sidePays: React.CSSProperties = { ...display, fontSize: 20, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' };
-  const cap = (s: string) => (s === 'YES' ? 'Yes' : s === 'NO' ? 'No' : s);
-  return (
-    <div className="m3-press" style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px 0 4px', borderRadius: 9999, background: cat.bg, color: cat.fg, boxShadow: 'var(--edge)', fontSize: 12, fontWeight: 800 }}>
-          <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: 9999, background: 'rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8 }}>
-            {cat.abbr}
-          </span>
-          {catTitle(r.cat)}
-        </span>
-        <span style={{ marginLeft: 'auto', height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: r.closingSoon ? 'var(--mako-red)' : 'inherit' }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true">
-            <circle cx="12" cy="13" r="8" />
-            <path d="M12 9v4l2 2M9 2h6" />
-          </svg>
-          {r.closes}
-        </span>
-      </div>
-      <Link href={poolHref(r.id)} className="mk-rowlink" style={{ display: 'block', ...display, fontSize: 22, lineHeight: 1.15, letterSpacing: '-0.02em', marginTop: 14, color: 'inherit', textDecoration: 'none' }}>
-        {r.question}
-      </Link>
-      <div className="mk-over" style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-        <Link href={`${poolHref(r.id)}?side=yes`} className="m3-press m3-scale96" style={{ ...side, background: 'var(--mako-signal)' }}>
-          <span style={sideName}>
-            {cap(labels.yes)} {r.yesPct}%
-          </span>
-          <span style={sidePays}>{pays(r.yesPays) || cap(labels.yes)}</span>
-        </Link>
-        <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96" style={{ ...side, background: 'var(--mako-red)' }}>
-          <span style={sideName}>
-            {cap(labels.no)} {r.noPct}%
-          </span>
-          <span style={sidePays}>{pays(r.noPays) || cap(labels.no)}</span>
-        </Link>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-        <span style={{ opacity: 0.72 }}>{usdc2(r.pool)} USDC</span>
-        <span aria-hidden="true" style={{ width: 4, height: 4, borderRadius: '50%', background: 'currentColor', opacity: 0.72 }} />
-        <span style={{ opacity: 0.72, whiteSpace: 'nowrap' }}>
-          {r.bettors} {r.bettors === 1 ? 'bettor' : 'bettors'}
-        </span>
-        {pos && (
-          <span style={{ marginLeft: 'auto', flex: 'none', height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontWeight: 700 }}>
-            {positionLabel(pos).replace('You · ', 'You: ')}
-          </span>
-        )}
-      </div>
-    </div>
   );
 }

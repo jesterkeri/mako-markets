@@ -44,6 +44,11 @@ export function catTitle(c: PoolFilter): string {
   return c[0] + c.slice(1).toLowerCase();
 }
 
+/// What a filtered list says when the category has no open pool: "No crypto pools open right now."
+export function noOpenPoolsTitle(filter: PoolFilter): string {
+  return `No ${filter === 'NBA' ? 'NBA' : filter === 'MAKO' ? 'Mako' : filter.toLowerCase()} pools open right now.`;
+}
+
 /// Where a pool is in its life. The pill colours follow 9a (and 18a for resolving).
 export type PoolState = 'open' | 'betting_closed' | 'resolving' | 'yes_won' | 'no_won' | 'refunded';
 
@@ -141,6 +146,11 @@ export function formatAgo(seconds: number): string {
 function paysPerOne(sidePool: bigint, raw: number): number | null {
   if (sidePool === 0n) return null;
   return raw === 0 ? 1 : raw;
+}
+
+/// A side's pays-per-1-USDC figure as the lists print it: "1.82x", or "" when the side has no stake to quote from.
+export function formatPays(n: number | null): string {
+  return n === null ? '' : `${n.toFixed(2)}x`;
 }
 
 export type PoolRow = {
@@ -255,4 +265,31 @@ export function buildPoolList(
     .map(([title, g]) => ({ title, rows: g }));
 
   return { groups, counts, openCount: open.length, openTotal };
+}
+
+export type ClosingSoon = {
+  /// At most `limit` open pools in the filter, the one whose betting closes first at the top.
+  rows: PoolRow[];
+  /// Open pools in every category: Home shows the pools empty state only when this is 0.
+  openCount: number;
+};
+
+/// Home's pools (2a): the open pools that close soonest, in the same order and with the same rows as the Pools
+/// list's "Closing soon" sort. Closed and settled pools never appear here. `bets` (the account's stakes) only fills
+/// each row's position; it never changes which rows show.
+export function closingSoon(
+  markets: readonly MarketWithId[],
+  nowSec: number,
+  filter: PoolFilter,
+  limit: number,
+  bets?: ReadonlyMap<string, UserBet>,
+): ClosingSoon {
+  const open = markets
+    .filter((m) => m.mType in CAT_OF && poolState(m, nowSec) === 'open')
+    .map((m) => poolRow(m, nowSec, bets?.get(m.id.toString())));
+  const rows = open
+    .filter((r) => filter === 'ALL' || r.cat === filter)
+    .sort(byClosing)
+    .slice(0, Math.max(0, Math.floor(limit)));
+  return { rows, openCount: open.length };
 }

@@ -1,24 +1,15 @@
-// ----------------------------------------------------------------------------
-// src/app/page.tsx
-//
-// Server Component shell for the / route. Single responsibility: opt
-// the home page out of static prerender + edge cache. The home feed
-// reads on-chain markets via wagmi and we never want stale prerendered
-// chunks (with stale NEXT_PUBLIC_MAKO_ADDRESS) sticking around the way
-// they did when v4 contracts rotated.
-//
-// The actual page body lives in `_components/HomeClient.tsx`. This
-// file MUST stay a Server Component (no 'use client'): config exports
-// like `dynamic` are only honored on the server entry of a route.
-//
-// Mirrors the gate-then-client split already used by /create and
-// /create/private.
-// ----------------------------------------------------------------------------
+import type { Metadata } from 'next';
 
-import HomeClient from './_components/HomeClient';
+import { HomeClient } from './_home/HomeClient';
 
+export const metadata: Metadata = { title: 'Mako Market Beta' };
+
+// Rendered per request, never prerendered: a prerendered Home once kept serving chunks with a retired contract
+// address baked in after the contract moved (a46925c).
 export const dynamic = 'force-dynamic';
 
+/// / (2a): rounds are not open yet, so Home says so, then shows the pools that close soonest and the latest news.
+/// (The previous home, `_components/HomeClient.tsx`, is no longer rendered.)
 export default function HomePage() {
   return <HomeClient />;
 }

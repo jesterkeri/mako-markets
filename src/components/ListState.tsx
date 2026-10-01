@@ -16,7 +16,8 @@ type Props = {
 
 const bar = 'color-mix(in srgb, var(--mako-canvas-fg) 16%, transparent)';
 
-function ActionButton({ action, onRetry, style, className }: { action: ListAction; onRetry?: () => void; style: React.CSSProperties; className: string }) {
+/// One action of a list state (a link, "Try again", or a disabled "coming soon"), styled by the caller.
+export function ListActionButton({ action, onRetry, style, className }: { action: ListAction; onRetry?: () => void; style: React.CSSProperties; className: string }) {
   if ('comingSoon' in action) {
     return (
       <button disabled aria-disabled="true" className={className} style={{ ...style, opacity: 0.55, cursor: 'not-allowed' }}>
@@ -74,8 +75,8 @@ export function ListStateDesktop({ kind, state, onRetry, explorerHref }: Props) 
       <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 36, letterSpacing: '-0.02em', marginTop: 22 }}>{c.title}</div>
       <div style={{ fontSize: 16, lineHeight: 1.55, color: 'var(--dim)', marginTop: 10, maxWidth: 520 }}>{c.body}</div>
       <div style={{ display: 'flex', gap: 10, marginTop: 26 }}>
-        <ActionButton action={c.primary} onRetry={onRetry} className="mk-press97" style={{ ...button, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }} />
-        <ActionButton action={c.secondary} onRetry={onRetry} className="mk-press97" style={{ ...button, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)' }} />
+        <ListActionButton action={c.primary} onRetry={onRetry} className="mk-press97" style={{ ...button, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }} />
+        <ListActionButton action={c.secondary} onRetry={onRetry} className="mk-press97" style={{ ...button, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)' }} />
       </div>
       {c.footer && <div style={{ fontFamily: 'var(--mako-font-mono)', fontSize: 12, color: 'var(--dim)', marginTop: 18 }}>{c.footer}</div>}
     </div>
@@ -113,8 +114,8 @@ export function ListStateMobile({ kind, state, onRetry, explorerHref }: Props) {
           <Mascot pose={c.pose} motion={c.motion} alt="" style={{ height: 160, width: 'auto' }} />
           <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 26, lineHeight: 1.1, letterSpacing: '-0.02em', marginTop: 18 }}>{c.title}</div>
           <div style={{ fontSize: 15, lineHeight: 1.5, opacity: 0.72, marginTop: 8 }}>{c.body}</div>
-          <ActionButton action={c.primary} onRetry={onRetry} className="m3-press" style={{ ...full, height: 54, marginTop: 18, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16 }} />
-          <ActionButton action={c.secondary} onRetry={onRetry} className="m3-press" style={{ ...full, height: 50, marginTop: 8, background: 'var(--m3-inv-2)', color: 'var(--m3-inv-fg)', fontSize: 15 }} />
+          <ListActionButton action={c.primary} onRetry={onRetry} className="m3-press" style={{ ...full, height: 54, marginTop: 18, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16 }} />
+          <ListActionButton action={c.secondary} onRetry={onRetry} className="m3-press" style={{ ...full, height: 50, marginTop: 8, background: 'var(--m3-inv-2)', color: 'var(--m3-inv-fg)', fontSize: 15 }} />
           {c.footer && <div style={{ fontSize: 13, opacity: 0.6, marginTop: 12 }}>{c.footer}</div>}
         </div>
       </div>
