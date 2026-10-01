@@ -20,7 +20,11 @@ export function feedbackLimitKey(userId: string | null): FeedbackLimitKey {
 
 /// The clock-hour window: floor(epoch_seconds / 3600).
 export function hourWindowKey(now: Date): string {
-  return `h:${Math.floor(now.getTime() / 3_600_000)}`;
+  return `h:${hourNumber(now)}`;
+}
+
+function hourNumber(now: Date): number {
+  return Math.floor(now.getTime() / 3_600_000);
 }
 
 class OverCap extends Error {
@@ -48,7 +52,11 @@ export async function reserveFeedback(db: DbOrTx, limit: FeedbackLimitKey, now: 
       const rows = (Array.isArray(raw) ? raw : []) as Array<{ count: number | string }>;
       const count = rows.length > 0 ? Number(rows[0].count) : Number.POSITIVE_INFINITY;
       if (count > limit.cap) throw new OverCap();
-      await tx.execute(sql`DELETE FROM feedback_rate_limits WHERE key = ${limit.key} AND window_key <> ${windowKey}`);
+      // Only OLDER hours: a request stamped in an earlier hour (a server clock a little behind) must never delete the
+      // current hour's count. window_key is 'h:<digits>' (CHECK feedback_rate_limits_window_chk), compared as a number.
+      await tx.execute(
+        sql`DELETE FROM feedback_rate_limits WHERE key = ${limit.key} AND substring(window_key from 3)::bigint < ${hourNumber(now)}`,
+      );
     });
     return true;
   } catch (e) {

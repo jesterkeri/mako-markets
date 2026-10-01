@@ -27,15 +27,17 @@ export function messageLength(raw: string): number {
 export type FeedbackBody = { message: string; path: string };
 export type FeedbackBodyError = 'bad_body' | 'unknown_field' | 'bad_message' | 'empty_message' | 'message_too_long' | 'bad_path';
 
-/// Strict: an object with exactly `message` and `path`, both strings. `path` is the page's own path (starts with a
-/// single "/", at most 200 characters, no spaces or control characters). Unknown keys are refused, not ignored.
+/// Strict: an object with exactly `message` and `path`, both strings. `path` is the page's own path: a single "/"
+/// then printable ASCII only (0x21 to 0x7E), at most 200 characters. A browser's `location.pathname` is always
+/// percent-encoded ASCII, so this costs no real page; it shuts out control, bidi, zero-width and blank-looking
+/// characters that could make the path draw a fake header line in Telegram. Unknown keys are refused, not ignored.
 export function parseFeedbackBody(raw: unknown): { ok: true; body: FeedbackBody } | { ok: false; error: FeedbackBodyError } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, error: 'bad_body' };
   const keys = Object.keys(raw);
   if (keys.some((k) => k !== 'message' && k !== 'path')) return { ok: false, error: 'unknown_field' };
   const { message, path } = raw as Record<string, unknown>;
   if (typeof message !== 'string') return { ok: false, error: 'bad_message' };
-  if (typeof path !== 'string' || !/^\/(?!\/)[^\s\u0000-\u001f\u007f]{0,199}$/.test(path) || path.length > PATH_MAX) {
+  if (typeof path !== 'string' || !/^\/(?!\/)[\x21-\x7e]{0,199}$/.test(path) || path.length > PATH_MAX) {
     return { ok: false, error: 'bad_path' };
   }
   const cleaned = cleanMessage(message);

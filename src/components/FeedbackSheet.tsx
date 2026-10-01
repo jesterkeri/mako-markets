@@ -71,17 +71,20 @@ function FeedbackFlow() {
       setPhase({ step: 'failed', failure: failureFor(null, null) });
       return;
     }
-    if (res.ok) {
+    let body: { ok?: unknown; error?: unknown } | null = null;
+    try {
+      body = (await res.json()) as { ok?: unknown; error?: unknown };
+    } catch {
+      body = null;
+    }
+    // "Sent" only on the route's own delivery answer: a 200 with { ok: true }. Any other 2xx (a 204, a captive
+    // portal's HTML page) did not come from a delivery, so it reads as a failure.
+    if (res.status === 200 && body?.ok === true) {
       setPhase({ step: 'sent' });
       return;
     }
-    let error: string | null = null;
-    try {
-      error = ((await res.json()) as { error?: unknown }).error as string;
-    } catch {
-      error = null;
-    }
-    setPhase({ step: 'failed', failure: failureFor(res.status, typeof error === 'string' ? error : null) });
+    const error = typeof body?.error === 'string' ? body.error : null;
+    setPhase({ step: 'failed', failure: failureFor(res.ok ? null : res.status, error) });
   };
 
   const from = user ? `Sent with ${formatAddress(accountAddress(user))}` : 'Sent without an account';
