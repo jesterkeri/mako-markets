@@ -44,6 +44,8 @@ export type ConfirmPhase =
       nothingMoved: boolean;
       primary: ConfirmAction;
       secondary: ConfirmAction;
+      /// A transaction that was broadcast but whose outcome is unknown: shown so the person can check it.
+      txHash?: string;
     };
 
 type Props = {
@@ -275,6 +277,11 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
                 <Svg d={CHECK_ICON} size={14} />
                 No USDC left your wallet
               </div>
+            )}
+            {phase.txHash && (
+              <a href={explorerUrl('tx', phase.txHash)} target="_blank" rel="noopener noreferrer" style={chip}>
+                Transaction · {formatAddress(phase.txHash)} ↗
+              </a>
             )}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>

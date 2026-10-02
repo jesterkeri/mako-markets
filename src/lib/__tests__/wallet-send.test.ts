@@ -76,7 +76,7 @@ describe('sendUsdcFromWallet: the sender is pinned', () => {
   it('a wallet rejection is reported as rejected, with nothing broadcast', async () => {
     write.mockRejectedValueOnce(Object.assign(new Error('User rejected the request.'), { name: 'UserRejectedRequestError' }));
     const onBroadcast = vi.fn();
-    expect(await sendUsdcFromWallet(REQ, deps(onBroadcast))).toEqual({ kind: 'rejected' });
+    expect(await sendUsdcFromWallet(REQ, deps(onBroadcast))).toEqual({ kind: 'rejected', byUser: true });
     expect(onBroadcast).not.toHaveBeenCalled();
     expect(receipt).not.toHaveBeenCalled();
   });
@@ -167,5 +167,22 @@ describe('sendUsdcFromWallet: the Monad chain is named', () => {
     const onBroadcast = vi.fn();
     expect(await sendUsdcFromWallet(REQ, deps(onBroadcast))).toEqual({ kind: 'wrong_chain' });
     expect(onBroadcast).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendUsdcFromWallet: who refused', () => {
+  it('a wallet error that is not the person declining is rejected, not by the user', async () => {
+    write.mockRejectedValueOnce(new Error('internal JSON-RPC error'));
+    expect(await sendUsdcFromWallet(REQ, deps())).toEqual({ kind: 'rejected', byUser: false });
+  });
+
+  it("viem's wrapped user rejection is found through the cause chain", async () => {
+    const { ContractFunctionExecutionError, UserRejectedRequestError } = await import('viem');
+    const wrapped = new ContractFunctionExecutionError(new UserRejectedRequestError(new Error('denied')), {
+      abi: [],
+      functionName: 'transfer',
+    });
+    write.mockRejectedValueOnce(wrapped);
+    expect(await sendUsdcFromWallet(REQ, deps())).toEqual({ kind: 'rejected', byUser: true });
   });
 });

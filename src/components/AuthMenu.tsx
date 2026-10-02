@@ -107,7 +107,7 @@ export function AuthMenu({ className }: Props) {
   // the actual SIGN OUT button lives.
   return (
     <Link
-      href="/profile"
+      href="/wallet"
       className={`flex items-center gap-2 hover:opacity-80 transition-opacity ${className ?? ''}`}
       aria-label={`Open profile for ${identity}`}
       title={identity}

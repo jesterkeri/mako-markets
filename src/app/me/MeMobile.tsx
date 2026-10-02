@@ -53,10 +53,13 @@ export function MeMobile(v: MeView) {
         <RowLink href={CREATE_HREF} icon={<Svg d={PLUS} size={20} />} iconBg="var(--mako-signal)" title="Create a pool" sub={v.chain.status === 'ready' ? createdLine(v.chain.created) : 'Anyone can create one'} />
       </div>
       <div style={{ padding: '8px 16px 0' }}>
+        <RowLink href="/wallet" icon={<Svg d={ICON.transfer} size={18} />} iconBg="var(--raise2)" title="Send and receive" sub="Send USDC or show your address" />
+      </div>
+      <div style={{ padding: '8px 16px 0' }}>
         <RowLink href={TOUR_START} icon={<Svg d={ICON.help} size={18} />} iconBg="var(--raise2)" title="How to play" sub="The 7-step intro to Mako Market" />
       </div>
       <div style={{ padding: '8px 16px 0' }}>
-        <RowLink href={SETTINGS_HREF} icon={<Svg d={GEAR} size={18} />} iconBg="var(--raise2)" title="Settings" sub="Account, security, send and receive, appearance, sign out" />
+        <RowLink href={SETTINGS_HREF} icon={<Svg d={GEAR} size={18} />} iconBg="var(--raise2)" title="Settings" sub="Account, security, appearance, sign out" />
       </div>
       <div style={{ padding: '8px 16px 0' }}>
         <FeedbackRow />

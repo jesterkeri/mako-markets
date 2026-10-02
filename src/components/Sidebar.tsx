@@ -115,7 +115,7 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
   return (
     <div className="mt-auto border-t-2 border-chrome-divider shrink-0">
       {hovering ? (
-        <Link href="/profile" className="flex flex-col gap-2 p-4 hover:bg-chrome-fg/10 transition-colors">
+        <Link href="/wallet" className="flex flex-col gap-2 p-4 hover:bg-chrome-fg/10 transition-colors">
           <div
             className="mako-label text-[10px] text-muted truncate"
             title={label}
@@ -128,7 +128,7 @@ function SidebarAccount({ hovering }: { hovering: boolean }) {
         </Link>
       ) : (
         <Link
-          href="/profile"
+          href="/wallet"
           className="flex items-center justify-center py-3 hover:bg-chrome-fg/10 transition-colors block"
           aria-label={`Signed in as ${label}`}
           title={label}

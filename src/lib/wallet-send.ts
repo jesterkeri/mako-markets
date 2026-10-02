@@ -1,4 +1,4 @@
-import { erc20Abi } from 'viem';
+import { BaseError, erc20Abi, UserRejectedRequestError } from 'viem';
 
 /// A USDC send from an external (browser) wallet, from Review to its receipt (Codex S4 r2).
 ///
@@ -12,7 +12,8 @@ import { erc20Abi } from 'viem';
 
 export type WalletSendOutcome =
   | { kind: 'wallet_changed' }
-  | { kind: 'rejected' }
+  /// The wallet refused or failed before broadcasting. `byUser` only when the person declined it in the wallet.
+  | { kind: 'rejected'; byUser: boolean }
   | { kind: 'wrong_chain' }
   | { kind: 'cancelled'; txHash: `0x${string}` }
   | { kind: 'sent'; txHash: `0x${string}` }
@@ -69,8 +70,11 @@ export async function sendUsdcFromWallet(
   } catch (e) {
     if (isAccountNotConnected(e)) return { kind: 'wallet_changed' };
     if (isChainMismatch(e)) return { kind: 'wrong_chain' };
-    console.error('Send failed via external wallet', e);
-    return { kind: 'rejected' };
+    const byUser =
+      errorName(e) === 'UserRejectedRequestError' ||
+      (e instanceof BaseError && e.walk((c) => c instanceof UserRejectedRequestError) instanceof UserRejectedRequestError);
+    if (!byUser) console.error('Send failed via external wallet', e);
+    return { kind: 'rejected', byUser };
   }
   deps.onBroadcast?.(txHash);
   try {

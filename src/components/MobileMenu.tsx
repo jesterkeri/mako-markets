@@ -292,7 +292,7 @@ export function MobileMenu({ className }: { className?: string }) {
                 ) : isAuthed ? (
                   <div className="flex flex-col gap-3 p-4">
                     <Link
-                      href="/profile"
+                      href="/wallet"
                       onClick={() => setOpen(false)}
                       className="flex items-center gap-3 hover:opacity-80 transition-opacity"
                     >

@@ -106,7 +106,7 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
         k: 'Send and receive',
         v: (
           <>
-            <Link href="/profile" className="mk-press96" style={pill}>
+            <Link href="/wallet" className="mk-press96" style={pill}>
               Open
             </Link>
             <span style={note}>Send USDC or show your address to receive it.</span>

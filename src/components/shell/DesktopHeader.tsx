@@ -166,6 +166,10 @@ function WalletMenu({ user, balance, onSignOut, onNavigate }: { user: AuthedUser
         <StrokeIcon d={ICON.profile} />
         Profile
       </Link>
+      <Link role="menuitem" href="/wallet" onClick={onNavigate} className="wm-row" style={menuRow()}>
+        <StrokeIcon d={ICON.transfer} />
+        Send and receive
+      </Link>
       <Link role="menuitem" href="/settings" onClick={onNavigate} className="wm-row" style={menuRow()}>
         <StrokeIcon d={ICON.settings} />
         Settings
