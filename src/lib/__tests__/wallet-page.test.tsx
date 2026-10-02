@@ -47,6 +47,7 @@ vi.mock('@/lib/aa-client', () => ({ runSendUsdc: mocks.runSendUsdc }));
 vi.mock('@/components/signin/SignInLink', () => ({ SignInLink: ({ children }: { children: React.ReactNode }) => <a href="/signin">{children}</a> }));
 
 import { WalletClient } from '@/app/wallet/WalletClient';
+import { USDC_ADDRESS } from '@/lib/usdc';
 
 const walletUser = { authed: true, authType: 'wallet', walletAddress: A, displayName: null, avatarUrl: null, lastSignInAt: null };
 const emailUser = { authed: true, authType: 'magic', email: 'a@b.co', magicEoa: B, safeAddress: SAFE, displayName: null, avatarUrl: null, totpEnabled: false, totpEnabledAt: null, lastSignInAt: null };
@@ -143,7 +144,7 @@ describe('/wallet, email account', () => {
     render(<WalletClient initialTab="send" />);
     review(SAFE, '1');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/your own address/);
-    review('0x534b2f3A21130d7a60830c2Df862319e593943A3', '1');
+    review(USDC_ADDRESS, '1'); // whatever USDC address this build uses (CI sets its own)
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/contract address/);
     review(TO, '250');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/more than your balance/);
