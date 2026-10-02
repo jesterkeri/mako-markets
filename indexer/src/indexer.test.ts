@@ -215,3 +215,52 @@ describe('contract values', () => {
     t.expect(dayOf(DAY1)).toEqual({ id: '2026-09-21', start: Math.floor(DAY1 / 86_400) * 86_400 });
   });
 });
+
+const forfeited = (id: bigint, creator: Address, forgoneAmount: bigint, timestamp: number) => ({
+  contract: 'MakoMarketsV4' as const,
+  event: 'CreatorFeeForfeited' as const,
+  ...at(timestamp),
+  params: { id, creator, forgoneAmount },
+});
+
+describe('Codex S6 r1', () => {
+  it('marks every bet and claim from an internal wallet, so public activity can filter before its limit', async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        [CHAIN]: {
+          simulate: [
+            created(5n, ALICE, DAY1),
+            bet(5n, ALICE, true, 2n * USDC, DAY1),
+            bet(5n, MAKO, false, 1n * USDC, DAY1 + 60),
+            resolved(5n, 2n, DAY1 + 3700),
+            claimed(5n, MAKO, 2_900_000n, DAY1 + 3800),
+          ],
+        },
+      },
+    });
+    const bets = await indexer.Bet.getAll();
+    const claims = await indexer.Claim.getAll();
+    t.expect(bets.map((b) => [b.wallet_id.toLowerCase(), b.internal]).sort()).toEqual([
+      [ALICE, false],
+      [MAKO.toLowerCase(), true],
+    ]);
+    t.expect(claims.map((c) => c.internal)).toEqual([true]);
+  });
+
+  it('a CreatorFeeForfeited event moves the index progress with the pool', async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        [CHAIN]: {
+          simulate: [created(6n, ALICE, DAY2), bet(6n, ALICE, true, 1n * USDC, DAY2), forfeited(6n, ALICE, 20_000n, DAY2 + 5000)],
+        },
+      },
+    });
+    const pool = await indexer.Pool.getOrThrow('6');
+    const global = await indexer.GlobalStats.getOrThrow('global');
+    t.expect(pool.creatorFeeForfeited).toBe(20_000n);
+    t.expect(global.updatedAt).toBe(DAY2 + 5000);
+    t.expect(global.updatedBlock).toBe(block);
+  });
+});

@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 vi.mock('@/db/client', () => ({ db: { execute: mocks.dbExecute } }));
 
-import { parseIndexedStats } from '../stats';
+import { parseIndexedStats, STATS_QUERY, toWire } from '../stats';
 
 const TX = `0x${'ab'.repeat(32)}`;
 const W1 = `0x${'A1'.repeat(20)}`;
@@ -32,8 +32,8 @@ const answer = (over: Record<string, unknown> = {}) => ({
     ],
     DailyStats: [{ id: '2026-09-21', dayStart: 1_789_948_800, newWallets: 12, activeWallets: 12, bets: 40, volume: '123450000', cumulativeWallets: 12 }],
     CategoryStats: [{ category: 'Crypto', pools: 5, bets: 30, volume: '100000000' }],
-    Bet: [{ id: 'b1', wallet_id: W1, pool_id: '92', isYes: true, amount: '1000000', timestamp: 1_790_000_100, txHash: TX }],
-    Claim: [{ id: 'c1', wallet_id: W1, pool_id: '90', amount: '2000000', timestamp: 1_790_000_200, txHash: TX }],
+    Bet: [{ id: 'b1', wallet_id: W1, pool_id: '92', isYes: true, amount: '1000000', timestamp: 1_790_000_100, txHash: TX, internal: false }],
+    Claim: [{ id: 'c1', wallet_id: W1, pool_id: '90', amount: '2000000', timestamp: 1_790_000_200, txHash: TX, internal: false }],
     ...over,
   },
 });
@@ -46,11 +46,32 @@ describe('parseIndexedStats', () => {
     expect(s?.activity[1]).toMatchObject({ wallet: W1.toLowerCase(), poolId: '92', amount: 1_000_000n, isYes: true });
   });
 
+  it("never lets Mako Market's own wallets into public activity (Codex S6 r1)", () => {
+    // The query filters on `internal` before its limit, for bets and claims alike.
+    expect(STATS_QUERY).toMatch(/Bet\(where: \{ internal: \{ _eq: false \} \}, order_by: \{ timestamp: desc \}, limit: 12\)/);
+    expect(STATS_QUERY).toMatch(/Claim\(where: \{ internal: \{ _eq: false \} \}, order_by: \{ timestamp: desc \}, limit: 12\)/);
+    // And an internal row that still arrives never reaches the page.
+    const INTERNAL = '0xc8bf886f73e4371cbd8160eea7683b8da98190f1';
+    const s = parseIndexedStats(
+      answer({
+        Bet: [{ id: 'bi', wallet_id: INTERNAL, pool_id: '92', isYes: false, amount: '5000000', timestamp: 1_790_000_300, txHash: TX, internal: true }],
+        Claim: [{ id: 'ci', wallet_id: INTERNAL, pool_id: '90', amount: '5000000', timestamp: 1_790_000_400, txHash: TX, internal: true }],
+      }),
+    );
+    expect(s).not.toBeNull();
+    expect(s!.activity).toEqual([]);
+    expect(JSON.stringify(toWire(s, 'ok', null, 0))).not.toContain(INTERNAL);
+  });
+
+  it('refuses a row without the internal flag', () => {
+    expect(parseIndexedStats(answer({ Bet: [{ id: 'b', wallet_id: W1, pool_id: '1', isYes: true, amount: '1', timestamp: 1, txHash: TX }] }))).toBeNull();
+  });
+
   it('refuses anything less than a complete, well-formed answer', () => {
     expect(parseIndexedStats({ errors: [{ message: 'field not found' }] })).toBeNull();
     expect(parseIndexedStats(answer({ GlobalStats: [] }))).toBeNull(); // nothing indexed yet
     expect(parseIndexedStats(answer({ CategoryStats: undefined }))).toBeNull();
-    expect(parseIndexedStats(answer({ Bet: [{ id: 'b', wallet_id: 'not-an-address', pool_id: '1', isYes: true, amount: '1', timestamp: 1, txHash: TX }] }))).toBeNull();
+    expect(parseIndexedStats(answer({ Bet: [{ id: 'b', wallet_id: 'not-an-address', pool_id: '1', isYes: true, amount: '1', timestamp: 1, txHash: TX, internal: false }] }))).toBeNull();
     const negative = answer();
     (negative.data.GlobalStats[0] as Record<string, unknown>).volume = '-5';
     expect(parseIndexedStats(negative)).toBeNull();

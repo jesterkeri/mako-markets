@@ -2,8 +2,9 @@
 
 Indexes Mako Market's pools contract, `MakoMarketsV4` at `0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195` on Monad
 testnet (chain 10143), from its deployment block 32603678, using [Envio HyperIndex](https://docs.envio.dev) over
-HyperSync (`https://10143.hypersync.xyz`). Two features of the site read it: the public `/stats` page ("proof of
-demand") and the leaderboard.
+HyperSync (`https://10143.hypersync.xyz`). Today one feature of the site reads it: the public `/stats` page ("proof
+of demand"). The leaderboard, public profiles and search are planned to read it next; until that work ships, the
+leaderboard still reads the site's own database.
 
 ## What it records
 

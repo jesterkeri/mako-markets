@@ -14,8 +14,8 @@ export const STATS_QUERY = `query Stats {
   }
   DailyStats(order_by: { dayStart: asc }) { id dayStart newWallets activeWallets bets volume cumulativeWallets }
   CategoryStats { category pools bets volume }
-  Bet(order_by: { timestamp: desc }, limit: 12) { id wallet_id pool_id isYes amount timestamp txHash }
-  Claim(order_by: { timestamp: desc }, limit: 12) { id wallet_id pool_id amount timestamp txHash }
+  Bet(where: { internal: { _eq: false } }, order_by: { timestamp: desc }, limit: 12) { id wallet_id pool_id isYes amount timestamp txHash internal }
+  Claim(where: { internal: { _eq: false } }, order_by: { timestamp: desc }, limit: 12) { id wallet_id pool_id amount timestamp txHash internal }
 }`;
 
 /// A BigInt column as Hasura returns it (a string, or a number for small values), as a bigint.
@@ -55,8 +55,8 @@ const Response = z.object({
       }),
     ),
     CategoryStats: z.array(z.object({ category: z.string(), pools: count, bets: count, volume: big })),
-    Bet: z.array(z.object({ id: z.string(), wallet_id: address, pool_id: z.string().regex(/^\d+$/), isYes: z.boolean(), amount: big, timestamp: count, txHash: hash })),
-    Claim: z.array(z.object({ id: z.string(), wallet_id: address, pool_id: z.string().regex(/^\d+$/), amount: big, timestamp: count, txHash: hash })),
+    Bet: z.array(z.object({ id: z.string(), wallet_id: address, pool_id: z.string().regex(/^\d+$/), isYes: z.boolean(), amount: big, timestamp: count, txHash: hash, internal: z.boolean() })),
+    Claim: z.array(z.object({ id: z.string(), wallet_id: address, pool_id: z.string().regex(/^\d+$/), amount: big, timestamp: count, txHash: hash, internal: z.boolean() })),
   }),
 });
 
@@ -87,9 +87,11 @@ export function parseIndexedStats(body: unknown, activityLimit = 12): IndexedSta
   const d = parsed.data.data;
   const global = d.GlobalStats[0];
   if (!global) return null;
+  // Mako Market's own wallets never appear in public activity (Codex S6 r1). The query already filters them before its
+  // limit; dropping any that still arrive keeps the promise even against a wrongly built query.
   const activity: StatsActivity[] = [
-    ...d.Bet.map((b) => ({ kind: 'bet' as const, wallet: b.wallet_id, poolId: b.pool_id, amount: b.amount, isYes: b.isYes, timestamp: b.timestamp, txHash: b.txHash })),
-    ...d.Claim.map((c) => ({ kind: 'claim' as const, wallet: c.wallet_id, poolId: c.pool_id, amount: c.amount, isYes: null, timestamp: c.timestamp, txHash: c.txHash })),
+    ...d.Bet.filter((b) => !b.internal).map((b) => ({ kind: 'bet' as const, wallet: b.wallet_id, poolId: b.pool_id, amount: b.amount, isYes: b.isYes, timestamp: b.timestamp, txHash: b.txHash })),
+    ...d.Claim.filter((c) => !c.internal).map((c) => ({ kind: 'claim' as const, wallet: c.wallet_id, poolId: c.pool_id, amount: c.amount, isYes: null, timestamp: c.timestamp, txHash: c.txHash })),
   ]
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, activityLimit);

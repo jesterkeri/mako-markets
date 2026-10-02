@@ -182,6 +182,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'BetPlaced' }, async ({ even
     amount,
     timestamp: ts,
     txHash: event.transaction.hash,
+    internal: wallet.internal,
   });
 
   wallet = {
@@ -248,6 +249,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'Claimed' }, async ({ event,
     amount,
     timestamp: ts,
     txHash: event.transaction.hash,
+    internal: wallet.internal,
   });
 
   wallet = { ...wallet, claimed: wallet.claimed + amount, net: wallet.net + amount, lastActiveAt: ts };
@@ -287,4 +289,7 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'CreatorFeeForfeited' }, asy
   const pool = await context.Pool.get(poolId);
   if (!pool) throw new Error(`CreatorFeeForfeited for unknown pool ${poolId} (tx ${event.transaction.hash})`);
   context.Pool.set({ ...pool, creatorFeeForfeited: event.params.forgoneAmount });
+  // Every handled event moves the index progress /stats shows (Codex S6 r1).
+  const global = await loadGlobal(context);
+  context.GlobalStats.set(stamp(global, event.block.timestamp, event.block.number));
 });

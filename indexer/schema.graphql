@@ -58,6 +58,8 @@ type Bet {
   amount: BigInt!
   timestamp: Int! @index
   txHash: String!
+  """Mako Market's own wallet (internal-wallets.ts): public activity lists filter on this before their limit."""
+  internal: Boolean! @index
 }
 
 """One Claimed event: a payout or a refund."""
@@ -68,6 +70,8 @@ type Claim {
   amount: BigInt!
   timestamp: Int! @index
   txHash: String!
+  """Mako Market's own wallet (internal-wallets.ts): public activity lists filter on this before their limit."""
+  internal: Boolean! @index
 }
 
 """A wallet's stake in one pool."""
