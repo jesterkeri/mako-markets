@@ -9,6 +9,9 @@ import { describe, it } from 'vitest';
 import { createTestIndexer } from 'envio';
 import { createPublicClient, defineChain, http, parseAbi } from 'viem';
 
+import { isInternal } from './internal-wallets';
+
+
 if (!process.env.ENVIO_API_TOKEN && existsSync('.env')) process.loadEnvFile('.env');
 
 const MAKO = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
@@ -85,6 +88,11 @@ describe.skipIf(!process.env.ENVIO_API_TOKEN)('the indexer against Monad testnet
       );
       t.expect(mismatches, mismatches.slice(0, 20).join('\n')).toEqual([]);
       t.expect(global?.pools).toBe(count);
+      // The public figures, recomputed from the contract with the same reviewed internal-wallet list (Codex S6 r2).
+      const publicPools = markets.filter((m) => !isInternal(m.creator));
+      t.expect(global?.communityPools).toBe(publicPools.length);
+      t.expect(global?.communityPoolsSettled).toBe(publicPools.filter((m) => m.resolved).length);
+      t.expect(global?.communityPoolsRefunded).toBe(publicPools.filter((m) => m.resolved && m.outcome === 3).length);
     },
     20 * 60_000,
   );

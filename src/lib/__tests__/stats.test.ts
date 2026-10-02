@@ -9,8 +9,6 @@ vi.mock('@/db/client', () => ({ db: { execute: mocks.dbExecute } }));
 
 import { parseIndexedStats, STATS_QUERY, toWire } from '../stats';
 
-const TX = `0x${'ab'.repeat(32)}`;
-const W1 = `0x${'A1'.repeat(20)}`;
 const answer = (over: Record<string, unknown> = {}) => ({
   data: {
     GlobalStats: [
@@ -19,10 +17,9 @@ const answer = (over: Record<string, unknown> = {}) => ({
         bettors: 9,
         bets: 40,
         volume: '123450000',
-        pools: 7,
         communityPools: 5,
-        poolsSettled: 4,
-        poolsRefunded: 1,
+        communityPoolsSettled: 4,
+        communityPoolsRefunded: 1,
         claims: 6,
         claimed: 50_000_000,
         creatorFeesPaid: '1000000',
@@ -32,46 +29,29 @@ const answer = (over: Record<string, unknown> = {}) => ({
     ],
     DailyStats: [{ id: '2026-09-21', dayStart: 1_789_948_800, newWallets: 12, activeWallets: 12, bets: 40, volume: '123450000', cumulativeWallets: 12 }],
     CategoryStats: [{ category: 'Crypto', pools: 5, bets: 30, volume: '100000000' }],
-    Bet: [{ id: 'b1', wallet_id: W1, pool_id: '92', isYes: true, amount: '1000000', timestamp: 1_790_000_100, txHash: TX, internal: false }],
-    Claim: [{ id: 'c1', wallet_id: W1, pool_id: '90', amount: '2000000', timestamp: 1_790_000_200, txHash: TX, internal: false }],
     ...over,
   },
 });
 
 describe('parseIndexedStats', () => {
-  it('reads a complete answer, with amounts as bigints and activity newest first', () => {
+  it('reads a complete answer, with amounts as bigints', () => {
     const s = parseIndexedStats(answer());
-    expect(s?.global).toMatchObject({ wallets: 12, bettors: 9, volume: 123_450_000n, claimed: 50_000_000n });
-    expect(s?.activity.map((a) => a.kind)).toEqual(['claim', 'bet']);
-    expect(s?.activity[1]).toMatchObject({ wallet: W1.toLowerCase(), poolId: '92', amount: 1_000_000n, isYes: true });
+    expect(s?.global).toMatchObject({ wallets: 12, bettors: 9, volume: 123_450_000n, claimed: 50_000_000n, communityPools: 5, communityPoolsSettled: 4 });
   });
 
-  it("never lets Mako Market's own wallets into public activity (Codex S6 r1)", () => {
-    // The query filters on `internal` before its limit, for bets and claims alike.
-    expect(STATS_QUERY).toMatch(/Bet\(where: \{ internal: \{ _eq: false \} \}, order_by: \{ timestamp: desc \}, limit: 12\)/);
-    expect(STATS_QUERY).toMatch(/Claim\(where: \{ internal: \{ _eq: false \} \}, order_by: \{ timestamp: desc \}, limit: 12\)/);
-    // And an internal row that still arrives never reaches the page.
-    const INTERNAL = '0xc8bf886f73e4371cbd8160eea7683b8da98190f1';
-    const s = parseIndexedStats(
-      answer({
-        Bet: [{ id: 'bi', wallet_id: INTERNAL, pool_id: '92', isYes: false, amount: '5000000', timestamp: 1_790_000_300, txHash: TX, internal: true }],
-        Claim: [{ id: 'ci', wallet_id: INTERNAL, pool_id: '90', amount: '5000000', timestamp: 1_790_000_400, txHash: TX, internal: true }],
-      }),
-    );
-    expect(s).not.toBeNull();
-    expect(s!.activity).toEqual([]);
-    expect(JSON.stringify(toWire(s, 'ok', null, 0))).not.toContain(INTERNAL);
-  });
-
-  it('refuses a row without the internal flag', () => {
-    expect(parseIndexedStats(answer({ Bet: [{ id: 'b', wallet_id: W1, pool_id: '1', isYes: true, amount: '1', timestamp: 1, txHash: TX }] }))).toBeNull();
+  it('is counts only: the query asks for no wallet, transaction or event row, and the wire carries none (Codex S6 r2)', () => {
+    expect(STATS_QUERY).not.toMatch(/\bBet\b|\bClaim\b|wallet_id|txHash|Wallet\(/);
+    // Operator-only totals (Mako Market's own pools included) are never asked for.
+    expect(STATS_QUERY).not.toMatch(/\bpools\b(?!\s*bets)|poolsSettled|poolsRefunded/);
+    const wire = JSON.stringify(toWire(parseIndexedStats(answer()), 'ok', null, 0));
+    expect(wire).not.toMatch(/0x[0-9a-fA-F]{40}/);
+    expect(wire).not.toMatch(/"activity"|"wallet"|"txHash"/);
   });
 
   it('refuses anything less than a complete, well-formed answer', () => {
     expect(parseIndexedStats({ errors: [{ message: 'field not found' }] })).toBeNull();
     expect(parseIndexedStats(answer({ GlobalStats: [] }))).toBeNull(); // nothing indexed yet
     expect(parseIndexedStats(answer({ CategoryStats: undefined }))).toBeNull();
-    expect(parseIndexedStats(answer({ Bet: [{ id: 'b', wallet_id: 'not-an-address', pool_id: '1', isYes: true, amount: '1', timestamp: 1, txHash: TX, internal: false }] }))).toBeNull();
     const negative = answer();
     (negative.data.GlobalStats[0] as Record<string, unknown>).volume = '-5';
     expect(parseIndexedStats(negative)).toBeNull();

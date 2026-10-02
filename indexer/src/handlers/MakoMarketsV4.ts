@@ -25,6 +25,8 @@ async function loadGlobal(context: HandlerContext): Promise<GlobalStats> {
       communityPools: 0,
       poolsSettled: 0,
       poolsRefunded: 0,
+      communityPoolsSettled: 0,
+      communityPoolsRefunded: 0,
       claims: 0,
       claimed: 0n,
       creatorFeesPaid: 0n,
@@ -215,9 +217,18 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketResolved' }, async ({
 
   context.Pool.set({ ...pool, status, resolvedAt: ts });
   const global = await loadGlobal(context);
+  const refunded = status === 'Refund' ? 1 : 0;
+  // A pool created by Mako Market's own wallet counts only in the operator totals (Codex S6 r2).
+  const community = isInternal(pool.creator_id) ? 0 : 1;
   context.GlobalStats.set(
     stamp(
-      { ...global, poolsSettled: global.poolsSettled + 1, poolsRefunded: global.poolsRefunded + (status === 'Refund' ? 1 : 0) },
+      {
+        ...global,
+        poolsSettled: global.poolsSettled + 1,
+        poolsRefunded: global.poolsRefunded + refunded,
+        communityPoolsSettled: global.communityPoolsSettled + community,
+        communityPoolsRefunded: global.communityPoolsRefunded + community * refunded,
+      },
       ts,
       event.block.number,
     ),

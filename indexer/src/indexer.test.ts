@@ -153,7 +153,13 @@ describe("Mako Market's own wallets", () => {
     await indexer.process({
       chains: {
         [CHAIN]: {
-          simulate: [created(3n, MAKO, DAY1, 6n), bet(3n, MAKO, true, 5n * USDC, DAY1), bet(3n, CAROL, false, USDC, DAY1 + 10)],
+          simulate: [
+            created(3n, MAKO, DAY1, 6n),
+            bet(3n, MAKO, true, 5n * USDC, DAY1),
+            bet(3n, CAROL, false, USDC, DAY1 + 10),
+            // Mako Market's own pool is created, then settled as a refund: only the operator totals move (Codex S6 r2).
+            resolved(3n, 3n, DAY2),
+          ],
         },
       },
     });
@@ -165,8 +171,13 @@ describe("Mako Market's own wallets", () => {
       internalWallets: 1,
       bets: 1,
       volume: USDC,
-      pools: 1,
       communityPools: 0,
+      communityPoolsSettled: 0,
+      communityPoolsRefunded: 0,
+      // Operator-only totals, never sent by /stats.
+      pools: 1,
+      poolsSettled: 1,
+      poolsRefunded: 1,
     });
     t.expect(await indexer.DailyStats.getOrThrow(dayOf(DAY1).id)).toMatchObject({ newWallets: 1, activeWallets: 1, bets: 1, poolsCreated: 0 });
     t.expect(await indexer.CategoryStats.get('Mako')).toMatchObject({ pools: 0, bets: 1, volume: USDC });
@@ -202,7 +213,7 @@ describe('refunds', () => {
     });
     t.expect(await indexer.Pool.getOrThrow('5')).toMatchObject({ status: 'Refund', claimedTotal: USDC });
     t.expect(await indexer.Wallet.getOrThrow(ALICE)).toMatchObject({ staked: USDC, claimed: USDC, net: 0n });
-    t.expect(await indexer.GlobalStats.getOrThrow('global')).toMatchObject({ poolsSettled: 1, poolsRefunded: 1 });
+    t.expect(await indexer.GlobalStats.getOrThrow('global')).toMatchObject({ poolsSettled: 1, poolsRefunded: 1, communityPoolsSettled: 1, communityPoolsRefunded: 1 });
   });
 });
 

@@ -148,12 +148,18 @@ type GlobalStats {
   bettors: Int!
   bets: Int!
   volume: BigInt!
-  "Every pool, including Mako Market's own house pools."
+  "Every pool, including Mako Market's own: an operator figure, never sent by the public /stats."
   pools: Int!
-  "Pools created by public wallets."
+  "Pools created by public wallets: the public 'pools created'."
   communityPools: Int!
+  "Every settled pool, Mako Market's own included: operator only."
   poolsSettled: Int!
+  "Every refunded pool, Mako Market's own included: operator only."
   poolsRefunded: Int!
+  "Settled pools created by public wallets: the public figure."
+  communityPoolsSettled: Int!
+  "Refunded pools created by public wallets: the public figure."
+  communityPoolsRefunded: Int!
   claims: Int!
   claimed: BigInt!
   creatorFeesPaid: BigInt!

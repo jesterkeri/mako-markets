@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { explorerUrl } from '@/lib/chain';
@@ -8,7 +7,6 @@ import { MAKO_ADDRESS } from '@/lib/contract';
 import { formatAgo, usdc2 } from '@/lib/pool-list';
 import { growthPaths, type StatsWire } from '@/lib/stats';
 import { useLiveNowSec } from '@/lib/use-live-clock';
-import { formatAddress } from '@/lib/user-display';
 
 // /stats ("proof of demand"): figures read from Monad testnet through Mako Market's Envio indexer of the pools
 // contract, and the gas-free actions Mako Market sponsored. Mako Market's own wallets are left out. A figure that
@@ -72,32 +70,6 @@ function Growth({ s, w, h }: { s: StatsWire; w: number; h: number }) {
         <span>{g[g.length - 1].day}</span>
       </div>
     </div>
-  );
-}
-
-function Activity({ s, now, compact }: { s: StatsWire; now: number | null; compact: boolean }) {
-  const rows = s.indexed?.activity ?? [];
-  if (rows.length === 0) return <div style={{ fontSize: 14, color: 'var(--dim)', padding: '18px 0' }}>{s.indexed ? 'No activity indexed yet.' : 'Unavailable until the index can be read.'}</div>;
-  return (
-    <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-      {rows.map((a) => {
-        const pill = a.kind === 'claim' ? { text: 'CLAIM', bg: 'var(--mako-teal)' } : a.isYes ? { text: 'BET YES', bg: 'var(--mako-signal)' } : { text: 'BET NO', bg: 'var(--mako-red)' };
-        return (
-          <li key={`${a.txHash}-${a.kind}-${a.poolId}`} style={{ display: 'flex', alignItems: 'center', gap: compact ? 10 : 16, padding: '12px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
-            <span style={{ flex: 'none', ...mono, fontSize: 10, fontWeight: 700, color: '#000', background: pill.bg, borderRadius: 9999, padding: '4px 9px' }}>{pill.text}</span>
-            <span style={{ ...mono, fontSize: 12 }}>{formatAddress(a.wallet)}</span>
-            <Link href={`/pools/${a.poolId}`} style={{ ...mono, fontSize: 12, color: 'var(--dim)' }}>
-              Pool #{a.poolId}
-            </Link>
-            <span style={{ marginLeft: 'auto', ...mono, fontSize: 12, fontWeight: 700 }}>{usdc(a.amount)} USDC</span>
-            {!compact && <span style={{ ...mono, fontSize: 11, color: 'var(--dim)', width: 70, textAlign: 'right' }}>{now === null ? '' : formatAgo(now - a.timestamp)}</span>}
-            <a href={explorerUrl('tx', a.txHash)} target="_blank" rel="noopener noreferrer" aria-label="View on the explorer" style={{ ...mono, fontSize: 13, color: 'var(--mako-canvas-fg)', textDecoration: 'none' }}>
-              ↗
-            </a>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 
@@ -218,8 +190,8 @@ export function StatsClient() {
           'Pools and payouts',
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 36 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              {figure({ label: 'Pools created', value: i ? int(i.pools) : null, note: i ? `${int(i.communityPools)} by the community` : '' }, 30)}
-              {figure({ label: 'Pools settled', value: i ? int(i.poolsSettled) : null, note: i ? `${int(i.poolsRefunded)} refunded` : '' }, 30)}
+              {figure({ label: 'Pools created', value: i ? int(i.communityPools) : null, note: 'by people using Mako Market' }, 30)}
+              {figure({ label: 'Pools settled', value: i ? int(i.communityPoolsSettled) : null, note: i ? `${int(i.communityPoolsRefunded)} refunded` : '' }, 30)}
               {figure({ label: 'Claims paid', value: i ? int(i.claims) : null, note: i ? `${usdc(i.claimed)} USDC` : '' }, 30)}
               {figure({ label: 'Gas-free accounts', value: s.gasFree ? int(s.gasFree.accounts) : null, note: 'email accounts that used sponsored gas' }, 30)}
             </div>
@@ -229,7 +201,6 @@ export function StatsClient() {
             </div>
           </div>,
         )}
-        {section('03', 'Live activity', 'Each row links to its transaction', <Activity s={s} now={now} compact={false} />)}
         <Footer s={s} now={now} />
         </div>
       </div>
@@ -240,7 +211,6 @@ export function StatsClient() {
         <IndexNote s={s} />
         {section('01', 'Growth', 'Wallets', <Growth s={s} w={360} h={140} />)}
         {section('02', 'Adoption', 'By category', <Categories s={s} />)}
-        {section('03', 'Live activity', 'Tap ↗ for the transaction', <Activity s={s} now={now} compact />)}
         <Footer s={s} now={now} />
       </div>
     </>

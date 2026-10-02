@@ -13,7 +13,7 @@ leaderboard still reads the site's own database.
 | `Pool` | market: question, category, close time, YES/NO totals, distinct bettors per side, status, claims, creator fee | every event of that market |
 | `Bet`, `Claim` | `BetPlaced` / `Claimed` event, with its transaction hash | the event |
 | `Position` | wallet in a pool: staked YES, staked NO, claimed | bets and claims |
-| `Wallet` | address that bet or created a pool: staked, claimed, creator fees, `net` (claimed + fees - staked, the leaderboard's PnL), first and last seen | every event it takes part in |
+| `Wallet` | address that bet or created a pool: staked, claimed, creator fees, `net` (claimed + fees - staked; note the leaderboard's profit is claimed - staked, without fees), first and last seen | every event it takes part in |
 | `DailyStats` | UTC day: new and active wallets, bets, volume, pools created, claims, cumulative wallets | the day's events |
 | `CategoryStats` | category: pools, bets, volume | creations and bets |
 | `GlobalStats` | one row, `global`: running totals since deployment | every event |
@@ -22,8 +22,11 @@ Envio Cloud does not serve aggregate queries, so every total is derived in the h
 (`src/handlers/MakoMarketsV4.ts`). Amounts are USDC base units (6 decimals); times are Unix seconds.
 
 **Mako Market's own wallets** (the contract's owner, resolver and treasury, plus test accounts, listed in
-`src/internal-wallets.ts`) are indexed like any other but left out of `GlobalStats`, `DailyStats` and
-`CategoryStats`, so the public numbers count people who came through the product.
+`src/internal-wallets.ts`) are indexed like any other but left out of every public figure: `DailyStats`,
+`CategoryStats`, and the public fields of `GlobalStats` (`communityPools`, `communityPoolsSettled`,
+`communityPoolsRefunded`, wallets, bets, volume, claims). `GlobalStats.pools`, `poolsSettled` and `poolsRefunded`
+count every pool, Mako Market's own included, for the operator; the public `/stats` never asks for them. `/stats` is
+counts only: it never requests or shows a wallet, a transaction or an individual bet or claim.
 
 ## Run it
 
