@@ -13,7 +13,9 @@ import { toBytes32 } from './oracle';
 import { buildPool, type CreateDraft } from './pool-create';
 import { useEnsureMonadChain } from './hooks';
 import { USDC_ADDRESS, usdcContract } from './usdc';
-import { useUser } from './use-user';
+import { formatAddress } from './user-display';
+import { useUser, type AuthedUser } from './use-user';
+import { isWalletDrifted } from './wallet-drift';
 
 // One on-chain pool action (a bet or a claim) driven through the confirm sheet (19a). An email account's action is
 // gas-free: one signature from its embedded wallet, sponsored by Mako Market. A wallet account signs and pays its
@@ -49,10 +51,45 @@ function undone(w: OutcomeWords, body = `Monad turned the ${w.noun} down, so it 
   return { step: 'failed', title: w.failTitle, body, nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
 }
 
+/// A wallet account whose browser wallet is not the one it signed in with: nothing may be asked of the connected
+/// wallet, since the sheet, balance and limits all describe the signed-in one (Codex S4 r1).
+function wrongWallet(user: Extract<AuthedUser, { authType: 'wallet' }>, connected: string): ConfirmPhase {
+  return {
+    step: 'failed',
+    title: 'Wrong wallet connected',
+    body: `You signed in with ${formatAddress(user.walletAddress)}, but your browser wallet is ${formatAddress(connected)}. Switch your wallet to ${formatAddress(user.walletAddress)}, then try again.`,
+    nothingMoved: true,
+    primary: { label: 'Try again', retry: true },
+    secondary: { label: 'Close' },
+  };
+}
+
+/// The USDC approval a wallet account sends before its first bet or pool: once it has gone out, the sheet can never
+/// say nothing was sent (Codex S3 r1). An approval moves no USDC; it lets the Pools contract take the stake later.
+type Approval = { hash: `0x${string}`; state: 'sent' | 'confirmed' };
+
+function afterApproval(a: Approval, p: ConfirmPhase, w: OutcomeWords): ConfirmPhase {
+  if (p.step !== 'cancelled' && !(p.step === 'failed' && p.nothingMoved)) return p;
+  const what =
+    a.state === 'confirmed'
+      ? 'Your USDC approval went through, so Mako Market pools can use your USDC when you bet.'
+      : "Your USDC approval was sent, but its confirmation didn't come back.";
+  const why = p.step === 'cancelled' ? `You declined the ${w.noun} in your wallet.` : p.body;
+  return {
+    step: 'failed',
+    title: `Approval sent, ${w.noun} not placed`,
+    body: `${what} The ${w.noun} itself was not sent: ${why} No USDC left your wallet. Approval tx ${a.hash.slice(0, 10)}…`,
+    nothingMoved: true,
+    primary: { label: 'Try again', retry: true },
+    secondary: { label: 'Close' },
+  };
+}
+
 export function usePoolTx(onLanded?: () => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
   const publicClient = usePublicClient({ chainId: monadTestnet.id });
+  const client = publicClient;
   const { writeContractAsync } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
 
@@ -63,12 +100,16 @@ export function usePoolTx(onLanded?: () => void) {
   const inFlight = useRef(false);
 
   /// Opens the sheet on the review step.
-  const open = useCallback((next: PoolTx) => {
-    if (inFlight.current) return;
-    setTx(next);
-    setPhase({ step: 'review' });
-    setCreatedId(null);
-  }, []);
+  const open = useCallback(
+    (next: PoolTx) => {
+      if (inFlight.current) return;
+      setTx(next);
+      // A drifted wallet session never reaches the review step's Confirm button.
+      setPhase(user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : { step: 'review' });
+      setCreatedId(null);
+    },
+    [user, connected],
+  );
 
   /// Closes the sheet; never while a transaction is on its way.
   const close = useCallback(() => {
@@ -100,7 +141,7 @@ export function usePoolTx(onLanded?: () => void) {
       if (user.authType === 'magic') {
         next = await runSponsored(tx, user, words);
       } else {
-        next = await runWithWallet(tx, words);
+        next = await runWithWallet(tx, user, words);
       }
     } catch (err) {
       // Only reached before anything was signed for an email account (the allowance read), or on a wallet error
@@ -151,81 +192,99 @@ export function usePoolTx(onLanded?: () => void) {
       return phaseFromOutcome(outcome, w);
     }
 
-    async function runWithWallet(t: PoolTx, w: OutcomeWords): Promise<ConfirmPhase> {
+    async function runWithWallet(t: PoolTx, u: Extract<typeof user, { authType: 'wallet' }>, w: OutcomeWords): Promise<ConfirmPhase> {
       const account = connected;
       if (!account || !publicClient) {
         return { step: 'failed', title: 'Wallet not connected', body: 'Connect the wallet you signed in with, then try again.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
       }
-      setPhase({ step: 'pending', stage: 'signing' });
-      try {
-        await ensureChain();
-      } catch {
-        return { step: 'cancelled' };
-      }
-      /// Set once the action itself is handed to the wallet: from then on an error other than a refusal may come
-      /// after the wallet broadcast it, so the sheet can no longer say nothing moved.
-      let sent = false;
-      try {
-        if (t.kind === 'create') {
-          const built = buildPool(t.draft, Math.floor(Date.now() / 1000));
-          if (!built.ok) return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
-          const args = [built.pool.mType, toBytes32(built.pool.oracleRef), built.pool.bettingCloseTime, built.pool.closeTime, built.pool.question, t.seed, t.seedYes] as const;
-          const allowance = (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [account, MAKO_ADDRESS] })) as bigint;
-          if (allowance < t.seed) {
-            const approveHash = await writeContractAsync({ ...usdcContract, functionName: 'approve', args: [MAKO_ADDRESS, maxUint256], chainId: monadTestnet.id });
-            setPhase({ step: 'pending', stage: 'confirming', txHash: approveHash });
-            const approved = await publicClient.waitForTransactionReceipt({ hash: approveHash });
-            if (approved.status !== 'success') return undone(w, 'Your USDC approval was turned down on Monad, so the pool was not created.');
-          }
-          try {
-            await publicClient.simulateContract({ ...makoContract, functionName: 'createMarket', args, account });
-          } catch (err) {
-            return refusalPhase(revertName(err), w);
-          }
-          setPhase({ step: 'pending', stage: 'signing' });
-          sent = true;
-          const hash = await writeContractAsync({ ...makoContract, functionName: 'createMarket', args, chainId: monadTestnet.id });
-          setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
-          const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          if (receipt.status !== 'success') return undone(w);
-          setCreatedId(createdMarketIdFor(receipt, account));
-          return { step: 'done', txHash: hash };
+      // Checked again at confirm time: the browser wallet can change after the sheet opened. Before any allowance
+      // read, simulation or wallet request.
+      if (isWalletDrifted(u, account)) return wrongWallet(u, account);
+      let approval: Approval | null = null;
+      const result = await walletSteps(account, publicClient);
+      return approval ? afterApproval(approval, result, w) : result;
+
+      /// Sends the USDC approval and records it the moment the wallet hands back its hash.
+      async function approve(): Promise<'ok' | 'reverted'> {
+        const approveHash = await writeContractAsync({ ...usdcContract, functionName: 'approve', args: [MAKO_ADDRESS, maxUint256], chainId: monadTestnet.id });
+        approval = { hash: approveHash, state: 'sent' };
+        setPhase({ step: 'pending', stage: 'confirming', txHash: approveHash });
+        const approved = await publicClient!.waitForTransactionReceipt({ hash: approveHash });
+        if (approved.status !== 'success') {
+          // Reverted: its effect was undone and the wallet paid only gas; the sheet says so itself.
+          approval = null;
+          return 'reverted';
         }
-        if (t.kind === 'bet') {
-          const allowance = (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [account, MAKO_ADDRESS] })) as bigint;
-          if (allowance < t.amount) {
-            const approveHash = await writeContractAsync({ ...usdcContract, functionName: 'approve', args: [MAKO_ADDRESS, maxUint256], chainId: monadTestnet.id });
-            setPhase({ step: 'pending', stage: 'confirming', txHash: approveHash });
-            const approved = await publicClient.waitForTransactionReceipt({ hash: approveHash });
-            if (approved.status !== 'success') return undone(w, 'Your USDC approval was turned down on Monad, so the bet was not sent.');
+        approval = { hash: approveHash, state: 'confirmed' };
+        return 'ok';
+      }
+
+      async function walletSteps(account: `0x${string}`, publicClient: NonNullable<typeof client>): Promise<ConfirmPhase> {
+        setPhase({ step: 'pending', stage: 'signing' });
+        try {
+          await ensureChain();
+        } catch {
+          return { step: 'cancelled' };
+        }
+        /// Set once the action itself is handed to the wallet: from then on an error other than a refusal may come
+        /// after the wallet broadcast it, so the sheet can no longer say nothing moved.
+        let sent = false;
+        try {
+          if (t.kind === 'create') {
+            const built = buildPool(t.draft, Math.floor(Date.now() / 1000));
+            if (!built.ok) return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
+            const args = [built.pool.mType, toBytes32(built.pool.oracleRef), built.pool.bettingCloseTime, built.pool.closeTime, built.pool.question, t.seed, t.seedYes] as const;
+            const allowance = (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [account, MAKO_ADDRESS] })) as bigint;
+            if (allowance < t.seed && (await approve()) === 'reverted') {
+              return undone(w, 'Your USDC approval was turned down on Monad, so the pool was not created.');
+            }
+            try {
+              await publicClient.simulateContract({ ...makoContract, functionName: 'createMarket', args, account });
+            } catch (err) {
+              return refusalPhase(revertName(err), w);
+            }
+            setPhase({ step: 'pending', stage: 'signing' });
+            sent = true;
+            const hash = await writeContractAsync({ ...makoContract, functionName: 'createMarket', args, chainId: monadTestnet.id });
+            setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
+            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+            if (receipt.status !== 'success') return undone(w);
+            setCreatedId(createdMarketIdFor(receipt, account));
+            return { step: 'done', txHash: hash };
+          }
+          if (t.kind === 'bet') {
+            const allowance = (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [account, MAKO_ADDRESS] })) as bigint;
+            if (allowance < t.amount && (await approve()) === 'reverted') {
+              return undone(w, 'Your USDC approval was turned down on Monad, so the bet was not sent.');
+            }
+            try {
+              await publicClient.simulateContract({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], account });
+            } catch (err) {
+              return refusalPhase(revertName(err), w);
+            }
+            setPhase({ step: 'pending', stage: 'signing' });
+            sent = true;
+            const hash = await writeContractAsync({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], chainId: monadTestnet.id });
+            setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
+            const receipt = await publicClient.waitForTransactionReceipt({ hash });
+            return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
           }
           try {
-            await publicClient.simulateContract({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], account });
+            await publicClient.simulateContract({ ...makoContract, functionName: 'claim', args: [t.marketId], account });
           } catch (err) {
             return refusalPhase(revertName(err), w);
           }
-          setPhase({ step: 'pending', stage: 'signing' });
           sent = true;
-          const hash = await writeContractAsync({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], chainId: monadTestnet.id });
+          const hash = await writeContractAsync({ ...makoContract, functionName: 'claim', args: [t.marketId], chainId: monadTestnet.id });
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
-        }
-        try {
-          await publicClient.simulateContract({ ...makoContract, functionName: 'claim', args: [t.marketId], account });
         } catch (err) {
-          return refusalPhase(revertName(err), w);
+          if (isUserRejection(err)) return { step: 'cancelled' };
+          return sent
+            ? { step: 'failed', title: 'Lost track of it', body: `Your ${w.noun} may have been sent, but its confirmation didn't come back. Check Me before you try again.`, nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } }
+            : { step: 'failed', title: w.failTitle, body: 'Your wallet or the network failed before it was sent.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
         }
-        sent = true;
-        const hash = await writeContractAsync({ ...makoContract, functionName: 'claim', args: [t.marketId], chainId: monadTestnet.id });
-        setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
-        return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
-      } catch (err) {
-        if (isUserRejection(err)) return { step: 'cancelled' };
-        return sent
-          ? { step: 'failed', title: 'Lost track of it', body: `Your ${w.noun} may have been sent, but its confirmation didn't come back. Check Me before you try again.`, nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } }
-          : { step: 'failed', title: w.failTitle, body: 'Your wallet or the network failed before it was sent.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
       }
     }
   }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
