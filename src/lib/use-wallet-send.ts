@@ -73,7 +73,7 @@ export function maxSend(balance: bigint, email: boolean): bigint {
 /// An email account's gas-free send, in the sheet's words.
 export function emailSendPhase(o: RunOutcome, safe: Address): ConfirmPhase {
   if (o.kind === 'sponsor_failed' && o.status === 403) {
-    if (o.reason === 'bad_send_recipient') return failed('Address not allowed', 'Mako Market can’t send to that address: it is your own account or a contract.', true, close);
+    if (o.reason === 'bad_send_recipient') return failed('Address not allowed', 'Mako Market can’t send to that address: it is your own account, or a Mako Market or USDC contract.', true, close);
     if (o.reason === 'bad_send_amount') return failed('Amount not allowed', `Each send can be at most ${usdc2(EMAIL_SEND_CAP)} USDC.`, true, close);
   }
   // A 409 from the send route means another request is already sending this operation: it may land.

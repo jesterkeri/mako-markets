@@ -54,6 +54,8 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
     () => {
       setTo('');
       setAmount('');
+      setNotice(null);
+      setAcknowledged(false);
       void balanceQuery.refetch();
     },
     () => void balanceQuery.refetch(),
