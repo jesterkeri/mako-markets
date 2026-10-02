@@ -43,6 +43,8 @@ type Ctx = {
   writable: boolean;
   nowMs: number;
   onSignIn: () => void;
+  /// When the comment list last refreshed: expanded reply pages re-fetch then, so a reply deleted elsewhere goes.
+  refreshedAt: number;
 };
 
 const MONO: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
@@ -142,7 +144,7 @@ function useDraft(target: CommentTargetParams, parentId: string | undefined, onP
 
 export function PoolCommentsDesktop({ marketId, onSignIn, writable = true }: Props) {
   const { target, viewer, isAdmin, query, comments, nowMs } = usePoolComments(marketId);
-  const ctx: Ctx = { target, viewer, canModerate: isAdmin, writable, nowMs, onSignIn };
+  const ctx: Ctx = { target, viewer, canModerate: isAdmin, writable, nowMs, onSignIn, refreshedAt: query.dataUpdatedAt };
   const pill: React.CSSProperties = { flex: 'none', height: 34, padding: '0 16px', borderRadius: 9999, ...MONO, fontSize: 11, fontWeight: 700, letterSpacing: '0.12em' };
   const note: React.CSSProperties = { flex: 1, fontSize: 14, lineHeight: 1.45, color: 'var(--dim)' };
 
@@ -335,7 +337,7 @@ const deleteFailed = (mobile: boolean) => (
 );
 
 function ThreadDesktop({ c, ctx }: { c: CommentWire; ctx: Ctx }) {
-  const t = useThread(c, ctx.target);
+  const t = useThread(c, ctx.target, ctx.refreshedAt);
   const d = useRowDelete(c, ctx);
   const [replyOpen, setReplyOpen] = useState(false);
   const canReply = canReplyTo(c, ctx);
@@ -424,7 +426,7 @@ function ReplyDesktop({ r, ctx, onDeleted }: { r: CommentWire; ctx: Ctx; onDelet
 
 export function PoolCommentsMobile({ marketId, onSignIn, writable = true }: Props) {
   const { target, viewer, isAdmin, query, comments, nowMs } = usePoolComments(marketId);
-  const ctx: Ctx = { target, viewer, canModerate: isAdmin, writable, nowMs, onSignIn };
+  const ctx: Ctx = { target, viewer, canModerate: isAdmin, writable, nowMs, onSignIn, refreshedAt: query.dataUpdatedAt };
   const note: React.CSSProperties = { flex: 1, fontSize: 15, lineHeight: 1.4, color: 'var(--dim)' };
   const pill: React.CSSProperties = { flex: 'none', height: 46, padding: '0 18px', borderRadius: 9999, fontSize: 15, fontWeight: 800 };
 
@@ -601,7 +603,7 @@ const actionsMobile: React.CSSProperties = { display: 'flex', gap: 14, marginTop
 const bubble = (padding: string): React.CSSProperties => ({ flex: 1, minWidth: 0, borderRadius: '4px 20px 20px 20px', background: 'var(--mako-canvas)', padding });
 
 function ThreadMobile({ c, ctx }: { c: CommentWire; ctx: Ctx }) {
-  const t = useThread(c, ctx.target);
+  const t = useThread(c, ctx.target, ctx.refreshedAt);
   const d = useRowDelete(c, ctx);
   const [replyOpen, setReplyOpen] = useState(false);
   const canReply = canReplyTo(c, ctx);

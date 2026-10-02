@@ -5,7 +5,7 @@
 // The one extra read is the viewer's own stake on this pool, for "Posting as … · holds YES", taken from the contract
 // with the same query the pool page already runs, so wagmi serves both from one request.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReadContract } from 'wagmi';
 
 import { useIsAdmin } from '@/lib/admin';
@@ -73,11 +73,47 @@ export function usePoolComments(marketId: string) {
 /// One top-level comment's replies: the first few come inline with the comment; "view more" pages the rest into
 /// local state. Two fixes over the old component (#193): the next cursor follows the comment itself until a page has
 /// been loaded, so a reply that pushes a thread past the inline window becomes reachable at once, and posting or
-/// deleting a reply reconciles the locally held pages instead of leaving them stale until a remount.
-export function useThread(comment: CommentWire, target: CommentTargetParams) {
+/// deleting a reply reconciles the locally held pages instead of leaving them stale until a remount. And every time
+/// the comment list refreshes (`refreshedAt`), the pages already loaded are fetched again from the start, so a reply
+/// deleted by someone else (a moderator, the author in another tab) disappears; if that fetch fails the thread falls
+/// back to its inline replies rather than keep showing pages it can no longer vouch for (Codex S4 r1).
+export function useThread(comment: CommentWire, target: CommentTargetParams, refreshedAt = 0) {
   const [extra, setExtra] = useState<{ replies: CommentWire[]; cursor: string | null } | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  /// How many "view more" pages are held, so a refresh can fetch the same span again.
+  const pagesLoaded = useRef(0);
+  const latest = useRef({ comment, target });
+  latest.current = { comment, target };
+
+  useEffect(() => {
+    if (!refreshedAt || pagesLoaded.current === 0) return;
+    let cancelled = false;
+    const { comment: c, target: t } = latest.current;
+    void (async () => {
+      const replies: CommentWire[] = [];
+      let next = c.repliesNextCursor;
+      let pages = 0;
+      try {
+        while (pages < pagesLoaded.current && next) {
+          const page = await fetchMoreReplies(t, c.id, next);
+          replies.push(...page.comments);
+          next = page.nextCursor;
+          pages += 1;
+        }
+        if (cancelled) return;
+        pagesLoaded.current = pages;
+        setExtra(pages === 0 ? null : { replies, cursor: next });
+      } catch {
+        if (cancelled) return;
+        pagesLoaded.current = 0;
+        setExtra(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshedAt]);
 
   // A delete shifts the inline window, so a loaded reply can come back inline too: show each id once.
   const inline = new Set(comment.replies.map((r) => r.id));
@@ -91,6 +127,7 @@ export function useThread(comment: CommentWire, target: CommentTargetParams) {
     try {
       const page = await fetchMoreReplies(target, comment.id, cursor);
       setExtra((prev) => ({ replies: [...(prev?.replies ?? []), ...page.comments], cursor: page.nextCursor }));
+      pagesLoaded.current += 1;
     } catch {
       setLoadFailed(true);
     } finally {
@@ -106,7 +143,10 @@ export function useThread(comment: CommentWire, target: CommentTargetParams) {
     loadMore,
     /// A new reply lands at the end of the thread: drop the local pages so the refreshed comment (inline replies
     /// plus its own cursor) leads to it.
-    onReplyPosted: () => setExtra(null),
+    onReplyPosted: () => {
+      pagesLoaded.current = 0;
+      setExtra(null);
+    },
     /// The server drops a deleted reply from every reply page; drop it from the local pages as well.
     onReplyDeleted: (id: string) => setExtra((prev) => (prev ? { ...prev, replies: prev.replies.filter((r) => r.id !== id) } : prev)),
   };
