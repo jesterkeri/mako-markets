@@ -75,10 +75,11 @@ function afterApproval(a: Approval, p: ConfirmPhase, w: OutcomeWords): ConfirmPh
       ? 'Your USDC approval went through, so Mako Market pools can use your USDC when you bet.'
       : "Your USDC approval was sent, but its confirmation didn't come back.";
   const why = p.step === 'cancelled' ? `You declined the ${w.noun} in your wallet.` : p.body;
+  // "Not placed", not "not sent": a reverted action was sent and undone (adversary on 26a91cd).
   return {
     step: 'failed',
     title: `Approval sent, ${w.noun} not placed`,
-    body: `${what} The ${w.noun} itself was not sent: ${why} No USDC left your wallet. Approval tx ${a.hash.slice(0, 10)}…`,
+    body: `${what} The ${w.noun} was not placed: ${why} No USDC left your wallet. Approval tx ${a.hash.slice(0, 10)}…`,
     nothingMoved: true,
     primary: { label: 'Try again', retry: true },
     secondary: { label: 'Close' },
@@ -87,9 +88,19 @@ function afterApproval(a: Approval, p: ConfirmPhase, w: OutcomeWords): ConfirmPh
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
+/// The browser wallet changed between Confirm and a wallet request: nothing was asked of it.
+class WalletSwitched extends Error {}
+
+/// wagmi's refusal when a write names an account the connector no longer has (it throws before the wallet sees it).
+const isAccountNotConnected = (err: unknown) => (err as { name?: string } | null)?.name === 'ConnectorAccountNotFoundError';
+
 export function usePoolTx(onLanded?: () => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
+  /// The connected wallet as of the latest render: the wallet can change while an approval confirms, after Confirm
+  /// read `connected` (adversary on 26a91cd).
+  const connectedNow = useRef(connected);
+  connectedNow.current = connected;
   const publicClient = usePublicClient({ chainId: monadTestnet.id });
   const { writeContractAsync } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
@@ -205,9 +216,16 @@ export function usePoolTx(onLanded?: () => void) {
       const result = await walletSteps(account, publicClient);
       return approval ? afterApproval(approval, result, w) : result;
 
+      /// Every wallet request goes through here: the browser wallet must still be the signed-in one at the moment of
+      /// asking, and the request names that account, so wagmi refuses rather than sign from another.
+      async function write(request: Parameters<typeof writeContractAsync>[0]): Promise<`0x${string}`> {
+        if (!connectedNow.current || isWalletDrifted(u, connectedNow.current)) throw new WalletSwitched();
+        return writeContractAsync({ ...request, account: account! } as Parameters<typeof writeContractAsync>[0]);
+      }
+
       /// Sends the USDC approval and records it the moment the wallet hands back its hash.
       async function approve(): Promise<'ok' | 'reverted'> {
-        const approveHash = await writeContractAsync({ ...usdcContract, functionName: 'approve', args: [MAKO_ADDRESS, maxUint256], chainId: monadTestnet.id });
+        const approveHash = await write({ ...usdcContract, functionName: 'approve', args: [MAKO_ADDRESS, maxUint256], chainId: monadTestnet.id });
         approval = { hash: approveHash, state: 'sent' };
         setPhase({ step: 'pending', stage: 'confirming', txHash: approveHash });
         const approved = await publicClient!.waitForTransactionReceipt({ hash: approveHash });
@@ -246,7 +264,7 @@ export function usePoolTx(onLanded?: () => void) {
             }
             setPhase({ step: 'pending', stage: 'signing' });
             sent = true;
-            const hash = await writeContractAsync({ ...makoContract, functionName: 'createMarket', args, chainId: monadTestnet.id });
+            const hash = await write({ ...makoContract, functionName: 'createMarket', args, chainId: monadTestnet.id });
             setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
             const receipt = await publicClient.waitForTransactionReceipt({ hash });
             if (receipt.status !== 'success') return undone(w);
@@ -265,7 +283,7 @@ export function usePoolTx(onLanded?: () => void) {
             }
             setPhase({ step: 'pending', stage: 'signing' });
             sent = true;
-            const hash = await writeContractAsync({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], chainId: monadTestnet.id });
+            const hash = await write({ ...makoContract, functionName: 'placeBet', args: [t.marketId, t.isYes, t.amount], chainId: monadTestnet.id });
             setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
             const receipt = await publicClient.waitForTransactionReceipt({ hash });
             return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
@@ -276,11 +294,13 @@ export function usePoolTx(onLanded?: () => void) {
             return refusalPhase(revertName(err), w);
           }
           sent = true;
-          const hash = await writeContractAsync({ ...makoContract, functionName: 'claim', args: [t.marketId], chainId: monadTestnet.id });
+          const hash = await write({ ...makoContract, functionName: 'claim', args: [t.marketId], chainId: monadTestnet.id });
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
         } catch (err) {
+          // Refused before the wallet saw anything, so nothing was sent, whatever `sent` says.
+          if (err instanceof WalletSwitched || isAccountNotConnected(err)) return wrongWallet(u, connectedNow.current ?? account);
           if (isUserRejection(err)) return { step: 'cancelled' };
           return sent
             ? { step: 'failed', title: 'Lost track of it', body: `Your ${w.noun} may have been sent, but its confirmation didn't come back. Check Me before you try again.`, nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } }

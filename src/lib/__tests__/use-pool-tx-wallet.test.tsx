@@ -143,4 +143,53 @@ describe('usePoolTx, wallet accounts: an approval that went out is always report
     await confirm(result);
     expect(result.current.phase).toEqual({ step: 'cancelled' });
   });
+
+  it('every wallet request names the signed-in wallet, so wagmi cannot sign from another (adversary on 26a91cd)', async () => {
+    const { result } = renderHook(() => usePoolTx());
+    act(() => result.current.open(BET));
+    await confirm(result);
+    expect(m.writeContractAsync).toHaveBeenCalledTimes(2);
+    for (const [req] of m.writeContractAsync.mock.calls) expect((req as { account: string }).account).toBe(A);
+  });
+
+  it('a wallet switch while the approval confirms stops before the bet, and says so (adversary on 26a91cd)', async () => {
+    let release: () => void = () => {};
+    const pending = new Promise<void>((seen) => {
+      m.waitForTransactionReceipt.mockImplementation(() => {
+        seen();
+        return new Promise((done) => {
+          release = () => done({ status: 'success', logs: [] });
+        });
+      });
+    });
+    const { result, rerender } = renderHook(() => usePoolTx());
+    act(() => result.current.open(BET));
+    let running: Promise<void> = Promise.resolve();
+    await act(async () => {
+      running = result.current.confirm();
+      await pending;
+    });
+    m.connected = B;
+    rerender();
+    await act(async () => {
+      release();
+      await running;
+    });
+    const p = result.current.phase;
+    expect(p).toMatchObject({ step: 'failed', title: 'Approval sent, bet not placed', nothingMoved: true });
+    expect(p.step === 'failed' && p.body).toMatch(/your browser wallet is 0xbbbb/);
+    expect(m.writeContractAsync.mock.calls.map(([r]) => (r as { functionName: string }).functionName)).toEqual(['approve']);
+  });
+
+  it('a bet that reverts after an approval says "not placed", never "not sent"', async () => {
+    m.waitForTransactionReceipt
+      .mockResolvedValueOnce({ status: 'success', logs: [] })
+      .mockResolvedValueOnce({ status: 'reverted', logs: [] });
+    const { result } = renderHook(() => usePoolTx());
+    act(() => result.current.open(BET));
+    await confirm(result);
+    const p = result.current.phase;
+    expect(p.step === 'failed' && p.body).toMatch(/The bet was not placed/);
+    expect(p.step === 'failed' && p.body).not.toMatch(/not sent/);
+  });
 });
