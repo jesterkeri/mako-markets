@@ -123,8 +123,13 @@ export function usdcExact(base: bigint): string {
   return `${sign}${(v / 1_000_000n).toLocaleString('en-US')}.${frac}`;
 }
 
+/// USDC base units at two decimals, rounded half up, in integer arithmetic: pool totals are uint256, so going through
+/// Number would drop cents above 2^53 base units (Codex S3 r1).
 export function usdc2(base: bigint): string {
-  return (Number(base) / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const neg = base < 0n;
+  const cents = ((neg ? -base : base) + 5_000n) / 10_000n;
+  const text = `${(cents / 100n).toLocaleString('en-US')}.${(cents % 100n).toString().padStart(2, '0')}`;
+  return neg && cents > 0n ? `-${text}` : text;
 }
 
 /// The row's position chip: "You · YES 5.00", "You · Won 9.40", "You · Lost 5.00", "You · Refund 5.00".

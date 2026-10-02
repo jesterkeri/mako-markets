@@ -88,6 +88,12 @@ export function poolSizeUsdc(m: Pick<MarketWithId, 'totalYes' | 'totalNo'>): num
   return Number(formatUsdc(m.totalYes + m.totalNo, 6));
 }
 
+/// num / den as a number, the division done in integers to 12 decimal places first: pool totals are uint256, and
+/// converting them to Number before dividing would lose precision above 2^53 base units (Codex S3 r1).
+function ratio(num: bigint, den: bigint): number {
+  return Number((num * 1_000_000_000_000n) / den) / 1e12;
+}
+
 /**
  * YES-side multiplier with v4 forfeit-aware fees. Accepts a prospective
  * bet (`extraYes`) for previews. Returns 0 in two cases:
@@ -109,8 +115,7 @@ export function yesMultiplier(
   const effectiveBps = isCreatorFeeForfeited(newYes, newNo, creatorBps)
     ? protocolBps
     : protocolBps + creatorBps;
-  const feeFactor = (10000 - Number(effectiveBps)) / 10000;
-  return (Number(newTotal) * feeFactor) / Number(newYes);
+  return ratio(newTotal * (10000n - effectiveBps), newYes * 10000n);
 }
 
 /**
@@ -131,8 +136,7 @@ export function noMultiplier(
   const effectiveBps = isCreatorFeeForfeited(newYes, newNo, creatorBps)
     ? protocolBps
     : protocolBps + creatorBps;
-  const feeFactor = (10000 - Number(effectiveBps)) / 10000;
-  return (Number(newTotal) * feeFactor) / Number(newNo);
+  return ratio(newTotal * (10000n - effectiveBps), newNo * 10000n);
 }
 
 /**
