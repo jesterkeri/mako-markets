@@ -3,6 +3,7 @@
 
 import type { MarketWithId } from './contract';
 import { usdc2 } from './pool-list';
+import { unsettleable, UNSETTLEABLE_LINE } from './pool-rules';
 
 /// MakoMarketsV4 constants.
 export const MIN_BET = 100_000n;
@@ -40,6 +41,8 @@ export function betBlocker(args: {
 }): string | null {
   const { m, nowSec, amount, balance, mine, limits } = args;
   if (m.resolved || nowSec >= Number(m.bettingCloseTime)) return 'Betting has closed on this pool.';
+  // The contract would take the bet, but nothing can settle the pool: no in-app bet into it (Codex S3 r1).
+  if (unsettleable(m)) return UNSETTLEABLE_LINE;
   if (amount < MIN_BET) return 'The minimum bet is 0.10 USDC.';
   if (limits) {
     if (limits.blocked) return 'This wallet is blocked from betting on Mako Market pools.';

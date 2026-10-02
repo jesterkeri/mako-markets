@@ -404,7 +404,7 @@ function PoolDesktop(v: ViewProps) {
             <div style={{ marginTop: 8 }}>
               {poolRules(m).map((r) => (
                 <div key={r.k} style={{ display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: 16, padding: '11px 4px', boxShadow: 'inset 0 -1px 0 var(--line)', fontSize: 14, lineHeight: 1.45 }}>
-                  <span style={{ ...mono, fontSize: 12, fontWeight: 700, color: r.k === 'YES' ? 'var(--up-text)' : r.k === 'NO' ? 'var(--mako-red)' : 'var(--mako-canvas-fg)' }}>{r.k}</span>
+                  <span style={{ ...mono, fontSize: 12, fontWeight: 700, color: r.k === 'YES' ? 'var(--up-text)' : r.k === 'NO' || r.k === 'WARNING' ? 'var(--mako-red)' : 'var(--mako-canvas-fg)' }}>{r.k}</span>
                   <span>{r.v}</span>
                 </div>
               ))}

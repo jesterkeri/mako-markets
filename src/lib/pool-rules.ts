@@ -5,6 +5,8 @@
 import { hexToString } from 'viem';
 
 import { MarketType, type MarketWithId } from './contract';
+import { CRYPTO_SYMBOLS } from './crypto-assets';
+import { PRICE_FEED_BY_SYMBOL } from './price-feed-assets';
 import { formatCountdown } from './countdown';
 import type { PoolState } from './pool-list';
 
@@ -15,8 +17,19 @@ type PriceRef = { kind: 'price'; symbol: string; op: 'gt' | 'lt'; strike: string
 type SportRef = { kind: 'football' | 'basketball'; type: 'home_win' | 'away_win' | 'draw' | 'over' | 'under'; param: string };
 export type OracleRef = PriceRef | SportRef;
 
-/// The pool's settlement reference, decoded exactly as the resolver decodes it, or null when it does not parse
-/// (the resolver skips such a pool, so the page states no YES/NO rule for it).
+/// The forex/commodities/stocks strike grammar (cf-worker parsePriceFeedOracleRef).
+const FEED_STRIKE = /^\+?(\d+\.\d+|\d+|\.\d+)$/;
+const FEED_CLASS: Partial<Record<number, 'forex' | 'commodities' | 'stocks'>> = {
+  [MarketType.FOREX]: 'forex',
+  [MarketType.COMMODITIES]: 'commodities',
+  [MarketType.STOCKS]: 'stocks',
+};
+
+/// The pool's settlement reference, decoded and validated exactly as the resolver does (cf-worker/src/index.ts:
+/// parseCryptoOracleRef with its CRYPTO_SYMBOLS, parsePriceFeedOracleRef with PRICE_FEED_BY_SYMBOL and the class
+/// check, parseFootballOracleRef, parseBasketballOracleRef), or null when the resolver would not read it. The
+/// contract stores any reference a direct `createMarket` call passes, so a null here is a pool the resolver will
+/// never settle by price or result (Codex S3 r1).
 export function parseOracleRef(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): OracleRef | null {
   let text: string;
   try {
@@ -27,9 +40,20 @@ export function parseOracleRef(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): Or
   const parts = text.split(':').map((p) => p.trim());
   if (parts.length !== 3) return null;
   const [a, b, c] = parts;
-  if (m.mType === MarketType.CRYPTO || m.mType === MarketType.FOREX || m.mType === MarketType.COMMODITIES || m.mType === MarketType.STOCKS) {
-    if (!a || (b !== 'gt' && b !== 'lt') || !(Number(c) > 0)) return null;
-    return { kind: 'price', symbol: a.toUpperCase(), op: b, strike: c };
+  if (m.mType === MarketType.CRYPTO) {
+    // Symbols are case-sensitive in the resolver; the strike is anything Number() reads as finite and positive.
+    if (!(CRYPTO_SYMBOLS as readonly string[]).includes(a) || (b !== 'gt' && b !== 'lt')) return null;
+    const n = Number(c);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return { kind: 'price', symbol: a, op: b, strike: FEED_STRIKE.test(c) ? c.replace(/^\+/, '') : String(n) };
+  }
+  const feedClass = FEED_CLASS[m.mType];
+  if (feedClass) {
+    if ((b !== 'gt' && b !== 'lt') || !FEED_STRIKE.test(c)) return null;
+    const n = Number(c);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (PRICE_FEED_BY_SYMBOL.get(a)?.class !== feedClass) return null;
+    return { kind: 'price', symbol: a, op: b, strike: c.replace(/^\+/, '') };
   }
   const n = Number(c);
   if (!/^\d+$/.test(a) || !Number.isFinite(n) || n < 0) return null;
@@ -47,7 +71,17 @@ export function dayTime(sec: number, timeZone?: string): string {
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone }).format(new Date(sec * 1000));
 }
 
-export type RuleLine = { k: 'YES' | 'NO' | 'CLOSES' | 'REFUND' | 'SOURCE'; v: string };
+export type RuleLine = { k: 'YES' | 'NO' | 'CLOSES' | 'REFUND' | 'SOURCE' | 'WARNING'; v: string };
+
+/// A pool whose settlement reference Mako Market's resolver cannot read: it is never settled by price or result,
+/// only refunded once 24H have passed after close. House (MAKO) pools are settled by hand and are never this.
+export function unsettleable(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): boolean {
+  return m.mType !== MarketType.MAKO && parseOracleRef(m) === null;
+}
+
+/// What the pool page says about such a pool, and the bet panel's reason for taking no bet.
+export const UNSETTLEABLE_LINE =
+  "Mako Market's resolver can't read this pool's settlement reference, so it will not be settled by a price or a result. If nobody settles it within 24H of close, anyone can mark it refunded.";
 
 const unit = (m: MarketWithId) => (m.mType === MarketType.FOREX ? '' : '$');
 
@@ -60,7 +94,9 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
 
   if (m.mType === MarketType.MAKO) {
     lines.push({ k: 'YES', v: 'As the question says. Mako Market settles this house pool by hand.' });
-  } else if (ref?.kind === 'price') {
+  } else if (!ref) {
+    lines.push({ k: 'WARNING', v: UNSETTLEABLE_LINE });
+  } else if (ref.kind === 'price') {
     const s = `${unit(m)}${ref.strike}`;
     lines.push(
       ref.op === 'gt'
@@ -68,7 +104,7 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
         : { k: 'YES', v: `${ref.symbol} is below ${s} at the first price check after ${close}.` },
       ref.op === 'gt' ? { k: 'NO', v: `${ref.symbol} is at ${s} or below at that check.` } : { k: 'NO', v: `${ref.symbol} is at ${s} or above at that check.` },
     );
-  } else if (ref) {
+  } else {
     const what = ref.kind === 'football' ? 'goals' : 'points';
     const yesNo: Record<SportRef['type'], [string, string]> = {
       home_win: ['The home team wins.', ref.kind === 'football' ? 'A draw or an away win.' : 'The away team wins.'],
@@ -101,7 +137,9 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
         ? 'The final result from football-data.org, at full time.'
         : ref?.kind === 'basketball'
           ? 'The final score from balldontlie.'
-          : m.mType === MarketType.CRYPTO
+          : !ref
+            ? 'None the resolver can read.'
+            : m.mType === MarketType.CRYPTO
             ? 'The CoinGecko spot price in USD, checked every minute.'
             : 'The latest Pyth price, checked every minute. A price Pyth marks as uncertain is skipped.';
   lines.push({ k: 'SOURCE', v: source });
