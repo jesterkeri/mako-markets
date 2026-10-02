@@ -14,6 +14,7 @@ import { useEnsureMonadChain } from './hooks';
 import { usdc2 } from './pool-list';
 import { USDC_ADDRESS } from './usdc';
 import { accountAddress, type AuthedUser } from './use-user';
+import { checkHold, holdSend } from './send-holds';
 import { sendUsdcFromWallet, type WalletSendOutcome } from './wallet-send';
 
 // Send USDC from /wallet. An email account sends from its Safe, gas-free, through the sponsor; a wallet account
@@ -72,6 +73,13 @@ export function emailSendPhase(o: RunOutcome, safe: Address): ConfirmPhase {
   if (o.kind === 'sponsor_failed' && o.status === 403) {
     if (o.reason === 'bad_send_recipient') return failed('Address not allowed', 'Mako Market can’t send to that address: it is your own account or a contract.', true, close);
     if (o.reason === 'bad_send_amount') return failed('Amount not allowed', `Each send can be at most ${usdc2(EMAIL_SEND_CAP)} USDC.`, true, close);
+  }
+  // A 409 from the send route means another request is already sending this operation: it may land.
+  if (o.kind === 'send_failed' && o.status === 409) {
+    return failed('Already sending', 'This send is already on its way. Check your wallet’s transactions before you send again.', false, {
+      label: 'Open explorer',
+      href: explorerUrl('address', safe),
+    });
   }
   const p = phaseFromOutcome(o, { noun: 'send', failTitle: FAIL_TITLE, afterRevert: 'Check the address and amount and try again.' });
   // phaseFromOutcome sends unknown outcomes to Me, which lists bets, not sends: point at the account's own
@@ -142,17 +150,16 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
   /// The wallet a wallet-account send was reviewed with: the signed-in one, never whatever is connected later.
   const sender = useRef<Address | null>(null);
   const inFlight = useRef(false);
-  /// A send whose outcome is unknown (it may have gone out). Reviewing the same send again is held once with a
-  /// warning, so a second press is a deliberate choice, never a reflex (adversary on 1e0fd99).
-  const unresolved = useRef<{ to: Address; amount: bigint; warned: boolean } | null>(null);
+  /// Set when this page produced an outcome that may have moved funds, so closing the sheet reloads the balance.
+  const unresolved = useRef(false);
 
   const review = (input: { to: string; amount: string }): string | null => {
     const c = checkSend(input, { self, balance, email });
     if (!c.ok) return c.error;
-    const u = unresolved.current;
-    if (u && u.to.toLowerCase() === c.to.toLowerCase() && u.amount === c.amount && !u.warned) {
-      u.warned = true;
-      return `Your last send of ${exactUsdc(u.amount)} USDC to this address isn’t confirmed yet and may have gone out. Check your wallet’s transactions first. Press Review send again to send it anyway.`;
+    // A send whose outcome is unknown is held once, whatever happened in between: other reviews, a reload, another
+    // tab (src/lib/send-holds.ts).
+    if (checkHold(self, c.to, c.amount) === 'held') {
+      return `Your last send of ${exactUsdc(c.amount)} USDC to this address isn’t confirmed yet and may have gone out. Check your wallet’s transactions first. Press Review send again to send it anyway.`;
     }
     if (!email) {
       const signedIn = user.walletAddress as Address;
@@ -160,7 +167,6 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
       if (connected.toLowerCase() !== signedIn.toLowerCase()) return 'Your browser wallet is not the one you signed in with. Switch back to send.';
       sender.current = signedIn;
     }
-    unresolved.current = null;
     setReviewed({ to: c.to, amount: c.amount });
     setPhase({ step: 'review' });
     return null;
@@ -170,7 +176,10 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
   const settle = (p: ConfirmPhase, sent: { to: Address; amount: bigint }) => {
     setPhase(p);
     if (p.step === 'done') onLanded();
-    if (p.step === 'failed' && !p.nothingMoved) unresolved.current = { to: sent.to, amount: sent.amount, warned: false };
+    if (p.step === 'failed' && !p.nothingMoved) {
+      holdSend(self, sent.to, sent.amount);
+      unresolved.current = true;
+    }
   };
 
   const confirm = async () => {
@@ -246,6 +255,7 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
     close: () => {
       if (inFlight.current) return;
       if (unresolved.current) refresh();
+      unresolved.current = false;
       sender.current = null;
       setReviewed(null);
       setPhase({ step: 'review' });

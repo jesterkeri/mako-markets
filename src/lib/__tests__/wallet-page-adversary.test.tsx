@@ -73,6 +73,7 @@ const SPONSOR_OK = {
 };
 
 beforeEach(() => {
+  window.localStorage.clear(); // send holds persist per account (src/lib/send-holds.ts)
   vi.spyOn(console, 'error').mockImplementation(() => {});
   mocks.balance = 200_000_000n;
   mocks.write.mockReset();

@@ -100,6 +100,15 @@ export const sheetButton = (primary: boolean): React.CSSProperties => ({
 });
 
 function ActionButton({ action, primary, onRetry, onClose }: { action: ConfirmAction; primary: boolean; onRetry: () => void; onClose: () => void }) {
+  // An outside page (the explorer) opens in a new tab, so checking a transaction does not leave the flow that asked
+  // for the check (adversary on 6494c2b).
+  if (action.href && /^https?:/.test(action.href)) {
+    return (
+      <a href={action.href} target="_blank" rel="noopener noreferrer" className={primary ? 'm3-press mk-onsig' : 'm3-press'} style={sheetButton(primary)}>
+        {action.label} ↗
+      </a>
+    );
+  }
   if (action.href) {
     return (
       <Link href={action.href} onClick={onClose} className={primary ? 'm3-press mk-onsig' : 'm3-press'} style={sheetButton(primary)}>

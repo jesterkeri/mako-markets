@@ -52,6 +52,7 @@ const walletUser = { authed: true, authType: 'wallet', walletAddress: A, display
 const emailUser = { authed: true, authType: 'magic', email: 'a@b.co', magicEoa: B, safeAddress: SAFE, displayName: null, avatarUrl: null, totpEnabled: false, totpEnabledAt: null, lastSignInAt: null };
 
 beforeEach(() => {
+  window.localStorage.clear(); // send holds (src/lib/send-holds.ts) persist per account
   vi.spyOn(console, 'error').mockImplementation(() => {});
   mocks.asked = [];
   mocks.balance = 200_000_000n;
@@ -220,7 +221,7 @@ describe('/wallet, after an outcome that may have moved funds', () => {
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Check before sending again').length).toBeGreaterThan(0));
     expect(screen.queryAllByRole('button', { name: 'Try again' })).toHaveLength(0);
-    expect(screen.getAllByRole('link', { name: 'Open explorer' })[0]!.getAttribute('href')).toContain(A);
+    expect(screen.getAllByRole('link', { name: /Open explorer/ })[0]!.getAttribute('href')).toContain(A);
   });
 });
 
