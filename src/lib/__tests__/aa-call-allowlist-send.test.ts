@@ -16,7 +16,7 @@
 // ----------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';
-import { encodeFunctionData, type Address, type Hex } from 'viem';
+import { encodeFunctionData, getAddress, type Address, type Hex } from 'viem';
 
 import {
   assertSendUsdcCall,
@@ -24,7 +24,7 @@ import {
   NotAllowedError,
 } from '../aa-call-allowlist';
 import { SEND_USDC_MAX_PER_OP_BASE_UNITS } from '../aa-constants';
-import { MAKO_ADDRESS } from '../contract';
+import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS } from '../contract';
 import { MONAD_TESTNET_ID } from '../chain';
 import { USDC_ADDRESS } from '../usdc';
 
@@ -400,5 +400,51 @@ describe('assertSponsoredCallData (extended for send_usdc)', () => {
         callData: wrapped,
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+// Codex batch r1 F1: the server refuses every protocol address the /wallet form refuses (one shared list,
+// src/lib/protocol-recipients.ts), at sponsor time and at send time. Any other contract is allowed by policy, since
+// every Mako Market email account is itself a contract; the form asks for an acknowledgement instead.
+describe('send_usdc recipients: the shared protocol list', () => {
+  const sponsorReason = (recipient: Address) => {
+    try {
+      assertSendUsdcCall({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        call: { to: USDC_ADDRESS, value: 0n, data: encodeTransfer(recipient, 1_000_000n) },
+      });
+      return 'allowed';
+    } catch (e) {
+      return (e as NotAllowedError).reason;
+    }
+  };
+  const sendReason = async (recipient: Address) => {
+    try {
+      await assertSponsoredCallData({
+        chainId: MONAD_TESTNET_ID,
+        safeAddress: SAFE,
+        callData: wrapOpZero({ to: USDC_ADDRESS, value: 0n, data: encodeTransfer(recipient, 1_000_000n) }),
+      });
+      return 'allowed';
+    } catch (e) {
+      return (e as NotAllowedError).reason;
+    }
+  };
+
+  it('refuses the Private Markets contract at sponsor time and at send time', async () => {
+    expect(sponsorReason(PM_CONTRACT_ADDRESS)).toBe('bad_send_recipient');
+    expect(await sendReason(PM_CONTRACT_ADDRESS)).toBe('bad_send_recipient');
+  });
+
+  it('allows a recipient that is not on the protocol list, contract or not, at both points', async () => {
+    const otherContract: Address = '0x4444444444444444444444444444444444444444';
+    expect(sponsorReason(otherContract)).toBe('allowed');
+    expect(await sendReason(otherContract)).toBe('allowed');
+  });
+
+  it('refuses a protocol address lowercase or checksummed', async () => {
+    expect(sponsorReason(PM_CONTRACT_ADDRESS.toLowerCase() as Address)).toBe('bad_send_recipient');
+    expect(sponsorReason(getAddress(PM_CONTRACT_ADDRESS))).toBe('bad_send_recipient');
   });
 });

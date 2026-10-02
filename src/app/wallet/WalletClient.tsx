@@ -40,6 +40,10 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
   const [error, setError] = useState('');
+  /// A recipient that is a contract, or could not be checked: shown with an "I understand" tick for that address.
+  const [notice, setNotice] = useState<{ reason: 'contract' | 'unknown'; to: string } | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [checking, setChecking] = useState(false);
   const email = user.authType === 'magic';
   const account = accountAddress(user);
   const balanceQuery = useUsdcBalance(account);
@@ -58,8 +62,27 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
   const balanceText = balance !== undefined ? `${usdc2(balance)} USDC` : balanceQuery.isError ? 'Balance unavailable' : '…';
   const gasLine = email ? `Gas-free with email. Up to ${usdc2(EMAIL_SEND_CAP)} USDC a send.` : 'Your wallet pays the gas, in MON.';
 
-  const onReview = () => {
-    setError(send.review({ to, amount }) ?? '');
+  const onReview = async () => {
+    if (checking) return;
+    setChecking(true);
+    try {
+      const r = await send.review({ to, amount }, notice && acknowledged ? notice.to : null);
+      if (r.kind === 'acknowledge') {
+        setError('');
+        if (!notice || notice.to.toLowerCase() !== r.to.toLowerCase()) setAcknowledged(false);
+        setNotice({ reason: r.reason, to: r.to });
+        return;
+      }
+      setError(r.kind === 'error' ? r.message : '');
+    } finally {
+      setChecking(false);
+    }
+  };
+  const onTo = (value: string) => {
+    setTo(value);
+    // A different address needs its own check and its own acknowledgement.
+    setNotice(null);
+    setAcknowledged(false);
   };
   const onMax = () => {
     if (balance !== undefined) setAmount(formatUnits(maxSend(balance, email), 6));
@@ -107,13 +130,13 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onReview();
+        void onReview();
       }}
       style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
     >
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span style={mobile ? { fontSize: 14, fontWeight: 700 } : { ...mono, fontSize: 11, color: 'var(--dim)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>To</span>
-        <input value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="0x…" autoComplete="off" spellCheck={false} aria-label="Recipient address" style={{ ...input, ...mono, fontSize: 14 }} />
+        <input value={to} onChange={(e) => onTo(e.target.value.trim())} placeholder="0x…" autoComplete="off" spellCheck={false} aria-label="Recipient address" style={{ ...input, ...mono, fontSize: 14 }} />
       </label>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span style={mobile ? { fontSize: 14, fontWeight: 700 } : { ...mono, fontSize: 11, color: 'var(--dim)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Amount, USDC</span>
@@ -130,8 +153,21 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
           {error}
         </span>
       )}
-      <button type="submit" className={mobile ? 'm3-press' : 'mk-press97'} style={{ height: mobile ? 56 : 48, padding: '0 24px', alignSelf: mobile ? 'stretch' : 'flex-end', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', ...display, fontSize: 16 }}>
-        Review send
+      {notice && (
+        <div role="alert" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px', borderRadius: 12, background: 'var(--raise)', boxShadow: 'inset 0 0 0 1.5px var(--mako-red)' }}>
+          <span style={{ fontSize: 14, lineHeight: 1.45 }}>
+            {notice.reason === 'contract'
+              ? 'This address is a smart contract. That is normal for another Mako Market account or a smart wallet, but USDC sent to a contract that can’t hold it is lost for good.'
+              : 'Mako Market couldn’t check whether this address is a smart contract. Only send if you’re sure it can receive USDC.'}
+          </span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 700 }}>
+            <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} style={{ width: 20, height: 20, accentColor: 'var(--mako-signal)' }} />
+            I understand. Send to this address.
+          </label>
+        </div>
+      )}
+      <button type="submit" disabled={checking || (notice !== null && !acknowledged)} className={mobile ? 'm3-press' : 'mk-press97'} style={{ opacity: checking || (notice !== null && !acknowledged) ? 0.5 : 1, height: mobile ? 56 : 48, padding: '0 24px', alignSelf: mobile ? 'stretch' : 'flex-end', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', ...display, fontSize: 16 }}>
+        {checking ? 'Checking…' : 'Review send'}
       </button>
     </form>
   );

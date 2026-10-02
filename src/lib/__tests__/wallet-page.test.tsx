@@ -5,7 +5,7 @@
 // connector no longer holds throws ConnectorAccountNotFoundError before the wallet sees it.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as React from 'react';
 import { getAddress } from 'viem';
 
@@ -16,6 +16,9 @@ const TO = '0xcccccccccccccccccccccccccccccccccccccccc' as const;
 const HASH = `0x${'d4'.repeat(32)}` as const;
 
 const mocks = vi.hoisted(() => ({
+  /// What the chain says is deployed at the recipient: '0x' for a plain address, bytecode for a contract, an Error
+  /// when the chain can't be read.
+  code: '0x' as string | Error,
   user: null as unknown,
   connected: undefined as `0x${string}` | undefined,
   balance: 200_000_000n as bigint | undefined,
@@ -32,7 +35,10 @@ vi.mock('next/link', () => ({
 vi.mock('qrcode.react', () => ({ QRCodeSVG: ({ value }: { value: string }) => <svg data-qr={value} /> }));
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: mocks.connected }),
-  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args) }),
+  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args), getCode: async () => {
+    if (mocks.code instanceof Error) throw mocks.code;
+    return mocks.code;
+  } }),
   useWriteContract: () => ({ writeContractAsync: mocks.write }),
 }));
 vi.mock('@/lib/hooks', () => ({
@@ -48,12 +54,14 @@ vi.mock('@/components/signin/SignInLink', () => ({ SignInLink: ({ children }: { 
 
 import { WalletClient } from '@/app/wallet/WalletClient';
 import { USDC_ADDRESS } from '@/lib/usdc';
+import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
 
 const walletUser = { authed: true, authType: 'wallet', walletAddress: A, displayName: null, avatarUrl: null, lastSignInAt: null };
 const emailUser = { authed: true, authType: 'magic', email: 'a@b.co', magicEoa: B, safeAddress: SAFE, displayName: null, avatarUrl: null, totpEnabled: false, totpEnabledAt: null, lastSignInAt: null };
 
 beforeEach(() => {
   window.localStorage.clear(); // send holds (src/lib/send-holds.ts) persist per account
+  mocks.code = '0x';
   vi.spyOn(console, 'error').mockImplementation(() => {});
   mocks.asked = [];
   mocks.balance = 200_000_000n;
@@ -78,10 +86,12 @@ afterEach(() => {
 });
 
 /// Fill the desktop form and press Review send. Returns the error shown, if any.
-function review(to: string, amount: string) {
+async function review(to: string, amount: string) {
   fireEvent.change(screen.getAllByLabelText('Recipient address')[0]!, { target: { value: to } });
   fireEvent.change(screen.getAllByLabelText('Amount in USDC')[0]!, { target: { value: amount } });
-  fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  });
 }
 const sendButton = () => screen.getAllByRole('button', { name: 'Send' })[0]!;
 
@@ -90,7 +100,7 @@ describe('/wallet, wallet account', () => {
     mocks.user = walletUser;
     mocks.connected = A;
     const view = render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     mocks.connected = B;
     view.rerender(<WalletClient initialTab="send" />);
     fireEvent.click(sendButton());
@@ -102,7 +112,7 @@ describe('/wallet, wallet account', () => {
     mocks.user = walletUser;
     mocks.connected = A;
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Sent').length).toBeGreaterThan(0));
     expect(mocks.write).toHaveBeenCalledTimes(1);
@@ -110,11 +120,11 @@ describe('/wallet, wallet account', () => {
     expect(mocks.refetchBalance).toHaveBeenCalled();
   });
 
-  it('refuses to open the sheet when the browser wallet is not the signed-in one', () => {
+  it('refuses to open the sheet when the browser wallet is not the signed-in one', async () => {
     mocks.user = walletUser;
     mocks.connected = B;
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/not the one you signed in with/);
     expect(screen.queryAllByRole('button', { name: 'Send' })).toHaveLength(0);
   });
@@ -125,30 +135,30 @@ describe('/wallet, email account', () => {
     mocks.user = emailUser;
     mocks.runSendUsdc.mockResolvedValue({ kind: 'sent', txHash: HASH });
     render(<WalletClient initialTab="send" />);
-    review(TO, '12.5');
+    await review(TO, '12.5');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Sent').length).toBeGreaterThan(0));
     expect(mocks.runSendUsdc).toHaveBeenCalledWith(expect.objectContaining({ recipient: getAddress(TO), amountUsdc: 12_500_000n, magicEoa: B, chainId: 10143 }));
   });
 
-  it('over the per-send cap: refused before anything is asked', () => {
+  it('over the per-send cap: refused before anything is asked', async () => {
     mocks.user = emailUser;
     render(<WalletClient initialTab="send" />);
-    review(TO, '150');
+    await review(TO, '150');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/at most 100\.00 USDC/);
     expect(mocks.runSendUsdc).not.toHaveBeenCalled();
   });
 
-  it('own address, a contract, more than the balance and a bad amount are refused', () => {
+  it('own address, a contract, more than the balance and a bad amount are refused', async () => {
     mocks.user = emailUser;
     render(<WalletClient initialTab="send" />);
-    review(SAFE, '1');
+    await review(SAFE, '1');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/your own address/);
-    review(USDC_ADDRESS, '1'); // whatever USDC address this build uses (CI sets its own)
-    expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/contract address/);
-    review(TO, '250');
+    await review(USDC_ADDRESS, '1'); // whatever USDC address this build uses (CI sets its own)
+    expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/Mako Market or USDC contract/);
+    await review(TO, '250');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/more than your balance/);
-    review(TO, '1.1234567');
+    await review(TO, '1.1234567');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/up to 6 decimal places/);
   });
 
@@ -156,13 +166,13 @@ describe('/wallet, email account', () => {
     mocks.user = emailUser;
     mocks.runSendUsdc.mockResolvedValue({ kind: 'sponsor_failed', status: 403, error: 'NOT_ALLOWED', reason: 'bad_send_recipient' });
     render(<WalletClient initialTab="send" />);
-    review(TO, '1');
+    await review(TO, '1');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Address not allowed').length).toBeGreaterThan(0));
     expect(screen.getAllByText('No USDC left your wallet').length).toBeGreaterThan(0);
   });
 
-  it('Receive shows the full Safe address, its QR code and Copy', () => {
+  it('Receive shows the full Safe address, its QR code and Copy', async () => {
     mocks.user = emailUser;
     render(<WalletClient initialTab="receive" />);
     expect(screen.getAllByText(SAFE).length).toBeGreaterThan(0);
@@ -172,7 +182,7 @@ describe('/wallet, email account', () => {
 });
 
 describe('/wallet, signed out', () => {
-  it('asks to sign in and shows no form', () => {
+  it('asks to sign in and shows no form', async () => {
     mocks.user = null;
     render(<WalletClient initialTab="send" />);
     expect(screen.getByText('Sign in')).toBeTruthy();
@@ -186,17 +196,17 @@ describe('/wallet, after an outcome that may have moved funds', () => {
     mocks.connected = A;
     mocks.receipt.mockRejectedValueOnce(new Error('Timed out while waiting for transaction'));
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Still confirming').length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
     expect(mocks.refetchBalance).toHaveBeenCalled();
 
-    review(TO, '5');
+    await review(TO, '5');
     expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/isn’t confirmed yet/);
     expect(screen.queryAllByRole('button', { name: 'Send' })).toHaveLength(0);
 
-    review(TO, '5'); // the deliberate second press
+    await review(TO, '5'); // the deliberate second press
     expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
   });
 
@@ -205,11 +215,11 @@ describe('/wallet, after an outcome that may have moved funds', () => {
     mocks.connected = A;
     mocks.receipt.mockRejectedValueOnce(new Error('Timed out while waiting for transaction'));
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Still confirming').length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
-    review(TO, '6');
+    await review(TO, '6');
     expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
   });
 
@@ -218,7 +228,7 @@ describe('/wallet, after an outcome that may have moved funds', () => {
     mocks.connected = A;
     mocks.write.mockRejectedValueOnce(new Error('Request expired. Please try again.'));
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Check before sending again').length).toBeGreaterThan(0));
     expect(screen.queryAllByRole('button', { name: 'Try again' })).toHaveLength(0);
@@ -227,11 +237,66 @@ describe('/wallet, after an outcome that may have moved funds', () => {
 });
 
 describe('/wallet, address forms', () => {
-  it('an all-uppercase address is accepted like an all-lowercase one', () => {
+  it('an all-uppercase address is accepted like an all-lowercase one', async () => {
     mocks.user = walletUser;
     mocks.connected = A;
     render(<WalletClient initialTab="send" />);
-    review(`0x${TO.slice(2).toUpperCase()}`, '5');
+    await review(`0x${TO.slice(2).toUpperCase()}`, '5');
     expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
+  });
+});
+
+// Codex batch r1 F1: other contracts are allowed (every Mako Market email account is a Safe), but never silently;
+// Mako Market's own contracts and USDC are refused by the same list the gas sponsor uses.
+describe('/wallet, contract recipients', () => {
+  const tick = () => fireEvent.click(screen.getAllByRole('checkbox', { name: /I understand/ })[0]!);
+
+  it('a contract recipient needs an explicit acknowledgement before the sheet opens', async () => {
+    mocks.user = emailUser;
+    mocks.code = '0x6080604052';
+    render(<WalletClient initialTab="send" />);
+    await review(TO, '5');
+    expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/smart contract/);
+    expect(screen.queryAllByRole('button', { name: 'Send' })).toHaveLength(0);
+    expect((screen.getAllByRole('button', { name: 'Review send' })[0] as HTMLButtonElement).disabled).toBe(true);
+    tick();
+    await review(TO, '5');
+    expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
+  });
+
+  it('when the chain cannot be read, the same acknowledgement is asked', async () => {
+    mocks.user = emailUser;
+    mocks.code = new Error('RPC down');
+    render(<WalletClient initialTab="send" />);
+    await review(TO, '5');
+    expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/couldn’t check/);
+    expect(screen.queryAllByRole('button', { name: 'Send' })).toHaveLength(0);
+  });
+
+  it('an acknowledgement belongs to one address: changing the address asks again', async () => {
+    mocks.user = emailUser;
+    mocks.code = '0x6080604052';
+    render(<WalletClient initialTab="send" />);
+    await review(TO, '5');
+    tick();
+    await review('0xdddddddddddddddddddddddddddddddddddddddd', '5');
+    expect(screen.queryAllByRole('button', { name: 'Send' })).toHaveLength(0);
+    expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/smart contract/);
+  });
+
+  it('a plain address needs no acknowledgement', async () => {
+    mocks.user = emailUser;
+    render(<WalletClient initialTab="send" />);
+    await review(TO, '5');
+    expect(screen.queryAllByRole('checkbox', { name: /I understand/ })).toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
+  });
+
+  it('the Private Markets contract is refused outright, like USDC', async () => {
+    mocks.user = emailUser;
+    render(<WalletClient initialTab="send" />);
+    await review(PM_CONTRACT_ADDRESS, '1');
+    expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/Mako Market or USDC contract/);
+    expect(mocks.runSendUsdc).not.toHaveBeenCalled();
   });
 });

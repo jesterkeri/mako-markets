@@ -9,11 +9,11 @@ import { runSendUsdc, type RunOutcome } from './aa-client';
 import { SEND_USDC_MAX_PER_OP_BASE_UNITS } from './aa-constants';
 import { explorerUrl, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome } from './confirm-outcome';
-import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS } from './contract';
 import { useEnsureMonadChain } from './hooks';
 import { usdc2 } from './pool-list';
 import { USDC_ADDRESS } from './usdc';
 import { accountAddress, type AuthedUser } from './use-user';
+import { isProtocolRecipient } from './protocol-recipients';
 import { checkHold, holdSend } from './send-holds';
 import { sendUsdcFromWallet, type WalletSendOutcome } from './wallet-send';
 
@@ -45,8 +45,10 @@ export function checkSend(input: { to: string; amount: string }, ctx: { self: Ad
   if (!isAddress(to)) return { ok: false, error: 'Enter a valid 0x address. Check it was copied in full.' };
   const lower = to.toLowerCase();
   if (lower === ctx.self.toLowerCase()) return { ok: false, error: 'That is your own address.' };
-  if ([USDC_ADDRESS, MAKO_ADDRESS, PM_CONTRACT_ADDRESS].some((a) => a && a.trim().toLowerCase() === lower)) {
-    return { ok: false, error: 'That is a contract address. USDC sent there can’t be got back.' };
+  // The same list the gas sponsor refuses (src/lib/protocol-recipients.ts). Other contracts are allowed, with an
+  // acknowledgement (useWalletSend.review), because every Mako Market email account is itself a contract.
+  if (isProtocolRecipient(lower)) {
+    return { ok: false, error: 'That is a Mako Market or USDC contract. USDC sent there can’t be got back.' };
   }
   const amountText = input.amount.trim();
   if (!/^\d+(\.\d{1,6})?$/.test(amountText)) return { ok: false, error: 'Enter an amount with a dot for decimals, up to 6 decimal places.' };
@@ -119,11 +121,18 @@ export function walletSendPhase(o: WalletSendOutcome, from?: Address): ConfirmPh
   }
 }
 
+/// What Review found. `contract` and `unknown` ask the person to acknowledge the address and press Review again.
+export type ReviewResult =
+  | { kind: 'ok' }
+  | { kind: 'error'; message: string }
+  | { kind: 'acknowledge'; reason: 'contract' | 'unknown'; to: Address };
+
 export type WalletSend = {
   /// The checked send the sheet is showing, or null when the sheet is closed.
   reviewed: { to: Address; amount: bigint } | null;
   phase: ConfirmPhase;
-  review: (input: { to: string; amount: string }) => string | null;
+  /// `acknowledged` is the address the person ticked "I understand" for, if any.
+  review: (input: { to: string; amount: string }, acknowledged?: string | null) => Promise<ReviewResult>;
   confirm: () => Promise<void>;
   retry: () => void;
   close: () => void;
@@ -153,9 +162,28 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
   /// Set when this page produced an outcome that may have moved funds, so closing the sheet reloads the balance.
   const unresolved = useRef(false);
 
-  const review = (input: { to: string; amount: string }): string | null => {
+  const review = async (input: { to: string; amount: string }, acknowledged: string | null = null): Promise<ReviewResult> => {
+    const r = await reviewInner(input, acknowledged);
+    return typeof r === 'string' ? { kind: 'error', message: r } : r;
+  };
+
+  const reviewInner = async (input: { to: string; amount: string }, acknowledged: string | null): Promise<ReviewResult | string> => {
     const c = checkSend(input, { self, balance, email });
     if (!c.ok) return c.error;
+    // A contract recipient is allowed (other Mako Market accounts are Safes) but never silently: the address must be
+    // acknowledged first. If the chain can't be read, the same acknowledgement is asked (Codex batch r1 F1). This is
+    // a check at Review time; an address can gain code later (a counterfactual Safe), which the wording allows for.
+    if (acknowledged === null || acknowledged.toLowerCase() !== c.to.toLowerCase()) {
+      let reason: 'contract' | 'unknown' | null;
+      try {
+        if (!publicClient) throw new Error('No Monad client');
+        const code = await publicClient.getCode({ address: c.to });
+        reason = code && code !== '0x' ? 'contract' : null;
+      } catch {
+        reason = 'unknown';
+      }
+      if (reason) return { kind: 'acknowledge', reason, to: c.to };
+    }
     // A send whose outcome is unknown is held once, whatever happened in between: other reviews, a reload, another
     // tab (src/lib/send-holds.ts).
     if (checkHold(self, c.to, c.amount) === 'held') {
@@ -169,7 +197,7 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
     }
     setReviewed({ to: c.to, amount: c.amount });
     setPhase({ step: 'review' });
-    return null;
+    return { kind: 'ok' };
   };
 
   /// Shows an outcome; one that may have moved funds is remembered against a repeat of the same send.

@@ -6,7 +6,7 @@
 // src/lib/__tests__/aa-client-run-sponsored-call-op.test.ts uses for SponsorResponse.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as React from 'react';
 
 const A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
@@ -31,7 +31,7 @@ vi.mock('next/link', () => ({
 vi.mock('qrcode.react', () => ({ QRCodeSVG: ({ value }: { value: string }) => <svg data-qr={value} /> }));
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: mocks.connected }),
-  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args) }),
+  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args), getCode: async () => (mocks as { code?: string }).code ?? '0x' }),
   useWriteContract: () => ({ writeContractAsync: mocks.write }),
 }));
 vi.mock('@/lib/hooks', () => ({
@@ -92,10 +92,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function review(to: string, amount: string) {
+async function review(to: string, amount: string) {
   fireEvent.change(screen.getAllByLabelText('Recipient address')[0]!, { target: { value: to } });
   fireEvent.change(screen.getAllByLabelText('Amount in USDC')[0]!, { target: { value: amount } });
-  fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  });
 }
 const sendButton = () => screen.getAllByRole('button', { name: 'Send' })[0]!;
 
@@ -109,7 +111,7 @@ describe('/wallet adversary on 1e0fd99', () => {
     mocks.connected = A;
     mocks.write.mockRejectedValue(new Error('Request expired. Please try again.'));
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.queryAllByRole('alert').length).toBeGreaterThan(0));
     expect(screen.queryAllByText('No USDC left your wallet')).toHaveLength(0);
@@ -124,12 +126,12 @@ describe('/wallet adversary on 1e0fd99', () => {
     mocks.connected = A;
     mocks.receipt.mockRejectedValue(Object.assign(new Error('Timed out while waiting for transaction'), { name: 'WaitForTransactionReceiptTimeoutError' }));
     render(<WalletClient initialTab="send" />);
-    review(TO, '150');
+    await review(TO, '150');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.getAllByText('Still confirming').length).toBeGreaterThan(0));
     expect(mocks.write).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
-    review(TO, '150');
+    await review(TO, '150');
     const send = screen.queryAllByRole('button', { name: 'Send' });
     if (send.length > 0) fireEvent.click(send[0]!);
     await new Promise((r) => setTimeout(r, 20));
@@ -147,7 +149,7 @@ describe('/wallet adversary on 1e0fd99', () => {
     vi.stubGlobal('fetch', fetchMock);
     mocks.sign.mockRejectedValue(Object.assign(new Error('User denied signature request'), { code: 4001 }));
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     fireEvent.click(sendButton());
     await waitFor(() => expect(screen.queryAllByRole('status').concat(screen.queryAllByRole('alert')).some((n) => !/Sending USDC/.test(n.textContent ?? ''))).toBe(true));
     expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['/api/aa/sponsor']);

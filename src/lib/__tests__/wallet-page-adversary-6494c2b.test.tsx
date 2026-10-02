@@ -4,7 +4,7 @@
 // a second identical transfer.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as React from 'react';
 
 const A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
@@ -27,7 +27,7 @@ vi.mock('next/link', () => ({
 vi.mock('qrcode.react', () => ({ QRCodeSVG: ({ value }: { value: string }) => <svg data-qr={value} /> }));
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: mocks.connected }),
-  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args) }),
+  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args), getCode: async () => (mocks as { code?: string }).code ?? '0x' }),
   useWriteContract: () => ({ writeContractAsync: mocks.write }),
 }));
 vi.mock('@/lib/hooks', () => ({
@@ -63,14 +63,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function review(to: string, amount: string) {
+async function review(to: string, amount: string) {
   fireEvent.change(screen.getAllByLabelText('Recipient address')[0]!, { target: { value: to } });
   fireEvent.change(screen.getAllByLabelText('Amount in USDC')[0]!, { target: { value: amount } });
-  fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  });
 }
 
 async function sendUnknown(to: string, amount: string) {
-  review(to, amount);
+  await review(to, amount);
   fireEvent.click(screen.getAllByRole('button', { name: 'Send' })[0]!);
   await waitFor(() => expect(screen.getAllByText('Still confirming').length).toBeGreaterThan(0));
   expect(mocks.write).toHaveBeenCalledTimes(1);
@@ -79,7 +81,7 @@ async function sendUnknown(to: string, amount: string) {
 
 /// Reviews once and presses Send if the sheet opened. Returns the hold warning shown, if any.
 async function reviewAndSendOnce(to: string, amount: string): Promise<string> {
-  review(to, amount);
+  await review(to, amount);
   const warning = screen.queryAllByRole('alert').map((n) => n.textContent ?? '').join(' ');
   const send = screen.queryAllByRole('button', { name: 'Send' });
   if (send.length > 0) fireEvent.click(send[0]!);
@@ -106,7 +108,7 @@ describe('/wallet adversary on 6494c2b', () => {
     render(<WalletClient initialTab="send" />);
     await sendUnknown(TO, '150');
 
-    review(TO, '149');
+    await review(TO, '149');
     expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]!);
 
@@ -121,7 +123,7 @@ describe('/wallet adversary on 6494c2b', () => {
     render(<WalletClient initialTab="send" />);
     await sendUnknown(TO, '150');
 
-    review(OTHER, '150');
+    await review(OTHER, '150');
     fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]!);
 
     const warning = await reviewAndSendOnce(TO, '150');

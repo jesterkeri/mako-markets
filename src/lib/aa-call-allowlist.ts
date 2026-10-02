@@ -107,6 +107,7 @@ import {
 } from './private-markets/pm-call-allowlist';
 import { assertRoundsSendBatched, assertRoundsSendCall, isRoundsTarget } from './rounds-call-allowlist';
 import { assertRoundsRelease } from './rounds-release';
+import { isProtocolRecipient } from './protocol-recipients';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -617,16 +618,14 @@ function decodeAndAssertSendUsdc(args: {
 
   // Recipient invariants. The order matters for operator-log clarity:
   // self-send first (most likely user error — paste own address),
-  // then known-protocol-contract destinations (USDC + MAKO catch the
-  // "I pasted the contract by mistake" footgun). All map to
+  // then Mako Market's own contracts and USDC, from the one list the /wallet
+  // form also uses (src/lib/protocol-recipients.ts; Codex batch r1 F1: the
+  // page refused Private Markets and the server did not). All map to
   // bad_send_recipient so the UI can show one consistent error.
   if (recipient.toLowerCase() === args.safeAddress.toLowerCase()) {
     throw new NotAllowedError('bad_send_recipient');
   }
-  if (recipient.toLowerCase() === USDC_ADDRESS.toLowerCase()) {
-    throw new NotAllowedError('bad_send_recipient');
-  }
-  if (recipient.toLowerCase() === MAKO_ADDRESS.toLowerCase()) {
+  if (isProtocolRecipient(recipient)) {
     throw new NotAllowedError('bad_send_recipient');
   }
 

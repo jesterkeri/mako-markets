@@ -43,7 +43,9 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Tests alone took about 11.5 minutes on 2026-10-02 (35b33de: 167 + 7 + 6 + 26 files, all green), and the build
+    # runs after them, so 15 minutes cancelled a passing run mid-build.
+    timeout-minutes: 25
 
     env:
       # Build-time placeholders. None are real values — they only need to

@@ -5,7 +5,7 @@
 // src/lib/__tests__/aa-client-run-sponsored-call-op.test.ts uses for SponsorResponse.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as React from 'react';
 
 const A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
@@ -30,7 +30,7 @@ vi.mock('next/link', () => ({
 vi.mock('qrcode.react', () => ({ QRCodeSVG: ({ value }: { value: string }) => <svg data-qr={value} /> }));
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: mocks.connected }),
-  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args) }),
+  usePublicClient: () => ({ waitForTransactionReceipt: (args: unknown) => mocks.receipt(args), getCode: async () => (mocks as { code?: string }).code ?? '0x' }),
   useWriteContract: () => ({ writeContractAsync: mocks.write }),
 }));
 vi.mock('@/lib/hooks', () => ({
@@ -91,10 +91,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function review(to: string, amount: string) {
+async function review(to: string, amount: string) {
   fireEvent.change(screen.getAllByLabelText('Recipient address')[0]!, { target: { value: to } });
   fireEvent.change(screen.getAllByLabelText('Amount in USDC')[0]!, { target: { value: amount } });
-  fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Review send' })[0]!);
+  });
 }
 const sendButton = () => screen.getAllByRole('button', { name: 'Send' })[0]!;
 
@@ -112,7 +114,7 @@ describe('/wallet adversary on e442601', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<WalletClient initialTab="send" />);
-    review(TO, '5');
+    await review(TO, '5');
     fireEvent.click(sendButton());
     // Wait for the sheet to settle on its failure card, whatever its wording.
     await waitFor(() => expect(screen.queryAllByRole('alert').length).toBeGreaterThan(0));
@@ -129,7 +131,7 @@ describe('/wallet adversary on e442601', () => {
     mocks.user = walletUser;
     mocks.connected = A;
     const view = render(<WalletClient initialTab="send" />);
-    review(TO, '150');
+    await review(TO, '150');
     expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
     mocks.balance = 80_000_000n;
     view.rerender(<WalletClient initialTab="send" />);
@@ -140,22 +142,22 @@ describe('/wallet adversary on e442601', () => {
 
   // Spec 3: "The confirm sheet shows exactly what will be sent (amount, recipient)". 0.004 USDC shows as 0.00 and
   // 1.995 USDC as 2.00, more than is sent; the recipient is cut to 0xcccc…cccc.
-  it('the sheet shows the exact amount being sent', () => {
+  it('the sheet shows the exact amount being sent', async () => {
     mocks.user = walletUser;
     mocks.connected = A;
     render(<WalletClient initialTab="send" />);
-    review(TO, '1.995');
+    await review(TO, '1.995');
     const dialog = screen.getAllByRole('dialog', { name: 'Confirm in wallet' })[0]!;
     expect(dialog.textContent).toContain('1.995');
     expect(dialog.textContent).not.toContain('2.00 USDC');
   });
 
-  it('the sheet shows the full recipient address being sent to', () => {
+  it('the sheet shows the full recipient address being sent to', async () => {
     mocks.user = walletUser;
     mocks.connected = A;
     render(<WalletClient initialTab="send" />);
     const to = '0x1234567890abcdef1234567890abcdef12345678';
-    review(to, '1');
+    await review(to, '1');
     const dialog = screen.getAllByRole('dialog', { name: 'Confirm in wallet' })[0]!;
     expect(dialog.textContent?.toLowerCase()).toContain(to);
   });
@@ -163,11 +165,11 @@ describe('/wallet adversary on e442601', () => {
   // Spec 2: "the send is refused when: the address is not a valid address". A mixed-case address whose EIP-55
   // checksum is wrong (one hex letter mistyped from 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed, the EIP-55 test
   // vector) is not valid: viem's own isAddress (strict, its default) rejects it.
-  it('a mixed-case address with a bad EIP-55 checksum is refused before the sheet opens', () => {
+  it('a mixed-case address with a bad EIP-55 checksum is refused before the sheet opens', async () => {
     mocks.user = walletUser;
     mocks.connected = A;
     render(<WalletClient initialTab="send" />);
-    review('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD', '1');
+    await review('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD', '1');
     expect(screen.queryAllByRole('button', { name: 'Send' })).toHaveLength(0);
   });
 });
