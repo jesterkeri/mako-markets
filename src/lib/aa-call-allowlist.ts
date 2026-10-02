@@ -2153,7 +2153,7 @@ export async function assertSponsoredCallData(args: {
     }
 
     // Codex r1 MAJ-1: dispatch by sub[1].to. The MultiSend wrapper
-    // shape is [approve(USDC → spender, MaxUint256), action(...)].
+    // shape is [approve(USDC → spender, amount), action(...)]: MaxUint256 for Pools, exactly the entry for Rounds.
     // The action target tells us which validator to run:
     //   - MAKO_ADDRESS → v4 batched bet (existing 1D flow)
     //   - PM_CONTRACT_ADDRESS → PM batched bet OR stake (selector
@@ -2221,7 +2221,7 @@ export async function assertSponsoredCallData(args: {
       throw new NotAllowedError('bad_selector');
     }
     if (isRoundsTarget(sub1.to)) {
-      // Rounds: only [approve(ROUNDS, MaxUint256) on USDC, enter(...)].
+      // Rounds: only [approve(ROUNDS, <the enter amount>) on USDC, enter(...)] (Codex S2 r1).
       assertRoundsSendBatched(sub0, sub1);
       await assertRoundsRelease();
       return;
