@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAccount, useBalance, useDisconnect } from 'wagmi';
+import { useAccount, useBalance, useDisconnect, usePublicClient } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useQueryClient } from '@tanstack/react-query';
 import { QRCodeSVG } from 'qrcode.react';
-import { isAddress, parseUnits, type Address, erc20Abi } from 'viem';
+import { isAddress, parseUnits, type Address } from 'viem';
 import { useWriteContract } from 'wagmi';
 
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
@@ -20,6 +20,7 @@ import { AvatarCircle } from '@/components/AvatarCircle';
 import { IdentityBlock } from '@/components/profile/IdentityBlock';
 import { TotpSection } from '@/components/profile/TotpSection';
 import { runSendUsdc } from '@/lib/aa-client';
+import { sendUsdcFromWallet } from '@/lib/wallet-send';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS } from '@/lib/contract';
 import { SEND_USDC_MAX_PER_OP_BASE_UNITS } from '@/lib/aa-constants';
@@ -96,6 +97,7 @@ const SEND_USDC_MAX_PER_OP_USDC = Number(
 ///              Monad testnet given current Pimlico polling cadence)
 /// sent       — receipt landed, success
 /// reverted   — receipt landed but execution reverted on chain
+/// unconfirmed — a wallet send was broadcast but no receipt was read in time: it may still land (Codex S4 r2)
 /// error      — pre-submit failure (sponsorship rejected, expired, etc)
 type SendPhase =
   | 'idle'
@@ -103,7 +105,9 @@ type SendPhase =
   | 'confirming'
   | 'sent'
   | 'reverted'
+  | 'unconfirmed'
   | 'error';
+
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -111,6 +115,10 @@ export default function ProfilePage() {
   const queryClient = useQueryClient();
   const { user, isLoading: isUserLoading } = useUser();
   const { address: connectedWallet } = useAccount();
+  /// The connected wallet as of the latest render: it can change while the SEND NOW modal is open (Codex S4 r2).
+  const connectedNow = useRef(connectedWallet);
+  connectedNow.current = connectedWallet;
+  const publicClient = usePublicClient({ chainId: MONAD_TESTNET_ID });
   const { disconnect, disconnectAsync } = useDisconnect();
   const { writeContractAsync } = useWriteContract();
 
@@ -410,24 +418,46 @@ export default function ProfilePage() {
     setSendPhase('sending');
     setSendTxHash(null);
 
-    // External wallet flow (direct EOA transaction)
+    // External wallet flow (direct EOA transaction). The sender is pinned to the wallet this account signed in
+    // with (or, with no session, the one shown when Review was clicked), re-checked against the wallet connected
+    // right now, and named as the write's account, so a switch after Review can never send from another wallet
+    // (Codex S4 r2).
     if (!isMagicUser) {
-      try {
-        const txHash = await writeContractAsync({
-          address: usdcAddress as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [sendDestination as `0x${string}`, amountBaseUnits],
-        });
-        setSendTxHash(txHash);
-        setSendPhase('confirming'); // Wagmi returns txHash immediately; network confirms it
-        // Note: For a robust implementation we should wait for the receipt,
-        // but for UX consistency with AA we can just show 'sent' shortly after.
-        setTimeout(() => setSendPhase('sent'), 3000); 
-      } catch (e) {
-        console.error('Send failed via external wallet', e);
-        setSendPhase('error');
-        setSendError('Transaction failed or was rejected by your wallet.');
+      const sender = (user?.authType === 'wallet' ? user.walletAddress : canonicalAddress) as `0x${string}`;
+      const sent = await sendUsdcFromWallet(
+        { sender, usdc: usdcAddress as `0x${string}`, to: sendDestination as `0x${string}`, amount: amountBaseUnits },
+        {
+          connectedNow: () => connectedNow.current,
+          writeContractAsync,
+          waitForTransactionReceipt: publicClient?.waitForTransactionReceipt,
+          onBroadcast: (hash) => {
+            setSendTxHash(hash);
+            setSendPhase('confirming');
+          },
+        },
+      );
+      switch (sent.kind) {
+        case 'wallet_changed':
+          setSendPhase('error');
+          setSendError('Connected wallet changed during review. Send was not sent.');
+          break;
+        case 'rejected':
+          setSendPhase('error');
+          setSendError('Transaction failed or was rejected by your wallet.');
+          break;
+        case 'sent':
+          setSendPhase('sent');
+          break;
+        case 'reverted':
+          setSendPhase('reverted');
+          setSendError('The send reverted on chain. No funds were moved.');
+          break;
+        case 'unconfirmed':
+          setSendPhase('unconfirmed');
+          setSendError(
+            'The send was broadcast but not confirmed yet. Check the transaction on the explorer before sending again.',
+          );
+          break;
       }
       return;
     }
@@ -802,6 +832,32 @@ export default function ProfilePage() {
                       >
                         VIEW ON EXPLORER
                       </a>
+                    )}
+                    <button
+                      onClick={handleDismissSendOutcome}
+                      className="mako-button mako-button--ghost mako-label text-[10px] mt-2"
+                    >
+                      DISMISS
+                    </button>
+                  </div>
+                )}
+
+                {sendPhase === 'unconfirmed' && (
+                  <div className="flex flex-col items-center justify-center py-10 gap-4">
+                    <h3 className="mako-display text-xl text-ink mt-2">NOT CONFIRMED YET</h3>
+                    <p className="mako-body text-sm text-muted text-center">{sendError}</p>
+                    {sendTxHash && (
+                      <>
+                        <p className="mako-mono text-[10px] text-muted break-all text-center">{sendTxHash}</p>
+                        <a
+                          href={`https://testnet.monadexplorer.com/tx/${sendTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mako-label text-[10px] text-mako-red hover:underline"
+                        >
+                          VIEW ON EXPLORER
+                        </a>
+                      </>
                     )}
                     <button
                       onClick={handleDismissSendOutcome}
