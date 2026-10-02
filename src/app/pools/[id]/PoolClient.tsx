@@ -2,18 +2,19 @@
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReadContract, useReadContracts } from 'wagmi';
 
 import { PoolCommentsDesktop, PoolCommentsMobile } from '@/components/comments/PoolComments';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { PoolShareSheet } from '@/components/PoolShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
 import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
-import { CAT_STYLE, catTitle, claimable, poolRow, STATE_PILL, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
+import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
@@ -31,15 +32,6 @@ type Side = 'yes' | 'no';
 const ZERO = '0x0000000000000000000000000000000000000000' as const;
 const CHIPS_DESKTOP = ['0.10', '1', '5', '10', '25', '50'];
 const CHIPS_MOBILE = ['1', '5', '10', '25', '50'];
-const STATE_COLOUR: Record<PoolState, string> = {
-  open: 'var(--mako-signal)',
-  betting_closed: STATE_PILL.betting_closed.bg,
-  resolving: STATE_PILL.resolving.bg,
-  yes_won: STATE_PILL.yes_won.bg,
-  no_won: STATE_PILL.no_won.bg,
-  refunded: STATE_PILL.refunded.bg,
-};
-const stateLabel = (s: PoolState) => (s === 'open' ? 'Open' : STATE_PILL[s].label);
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
@@ -106,6 +98,9 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   }, [userBet]);
   const [amountText, setAmountText] = useState('5');
   const [rulesOpen, setRulesOpen] = useState(false);
+  /// The share sheet (15a), opened from the receipt's SHARE control.
+  const [shareOpen, setShareOpen] = useState(false);
+  const closeShare = useCallback(() => setShareOpen(false), []);
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
@@ -164,6 +159,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     lastClaimTx: tx.tx?.kind === 'claim' && tx.phase.step === 'done' ? tx.phase.txHash : undefined,
     rulesOpen,
     setRulesOpen,
+    openShare: () => setShareOpen(true),
   };
 
   const spec = tx.tx ? sheetSpec : null;
@@ -176,6 +172,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
       <div className="mk-mob mk-m">
         <PoolMobile {...view} />
       </div>
+      {shareOpen && <PoolShareSheet market={market} now={now} labels={labels} by={by} onClose={closeShare} />}
       {spec && user && (
         <ConfirmSheet spec={spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} />
       )}
@@ -266,6 +263,7 @@ type ViewProps = {
   lastClaimTx: string | undefined;
   rulesOpen: boolean;
   setRulesOpen: (b: boolean) => void;
+  openShare: () => void;
 };
 
 /// The fee sentence, from this pool's own fee snapshot.
@@ -508,22 +506,13 @@ function Odds({ market: m, row, labels }: ViewProps) {
   );
 }
 
-function Receipt({ market: m, row, labels }: ViewProps) {
-  const [copied, setCopied] = useState(false);
-  const share = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
+function Receipt({ market: m, row, labels, openShare }: ViewProps) {
   return (
     <div style={{ borderTop: '1px solid var(--line)', paddingTop: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '0 4px' }}>
         <h2 style={{ margin: 0, ...display, fontSize: 24, letterSpacing: '-0.02em' }}>Result receipt</h2>
-        <button onClick={share} style={{ ...mono, fontSize: 11, fontWeight: 700 }}>
-          {copied ? 'LINK COPIED' : 'SHARE ↗'}
+        <button onClick={openShare} aria-haspopup="dialog" style={{ ...mono, fontSize: 11, fontWeight: 700 }}>
+          SHARE ↗
         </button>
       </div>
       <div style={{ marginTop: 8 }}>
@@ -834,7 +823,12 @@ function PoolMobile(v: ViewProps) {
 
         {settled && (
           <div style={{ marginTop: 10, borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '16px 18px 10px' }}>
-            <div style={{ ...display, fontSize: 20, marginBottom: 6 }}>Result receipt</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+              <span style={{ ...display, fontSize: 20 }}>Result receipt</span>
+              <button onClick={v.openShare} aria-haspopup="dialog" className="m3-press" style={{ flex: 'none', height: 36, padding: '0 14px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontSize: 14, fontWeight: 800 }}>
+                Share
+              </button>
+            </div>
             {receipt(m, row, labels).map((r) => (
               <div key={r.k} style={{ display: 'flex', justifyContent: 'space-between', gap: 14, padding: '10px 0', boxShadow: 'inset 0 -1px 0 var(--m3-inv-2)', fontSize: 13 }}>
                 <span style={{ flex: 'none', fontWeight: 600, opacity: 0.65 }}>{r.k}</span>

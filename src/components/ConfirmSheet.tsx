@@ -320,12 +320,18 @@ export function SheetFrame({
   label,
   onScrim,
   initialFocus,
+  width = 460,
+  yellowOnDark = true,
   children,
 }: {
   label: string;
   onScrim?: () => void;
   /// What takes focus when the sheet opens, per variant (else its first focusable control).
   initialFocus?: { desktop: React.RefObject<HTMLElement | null>; mobile: React.RefObject<HTMLElement | null> };
+  /// The desktop dialog's width in px.
+  width?: number;
+  /// Whether the mobile sheet turns yellow in dark mode (the action sheets do; the share sheet keeps the canvas).
+  yellowOnDark?: boolean;
   children: (variant: 'desktop' | 'mobile') => React.ReactNode;
 }) {
   const deskRef = useRef<HTMLDivElement>(null);
@@ -350,8 +356,8 @@ export function SheetFrame({
           position: 'fixed',
           top: 96,
           left: '50%',
-          marginLeft: -230,
-          width: 460,
+          marginLeft: -width / 2,
+          width,
           boxSizing: 'border-box',
           borderRadius: 24,
           zIndex: 81,
@@ -372,7 +378,7 @@ export function SheetFrame({
           aria-modal="true"
           aria-label={label}
           ref={mobRef}
-          className="mk-sheet mk-ysheet"
+          className={yellowOnDark ? 'mk-sheet mk-ysheet' : 'mk-sheet'}
           style={{
             position: 'absolute',
             left: 0,

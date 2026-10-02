@@ -60,6 +60,17 @@ export const STATE_PILL: Record<Exclude<PoolState, 'open'>, { label: string; bg:
   refunded: { label: 'Refunded', bg: 'var(--mako-cyan)' },
 };
 
+/// The pool page's state colour and words, open included (yellow, "Open"); the share card uses the same.
+export const STATE_COLOUR: Record<PoolState, string> = {
+  open: 'var(--mako-signal)',
+  betting_closed: STATE_PILL.betting_closed.bg,
+  resolving: STATE_PILL.resolving.bg,
+  yes_won: STATE_PILL.yes_won.bg,
+  no_won: STATE_PILL.no_won.bg,
+  refunded: STATE_PILL.refunded.bg,
+};
+export const stateLabel = (s: PoolState) => (s === 'open' ? 'Open' : STATE_PILL[s].label);
+
 export function poolState(m: MarketWithId, nowSec: number): PoolState {
   if (m.resolved) {
     if (m.outcome === Outcome.YES) return 'yes_won';
