@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { type MarketWithId, MarketType, marketTypeLabel } from '@/lib/contract';
-import { poolSizeUsdc, secondsUntilBettingClose, yesMultiplier, noMultiplier } from '@/lib/mocks';
+import { secondsUntilBettingClose, yesMultiplier, noMultiplier } from '@/lib/mocks';
+import { usdc2 } from '@/lib/pool-list';
 import { formatUsdc } from '@/lib/usdc';
 import { useNowSec } from '@/lib/use-now';
 import { outcomeLabelForMarket } from '@/components/admin-shared';
@@ -79,7 +80,8 @@ export function MarketCard({
 
   const yesMult = displayMult(market.totalYes, yesMultiplier(market));
   const noMult = displayMult(market.totalNo, noMultiplier(market));
-  const pool = poolSizeUsdc(market);
+  // Exact to the cent at any size (Codex S3 r2): BigInt formatting, never Number.
+  const pool = usdc2(market.totalYes + market.totalNo);
   const isClosed = timeLeft <= 0 || market.resolved;
   const yesUsdc = formatUsdc(market.totalYes);
   const noUsdc = formatUsdc(market.totalNo);
@@ -160,7 +162,7 @@ export function MarketCard({
 
         {/* Footer strip — total pool + total bettors */}
         <div className="mt-3 pt-3 border-t-2 border-ink/10 flex justify-between items-center mako-label text-[10px] text-muted tabular-nums">
-          <span>POOL · {pool.toFixed(2)} USDC</span>
+          <span>POOL · {pool} USDC</span>
           <span>VOL · {market.yesBettorCount + market.noBettorCount} TOTAL</span>
         </div>
       </div>

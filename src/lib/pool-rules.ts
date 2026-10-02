@@ -178,11 +178,19 @@ export function resultSteps(m: MarketWithId, minRatioBps: number, timeZone?: str
   const fee = m.creatorFeeBpsSnapshot / 100;
   return [
     { n: '01', title: 'Betting closes', body: `At the time set when the pool was created: ${dayTime(Number(m.bettingCloseTime), timeZone)}.` },
-    {
-      n: '02',
-      title: 'Mako Market settles it',
-      body: house ? 'Mako Market settles this house pool by hand.' : 'Mako Market’s resolver settles the result from the pool’s source. Nobody reports or votes.',
-    },
+    // A reference the resolver cannot read is never settled automatically (Codex S3 r2): the step says so, as the
+    // pool's rules already do.
+    unsettleable(m)
+      ? {
+          n: '02',
+          title: 'Not settled automatically',
+          body: "Mako Market's resolver can't read this pool's settlement reference, so it won't settle it by a price or a result. If it isn't settled within 24H of close, anyone can mark it refunded.",
+        }
+      : {
+          n: '02',
+          title: 'Mako Market settles it',
+          body: house ? 'Mako Market settles this house pool by hand.' : 'Mako Market’s resolver settles the result from the pool’s source. Nobody reports or votes.',
+        },
     {
       n: '03',
       title: 'Winners claim',

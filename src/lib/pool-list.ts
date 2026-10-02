@@ -125,6 +125,11 @@ export function usdcExact(base: bigint): string {
 
 /// USDC base units at two decimals, rounded half up, in integer arithmetic: pool totals are uint256, so going through
 /// Number would drop cents above 2^53 base units (Codex S3 r1).
+/// Whole USDC, rounded down, grouped: exact at any size (the Pools summary's "USDC in play").
+export function wholeUsdc(base: bigint): string {
+  return ((base < 0n ? 0n : base) / 1_000_000n).toLocaleString('en-US');
+}
+
 export function usdc2(base: bigint): string {
   const neg = base < 0n;
   const cents = ((neg ? -base : base) + 5_000n) / 10_000n;

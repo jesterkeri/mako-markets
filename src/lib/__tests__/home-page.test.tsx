@@ -135,11 +135,12 @@ describe('Home pools', () => {
     expect(within(desk).getByRole('link', { name: 'All pools →' }).getAttribute('href')).toBe('/pools');
   });
 
-  it('prints each side as a pill with its multiplier, and a dash for a side with no stake', () => {
+  it('prints each side as a pill with its multiplier, and "No bets" (never an em dash) for a side with no stake', () => {
     const { desk } = renderHome();
     const row = deskRowLinks(desk)[0].closest('.mk-row') as HTMLElement;
     const no = within(row).getByRole('link', { name: 'NO, no stake on this side yet' });
-    expect(no.textContent).toBe('NO—');
+    expect(no.textContent).toBe('NONo bets');
+    expect(no.textContent).not.toContain('—');
     expect(no.getAttribute('href')).toBe('/pools/1?side=no');
     const yes = within(row).getByRole('link', { name: /^YES, pays 1\.00x per 1 USDC$/ });
     expect(yes.getAttribute('href')).toBe('/pools/1?side=yes');

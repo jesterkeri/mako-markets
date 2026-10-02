@@ -89,3 +89,15 @@ describe('a pool the resolver cannot read', () => {
     expect(betBlocker({ m: ok, nowSec: NOW, amount: 1_000_000n, balance: 10_000_000n, mine: { yes: 0n, no: 0n }, limits: null })).toBeNull();
   });
 });
+
+describe('a closed pool the resolver cannot read (Codex S3 r2)', () => {
+  it('"How results work" does not claim automatic settlement', async () => {
+    const { resultSteps } = await import('../pool-rules');
+    const bad = pool(MarketType.STOCKS, 'MADEUP:gt:1');
+    const step = resultSteps(bad, 408, 'UTC')[1];
+    expect(step.title).toBe('Not settled automatically');
+    expect(step.body).not.toMatch(/resolver settles/);
+    expect(resultSteps(pool(MarketType.STOCKS, 'TSLA:gt:250'), 408, 'UTC')[1].title).toBe('Mako Market settles it');
+    expect(resultSteps(pool(MarketType.MAKO, 'anything'), 408, 'UTC')[1].body).toBe('Mako Market settles this house pool by hand.');
+  });
+});

@@ -159,7 +159,7 @@ function PoolRowDesk({ row: r, labels }: { row: PoolRow; labels: SideLabels }) {
         style={{ minWidth: 0, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '0 10px', borderRadius: 9999, background: bg, color: '#000', boxShadow: 'var(--edge)', ...mono, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textDecoration: 'none' }}
       >
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
-        <span style={{ flex: 'none' }}>{figure || '—'}</span>
+        <span style={{ flex: 'none' }}>{figure || 'No bets'}</span>
       </Link>
     );
   };

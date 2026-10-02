@@ -22,6 +22,7 @@ import {
   type PoolFilter,
   type PoolRow,
   type PoolSort,
+  wholeUsdc,
 } from '@/lib/pool-list';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
@@ -310,7 +311,7 @@ function PoolsMobile({ list, state, filter, setFilter, sort, setSort, labelsOf, 
             <div style={{ position: 'relative', borderRadius: '28px 28px 10px 28px', background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '16px 16px 14px', minHeight: 112 }}>
               <CornerArrow bg="var(--m3-inv-fg)" fg="var(--m3-inv)" />
               <div style={{ ...display, fontSize: 30, lineHeight: 1, letterSpacing: '-0.03em', marginTop: 24, fontVariantNumeric: 'tabular-nums' }}>
-                {Math.floor(Number(list.openTotal) / 1e6).toLocaleString('en-US')}
+                {wholeUsdc(list.openTotal)}
               </div>
               <div style={{ fontSize: 14, fontWeight: 700, marginTop: 8 }}>USDC in play</div>
             </div>

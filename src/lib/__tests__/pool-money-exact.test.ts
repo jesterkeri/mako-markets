@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { noMultiplier, yesMultiplier } from '../mocks';
-import { usdc2 } from '../pool-list';
+import { usdc2, wholeUsdc } from '../pool-list';
 
 describe('usdc2', () => {
   it('formats a total above 2^53 base units to the exact cent', () => {
@@ -38,5 +38,13 @@ describe('multipliers', () => {
     expect(yesMultiplier(pool(30_000_000n, 10_000_000n)).toFixed(2)).toBe('1.29');
     expect(noMultiplier(pool(30_000_000n, 10_000_000n)).toFixed(2)).toBe('3.88');
     expect(yesMultiplier(pool(0n, 10_000_000n))).toBe(0);
+  });
+});
+
+describe('whole-USDC aggregate (Codex S3 r2)', () => {
+  it('is exact above 2^53 base units', () => {
+    const total = 2n ** 80n - 1n;
+    expect(wholeUsdc(total)).toBe('1,208,925,819,614,629,174');
+    expect(wholeUsdc(1_999_999n)).toBe('1');
   });
 });

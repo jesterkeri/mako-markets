@@ -1,5 +1,4 @@
 import { MarketType, Outcome, type MarketWithId } from './contract';
-import { formatUsdc } from './usdc';
 import { isCreatorFeeForfeited } from './bet';
 
 /**
@@ -83,10 +82,6 @@ export const mockMarkets: MarketWithId[] = [
   },
 ];
 
-/** Helper: total pool size for a market in USDC (number, for display). */
-export function poolSizeUsdc(m: Pick<MarketWithId, 'totalYes' | 'totalNo'>): number {
-  return Number(formatUsdc(m.totalYes + m.totalNo, 6));
-}
 
 /// num / den as a number, the division done in integers to 12 decimal places first: pool totals are uint256, and
 /// converting them to Number before dividing would lose precision above 2^53 base units (Codex S3 r1).
