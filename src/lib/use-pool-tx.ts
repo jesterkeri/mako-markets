@@ -85,11 +85,12 @@ function afterApproval(a: Approval, p: ConfirmPhase, w: OutcomeWords): ConfirmPh
   };
 }
 
+type Client = NonNullable<ReturnType<typeof usePublicClient>>;
+
 export function usePoolTx(onLanded?: () => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
   const publicClient = usePublicClient({ chainId: monadTestnet.id });
-  const client = publicClient;
   const { writeContractAsync } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
 
@@ -219,7 +220,7 @@ export function usePoolTx(onLanded?: () => void) {
         return 'ok';
       }
 
-      async function walletSteps(account: `0x${string}`, publicClient: NonNullable<typeof client>): Promise<ConfirmPhase> {
+      async function walletSteps(account: `0x${string}`, publicClient: Client): Promise<ConfirmPhase> {
         setPhase({ step: 'pending', stage: 'signing' });
         try {
           await ensureChain();

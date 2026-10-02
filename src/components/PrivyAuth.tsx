@@ -27,8 +27,10 @@ export const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim() ?? '';
 export interface EmbeddedActions {
   /// Ends the Privy session (best effort; Mako's own session is ended by /api/user/logout).
   logout(): Promise<void>;
-  /// Opens Privy's export flow for the embedded wallet's private key.
-  exportKey(): Promise<void>;
+  /// Opens Privy's export flow for the private key of the embedded wallet at `expectedAddress`: the signer this
+  /// Mako Market account records (`magicEoa`). Refuses, without opening anything, when this browser's Privy session
+  /// does not hold that wallet, so a key for another wallet is never shown as the account's (Codex S5 r1).
+  exportKey(expectedAddress: string): Promise<void>;
 }
 
 const notConfigured: EmbeddedActions = {
@@ -44,19 +46,28 @@ export function useEmbeddedActions(): EmbeddedActions {
   return React.useContext(EmbeddedActionsContext);
 }
 
-function EmbeddedActionsProvider({ children }: { children: React.ReactNode }) {
-  const { logout, exportWallet } = usePrivy();
+/// The refusal shown when the browser's Privy session does not hold the account's signer.
+export const EXPORT_MISMATCH = "This browser isn't signed in to this account's wallet. Sign out, sign in again with the account's email, then try again.";
+
+export function EmbeddedActionsProvider({ children }: { children: React.ReactNode }) {
+  const { logout, exportWallet, authenticated } = usePrivy();
+  const { wallets } = useWallets();
   const value = React.useMemo<EmbeddedActions>(
     () => ({
       logout: async () => {
         clearEmbeddedSigner();
         await logout();
       },
-      exportKey: async () => {
-        await exportWallet();
+      exportKey: async (expectedAddress: string) => {
+        const want = expectedAddress.toLowerCase();
+        const match = authenticated
+          ? wallets.find((w) => w.walletClientType === 'privy' && w.address.toLowerCase() === want)
+          : undefined;
+        if (!match) throw new Error(EXPORT_MISMATCH);
+        await exportWallet({ address: match.address });
       },
     }),
-    [logout, exportWallet],
+    [logout, exportWallet, authenticated, wallets],
   );
   return <EmbeddedActionsContext.Provider value={value}>{children}</EmbeddedActionsContext.Provider>;
 }

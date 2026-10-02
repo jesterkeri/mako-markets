@@ -67,7 +67,9 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
   const runExport = async () => {
     setExportError('');
     try {
-      await exportKey();
+      // Only an email account has an embedded key; its signer is the wallet the account records.
+      if (user.authType !== 'magic') return;
+      await exportKey(user.magicEoa);
     } catch (e) {
       setExportError(e instanceof Error && e.message ? e.message : 'The key could not be shown. Try again.');
     }

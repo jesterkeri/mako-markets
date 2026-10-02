@@ -66,6 +66,8 @@ describe('Settings', () => {
     expect(screen.getByText('enroll-modal')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Show private key' })[0]);
     await waitFor(() => expect(mocks.exportKey).toHaveBeenCalledTimes(1));
+    // Bound to the account's own signer, never Privy's default wallet (Codex S5 r1).
+    expect(mocks.exportKey).toHaveBeenCalledWith('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   });
 
   it('email account with 2FA on offers new recovery codes and turning it off', () => {
@@ -127,5 +129,12 @@ describe('Settings', () => {
     mocks.user = null;
     render(<SettingsClient />);
     expect(screen.getByText('Sign in to manage your account, security and appearance.')).toBeTruthy();
+  });
+
+  it('a wallet account has no key-export control at all', () => {
+    mocks.user = walletUser;
+    render(<SettingsClient />);
+    expect(screen.queryAllByRole('button', { name: 'Show private key' })).toHaveLength(0);
+    expect(mocks.exportKey).not.toHaveBeenCalled();
   });
 });

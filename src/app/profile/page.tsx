@@ -325,7 +325,9 @@ export default function ProfilePage() {
   const handleExportKey = async () => {
     try {
       // Privy's export flow for the embedded wallet (Privy since 2026-09-29).
-      await embedded.exportKey();
+      // The signer this account records; a Privy session holding other wallets is refused (Codex S5 r1).
+      if (!user || user.authType !== 'magic') return;
+      await embedded.exportKey(user.magicEoa);
     } catch (e) {
       // Closing Privy's modal is not an error; anything else is logged.
       const msg = e instanceof Error ? e.message : String(e);
