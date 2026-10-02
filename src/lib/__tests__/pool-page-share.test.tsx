@@ -1,5 +1,5 @@
-// The pool page (9a) opens Share (15a) from its receipt's share control, on desktop and on mobile, instead of
-// copying the page's address; Escape closes it and focus goes back to the control that opened it.
+// The pool page (9a) opens Share (15a) from its header (every state) and its receipt's share control, on desktop and
+// mobile, instead of copying the page's address; Escape closes it and focus goes back to the control that opened it.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -18,8 +18,8 @@ vi.mock('@/lib/use-address-names', () => ({ useAddressNames: () => new Map() }))
 const USDC = 1_000_000n;
 const NOW = Math.floor(Date.now() / 1000);
 
-// Settled YES: the receipt (and its share control) shows.
-const MARKET: MarketWithId = {
+// Settled YES by default (the receipt and its share control show); `state.market` switches to an open pool.
+const SETTLED: MarketWithId = {
   id: 7n,
   creator: '0x00000000000000000000000000000000000000c1',
   mType: MarketType.CRYPTO,
@@ -38,6 +38,8 @@ const MARKET: MarketWithId = {
   protocolFeeBpsSnapshot: 100,
   creatorFeeBpsSnapshot: 200,
 };
+const OPEN: MarketWithId = { ...SETTLED, closeTime: BigInt(NOW + 2 * 86400), bettingCloseTime: BigInt(NOW + 86400), outcome: Outcome.UNRESOLVED, resolved: false };
+const state = vi.hoisted(() => ({ market: null as unknown }));
 
 vi.mock('wagmi', () => ({
   useReadContract: () => ({ data: undefined, refetch: vi.fn() }),
@@ -47,8 +49,8 @@ vi.mock('wagmi', () => ({
   useWriteContract: () => ({ writeContractAsync: vi.fn() }),
 }));
 vi.mock('@/lib/hooks', () => ({
-  useMarket: () => ({ market: MARKET, isLoading: false, isError: false, refetch: vi.fn() }),
-  useMarkets: () => ({ markets: [MARKET] }),
+  useMarket: () => ({ market: (state.market ?? SETTLED) as MarketWithId, isLoading: false, isError: false, refetch: vi.fn() }),
+  useMarkets: () => ({ markets: [(state.market ?? SETTLED) as MarketWithId] }),
   useUsdcBalance: () => ({ data: undefined, refetch: vi.fn() }),
   useEnsureMonadChain: () => vi.fn(),
 }));
@@ -60,6 +62,7 @@ vi.mock('@/lib/use-user', () => ({
 const { PoolClient } = await import('@/app/pools/[id]/PoolClient');
 
 afterEach(() => {
+  state.market = null;
   cleanup();
   vi.restoreAllMocks();
 });
@@ -77,7 +80,8 @@ describe('pool page share control', () => {
     const { writeText } = renderPage(true);
     expect(screen.queryByRole('dialog', { name: 'Share' })).toBeNull();
 
-    const control = screen.getByRole('button', { name: 'SHARE ↗' });
+    // The receipt's control (the header has its own, tested below).
+    const control = screen.getAllByRole('button', { name: 'SHARE ↗' })[1];
     control.focus();
     await act(async () => {
       fireEvent.click(control);
@@ -106,5 +110,22 @@ describe('pool page share control', () => {
       fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]);
     });
     expect(screen.queryByRole('dialog', { name: 'Share' })).toBeNull();
+  });
+
+  it('an open pool is shared from the header, desktop and mobile, and its card asks people to join', async () => {
+    state.market = OPEN;
+    renderPage(true);
+    expect(screen.queryByText('Result receipt')).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'SHARE ↗' }));
+    });
+    expect(screen.getAllByText('Scan to join').length).toBeGreaterThan(0);
+    await act(async () => {
+      fireEvent.keyDown(document, { key: 'Escape' });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Share pool' }));
+    });
+    expect(screen.getAllByRole('dialog', { name: 'Share' }).length).toBeGreaterThan(0);
   });
 });

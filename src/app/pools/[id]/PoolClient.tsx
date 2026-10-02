@@ -344,9 +344,16 @@ function PoolDesktop(v: ViewProps) {
   const settled = row.state === 'yes_won' || row.state === 'no_won';
   return (
     <div style={{ paddingBottom: 28 }}>
-      <Link href="/pools" style={{ display: 'inline-block', ...mono, fontSize: 12, color: 'var(--dim)', padding: '14px 4px 0', textDecoration: 'none' }}>
-        ← POOLS
-      </Link>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 4px 0' }}>
+        <Link href="/pools" style={{ ...mono, fontSize: 12, color: 'var(--dim)', textDecoration: 'none' }}>
+          ← POOLS
+        </Link>
+        {/* Not drawn by the design on this page (it shares from the settled receipt only); added so an open pool can be
+            shared (Joshua, 2026-10-02). */}
+        <button onClick={v.openShare} aria-haspopup="dialog" className="mk-press96" style={{ height: 32, padding: '0 14px', borderRadius: 9999, boxShadow: 'inset 0 0 0 1px var(--line)', ...mono, fontSize: 11, fontWeight: 700 }}>
+          SHARE ↗
+        </button>
+      </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 32, padding: '10px 4px 22px' }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -740,6 +747,11 @@ function PoolMobile(v: ViewProps) {
         </Link>
         <span style={{ textAlign: 'center', fontSize: 16, fontWeight: 700 }}>Pool</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={v.openShare} aria-label="Share pool" aria-haspopup="dialog" className="m3-press" style={roundBtn}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 15V4M8 8l4-4 4 4M5 12v6.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V12" />
+            </svg>
+          </button>
           {signedIn ? (
             <span style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 14px', borderRadius: 9999, background: 'var(--raise)', fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{balance === null ? '…' : `${usdc2(balance)} USDC`}</span>
           ) : (
