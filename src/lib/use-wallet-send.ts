@@ -36,7 +36,9 @@ export type SendCheck = { ok: true; to: Address; amount: bigint } | { ok: false;
 
 /// The form's checks, before anything is asked of a wallet. `balance` is undefined until it has loaded.
 export function checkSend(input: { to: string; amount: string }, ctx: { self: Address; balance: bigint | undefined; email: boolean }): SendCheck {
-  const to = input.to.trim();
+  // An all-uppercase address carries no checksum, like an all-lowercase one: compare it as lowercase.
+  const raw = input.to.trim();
+  const to = /^0x[0-9A-F]{40}$/.test(raw) ? `0x${raw.slice(2).toLowerCase()}` : raw;
   // Strict: a mixed-case address must carry a valid checksum, so a mistyped checksummed address is refused
   // (adversary on e442601). An all-lowercase address has no checksum to check and is accepted.
   if (!isAddress(to)) return { ok: false, error: 'Enter a valid 0x address. Check it was copied in full.' };
@@ -75,13 +77,13 @@ export function emailSendPhase(o: RunOutcome, safe: Address): ConfirmPhase {
   // phaseFromOutcome sends unknown outcomes to Me, which lists bets, not sends: point at the account's own
   // transaction list instead.
   if (p.step === 'failed' && p.primary.href === '/me') {
-    return { ...p, body: p.body.replace(/Check Me/g, 'Check your wallet’s transactions'), primary: { label: 'Open explorer', href: explorerUrl('address', safe) } };
+    return { ...p, body: p.body.replace(/Check Me/g, 'Check your wallet’s transactions').replace(/check Me/g, 'check your wallet’s transactions'), primary: { label: 'Open explorer', href: explorerUrl('address', safe) } };
   }
   return p;
 }
 
-/// A wallet account's send, in the sheet's words.
-export function walletSendPhase(o: WalletSendOutcome): ConfirmPhase {
+/// A wallet account's send, in the sheet's words. `from` is the sending wallet, for the explorer link.
+export function walletSendPhase(o: WalletSendOutcome, from?: Address): ConfirmPhase {
   switch (o.kind) {
     case 'sent':
       return { step: 'done', txHash: o.txHash };
@@ -90,7 +92,16 @@ export function walletSendPhase(o: WalletSendOutcome): ConfirmPhase {
     case 'wrong_chain':
       return failed('Wrong network', 'Switch your wallet to Monad testnet, then review the send again.', true, close);
     case 'rejected':
-      return o.byUser ? { step: 'cancelled' } : failed(FAIL_TITLE, 'Your wallet reported an error before sending. Check your balance before you try again.', false);
+      // Not a decline: the wallet may have broadcast before failing (a relay timeout), so this is an unknown
+      // outcome with a way to check, never a plain "Try again" (adversary on 1e0fd99).
+      return o.byUser
+        ? { step: 'cancelled' }
+        : failed(
+            'Check before sending again',
+            'Your wallet reported an error, so this send may or may not have gone out. Check your wallet’s activity before you send again.',
+            false,
+            from ? { label: 'Open explorer', href: explorerUrl('address', from) } : close,
+          );
     case 'cancelled':
       return failed('Cancelled in your wallet', 'The send was replaced by a cancel in your wallet. No USDC was sent.', true, close, o.txHash);
     case 'reverted':
@@ -111,7 +122,8 @@ export type WalletSend = {
 };
 
 /// `balance` is the account's USDC balance in base units, undefined until loaded. `onLanded` runs once a send lands.
-export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onLanded: () => void): WalletSend {
+/// `refresh` reloads the balance; it runs when the sheet closes after an outcome that may have moved funds.
+export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onLanded: () => void, refresh: () => void = () => {}): WalletSend {
   const email = user.authType === 'magic';
   const self = accountAddress(user);
   const { address: connected } = useAccount();
@@ -130,19 +142,35 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
   /// The wallet a wallet-account send was reviewed with: the signed-in one, never whatever is connected later.
   const sender = useRef<Address | null>(null);
   const inFlight = useRef(false);
+  /// A send whose outcome is unknown (it may have gone out). Reviewing the same send again is held once with a
+  /// warning, so a second press is a deliberate choice, never a reflex (adversary on 1e0fd99).
+  const unresolved = useRef<{ to: Address; amount: bigint; warned: boolean } | null>(null);
 
   const review = (input: { to: string; amount: string }): string | null => {
     const c = checkSend(input, { self, balance, email });
     if (!c.ok) return c.error;
+    const u = unresolved.current;
+    if (u && u.to.toLowerCase() === c.to.toLowerCase() && u.amount === c.amount && !u.warned) {
+      u.warned = true;
+      return `Your last send of ${exactUsdc(u.amount)} USDC to this address isn’t confirmed yet and may have gone out. Check your wallet’s transactions first. Press Review send again to send it anyway.`;
+    }
     if (!email) {
       const signedIn = user.walletAddress as Address;
       if (!connected) return `Connect ${signedIn.slice(0, 6)}…${signedIn.slice(-4)} in your browser wallet to send.`;
       if (connected.toLowerCase() !== signedIn.toLowerCase()) return 'Your browser wallet is not the one you signed in with. Switch back to send.';
       sender.current = signedIn;
     }
+    unresolved.current = null;
     setReviewed({ to: c.to, amount: c.amount });
     setPhase({ step: 'review' });
     return null;
+  };
+
+  /// Shows an outcome; one that may have moved funds is remembered against a repeat of the same send.
+  const settle = (p: ConfirmPhase, sent: { to: Address; amount: bigint }) => {
+    setPhase(p);
+    if (p.step === 'done') onLanded();
+    if (p.step === 'failed' && !p.nothingMoved) unresolved.current = { to: sent.to, amount: sent.amount, warned: false };
   };
 
   const confirm = async () => {
@@ -159,21 +187,27 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
         setPhase({ step: 'pending', stage: 'signing' });
         let o: RunOutcome;
         try {
-          o = await runSendUsdc({ chainId: MONAD_TESTNET_ID, recipient: reviewed.to, amountUsdc: reviewed.amount, usdcAddress: USDC_ADDRESS, magicEoa: user.magicEoa as Address });
+          o = await runSendUsdc({
+            chainId: MONAD_TESTNET_ID,
+            recipient: reviewed.to,
+            amountUsdc: reviewed.amount,
+            usdcAddress: USDC_ADDRESS,
+            magicEoa: user.magicEoa as Address,
+            onStage: (stage) => setPhase({ step: 'pending', stage }),
+          });
         } catch {
           // A throw can come after the signed send was posted (a dropped connection), so the outcome is unknown,
           // never "nothing moved" (adversary on e442601; the same rule as confirm-outcome.ts).
-          setPhase(
+          settle(
             failed('Lost the connection', 'Your send may still reach Monad. Check your wallet’s transactions before you try again.', false, {
               label: 'Open explorer',
               href: explorerUrl('address', self),
             }),
+            reviewed,
           );
           return;
         }
-        const p = emailSendPhase(o, self);
-        setPhase(p);
-        if (p.step === 'done') onLanded();
+        settle(emailSendPhase(o, self), reviewed);
         return;
       }
       const from = sender.current;
@@ -197,9 +231,7 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
           onBroadcast: (txHash) => setPhase({ step: 'pending', stage: 'confirming', txHash }),
         },
       );
-      const p = walletSendPhase(o);
-      setPhase(p);
-      if (p.step === 'done') onLanded();
+      settle(walletSendPhase(o, from), reviewed);
     } finally {
       inFlight.current = false;
     }
@@ -213,6 +245,7 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
     retry: () => setPhase({ step: 'review' }),
     close: () => {
       if (inFlight.current) return;
+      if (unresolved.current) refresh();
       sender.current = null;
       setReviewed(null);
       setPhase({ step: 'review' });

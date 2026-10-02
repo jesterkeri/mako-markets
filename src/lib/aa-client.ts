@@ -623,6 +623,8 @@ export type RunSendUsdcArgs = {
   /// Magic-derived EOA — passed to signSafeOpHash so the personal_sign
   /// call goes through Magic's RPC provider.
   magicEoa: Address;
+  /// Progress for the confirm sheet, as runSponsoredRequest reports it.
+  onStage?: (stage: SponsoredStage) => void;
 };
 
 const TRANSFER_ABI = [
@@ -658,104 +660,10 @@ export async function runSendUsdc(args: RunSendUsdcArgs): Promise<RunOutcome> {
     },
   };
 
-  // 1. Sponsor.
-  const sponsor = await postJson('/api/aa/sponsor', body);
-  if (!sponsor.ok) {
-    return {
-      kind: 'sponsor_failed',
-      status: sponsor.status,
-      error: (sponsor.body as { error?: string }).error ?? 'unknown',
-      reason: (sponsor.body as { reason?: string }).reason,
-      detail: (sponsor.body as { message?: string }).message,
-    };
-  }
-  const sponsored = sponsor.body as SponsorResponse;
-
-  // 2. Magic personal_sign over the SafeOp hash.
-  const validAfter = BigInt(sponsored.validAfter);
-  const validUntil = BigInt(sponsored.validUntil);
-  const signature = await signSafeOpHash({
-    hash: sponsored.safeOpHash,
-    magicEoa: args.magicEoa,
-    validAfter,
-    validUntil,
-  });
-
-  // 3. Send.
-  const send = await postJson('/api/aa/send', {
-    pendingUserOpId: sponsored.pendingUserOpId,
-    signature,
-  });
-
-  if (!send.ok) {
-    const sendBody = send.body as {
-      error?: string;
-      message?: string;
-      status?: string;
-      retryAfterSeconds?: number;
-    };
-    if (send.status === 202 && sendBody.status === 'send_in_progress') {
-      return {
-        kind: 'in_progress',
-        pendingUserOpId: sponsored.pendingUserOpId,
-        retryAfterSeconds: sendBody.retryAfterSeconds ?? 1,
-      };
-    }
-    if (send.status === 410) {
-      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
-    }
-    if (send.status === 423) {
-      return {
-        kind: 'manual_review',
-        pendingUserOpId: sponsored.pendingUserOpId,
-      };
-    }
-    return {
-      kind: 'send_failed',
-      status: send.status,
-      error: sendBody.error ?? 'unknown',
-      detail: sendBody.message,
-    };
-  }
-
-  const sendBody = send.body as {
-    status: 'sent' | 'reverted' | 'submitted' | 'failed_pre_submit' | 'expired';
-    txHash?: Hex;
-    userOpHash?: Hex;
-    failureReason?: string;
-  };
-  switch (sendBody.status) {
-    case 'sent':
-      return {
-        kind: 'sent',
-        pendingUserOpId: sponsored.pendingUserOpId,
-        txHash: sendBody.txHash as Hex,
-        userOpHash: sendBody.userOpHash as Hex,
-        recovered: sponsored.recovered,
-      };
-    case 'reverted':
-      return {
-        kind: 'reverted',
-        pendingUserOpId: sponsored.pendingUserOpId,
-        txHash: sendBody.txHash as Hex,
-        userOpHash: sendBody.userOpHash as Hex,
-        failureReason: sendBody.failureReason ?? 'on-chain revert',
-      };
-    case 'submitted':
-      return {
-        kind: 'submitted',
-        pendingUserOpId: sponsored.pendingUserOpId,
-        userOpHash: sendBody.userOpHash as Hex,
-      };
-    case 'failed_pre_submit':
-      return {
-        kind: 'failed_pre_submit',
-        pendingUserOpId: sponsored.pendingUserOpId,
-        failureReason: sendBody.failureReason ?? 'bundler reject',
-      };
-    case 'expired':
-      return { kind: 'expired', pendingUserOpId: sponsored.pendingUserOpId };
-  }
+  // The shared sponsor -> sign -> send flow (adversary on 1e0fd99): it catches a transport failure at each step and
+  // a refused or failed signature, so every result is a typed outcome that says whether the send could have left.
+  // This function used to repeat the flow without those catches, so a declined signature surfaced as a throw.
+  return runSponsoredRequest(body, args.magicEoa, args.onStage);
 }
 
 // ── runCreateMarket (Phase 1H Magic create-market flow) ────────────────────

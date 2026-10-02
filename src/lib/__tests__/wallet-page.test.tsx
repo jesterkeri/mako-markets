@@ -177,3 +177,59 @@ describe('/wallet, signed out', () => {
     expect(screen.queryAllByLabelText('Recipient address')).toHaveLength(0);
   });
 });
+
+describe('/wallet, after an outcome that may have moved funds', () => {
+  it('the same send is held once with a warning, and goes only on a deliberate second press', async () => {
+    mocks.user = walletUser;
+    mocks.connected = A;
+    mocks.receipt.mockRejectedValueOnce(new Error('Timed out while waiting for transaction'));
+    render(<WalletClient initialTab="send" />);
+    review(TO, '5');
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.getAllByText('Still confirming').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+    expect(mocks.refetchBalance).toHaveBeenCalled();
+
+    review(TO, '5');
+    expect(screen.getAllByRole('alert')[0]!.textContent).toMatch(/isn’t confirmed yet/);
+    expect(screen.queryAllByRole('button', { name: 'Send' })).toHaveLength(0);
+
+    review(TO, '5'); // the deliberate second press
+    expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
+  });
+
+  it('a different send is not held', async () => {
+    mocks.user = walletUser;
+    mocks.connected = A;
+    mocks.receipt.mockRejectedValueOnce(new Error('Timed out while waiting for transaction'));
+    render(<WalletClient initialTab="send" />);
+    review(TO, '5');
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.getAllByText('Still confirming').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+    review(TO, '6');
+    expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
+  });
+
+  it('a wallet error that is not a decline offers the explorer, not Try again', async () => {
+    mocks.user = walletUser;
+    mocks.connected = A;
+    mocks.write.mockRejectedValueOnce(new Error('Request expired. Please try again.'));
+    render(<WalletClient initialTab="send" />);
+    review(TO, '5');
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.getAllByText('Check before sending again').length).toBeGreaterThan(0));
+    expect(screen.queryAllByRole('button', { name: 'Try again' })).toHaveLength(0);
+    expect(screen.getAllByRole('link', { name: 'Open explorer' })[0]!.getAttribute('href')).toContain(A);
+  });
+});
+
+describe('/wallet, address forms', () => {
+  it('an all-uppercase address is accepted like an all-lowercase one', () => {
+    mocks.user = walletUser;
+    mocks.connected = A;
+    render(<WalletClient initialTab="send" />);
+    review(`0x${TO.slice(2).toUpperCase()}`, '5');
+    expect(screen.getAllByRole('button', { name: 'Send' }).length).toBeGreaterThan(0);
+  });
+});

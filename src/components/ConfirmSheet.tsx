@@ -115,7 +115,7 @@ function ActionButton({ action, primary, onRetry, onClose }: { action: ConfirmAc
 }
 
 export const tileTitle: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.02, letterSpacing: '-0.025em' };
-export const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, fontWeight: 600, opacity: 0.8, marginTop: 6 };
+export const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, fontWeight: 600, opacity: 0.8, marginTop: 6, overflowWrap: 'anywhere' };
 const chip: React.CSSProperties = { alignSelf: 'flex-start', height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', borderRadius: 9999, background: 'color-mix(in srgb, currentColor 14%, transparent)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'inherit', textDecoration: 'none' };
 
 function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, variant, confirmRef }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null> }) {

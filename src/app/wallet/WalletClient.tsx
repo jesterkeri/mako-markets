@@ -44,11 +44,16 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
   const account = accountAddress(user);
   const balanceQuery = useUsdcBalance(account);
   const balance = typeof balanceQuery.data === 'bigint' ? balanceQuery.data : undefined;
-  const send = useWalletSend(user, balance, () => {
-    setTo('');
-    setAmount('');
-    void balanceQuery.refetch();
-  });
+  const send = useWalletSend(
+    user,
+    balance,
+    () => {
+      setTo('');
+      setAmount('');
+      void balanceQuery.refetch();
+    },
+    () => void balanceQuery.refetch(),
+  );
 
   const balanceText = balance !== undefined ? `${usdc2(balance)} USDC` : balanceQuery.isError ? 'Balance unavailable' : '…';
   const gasLine = email ? `Gas-free with email. Up to ${usdc2(EMAIL_SEND_CAP)} USDC a send.` : 'Your wallet pays the gas, in MON.';
