@@ -118,6 +118,9 @@ export default function ProfilePage() {
   /// The connected wallet as of the latest render: it can change while the SEND NOW modal is open (Codex S4 r2).
   const connectedNow = useRef(connectedWallet);
   connectedNow.current = connectedWallet;
+  /// The wallet a wallet send was reviewed with, fixed when REVIEW SEND is pressed: SEND NOW sends only from it, even
+  /// with no session, where the drift gate cannot see a switch (adversary on 2794f4b).
+  const reviewedSender = useRef<`0x${string}` | null>(null);
   const publicClient = usePublicClient({ chainId: MONAD_TESTNET_ID });
   const { disconnect, disconnectAsync } = useDisconnect();
   const { writeContractAsync } = useWriteContract();
@@ -383,6 +386,11 @@ export default function ProfilePage() {
       );
       return;
     }
+    reviewedSender.current = isMagicUser
+      ? null
+      : user?.authType === 'wallet'
+        ? (user.walletAddress as `0x${string}`)
+        : (connectedWallet ?? null);
     setActiveModal('send');
   };
 
@@ -423,9 +431,21 @@ export default function ProfilePage() {
     // right now, and named as the write's account, so a switch after Review can never send from another wallet
     // (Codex S4 r2).
     if (!isMagicUser) {
-      const sender = (user?.authType === 'wallet' ? user.walletAddress : canonicalAddress) as `0x${string}`;
+      const sender = reviewedSender.current;
+      reviewedSender.current = null;
+      if (!sender) {
+        setSendPhase('error');
+        setSendError('Review the send again before sending.');
+        return;
+      }
       const sent = await sendUsdcFromWallet(
-        { sender, usdc: usdcAddress as `0x${string}`, to: sendDestination as `0x${string}`, amount: amountBaseUnits },
+        {
+          sender,
+          usdc: usdcAddress as `0x${string}`,
+          to: sendDestination as `0x${string}`,
+          amount: amountBaseUnits,
+          chainId: MONAD_TESTNET_ID,
+        },
         {
           connectedNow: () => connectedNow.current,
           writeContractAsync,
@@ -445,10 +465,21 @@ export default function ProfilePage() {
           setSendPhase('error');
           setSendError('Transaction failed or was rejected by your wallet.');
           break;
+        case 'wrong_chain':
+          setSendPhase('error');
+          setSendError('Your wallet is on another network. Switch it to Monad testnet and review the send again.');
+          break;
+        case 'cancelled':
+          setSendTxHash(sent.txHash);
+          setSendPhase('error');
+          setSendError('The send was cancelled in your wallet. No USDC was sent.');
+          break;
         case 'sent':
+          setSendTxHash(sent.txHash);
           setSendPhase('sent');
           break;
         case 'reverted':
+          setSendTxHash(sent.txHash);
           setSendPhase('reverted');
           setSendError('The send reverted on chain. No funds were moved.');
           break;
