@@ -62,6 +62,9 @@ export type IndexedStats = {
 /// The indexer's answer, checked. Null for anything that is not a complete, well-formed answer: an error body, a
 /// missing field, a wrong type, or no GlobalStats row yet (the indexer has not processed its first event).
 export function parseIndexedStats(body: unknown): IndexedStats | null {
+  // A GraphQL answer that reports errors is not complete, even with data beside it (adversary on fdebf29).
+  const errors = (body as { errors?: unknown } | null)?.errors;
+  if (errors !== undefined && !(Array.isArray(errors) && errors.length === 0)) return null;
   const parsed = Response.safeParse(body);
   if (!parsed.success) return null;
   const d = parsed.data.data;

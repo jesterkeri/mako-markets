@@ -217,16 +217,20 @@ indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketResolved' }, async ({
 
   context.Pool.set({ ...pool, status, resolvedAt: ts });
   const global = await loadGlobal(context);
-  const refunded = status === 'Refund' ? 1 : 0;
+  // Each pool is counted once, in the bucket of the status it ends with, however many resolutions arrive (V4
+  // refuses a second one today; adversary on fdebf29): a first resolution adds it, a later one only moves it
+  // between settled-with-a-winner and refunded.
+  const settled = pool.status === 'Open' ? 1 : 0;
+  const refunded = (status === 'Refund' ? 1 : 0) - (pool.status === 'Refund' ? 1 : 0);
   // A pool created by Mako Market's own wallet counts only in the operator totals (Codex S6 r2).
   const community = isInternal(pool.creator_id) ? 0 : 1;
   context.GlobalStats.set(
     stamp(
       {
         ...global,
-        poolsSettled: global.poolsSettled + 1,
+        poolsSettled: global.poolsSettled + settled,
         poolsRefunded: global.poolsRefunded + refunded,
-        communityPoolsSettled: global.communityPoolsSettled + community,
+        communityPoolsSettled: global.communityPoolsSettled + community * settled,
         communityPoolsRefunded: global.communityPoolsRefunded + community * refunded,
       },
       ts,
