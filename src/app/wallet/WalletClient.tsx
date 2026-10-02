@@ -12,7 +12,7 @@ import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
 import { usdc2 } from '@/lib/pool-list';
 import { formatAddress } from '@/lib/user-display';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
-import { EMAIL_SEND_CAP, maxSend, useWalletSend } from '@/lib/use-wallet-send';
+import { EMAIL_SEND_CAP, exactUsdc, maxSend, useWalletSend } from '@/lib/use-wallet-send';
 import { formatUnits } from 'viem';
 
 // Wallet: send USDC, or show the address to receive it. Composed from the redesign's parts: Settings' rows and
@@ -67,14 +67,15 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
     confirmLabel: 'Send',
     pendingTitle: 'Sending USDC',
     rows: [
-      { label: 'Amount', value: `${usdc2(send.reviewed.amount)} USDC` },
-      { label: 'To', value: formatAddress(send.reviewed.to) },
+      // Exactly what is sent: the unrounded amount and the full address (adversary on e442601).
+      { label: 'Amount', value: `${exactUsdc(send.reviewed.amount)} USDC` },
+      { label: 'To', value: send.reviewed.to },
       { label: 'Network', value: 'Monad testnet' },
       { label: 'Gas', value: email ? 'Covered by Mako Market' : 'Paid by your wallet' },
     ],
     note: 'A send can’t be undone. Check the address: USDC sent to the wrong one is gone.',
     doneTitle: 'Sent',
-    doneBody: `${usdc2(send.reviewed.amount)} USDC left your wallet for ${formatAddress(send.reviewed.to)}.`,
+    doneBody: `${exactUsdc(send.reviewed.amount)} USDC left your wallet for ${send.reviewed.to}.`,
   };
 
   const tabs = (mobile: boolean) => (
@@ -112,7 +113,7 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span style={mobile ? { fontSize: 14, fontWeight: 700 } : { ...mono, fontSize: 11, color: 'var(--dim)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Amount, USDC</span>
         <span style={{ display: 'flex', gap: 8 }}>
-          <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="0.00" aria-label="Amount in USDC" style={{ ...input, ...display, fontSize: 20, flex: 1 }} />
+          <input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.,]/g, ''))} inputMode="decimal" placeholder="0.00" aria-label="Amount in USDC" style={{ ...input, ...display, fontSize: 20, flex: 1 }} />
           <button type="button" onClick={onMax} disabled={balance === undefined} className="mk-press96" style={{ ...pill, height: 48, padding: '0 16px' }}>
             Max
           </button>

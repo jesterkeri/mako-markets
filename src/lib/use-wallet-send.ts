@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { getAddress, isAddress, parseUnits, type Address } from 'viem';
+import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 
 import type { ConfirmPhase } from '@/components/ConfirmSheet';
@@ -37,20 +37,27 @@ export type SendCheck = { ok: true; to: Address; amount: bigint } | { ok: false;
 /// The form's checks, before anything is asked of a wallet. `balance` is undefined until it has loaded.
 export function checkSend(input: { to: string; amount: string }, ctx: { self: Address; balance: bigint | undefined; email: boolean }): SendCheck {
   const to = input.to.trim();
-  if (!isAddress(to, { strict: false })) return { ok: false, error: 'Enter a valid 0x address.' };
+  // Strict: a mixed-case address must carry a valid checksum, so a mistyped checksummed address is refused
+  // (adversary on e442601). An all-lowercase address has no checksum to check and is accepted.
+  if (!isAddress(to)) return { ok: false, error: 'Enter a valid 0x address. Check it was copied in full.' };
   const lower = to.toLowerCase();
   if (lower === ctx.self.toLowerCase()) return { ok: false, error: 'That is your own address.' };
   if ([USDC_ADDRESS, MAKO_ADDRESS, PM_CONTRACT_ADDRESS].some((a) => a && a.trim().toLowerCase() === lower)) {
     return { ok: false, error: 'That is a contract address. USDC sent there can’t be got back.' };
   }
   const amountText = input.amount.trim();
-  if (!/^\d+(\.\d{1,6})?$/.test(amountText)) return { ok: false, error: 'Enter an amount, up to 6 decimal places.' };
+  if (!/^\d+(\.\d{1,6})?$/.test(amountText)) return { ok: false, error: 'Enter an amount with a dot for decimals, up to 6 decimal places.' };
   const amount = parseUnits(amountText, 6);
   if (amount <= 0n) return { ok: false, error: 'Enter an amount above zero.' };
   if (ctx.balance === undefined) return { ok: false, error: 'Your balance hasn’t loaded yet. Try again in a moment.' };
   if (amount > ctx.balance) return { ok: false, error: `That is more than your balance (${usdc2(ctx.balance)} USDC).` };
   if (ctx.email && amount > EMAIL_SEND_CAP) return { ok: false, error: `Each send can be at most ${usdc2(EMAIL_SEND_CAP)} USDC.` };
   return { ok: true, to: getAddress(to), amount };
+}
+
+/// An amount exactly as it will be sent, never rounded: "1.995", "0.004", "12" (adversary on e442601).
+export function exactUsdc(amount: bigint): string {
+  return formatUnits(amount, 6);
 }
 
 /// The most this account can send in one go: its balance, capped per send for an email account.
@@ -114,6 +121,9 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
   const publicClient = usePublicClient({ chainId: MONAD_TESTNET_ID });
   const { writeContractAsync } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
+  /// The balance as of the latest render: it can drop while the sheet is open.
+  const balanceNow = useRef(balance);
+  balanceNow.current = balance;
 
   const [reviewed, setReviewed] = useState<{ to: Address; amount: bigint } | null>(null);
   const [phase, setPhase] = useState<ConfirmPhase>({ step: 'review' });
@@ -139,13 +149,26 @@ export function useWalletSend(user: AuthedUser, balance: bigint | undefined, onL
     if (!reviewed || inFlight.current) return;
     inFlight.current = true;
     try {
+      // Re-checked at Send, not only at Review: the balance can drop while the sheet is open.
+      const now = balanceNow.current;
+      if (now === undefined || reviewed.amount > now) {
+        setPhase(failed('Balance changed', `Your balance is now ${now === undefined ? 'unknown' : `${exactUsdc(now)} USDC`}, less than this send. Nothing was sent.`, true, close));
+        return;
+      }
       if (user.authType === 'magic') {
         setPhase({ step: 'pending', stage: 'signing' });
         let o: RunOutcome;
         try {
           o = await runSendUsdc({ chainId: MONAD_TESTNET_ID, recipient: reviewed.to, amountUsdc: reviewed.amount, usdcAddress: USDC_ADDRESS, magicEoa: user.magicEoa as Address });
         } catch {
-          setPhase(failed(FAIL_TITLE, 'Mako Market couldn’t prepare it. Nothing was sent.', true));
+          // A throw can come after the signed send was posted (a dropped connection), so the outcome is unknown,
+          // never "nothing moved" (adversary on e442601; the same rule as confirm-outcome.ts).
+          setPhase(
+            failed('Lost the connection', 'Your send may still reach Monad. Check your wallet’s transactions before you try again.', false, {
+              label: 'Open explorer',
+              href: explorerUrl('address', self),
+            }),
+          );
           return;
         }
         const p = emailSendPhase(o, self);

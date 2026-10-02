@@ -158,6 +158,9 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
                     fontSize: 15,
                     fontWeight: 700,
                     textAlign: 'right',
+                    // A full address (the send sheet) wraps instead of pushing the sheet wider than a phone.
+                    minWidth: 0,
+                    overflowWrap: 'anywhere',
                     fontVariantNumeric: 'tabular-nums',
                     color: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv-fg)' : r.tone === 'up' ? 'var(--up-text)' : r.tone === 'no' ? 'var(--mako-red)' : 'var(--mako-canvas-fg)',
                     background: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv)' : 'transparent',
