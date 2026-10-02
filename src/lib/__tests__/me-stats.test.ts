@@ -30,7 +30,7 @@ function pool(id: bigint, over: Partial<MarketWithId>): MarketWithId {
     id,
     creator: '0x00000000000000000000000000000000000000c1',
     mType: MarketType.CRYPTO,
-    oracleRef: `0x${'0'.repeat(64)}`,
+    oracleRef: '0x4254433a67743a31000000000000000000000000000000000000000000000000', // BTC:gt:1, a reference the resolver reads
     question: `Pool ${id}`,
     createdAt: BigInt(NOW - 3 * DAY),
     closeTime: BigInt(NOW - HOUR),

@@ -12,7 +12,7 @@
 
 import { computeResolvedClaim } from './bet';
 import type { MarketWithId } from './contract';
-import { dayTime, RESOLUTION_GRACE_SEC } from './pool-rules';
+import { dayTime, RESOLUTION_GRACE_SEC, unsettleable } from './pool-rules';
 import { claimable, formatAgo, poolRow, usdc2, type PoolCat, type PoolState, type Position, type UserBet } from './pool-list';
 import { formatCountdown } from './countdown';
 
@@ -213,6 +213,11 @@ export function estPayouts(m: MarketWithId, bet: UserBet): { side: 'yes' | 'no';
 /// The row's time line: "Closes in 1D 2H", "Settles after Sat 18:30", "Waiting for the result", "Closed 1D ago".
 export function positionMeta(p: MePosition, nowSec: number, timeZone?: string): string {
   const m = p.market;
+  // A pool the resolver cannot read is not settled automatically, so its row never promises a result.
+  const manual = unsettleable(m) && nowSec < Number(m.closeTime) + RESOLUTION_GRACE_SEC;
+  if (manual && (p.state === 'betting_closed' || p.state === 'resolving')) {
+    return `Refundable from ${dayTime(Number(m.closeTime) + RESOLUTION_GRACE_SEC, timeZone)}`;
+  }
   switch (p.state) {
     case 'open':
       return `Closes in ${formatCountdown(Number(m.bettingCloseTime) - nowSec)}`;

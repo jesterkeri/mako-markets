@@ -10,7 +10,7 @@ const pool = (over: Partial<MarketWithId> = {}): MarketWithId => ({
   id: 92n,
   creator: '0x0000000000000000000000000000000000000001',
   mType: MarketType.CRYPTO,
-  oracleRef: `0x${'00'.repeat(32)}`,
+  oracleRef: '0x4254433a67743a31000000000000000000000000000000000000000000000000', // BTC:gt:1, a reference the resolver reads
   question: 'Will BTC close above $84,546 in 1 hour?',
   createdAt: BigInt(NOW - 600),
   closeTime: BigInt(NOW + 3000),

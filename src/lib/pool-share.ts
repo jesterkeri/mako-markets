@@ -5,6 +5,7 @@
 import { createPublicClient, http } from 'viem';
 
 import { MAKO_ADDRESS, makoAbi, marketTypeLabel, type MarketWithId } from './contract';
+import { unsettleable } from './pool-rules';
 import { humanizeUntil } from './time';
 
 const RPC_URL = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
@@ -37,7 +38,9 @@ export async function readPoolForShare(id: bigint): Promise<MarketWithId | null>
 export function shareStatus(m: MarketWithId, nowSec: number): string {
   if (m.resolved) return 'Settled';
   const bettingClose = Number(m.bettingCloseTime);
-  return bettingClose > nowSec ? `Betting closes ${humanizeUntil(bettingClose - nowSec)}` : 'Waiting for the result';
+  if (bettingClose > nowSec) return `Betting closes ${humanizeUntil(bettingClose - nowSec)}`;
+  // A pool the resolver cannot read gets no result to wait for, only a refund after 24H.
+  return unsettleable(m) ? 'Not settled automatically' : 'Waiting for the result';
 }
 
 export const poolUrl = (id: bigint | string) => `${APP_URL}/pools/${id.toString()}`;

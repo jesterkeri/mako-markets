@@ -15,7 +15,7 @@ import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
-import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps } from '@/lib/pool-rules';
+import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
@@ -453,8 +453,14 @@ function HowResultsWork({ market: m }: { market: MarketWithId }) {
 
 function closedNote(state: PoolState, m: MarketWithId, now: number): string {
   const close = dayTime(Number(m.closeTime));
+  const overdue = now >= Number(m.closeTime) + RESOLUTION_GRACE_SEC;
+  // A pool the resolver cannot read is never settled automatically: this note agrees with the header and step 02
+  // (adversary on 05ce755).
+  if (unsettleable(m) && !overdue) {
+    return `${state === 'betting_closed' ? `Betting closed ${dayTime(Number(m.bettingCloseTime))}. ` : ''}Not settled automatically: from 24H after ${close}, anyone can mark it refunded.`;
+  }
   if (state === 'betting_closed') return `Betting closed ${dayTime(Number(m.bettingCloseTime))}. Mako Market settles the result after ${close}.`;
-  return now >= Number(m.closeTime) + RESOLUTION_GRACE_SEC
+  return overdue
     ? `It wasn't settled within 24H of ${close}, so it can now be marked refunded. Then everyone claims their stake back, no fee.`
     : `Waiting for the result. If it isn't settled within 24H of ${close}, anyone can mark the pool refunded.`;
 }
