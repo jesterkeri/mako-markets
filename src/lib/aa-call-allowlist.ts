@@ -106,6 +106,7 @@ import {
   isPmTarget,
 } from './private-markets/pm-call-allowlist';
 import { assertRoundsSendBatched, assertRoundsSendCall, isRoundsTarget } from './rounds-call-allowlist';
+import { assertRoundsRelease } from './rounds-release';
 
 const MAX_UINT_256 = (1n << 256n) - 1n;
 
@@ -2093,6 +2094,8 @@ export async function assertSponsoredCallData(args: {
         throw new NotAllowedError('round_bad_target');
       }
       assertRoundsSendCall({ to, value, data });
+      // The chain must still show the reviewed Rounds code at that address (Codex S2 r1).
+      await assertRoundsRelease();
       return;
     }
     throw new NotAllowedError('bad_to');
@@ -2220,6 +2223,7 @@ export async function assertSponsoredCallData(args: {
     if (isRoundsTarget(sub1.to)) {
       // Rounds: only [approve(ROUNDS, MaxUint256) on USDC, enter(...)].
       assertRoundsSendBatched(sub0, sub1);
+      await assertRoundsRelease();
       return;
     }
     // Unknown sub[1] target. Reject defensively — neither v4 batched

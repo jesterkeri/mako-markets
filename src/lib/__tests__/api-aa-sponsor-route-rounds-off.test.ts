@@ -31,6 +31,7 @@ vi.mock('@/lib/aa-public-client', () => ({
 
 import { POST } from '../../app/api/aa/sponsor/route';
 import { roundsAbi } from '../rounds-abi';
+import { USDC_ADDRESS } from '../usdc';
 
 const SOME: Address = '0x5e0f1e7b7a3b1c2d3E4F5a6b7c8D9E0f1A2B3C4d';
 const enter = encodeFunctionData({ abi: roundsAbi, functionName: 'enter', args: [7n, 1, 100_000n] });
@@ -55,6 +56,36 @@ describe('/api/aa/sponsor — Rounds not live', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json', origin: 'http://localhost' },
         body: JSON.stringify({ kind, chainId: 10143, call: { to: SOME, value: '0x0', data } }),
+      }),
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'NOT_ALLOWED', reason: 'round_unavailable' });
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
+    expect(mocks.readContract).not.toHaveBeenCalled();
+    expect(mocks.getBlock).not.toHaveBeenCalled();
+  });
+
+  it('round_enter_batched (the only Rounds kind carrying an approval) answers 503 round_unavailable and touches nothing (Codex S2 r1)', async () => {
+    mocks.getUserSession.mockResolvedValue({ userId: 'u', email: 'a@b.com', magicEoa: '0x2222222222222222222222222222222222222222', sessionId: 's' });
+    mocks.selectFromUserSafes.mockResolvedValue([{ safeAddress: '0x1111111111111111111111111111111111111111' }]);
+    const approve = encodeFunctionData({
+      abi: [{ type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 's', type: 'address' }, { name: 'a', type: 'uint256' }], outputs: [{ type: 'bool' }] }] as const,
+      functionName: 'approve',
+      args: [SOME, 100_000n],
+    });
+    const res = await POST(
+      new Request('http://localhost/api/aa/sponsor', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+        body: JSON.stringify({
+          kind: 'round_enter_batched',
+          chainId: 10143,
+          calls: [
+            { to: USDC_ADDRESS, value: '0x0', data: approve },
+            { to: SOME, value: '0x0', data: enter },
+          ],
+        }),
       }),
     );
     expect(res.status).toBe(503);

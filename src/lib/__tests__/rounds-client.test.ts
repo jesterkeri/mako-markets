@@ -2,7 +2,7 @@
 // order, and nothing sent while Rounds is not live.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { decodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
+import { decodeFunctionData, type Address, type Hex } from 'viem';
 
 const mocks = vi.hoisted(() => ({ signSafeOpHash: vi.fn() }));
 vi.mock('../embedded-signer', () => ({ signSafeOpHash: (a: unknown) => mocks.signSafeOpHash(a) }));
@@ -53,12 +53,12 @@ describe('runEnterRound', () => {
     expect(decodeFunctionData({ abi: roundsAbi, data: b.call!.data })).toMatchObject({ functionName: 'enter', args: [142n, 1, 5_000_000n] });
   });
 
-  it('below the stake it approves first: [approve(ROUNDS, MaxUint256) on USDC, enter(Down=2)]', async () => {
+  it('below the stake it approves exactly the stake first: [approve(ROUNDS, stake) on USDC, enter(Down=2)]', async () => {
     await runEnterRound({ ...base, roundId: 7n, side: 'down', amount: 1_000_000n, currentAllowance: 999_999n });
     const b = sponsorBody();
     expect(b.kind).toBe('round_enter_batched');
     expect(b.calls!.map((c) => c.to)).toEqual([USDC_ADDRESS, ROUNDS]);
-    expect(decodeFunctionData({ abi: [{ type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 's', type: 'address' }, { name: 'a', type: 'uint256' }], outputs: [{ type: 'bool' }] }], data: b.calls![0].data }).args).toEqual([ROUNDS, maxUint256]);
+    expect(decodeFunctionData({ abi: [{ type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 's', type: 'address' }, { name: 'a', type: 'uint256' }], outputs: [{ type: 'bool' }] }], data: b.calls![0].data }).args).toEqual([ROUNDS, 1_000_000n]);
     expect(decodeFunctionData({ abi: roundsAbi, data: b.calls![1].data }).args).toEqual([7n, 2, 1_000_000n]);
   });
 

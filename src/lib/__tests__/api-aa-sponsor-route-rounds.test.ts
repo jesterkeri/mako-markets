@@ -2,13 +2,21 @@
 // Only the edges are mocked (session, DB, limiter, builder, chain reads); the route and validators are real.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
+import { encodeFunctionData, type Address, type Hex } from 'viem';
 
 const ROUNDS = vi.hoisted(() => {
   const address = '0x5e0f1e7b7a3b1c2d3E4F5a6b7c8D9E0f1A2B3C4d';
   process.env.NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS = address;
   return address as `0x${string}`;
 });
+
+// Rounds is live only for a reviewed release record (Codex S2 r1): this file supplies one for ROUNDS, and the
+// on-chain identity check passes (its own tests are in rounds-release.test.ts).
+vi.mock('@/lib/rounds-release-record', async () => {
+  const { USDC_ADDRESS } = await import('@/lib/usdc');
+  return { ROUNDS_RELEASE_RECORD: { address: ROUNDS, runtimeCodeHash: `0x${'11'.repeat(32)}`, usdc: USDC_ADDRESS } };
+});
+vi.mock('@/lib/rounds-release', () => ({ assertRoundsRelease: vi.fn(async () => {}), resetRoundsReleaseCache: vi.fn() }));
 
 const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
@@ -56,7 +64,7 @@ const claim = encodeFunctionData({ abi: roundsAbi, functionName: 'claim', args: 
 const approve = encodeFunctionData({
   abi: [{ type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 's', type: 'address' }, { name: 'a', type: 'uint256' }], outputs: [{ type: 'bool' }] }] as const,
   functionName: 'approve',
-  args: [ROUNDS, maxUint256],
+  args: [ROUNDS, 100_000n],
 });
 const one = (kind: string, to: Address, data: Hex) => ({ kind, chainId: 10143, call: { to, value: '0x0', data } });
 
@@ -101,6 +109,18 @@ describe('/api/aa/sponsor — Rounds kinds (Rounds live)', () => {
     const args = mocks.buildSponsoredUserOp.mock.calls[0][0] as { call: { to: Address; data: Hex } };
     expect(args.call.to).toBe(ROUNDS);
     expect(args.call.data).toBe(enter);
+  });
+
+  it('the chain no longer shows the reviewed Rounds code: 503 round_unavailable, nothing built or counted (Codex S2 r1)', async () => {
+    happy();
+    const { assertRoundsRelease } = await import('@/lib/rounds-release');
+    const { NotAllowedError } = await import('@/lib/aa-call-allowlist');
+    vi.mocked(assertRoundsRelease).mockRejectedValueOnce(new NotAllowedError('round_unavailable', 'code_hash'));
+    const res = await POST(mkReq(one('round_enter', ROUNDS, enter)));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'NOT_ALLOWED', reason: 'round_unavailable' });
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
   });
 
   it('round_enter_batched: builds [approve, enter]', async () => {

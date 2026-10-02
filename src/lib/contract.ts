@@ -1,4 +1,5 @@
 import { decodeEventLog, getAddress, type TransactionReceipt } from 'viem';
+import { ROUNDS_RELEASE_RECORD, type RoundsRelease } from './rounds-release-record';
 import { makoAbi } from './MakoMarkets.abi';
 import { USDC_ADDRESS, usdcContract } from './usdc';
 
@@ -66,9 +67,19 @@ export const PM_CONTRACT_ADDRESS = normalizeAddress(
  * Rounds' `claim(uint256)` has the same selector as the Pools `claim(uint256)`, and the two are told apart only by
  * target.
  */
+/// The reviewed MakoRoundsV1 deployment (rounds-release-record.ts). Codex S2 r1: an address in an environment variable
+/// is not a contract identity, and a first entry gives Rounds a USDC allowance, so Rounds is live only for the
+/// deployment recorded there, in reviewed code, and only while the chain still shows that code and that USDC
+/// (assertRoundsRelease, at sponsor and at send time). While the record is null, Rounds is off whatever
+/// NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS says.
+export const ROUNDS_RELEASE: RoundsRelease | null = ROUNDS_RELEASE_RECORD;
+
+export type { RoundsRelease };
+
 export function resolveRoundsAddress(
   raw: string | undefined,
   others: readonly `0x${string}`[] = [MAKO_ADDRESS, PM_CONTRACT_ADDRESS, USDC_ADDRESS],
+  release: RoundsRelease | null = ROUNDS_RELEASE,
 ): `0x${string}` | null {
   if (!raw || !raw.trim()) return null;
   let address: `0x${string}`;
@@ -81,6 +92,10 @@ export function resolveRoundsAddress(
   // `others` trimmed: USDC_ADDRESS comes from the env untrimmed, and padding must not hide a collision.
   if (others.some((o) => o.trim().toLowerCase() === address.toLowerCase())) {
     console.error('[contract] NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS equals another Mako contract or USDC; Rounds is off');
+    return null;
+  }
+  if (!release || release.address.toLowerCase() !== address.toLowerCase()) {
+    console.error('[contract] NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS is not the reviewed Rounds release; Rounds is off');
     return null;
   }
   return address;

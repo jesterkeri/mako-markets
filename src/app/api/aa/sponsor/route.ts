@@ -5,6 +5,7 @@ import { db } from '@/db/client';
 import { userSafes, type AaPendingUserOp } from '@/db/schema';
 import { makoAbi } from '@/lib/MakoMarkets.abi';
 import { MAKO_ADDRESS, ROUNDS_ADDRESS } from '@/lib/contract';
+import { assertRoundsRelease } from '@/lib/rounds-release';
 import { roundsAbi } from '@/lib/rounds-abi';
 import {
   assertRoundClaimCall,
@@ -905,11 +906,13 @@ export async function POST(req: Request) {
         if (kind === 'round_enter') assertRoundEnterCall({ chainId, call });
         else if (kind === 'round_claim') assertRoundClaimCall({ chainId, call });
         else if (kind === 'round_refund') assertRoundRefundCall({ chainId, call });
-        else {
-          // Shape first, with no chain read, so a malformed request (or Rounds not live) never costs an RPC call.
-          // Then the lead window by the latest block's time (the clock the contract uses), then only a creator is
+        else assertRoundScheduleShape({ chainId, call });
+        // Shape first (no chain read; refuses while Rounds is not live), then the chain must still show the reviewed
+        // Rounds code at the pinned address (Codex S2 r1).
+        await assertRoundsRelease();
+        if (kind === 'round_schedule') {
+          // The lead window by the latest block's time (the clock the contract uses), then only a creator is
           // sponsored: schedule() reverts for anyone else.
-          assertRoundScheduleShape({ chainId, call });
           const client = getAaPublicClient(chainId);
           const block = await client.getBlock({ blockTag: 'latest' });
           assertRoundScheduleCall({ chainId, call, nowSec: Number(block.timestamp) });
@@ -928,6 +931,7 @@ export async function POST(req: Request) {
           { to: b.to as Address, value: hexToBigInt(b.value as Hex), data: b.data as Hex },
         ];
         assertRoundEnterBatchedCalls({ chainId, calls });
+        await assertRoundsRelease();
         buildArgs = { kind: 'round_enter_batched', calls };
         break;
       }

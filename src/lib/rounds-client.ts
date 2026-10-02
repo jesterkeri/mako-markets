@@ -2,7 +2,7 @@
 // Each builds the one call its kind allows and hands it to runSponsoredRequest (sponsor -> sign with the embedded
 // wallet -> send), reporting its stage to the confirm sheet. The server re-validates everything.
 
-import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
+import { encodeFunctionData, type Address, type Hex } from 'viem';
 
 import { runSponsoredRequest, type RunOutcome, type SponsoredStage, type SponsorRequestBody } from './aa-client';
 import { ROUNDS_ADDRESS } from './contract';
@@ -43,8 +43,8 @@ function rounds(args: Common): Address | null {
 
 const onRounds = (to: Address, data: Hex) => ({ to, value: '0x0' as Hex, data });
 
-/// Enter a round. Uses [approve(ROUNDS, MaxUint256), enter] the first time, when the Safe's USDC allowance to
-/// ROUNDS is below the stake, and a single enter afterwards (the Pools bet flow does the same).
+/// Enter a round. Uses [approve(ROUNDS, stake), enter] when the Safe's USDC allowance to ROUNDS is below the stake,
+/// and a single enter otherwise. The approval is exactly the stake, never unlimited (Codex S2 r1).
 export async function runEnterRound(
   args: Common & { roundId: bigint; side: RoundSide; amount: bigint; currentAllowance: bigint },
 ): Promise<RunOutcome> {
@@ -61,7 +61,7 @@ export async function runEnterRound(
           kind: 'round_enter_batched',
           chainId: args.chainId,
           calls: [
-            { to: USDC_ADDRESS, value: '0x0', data: encodeFunctionData({ abi: APPROVE_ABI, functionName: 'approve', args: [to, maxUint256] }) },
+            { to: USDC_ADDRESS, value: '0x0', data: encodeFunctionData({ abi: APPROVE_ABI, functionName: 'approve', args: [to, args.amount] }) },
             enter,
           ],
         };

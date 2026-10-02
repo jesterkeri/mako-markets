@@ -10,6 +10,14 @@ const ROUNDS = vi.hoisted(() => {
   return address as `0x${string}`;
 });
 
+// Rounds is live only for a reviewed release record (Codex S2 r1): this file supplies one for ROUNDS, and the
+// on-chain identity check passes (its own tests are in rounds-release.test.ts).
+vi.mock('@/lib/rounds-release-record', async () => {
+  const { USDC_ADDRESS } = await import('@/lib/usdc');
+  return { ROUNDS_RELEASE_RECORD: { address: ROUNDS, runtimeCodeHash: `0x${'11'.repeat(32)}`, usdc: USDC_ADDRESS } };
+});
+vi.mock('@/lib/rounds-release', () => ({ assertRoundsRelease: vi.fn(async () => {}), resetRoundsReleaseCache: vi.fn() }));
+
 import { assertSponsoredCallData, NotAllowedError } from '../aa-call-allowlist';
 import { MONAD_TESTNET_ID } from '../chain';
 import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS, ROUNDS_ADDRESS, resolveRoundsAddress } from '../contract';
@@ -116,18 +124,20 @@ describe('round_enter', () => {
 });
 
 describe('round_enter_batched', () => {
-  const ok = [call(approve(ROUNDS, maxUint256), USDC_ADDRESS), call(enter(1n, 1, 100_000n))] as const;
+  const ok = [call(approve(ROUNDS, 100_000n), USDC_ADDRESS), call(enter(1n, 1, 100_000n))] as const;
 
-  it('accepts exactly [approve(ROUNDS, MaxUint256) on USDC, enter]', () => {
+  it('accepts exactly [approve(ROUNDS, <the entry amount>) on USDC, enter]', () => {
     expect(reasonOf(() => assertRoundEnterBatchedCalls({ chainId: CHAIN, calls: ok }))).toBeNull();
   });
 
   it.each([
     ['reversed order', [ok[1], ok[0]], 'round_bad_approval'],
-    ['approve to Pools', [call(approve(MAKO_ADDRESS, maxUint256), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
-    ['approve to Private Markets', [call(approve(PM_CONTRACT_ADDRESS, maxUint256), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
-    ['approve less than MaxUint256', [call(approve(ROUNDS, 100_000n), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
-    ['approve on a token other than USDC', [call(approve(ROUNDS, maxUint256), MAKO_ADDRESS), ok[1]], 'round_bad_approval'],
+    ['approve to Pools', [call(approve(MAKO_ADDRESS, 100_000n), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
+    ['approve to Private Markets', [call(approve(PM_CONTRACT_ADDRESS, 100_000n), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
+    ['an unlimited approval (Codex S2 r1)', [call(approve(ROUNDS, maxUint256), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
+    ['an approval above the entry', [call(approve(ROUNDS, 100_001n), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
+    ['an approval below the entry', [call(approve(ROUNDS, 99_999n), USDC_ADDRESS), ok[1]], 'round_bad_approval'],
+    ['approve on a token other than USDC', [call(approve(ROUNDS, 100_000n), MAKO_ADDRESS), ok[1]], 'round_bad_approval'],
     ['a claim instead of enter', [ok[0], call(claim(1n))], 'round_bad_enter_args'],
   ] as const)('refuses %s', (_, calls, reason) => {
     expect(reasonOf(() => assertRoundEnterBatchedCalls({ chainId: CHAIN, calls: calls as unknown as readonly [ReturnType<typeof call>, ReturnType<typeof call>] }))).toBe(reason);
@@ -183,14 +193,22 @@ describe('send-time re-check (assertSponsoredCallData)', () => {
     for (const data of [enter(1n, 2, 100_000n), claim(3n), refund(3n), schedule(nextBoundaryAtLeast(NOW + 600))]) {
       await expect(send(encodeSingleExecuteUserOpCallData(call(data)))).resolves.toBeUndefined();
     }
-    await expect(send(encodeBatchedExecuteUserOpCallData([call(approve(ROUNDS, maxUint256), USDC_ADDRESS), call(enter(1n, 1, 100_000n))]))).resolves.toBeUndefined();
+    await expect(send(encodeBatchedExecuteUserOpCallData([call(approve(ROUNDS, 100_000n), USDC_ADDRESS), call(enter(1n, 1, 100_000n))]))).resolves.toBeUndefined();
+  });
+
+  it('refuses a stored Rounds op once the chain no longer shows the reviewed code, single or batched (Codex S2 r1)', async () => {
+    const { assertRoundsRelease } = await import('@/lib/rounds-release');
+    vi.mocked(assertRoundsRelease).mockRejectedValueOnce(new NotAllowedError('round_unavailable', 'code_hash'));
+    await expect(send(encodeSingleExecuteUserOpCallData(call(enter(1n, 2, 100_000n))))).rejects.toMatchObject({ reason: 'round_unavailable' });
+    vi.mocked(assertRoundsRelease).mockRejectedValueOnce(new NotAllowedError('round_unavailable', 'code_hash'));
+    await expect(send(encodeBatchedExecuteUserOpCallData([call(approve(ROUNDS, 100_000n), USDC_ADDRESS), call(enter(1n, 1, 100_000n))]))).rejects.toMatchObject({ reason: 'round_unavailable' });
   });
 
   it('refuses a malformed Rounds call and a batched approve to the wrong spender', async () => {
     await expect(send(encodeSingleExecuteUserOpCallData(call(enter(1n, 3, 100_000n))))).rejects.toMatchObject({ reason: 'round_bad_enter_args' });
     await expect(send(encodeSingleExecuteUserOpCallData(call(schedule(61n))))).rejects.toMatchObject({ reason: 'round_bad_schedule_args' });
     await expect(
-      send(encodeBatchedExecuteUserOpCallData([call(approve(MAKO_ADDRESS, maxUint256), USDC_ADDRESS), call(enter(1n, 1, 100_000n))])),
+      send(encodeBatchedExecuteUserOpCallData([call(approve(MAKO_ADDRESS, 100_000n), USDC_ADDRESS), call(enter(1n, 1, 100_000n))])),
     ).rejects.toMatchObject({ reason: 'round_bad_approval' });
   });
 

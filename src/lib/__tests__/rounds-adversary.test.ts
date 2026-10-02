@@ -10,6 +10,14 @@ const ROUNDS = vi.hoisted(() => {
   return address as `0x${string}`;
 });
 
+// Rounds is live only for a reviewed release record (Codex S2 r1): this file supplies one for ROUNDS, and the
+// on-chain identity check passes (its own tests are in rounds-release.test.ts).
+vi.mock('@/lib/rounds-release-record', async () => {
+  const { USDC_ADDRESS } = await import('@/lib/usdc');
+  return { ROUNDS_RELEASE_RECORD: { address: ROUNDS, runtimeCodeHash: `0x${'11'.repeat(32)}`, usdc: USDC_ADDRESS } };
+});
+vi.mock('@/lib/rounds-release', () => ({ assertRoundsRelease: vi.fn(async () => {}), resetRoundsReleaseCache: vi.fn() }));
+
 const mocks = vi.hoisted(() => ({ signSafeOpHash: vi.fn() }));
 vi.mock('../embedded-signer', () => ({ signSafeOpHash: (a: unknown) => mocks.signSafeOpHash(a) }));
 

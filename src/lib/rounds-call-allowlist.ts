@@ -8,7 +8,7 @@ import 'server-only';
 //
 // Every Rounds call must target exactly ROUNDS, carry value 0 and decode as the one function its kind allows:
 //   round_enter          enter(roundId >= 1, side Up=1 | Down=2, amount >= MIN_ENTRY)
-//   round_enter_batched  [approve(ROUNDS, MaxUint256) on USDC, enter(...)]
+//   round_enter_batched  [approve(ROUNDS, <entry amount>) on USDC, enter(...)]
 //   round_claim          claim(roundId >= 1)
 //   round_refund         finalizeRefund(roundId >= 1)
 //   round_schedule       schedule(startTime on a 60s boundary, 600s to 7 days ahead)   + the Safe is a creator
@@ -40,7 +40,6 @@ export const ROUND_BOUNDARY_STEP = 60n;
 export const ROUND_MIN_LEAD = 600n;
 export const ROUND_MAX_LEAD = 7n * 24n * 60n * 60n;
 
-const MAX_UINT_256 = (1n << 256n) - 1n;
 const MAX_UINT_64 = (1n << 64n) - 1n;
 const SIDE_UP = 1;
 const SIDE_DOWN = 2;
@@ -77,13 +76,14 @@ function decodeRounds(call: RoundsCall, rounds: Address) {
   }
 }
 
-function assertEnter(call: RoundsCall, rounds: Address): void {
+function assertEnter(call: RoundsCall, rounds: Address): bigint {
   const d = decodeRounds(call, rounds);
   if (d.functionName !== 'enter') throw new NotAllowedError('round_bad_enter_args');
   const [roundId, side, amount] = d.args as readonly [bigint, number, bigint];
   if (roundId < 1n) throw new NotAllowedError('round_bad_enter_args', 'roundId');
   if (side !== SIDE_UP && side !== SIDE_DOWN) throw new NotAllowedError('round_bad_enter_args', 'side');
   if (amount < ROUND_MIN_ENTRY) throw new NotAllowedError('round_bad_enter_args', 'amount');
+  return amount;
 }
 
 function assertRoundIdOnly(call: RoundsCall, rounds: Address, fn: 'claim' | 'finalizeRefund'): void {
@@ -106,9 +106,10 @@ function scheduleStartTime(call: RoundsCall, rounds: Address): bigint {
   return startTime;
 }
 
-/// approve(ROUNDS, MaxUint256) on USDC: the only approval the batched enter may carry. Safe because the only
-/// path by which ROUNDS pulls USDC is enter(), which pulls from msg.sender, the Safe itself.
-function assertApprove(call: RoundsCall, rounds: Address): void {
+/// approve(ROUNDS, <the entry's own amount>) on USDC: the only approval the batched enter may carry. Exactly the stake
+/// the same batch enters with, never an unlimited allowance (Codex S2 r1): even a wrongly configured Rounds address
+/// could never take more than that one entry.
+function assertApprove(call: RoundsCall, rounds: Address): bigint {
   if (call.to.toLowerCase() !== USDC_ADDRESS.toLowerCase()) throw new NotAllowedError('round_bad_approval', 'target');
   if (call.value !== 0n) throw new NotAllowedError('bad_value');
   let spender: Address;
@@ -121,7 +122,15 @@ function assertApprove(call: RoundsCall, rounds: Address): void {
     throw new NotAllowedError('round_bad_approval', 'selector');
   }
   if (spender.toLowerCase() !== rounds.toLowerCase()) throw new NotAllowedError('round_bad_approval', 'spender');
-  if (amount !== MAX_UINT_256) throw new NotAllowedError('round_bad_approval', 'amount');
+  return amount;
+}
+
+/// [approve, enter]: the approval's shape first (order, token, spender), then the entry, then the approval must be
+/// exactly the entry's amount.
+function assertBatch(approveCall: RoundsCall, enterCall: RoundsCall, rounds: Address): void {
+  const approved = assertApprove(approveCall, rounds);
+  const entry = assertEnter(enterCall, rounds);
+  if (approved !== entry) throw new NotAllowedError('round_bad_approval', 'amount');
 }
 
 const APPROVE_ABI = [
@@ -149,8 +158,7 @@ export function assertRoundEnterCall(args: Single): void {
 export function assertRoundEnterBatchedCalls(args: { chainId: number; calls: readonly [RoundsCall, RoundsCall] } & RoundsOptions): void {
   assertChain(args.chainId);
   const rounds = liveRounds(args);
-  assertApprove(args.calls[0], rounds);
-  assertEnter(args.calls[1], rounds);
+  assertBatch(args.calls[0], args.calls[1], rounds);
 }
 
 export function assertRoundClaimCall(args: Single): void {
@@ -200,7 +208,10 @@ export function assertRoundsSendCall(call: RoundsCall, opts?: RoundsOptions): vo
   const rounds = liveRounds(opts);
   if (call.data.length < 10) throw new NotAllowedError('bad_selector');
   const selector = call.data.slice(0, 10).toLowerCase();
-  if (selector === ROUND_ENTER_SELECTOR) return assertEnter(call, rounds);
+  if (selector === ROUND_ENTER_SELECTOR) {
+    assertEnter(call, rounds);
+    return;
+  }
   if (selector === ROUND_CLAIM_SELECTOR) return assertRoundIdOnly(call, rounds, 'claim');
   if (selector === ROUND_REFUND_SELECTOR) return assertRoundIdOnly(call, rounds, 'finalizeRefund');
   if (selector === ROUND_SCHEDULE_SELECTOR) {
@@ -210,12 +221,11 @@ export function assertRoundsSendCall(call: RoundsCall, opts?: RoundsOptions): vo
   throw new NotAllowedError('bad_selector');
 }
 
-/// op=1 MultiSend whose second sub-call targets ROUNDS: only [approve(ROUNDS, MaxUint256), enter(...)].
+/// op=1 MultiSend whose second sub-call targets ROUNDS: only [approve(ROUNDS, <entry amount>), enter(...)].
 export function assertRoundsSendBatched(sub0: RoundsCall, sub1: RoundsCall, opts?: RoundsOptions): void {
   const rounds = liveRounds(opts);
   if (sub1.data.length < 10 || sub1.data.slice(0, 10).toLowerCase() !== ROUND_ENTER_SELECTOR) {
     throw new NotAllowedError('bad_selector');
   }
-  assertApprove(sub0, rounds);
-  assertEnter(sub1, rounds);
+  assertBatch(sub0, sub1, rounds);
 }
