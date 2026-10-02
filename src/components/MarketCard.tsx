@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { type MarketWithId, MarketType, marketTypeLabel } from '@/lib/contract';
 import { secondsUntilBettingClose, yesMultiplier, noMultiplier } from '@/lib/mocks';
 import { usdc2 } from '@/lib/pool-list';
-import { formatUsdc } from '@/lib/usdc';
 import { useNowSec } from '@/lib/use-now';
 import { outcomeLabelForMarket } from '@/components/admin-shared';
 import type { MakoOutcomeLabels } from '@/lib/mako-labels';
@@ -83,8 +82,8 @@ export function MarketCard({
   // Exact to the cent at any size (Codex S3 r2): BigInt formatting, never Number.
   const pool = usdc2(market.totalYes + market.totalNo);
   const isClosed = timeLeft <= 0 || market.resolved;
-  const yesUsdc = formatUsdc(market.totalYes);
-  const noUsdc = formatUsdc(market.totalNo);
+  const yesUsdc = usdc2(market.totalYes);
+  const noUsdc = usdc2(market.totalNo);
 
   // Closing-soon sticker appears under 1h; suppressed once the market closes
   // (the countdown chip already communicates that state).

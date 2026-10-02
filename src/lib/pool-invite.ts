@@ -8,7 +8,7 @@
 import type { MarketWithId } from './contract';
 import { MIN_BET } from './pool-bet-rules';
 import { formatPays, poolRow, STATE_COLOUR, stateLabel, usdc2, type PoolCat, type PoolState } from './pool-list';
-import { poolClock } from './pool-rules';
+import { poolClock, unsettleable } from './pool-rules';
 import { parseRefTag } from './ref-tag';
 
 /// Shared links always point at production, never at the preview or local host the sharer happens to be on.
@@ -85,6 +85,7 @@ export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: s
   const row = poolRow(m, nowSec);
   const clock = poolClock(m, row.state, nowSec);
   const open = row.state === 'open';
+  const manual = unsettleable(m);
   const side = (s: 'yes' | 'no'): InviteSide => {
     const pays = s === 'yes' ? row.yesPays : row.noPays;
     return {
@@ -100,10 +101,11 @@ export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: s
     open,
     pill: { label: stateLabel(row.state).toUpperCase(), colour: STATE_COLOUR[row.state] },
     cat: row.cat,
-    sub: open ? `Bet ${labels.yes} or ${labels.no} · settled by Mako Market` : clock.sub,
+    // A pool the resolver cannot read takes no bets and is not settled automatically (adversary on b4f4a5d).
+    sub: !open ? clock.sub : manual ? 'Not settled automatically · takes no bets' : `Bet ${labels.yes} or ${labels.no} · settled by Mako Market`,
     clock: { label: clock.label, value: clock.value },
     sides: [side('yes'), side('no')],
-    scanTitle: open ? 'Scan to join' : 'Scan to view',
-    minLine: open ? `Min ${usdc2(MIN_BET)} USDC · gas-free with email` : null,
+    scanTitle: open && !manual ? 'Scan to join' : 'Scan to view',
+    minLine: open && !manual ? `Min ${usdc2(MIN_BET)} USDC · gas-free with email` : null,
   };
 }

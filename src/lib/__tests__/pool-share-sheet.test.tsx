@@ -18,7 +18,7 @@ const OPEN: MarketWithId = {
   id: 88n,
   creator: '0x00000000000000000000000000000000000000c1',
   mType: MarketType.CRYPTO,
-  oracleRef: `0x${'00'.repeat(32)}`,
+  oracleRef: '0x4254433a67743a31000000000000000000000000000000000000000000000000', // BTC:gt:1, a reference the resolver reads
   question: 'Will BTC close above $80,000 in 1 day?',
   createdAt: BigInt(NOW - 3_600),
   bettingCloseTime: BigInt(NOW + 6 * 3_600 + 11 * 60),

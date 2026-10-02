@@ -117,7 +117,13 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
     lines.push({ k: 'YES', v: yes }, { k: 'NO', v: no });
   }
 
-  lines.push({ k: 'CLOSES', v: `Betting closes ${bettingClose}. The result is settled after ${close}.` });
+  // An unreadable reference is never settled automatically: the CLOSES line must not promise a result (adversary on b4f4a5d).
+  lines.push({
+    k: 'CLOSES',
+    v: unsettleable(m)
+      ? `Betting closes ${bettingClose}. It is not settled automatically after ${close}.`
+      : `Betting closes ${bettingClose}. The result is settled after ${close}.`,
+  });
 
   const voided =
     ref?.kind === 'football'
@@ -150,15 +156,21 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
 export function poolClock(m: MarketWithId, state: PoolState, nowSec: number, timeZone?: string): { label: string; value: string; sub: string } {
   const bettingClose = dayTime(Number(m.bettingCloseTime), timeZone);
   const close = dayTime(Number(m.closeTime), timeZone);
+  // A pool the resolver cannot read says so in the header too, as step 02 does (adversary on b4f4a5d).
+  const manual = unsettleable(m);
   switch (state) {
     case 'open':
       return { label: 'Closes in', value: formatCountdown(Number(m.bettingCloseTime) - nowSec), sub: `Betting stops ${bettingClose}.` };
     case 'betting_closed':
-      return { label: 'Result after', value: formatCountdown(Number(m.closeTime) - nowSec), sub: `Betting closed ${bettingClose}. The result is settled after ${close}.` };
+      return manual
+        ? { label: 'Refundable in', value: formatCountdown(Number(m.closeTime) + RESOLUTION_GRACE_SEC - nowSec), sub: `Betting closed ${bettingClose}. Not settled automatically: from 24H after ${close}, anyone can mark it refunded.` }
+        : { label: 'Result after', value: formatCountdown(Number(m.closeTime) - nowSec), sub: `Betting closed ${bettingClose}. The result is settled after ${close}.` };
     case 'resolving':
       return nowSec >= Number(m.closeTime) + RESOLUTION_GRACE_SEC
         ? { label: 'Result', value: 'Overdue', sub: `Not settled within 24H of ${close}, so anyone can mark it refunded.` }
-        : { label: 'Result', value: 'Settling', sub: `Mako Market settles it after ${close}. If it isn't settled within 24H, it can be refunded.` };
+        : manual
+          ? { label: 'Refundable in', value: formatCountdown(Number(m.closeTime) + RESOLUTION_GRACE_SEC - nowSec), sub: `Not settled automatically. From 24H after ${close}, anyone can mark it refunded.` }
+          : { label: 'Result', value: 'Settling', sub: `Mako Market settles it after ${close}. If it isn't settled within 24H, it can be refunded.` };
     case 'yes_won':
       return { label: 'Result', value: 'YES won', sub: 'Winners can claim from this page or Me.' };
     case 'no_won':

@@ -44,13 +44,13 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
           <span style={sideName}>
             {cap(labels.yes)} {r.yesPct}%
           </span>
-          <span style={sidePays}>{formatPays(r.yesPays) || cap(labels.yes)}</span>
+          <span style={sidePays}>{formatPays(r.yesPays) || 'No bets'}</span>
         </Link>
         <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96" style={{ ...side, background: 'var(--mako-red)' }}>
           <span style={sideName}>
             {cap(labels.no)} {r.noPct}%
           </span>
-          <span style={sidePays}>{formatPays(r.noPays) || cap(labels.no)}</span>
+          <span style={sidePays}>{formatPays(r.noPays) || 'No bets'}</span>
         </Link>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
