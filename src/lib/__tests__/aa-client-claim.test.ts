@@ -27,6 +27,8 @@ import type { Address, Hex } from 'viem';
 const mocks = vi.hoisted(() => ({
   signSafeOpHash: vi.fn(),
 }));
+// These fixtures are not real Safe operations; the browser's signing check (op-binding) has its own tests.
+vi.mock('../op-binding', async (orig) => ({ ...(await orig<typeof import('@/lib/op-binding')>()), assertSignableOp: () => {} }));
 vi.mock('../embedded-signer', () => ({
   signSafeOpHash: (args: unknown) => mocks.signSafeOpHash(args),
 }));

@@ -30,6 +30,7 @@
 import { encodeFunctionData, maxUint256, type Address, type Hex } from 'viem';
 
 import { signSafeOpHash } from './embedded-signer';
+import { assertSignableOp, OpBindingError, type ExpectedOp } from './op-binding';
 import { PM_CONTRACT_ADDRESS } from './contract';
 import {
   PM_BET_ABI,
@@ -213,6 +214,27 @@ export type RunSponsoredOpArgs = {
 /// Execute the full happy-path or tampered-path. Caller already screened
 /// the user is signed in via /signup; this helper assumes a live session
 /// cookie is present.
+/// The call(s) a sponsor request asked for, as the browser's signing check compares them.
+function expectedOf(body: { call?: Call; calls?: [Call, Call] }): ExpectedOp {
+  if (body.calls) return { calls: body.calls };
+  if (body.call) return { call: body.call };
+  throw new OpBindingError('malformed');
+}
+
+/// Every sponsored signature goes through here: the browser checks that the operation the gas sponsor returned is
+/// exactly the call it asked for (src/lib/op-binding.ts, INBOX_GAP_PLAN r10 item 6), and only then asks the
+/// embedded wallet to sign. A mismatch throws OpBindingError before anything is signed.
+async function signSponsoredOp(args: {
+  sponsored: SponsorResponse;
+  expected: ExpectedOp;
+  magicEoa: Address;
+  validAfter: bigint;
+  validUntil: bigint;
+}): Promise<Hex> {
+  assertSignableOp({ owner: args.magicEoa, expected: args.expected, sponsored: args.sponsored });
+  return signSafeOpHash({ hash: args.sponsored.safeOpHash, magicEoa: args.magicEoa, validAfter: args.validAfter, validUntil: args.validUntil });
+}
+
 export async function runSponsoredOp(
   args: RunSponsoredOpArgs,
 ): Promise<RunOutcome> {
@@ -240,8 +262,9 @@ export async function runSponsoredOp(
   //    `0xffffffffffff` upper bound. Convert to bigint for the envelope.
   const validAfter = BigInt(sponsored.validAfter);
   const validUntil = BigInt(sponsored.validUntil);
-  const signature = await signSafeOpHash({
-    hash: sponsored.safeOpHash,
+  const signature = await signSponsoredOp({
+    sponsored,
+    expected: { call: args.call },
     magicEoa: args.magicEoa,
     validAfter,
     validUntil,
@@ -520,8 +543,9 @@ export async function runPlaceBet(args: RunPlaceBetArgs): Promise<RunOutcome> {
   // 2. Magic personal_sign over the SafeOp hash.
   const validAfter = BigInt(sponsored.validAfter);
   const validUntil = BigInt(sponsored.validUntil);
-  const signature = await signSafeOpHash({
-    hash: sponsored.safeOpHash,
+  const signature = await signSponsoredOp({
+    sponsored,
+    expected: expectedOf(body),
     magicEoa: args.magicEoa,
     validAfter,
     validUntil,
@@ -913,8 +937,9 @@ export async function runCreateMarket(
   // 2. Magic personal_sign over the SafeOp hash.
   const validAfter = BigInt(sponsored.validAfter);
   const validUntil = BigInt(sponsored.validUntil);
-  const signature = await signSafeOpHash({
-    hash: sponsored.safeOpHash,
+  const signature = await signSponsoredOp({
+    sponsored,
+    expected: expectedOf(body),
     magicEoa: args.magicEoa,
     validAfter,
     validUntil,
@@ -1132,8 +1157,9 @@ export async function runSponsoredRequest(
   try {
     const validAfter = BigInt(sponsored.validAfter);
     const validUntil = BigInt(sponsored.validUntil);
-    signature = await signSafeOpHash({
-      hash: sponsored.safeOpHash,
+    signature = await signSponsoredOp({
+      sponsored,
+      expected: expectedOf(body),
       magicEoa,
       validAfter,
       validUntil,
@@ -1570,8 +1596,9 @@ export async function runCreatePrivateMarket(
   try {
     const validAfter = BigInt(sponsored.validAfter);
     const validUntil = BigInt(sponsored.validUntil);
-    signature = await signSafeOpHash({
-      hash: sponsored.safeOpHash,
+    signature = await signSponsoredOp({
+      sponsored,
+      expected: expectedOf(body),
       magicEoa: args.magicEoa,
       validAfter,
       validUntil,
@@ -1815,8 +1842,9 @@ async function runSponsoredCallOp(
   try {
     const validAfter = BigInt(sponsored.validAfter);
     const validUntil = BigInt(sponsored.validUntil);
-    signature = await signSafeOpHash({
-      hash: sponsored.safeOpHash,
+    signature = await signSponsoredOp({
+      sponsored,
+      expected: expectedOf(args.body),
       magicEoa: args.magicEoa,
       validAfter,
       validUntil,

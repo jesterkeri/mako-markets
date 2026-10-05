@@ -41,6 +41,8 @@ vi.mock('@/lib/use-user', () => ({
   useUser: () => ({ user: mocks.user, isLoading: false, isError: false, refetch: vi.fn() }),
   accountAddress: (u: { authType: string; safeAddress?: string; walletAddress?: string }) => (u.authType === 'magic' ? u.safeAddress : u.walletAddress),
 }));
+// These fixtures are not real Safe operations; the browser's signing check (op-binding) has its own tests.
+vi.mock('@/lib/op-binding', async (orig) => ({ ...(await orig<typeof import('@/lib/op-binding')>()), assertSignableOp: () => {} }));
 vi.mock('@/lib/embedded-signer', () => ({ signSafeOpHash: (...args: unknown[]) => mocks.sign(...args) }));
 vi.mock('@/components/signin/SignInLink', () => ({ SignInLink: ({ children }: { children: React.ReactNode }) => <a href="/signin">{children}</a> }));
 

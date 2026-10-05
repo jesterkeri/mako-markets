@@ -19,6 +19,8 @@ vi.mock('@/lib/rounds-release-record', async () => {
 vi.mock('@/lib/rounds-release', () => ({ assertRoundsRelease: vi.fn(async () => {}), resetRoundsReleaseCache: vi.fn() }));
 
 const mocks = vi.hoisted(() => ({ signSafeOpHash: vi.fn() }));
+// These fixtures are not real Safe operations; the browser's signing check (op-binding) has its own tests.
+vi.mock('../op-binding', async (orig) => ({ ...(await orig<typeof import('@/lib/op-binding')>()), assertSignableOp: () => {} }));
 vi.mock('../embedded-signer', () => ({ signSafeOpHash: (a: unknown) => mocks.signSafeOpHash(a) }));
 
 import { assertSponsoredCallData, NotAllowedError } from '../aa-call-allowlist';
