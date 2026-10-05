@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { devPagesAllowed } from '@/lib/dev-pages';
 
 import { ListStateDesktop, ListStateMobile } from '@/components/ListState';
 import type { ListKind } from '@/lib/list-states';
@@ -11,7 +12,7 @@ const STATES = ['empty', 'loading', 'error'] as const;
 /// Dev-only preview of the shared list states (16a): /dev/list-states?kind=rounds&state=empty. Gated like the
 /// other /dev pages; production answers 404.
 export default async function DevListStatesPage({ searchParams }: { searchParams: Promise<{ kind?: string; state?: string }> }) {
-  if (process.env.MAKO_STAGE !== 'dev') notFound();
+  if (!devPagesAllowed()) notFound();
   const q = await searchParams;
   const kind = KINDS.find((k) => k === q.kind) ?? 'rounds';
   const state = STATES.find((s) => s === q.state) ?? 'empty';

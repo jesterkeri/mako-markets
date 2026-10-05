@@ -17,6 +17,18 @@ async function waitMonotonic(ms: number) {
   while (performance.now() - start < ms) await new Promise((r) => setTimeout(r, 50));
 }
 
+const hint: React.CSSProperties = { margin: 0, fontSize: 13, color: 'var(--dim)', lineHeight: 1.5 };
+
+/// What to do about the errors Privy gives during the matrix, in plain words.
+function explain(message: string): string {
+  if (/MFA is not enabled/i.test(message)) {
+    return '2FA is switched off for the development Privy app. In the Privy dashboard, turn on MFA for transactions with the authenticator app (TOTP), then press Start again.';
+  }
+  if (/Invalid email and code/i.test(message)) return 'That email code was wrong or has expired. Press Send code for a new one.';
+  if (/already has an embedded wallet/i.test(message)) return 'This user already has a wallet; the test only needs one.';
+  return message;
+}
+
 const short = (s: string) => (s.length > 18 ? `${s.slice(0, 10)}…${s.slice(-6)}` : s);
 
 export function PrivyMatrixHarness() {
@@ -38,7 +50,7 @@ export function PrivyMatrixHarness() {
       const r = await fn();
       note(`${label}: ok${typeof r === 'string' ? ` (${short(r)})` : ''}`);
     } catch (e) {
-      note(`${label}: FAILED ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
+      note(`${label}: FAILED. ${explain(e instanceof Error ? e.message : String(e))}`);
     }
   };
 
@@ -66,6 +78,7 @@ export function PrivyMatrixHarness() {
 
       <section style={box}>
         <strong>1. Email sign-in (Privy only)</strong>
+        <p style={hint}>Type the test email, press Send code, then type the code from that inbox and press Log in with code. State above should then say signed in: true.</p>
         <input style={field} value={email} onChange={(e) => setEmail(e.target.value.trim())} placeholder="test email" aria-label="Test email" />
         <button style={btn} onClick={run('send code', () => sendCode({ email }))}>Send code</button>
         <input style={field} value={code} onChange={(e) => setCode(e.target.value.trim())} placeholder="code from the email" aria-label="Email code" />
@@ -75,7 +88,13 @@ export function PrivyMatrixHarness() {
 
       <section style={box}>
         <strong>2. Set up the authenticator (TOTP)</strong>
+        <p style={hint}>
+          Sign in first. Press Start: a QR code appears. Scan it with your authenticator app (or type the code shown under it). The app then shows a
+          6-digit code: type it here and press Finish. State should then list totp under Second factors. If the log says 2FA is switched off, change the
+          development Privy app&apos;s dashboard first.
+        </p>
         <button
+          disabled={!authenticated}
           style={btn}
           onClick={run('start TOTP enrollment', async () => {
             const r = await initEnrollmentWithTotp();
@@ -98,6 +117,7 @@ export function PrivyMatrixHarness() {
 
       <section style={box}>
         <strong>3. Wallet</strong>
+        <p style={hint}>Create the wallet only when the runbook step says so (most tests set up 2FA first and use the 1.1 s button).</p>
         <button style={btn} onClick={run('create wallet now', () => createWallet().then((w) => w.address))}>Create wallet now</button>
         <button
           style={btn}

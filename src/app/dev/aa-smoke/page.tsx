@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { devPagesAllowed } from '@/lib/dev-pages';
 
 import AaSmokeClient from './AaSmokeClient';
 
@@ -31,7 +32,7 @@ import AaSmokeClient from './AaSmokeClient';
 export const dynamic = 'force-dynamic';
 
 export default function DevAaSmokePage() {
-  if (process.env.MAKO_STAGE !== 'dev') {
+  if (!devPagesAllowed()) {
     notFound();
   }
   return <AaSmokeClient />;
