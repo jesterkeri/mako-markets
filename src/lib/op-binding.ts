@@ -46,6 +46,29 @@ export class OpBindingError extends Error {
 }
 
 const ZERO: Address = '0x0000000000000000000000000000000000000000';
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const HEX = /^0x[0-9a-fA-F]*$/;
+const QUANTITIES = [
+  'nonce',
+  'callGasLimit',
+  'verificationGasLimit',
+  'preVerificationGas',
+  'maxFeePerGas',
+  'maxPriorityFeePerGas',
+  'paymasterVerificationGasLimit',
+  'paymasterPostOpGasLimit',
+] as const;
+
+/// Every field must have its exact shape before anything is compared: a paymaster that is not 20 bytes (`0x`, or 19
+/// zero bytes) would otherwise slip past the zero-address check and still pack into a paymasterAndData whose first 20
+/// bytes are zero, which EntryPoint reads as "no paymaster", so the Safe pays its own gas (adversary on ecb6aa6).
+function assertWellFormed(op: StoredSplitFormUserOp, sponsored: SponsoredForSigning): void {
+  if (!ADDRESS.test(op.sender) || !ADDRESS.test(op.paymaster)) throw new OpBindingError('malformed');
+  for (const f of QUANTITIES) if (typeof op[f] !== 'string' || !HEX.test(op[f]) || op[f].length < 3) throw new OpBindingError('malformed');
+  for (const f of [op.initCode, op.callData, op.paymasterData]) if (typeof f !== 'string' || !HEX.test(f) || f.length % 2 !== 0) throw new OpBindingError('malformed');
+  for (const f of [sponsored.validAfter, sponsored.validUntil]) if (typeof f !== 'string' || !HEX.test(f) || f.length < 3) throw new OpBindingError('malformed');
+  if (typeof sponsored.safeOpHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(sponsored.safeOpHash)) throw new OpBindingError('malformed');
+}
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 function toBigCall(c: ExpectedCall) {
@@ -56,6 +79,8 @@ function toBigCall(c: ExpectedCall) {
 export function assertSignableOp(args: { owner: Address; expected: ExpectedOp; sponsored: SponsoredForSigning; chainId?: number }): void {
   const { owner, expected, sponsored } = args;
   const op = sponsored.userOp;
+  if (!op || typeof op !== 'object') throw new OpBindingError('malformed');
+  assertWellFormed(op, sponsored);
   let packed;
   try {
     packed = storedToPacked(op);

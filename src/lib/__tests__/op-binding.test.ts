@@ -127,4 +127,17 @@ describe('assertSignableOp', () => {
     expect(reason(() => assertSignableOp({ owner: OWNER, expected: SEND, sponsored: { ...op, userOp: { ...op.userOp, nonce: 'zz' as Hex } } }))).toBe('malformed');
     expect(reason(() => assertSignableOp({ owner: OWNER, expected: SEND, sponsored: { ...op, validAfter: 'later' as Hex } }))).toBe('malformed');
   });
+
+  it('every field must have its exact shape (adversary on ecb6aa6)', () => {
+    const op = opFor(SEND);
+    const bad = (u: Partial<StoredSplitFormUserOp>, extra: Partial<SponsoredForSigning> = {}) =>
+      reason(() => assertSignableOp({ owner: OWNER, expected: SEND, sponsored: { ...op, ...extra, userOp: { ...op.userOp, ...u } } }));
+    expect(bad({ paymaster: '0x' as Address })).toBe('malformed');
+    expect(bad({ paymaster: `0x${'00'.repeat(19)}` as Address })).toBe('malformed');
+    expect(bad({ sender: `0x${'11'.repeat(21)}` as Address })).toBe('malformed');
+    expect(bad({ callData: '0xabc' })).toBe('malformed');
+    expect(bad({ paymasterData: '0xzz' as Hex })).toBe('malformed');
+    expect(bad({ callGasLimit: '0x' })).toBe('malformed');
+    expect(bad({}, { safeOpHash: '0x1234' })).toBe('malformed');
+  });
 });
