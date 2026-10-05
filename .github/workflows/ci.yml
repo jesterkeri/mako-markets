@@ -33,6 +33,8 @@ on:
       - 'feat/privy'
       # The redesign (built on the Privy branch) likewise, before any merge.
       - 'feat/redesign'
+      # The inbox-gap fix (INBOX_GAP_PLAN r10), built on the redesign, likewise.
+      - 'feat/inbox-gap'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
