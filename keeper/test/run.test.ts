@@ -302,6 +302,8 @@ describe('never two transactions at once', () => {
     expect(o.prior?.status).toBe('tx-dropped');
     expect(w.signedNonces).toEqual([4]);
     expect(w.sent).toHaveLength(1);
+    // The replacement is the record now, and the lost one counts as one failure, once.
+    expect(w.meta.txFailures['7']).toBe(1);
   });
 
   it('a replacement is refused if the pending nonce moved before the send', async () => {

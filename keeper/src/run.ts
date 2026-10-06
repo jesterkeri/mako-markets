@@ -312,12 +312,11 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
           // It may still land: keep it, send nothing, and say so every run until it resolves.
           return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} ${known ? 'still known to the node' : 'pending'}` };
         }
-        // Unknown to the node and its nonce unused: replace it at the SAME nonce, so at most one of the two can
-        // ever execute. The send below refuses if the nonce has moved by then.
-        meta.inFlight = null;
-        meta.txFailures[fk] = (meta.txFailures[fk] ?? 0) + 1;
+        // Unknown to the node and its nonce unused: it may be replaced, at the SAME nonce only, so at most one of
+        // the two can ever execute. The record is KEPT until a replacement at that nonce is actually recorded
+        // (sendTx overwrites it then and counts the failure) or the nonce is used on chain: a run that ends
+        // without sending must not forget a signed transaction that could resurface (adversary on 5ed962d).
         replaceNonce = f.nonce;
-        prior = { status: 'tx-dropped', detail: `${label} ${f.hash} unknown to the node; any resend reuses nonce ${f.nonce}` };
       }
     }
   }
@@ -325,8 +324,16 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
   // Resolved or none: go on to this run's round (SPEC §5.5 step 1: every run takes one round), so a
   // receipt never costs a minute. At most 7 requests plus the ping (T0.1c: 10 per round).
   meta.replaceNonce = replaceNonce;
+  const before = meta.inFlight;
   try {
     const next = await takeRound(cfg, deps, token, meta, nowMs, call);
+    if (replaceNonce !== undefined && before) {
+      const label = targetLabel(before.kind ?? 'settle', before.roundId);
+      prior =
+        meta.inFlight !== before // sendTx swaps in a new record object only when a replacement is recorded
+          ? { status: 'tx-dropped', detail: `${label} ${before.hash} unknown to the node; replaced at nonce ${replaceNonce}` }
+          : { status: 'tx-stuck', detail: `${label} ${before.hash} unknown to the node, nonce ${replaceNonce} unused; kept until a send reuses that nonce or the nonce is used` };
+    }
     return prior ? { ...next, prior } : next;
   } finally {
     delete meta.replaceNonce;
@@ -518,6 +525,13 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
   const sentAt = deps.net.now();
   const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt, kind: job.kind };
   const extra: Partial<Meta> = job.countPoolRefund ? { poolRefundsSent: [...meta.poolRefundsSent, sentAt] } : {};
+  // A replacement supersedes the record of the transaction the node lost: that one failed, so count it now,
+  // when the replacement at its nonce is recorded (and not before, adversary on 5ed962d).
+  const replaced = meta.replaceNonce !== undefined ? meta.inFlight : null;
+  if (replaced) {
+    const k = failKey(replaced.kind ?? 'settle', replaced.roundId);
+    extra.txFailures = { ...meta.txFailures, [k]: (meta.txFailures[k] ?? 0) + 1 };
+  }
   const recorded = await deps.state.recordInFlight(token, inFlight, sentAt, extra);
   if (!recorded.ok) return { status: 'lease-lost', detail: label };
   meta.inFlight = inFlight;
