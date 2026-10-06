@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
-# Mako Market's pools (MakoMarketsV4) on Monad testnet, indexed with Envio HyperIndex. The handlers in src/ keep
+# Mako Market's pools (MakoMarketsV4) and rounds (MakoRoundsV1) on Monad testnet, indexed with Envio HyperIndex. The handlers in src/ keep
 # running totals (per pool, per wallet, per UTC day, and overall), because Envio Cloud does not expose aggregate
 # queries; the site's /stats page and leaderboard read those entities.
 name: mako-market-indexer
@@ -23,3 +23,18 @@ chains:
     - event: Claimed(uint256 indexed id, address indexed user, uint256 amount)
     - event: CreatorFeePaid(uint256 indexed id, address indexed creator, uint256 amount)
     - event: CreatorFeeForfeited(uint256 indexed id, address indexed creator, uint256 forgoneAmount)
+  - name: MakoRoundsV1
+    address:
+    - "0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921"
+    start_block: 68759154 # MakoRoundsV1 deployment block (2026-10-06; mako-contracts deployments/rounds-v1-10143-*.json)
+    handler: ./src/handlers/MakoRoundsV1.ts
+    # Solidity enums are uint8 in the ABI: Outcome None/Up/Down, Side None/Up/Down, RefundReason None/OneSided/Tie/NoPrice.
+    events:
+    - event: RoundScheduled(uint256 indexed roundId, address indexed creator, uint64 openTime, uint64 startTime, uint64 entryCloseTime, uint64 closeTime, uint64 submitDeadline)
+    - event: Entered(uint256 indexed roundId, address indexed entrant, uint8 side, uint256 amount, uint256 stakeTotal)
+    - event: FeesAccrued(uint256 indexed roundId, uint256 total, uint256 protocolFee, uint256 creatorFee, uint256 distributable)
+    - event: RoundSettled(uint256 indexed roundId, uint8 outcome, int192 anchorPrice, int192 closePrice, uint32 anchorObservedAt, uint32 closeObservedAt, bytes32 anchorReportHash, bytes32 closeReportHash, address settler)
+    - event: RoundTied(uint256 indexed roundId, int192 anchorPrice, int192 closePrice, uint32 anchorObservedAt, uint32 closeObservedAt, bytes32 anchorReportHash, bytes32 closeReportHash, address settler)
+    - event: RoundRefunded(uint256 indexed roundId, uint8 reason)
+    - event: Claimed(uint256 indexed roundId, address indexed who, uint256 stakePart, uint256 creatorFeePart)
+    - event: RemainderSwept(uint256 indexed roundId, uint256 amount)

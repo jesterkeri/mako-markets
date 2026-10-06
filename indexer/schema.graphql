@@ -1,5 +1,5 @@
-# Mako Market pools on Monad testnet (MakoMarketsV4). Amounts are USDC base units (6 decimals). Times are Unix
-# seconds. Every total below is kept up to date by the event handlers in src/handlers/MakoMarketsV4.ts.
+# Mako Market pools (MakoMarketsV4) and rounds (MakoRoundsV1) on Monad testnet. Amounts are USDC base units
+# (6 decimals). Times are Unix seconds. Every total below is kept up to date by the event handlers in src/handlers/.
 #
 # "Internal" wallets (Mako Market's own owner, resolver and test accounts, listed in src/internal-wallets.ts) are
 # indexed like any other, but left out of the public counts in GlobalStats, DailyStats and CategoryStats.
@@ -49,6 +49,90 @@ type Pool {
   positions: [Position!]! @derivedFrom(field: "pool")
 }
 
+enum RoundStatus {
+  "Scheduled, entries open or locked, or waiting to settle."
+  Active
+  Up
+  Down
+  Refunded
+}
+
+enum RoundSide {
+  Up
+  Down
+}
+
+enum RoundRefundReason {
+  "Only one side had entries."
+  OneSided
+  "The close price equalled the opening price."
+  Tie
+  "No valid price reports before the submit deadline."
+  NoPrice
+}
+
+"""A 15-minute BTC/USD round: one MakoRoundsV1 round, opened by one of Mako Market's own creator wallets."""
+type Round {
+  "The round id."
+  id: ID!
+  "Lower-case creator address (always one of Mako Market's own wallets)."
+  creator: String! @index
+  openTime: BigInt!
+  startTime: BigInt! @index
+  entryCloseTime: BigInt!
+  closeTime: BigInt!
+  submitDeadline: BigInt!
+  createdAt: Int! @index
+  createdTx: String!
+  upPool: BigInt!
+  downPool: BigInt!
+  "Distinct wallets on each side (a wallet holds one side per round)."
+  upEntrants: Int!
+  downEntrants: Int!
+  entryCount: Int!
+  status: RoundStatus! @index
+  refundReason: RoundRefundReason
+  "18-decimal BTC/USD prices from the verified Chainlink Data Streams reports, set on settlement or a tie."
+  anchorPrice: BigInt
+  closePrice: BigInt
+  settledAt: Int
+  settledTx: String
+  protocolFee: BigInt!
+  creatorFee: BigInt!
+  distributable: BigInt!
+  "Paid to entrants (winnings or refunds), creator fee excluded."
+  claimedTotal: BigInt!
+  remainderSwept: BigInt!
+  entries: [RoundEntry!]! @derivedFrom(field: "round")
+  claims: [RoundClaim!]! @derivedFrom(field: "round")
+}
+
+"""One Entered event: a stake, or a top-up of the same side."""
+type RoundEntry {
+  id: ID!
+  round: Round! @index
+  wallet: Wallet! @index
+  side: RoundSide!
+  amount: BigInt!
+  timestamp: Int! @index
+  txHash: String!
+  """Mako Market's own wallet (internal-wallets.ts): public activity lists filter on this before their limit."""
+  internal: Boolean! @index
+}
+
+"""One MakoRoundsV1 Claimed event: winnings or a refund (stakePart) and, for the round's creator, its fee."""
+type RoundClaim {
+  id: ID!
+  round: Round! @index
+  wallet: Wallet! @index
+  stakePart: BigInt!
+  creatorFeePart: BigInt!
+  timestamp: Int! @index
+  txHash: String!
+  """Mako Market's own wallet (internal-wallets.ts): public activity lists filter on this before their limit."""
+  internal: Boolean! @index
+}
+
 """One BetPlaced event (a pool's creator seed is a bet too)."""
 type Bet {
   id: ID!
@@ -86,9 +170,10 @@ type Position {
 }
 
 """
-A wallet that used Mako Market: placed a bet or created a pool. For an email account this is its Safe.
-net = claimed + creatorFees - staked: the same cash-flow PnL as the leaderboard, so a stake still in an open pool
-counts against it until the pool settles and the wallet claims.
+A wallet that used Mako Market: placed a bet, created a pool or entered a round. For an email account this is its
+Safe. net = claimed + creatorFees - staked + roundClaimed + roundCreatorFees - roundStaked: cash-flow PnL over pools
+and rounds together (Joshua, 2026-10-06), so a stake still in an open pool or round counts against it until it
+settles and the wallet claims. The pool-only and round-only figures stay beside it.
 """
 type Wallet {
   "Lower-case address."
@@ -102,8 +187,18 @@ type Wallet {
   staked: BigInt!
   claimed: BigInt!
   creatorFees: BigInt!
+  "Round entries (a top-up is an entry) and distinct rounds entered."
+  roundEntryCount: Int!
+  roundsEntered: Int!
+  roundStaked: BigInt!
+  "Round winnings and refunds claimed."
+  roundClaimed: BigInt!
+  "Round creator fees claimed (creator wallets only)."
+  roundCreatorFees: BigInt!
   net: BigInt! @index
   bets: [Bet!]! @derivedFrom(field: "wallet")
+  roundEntries: [RoundEntry!]! @derivedFrom(field: "wallet")
+  roundClaims: [RoundClaim!]! @derivedFrom(field: "wallet")
   claims: [Claim!]! @derivedFrom(field: "wallet")
   positions: [Position!]! @derivedFrom(field: "wallet")
 }
@@ -122,6 +217,9 @@ type DailyStats {
   claimed: BigInt!
   "Public wallets seen on or before this day."
   cumulativeWallets: Int!
+  "Round entries and their stakes, public wallets only."
+  roundEntries: Int!
+  roundVolume: BigInt!
 }
 
 """Marks a wallet as active on a day, so DailyStats.activeWallets counts each wallet once."""
@@ -142,7 +240,7 @@ type CategoryStats {
 """Running totals since the contract was deployed. One row, id "global"."""
 type GlobalStats {
   id: ID!
-  "Public wallets that placed a bet or created a pool."
+  "Public wallets that placed a bet, created a pool or entered a round."
   wallets: Int!
   "Public wallets with at least one bet."
   bettors: Int!
@@ -164,6 +262,23 @@ type GlobalStats {
   claimed: BigInt!
   creatorFeesPaid: BigInt!
   internalWallets: Int!
+  "Rounds scheduled. Every round is opened by Mako Market's own creator wallets, so these are public figures."
+  rounds: Int!
+  roundsUp: Int!
+  roundsDown: Int!
+  "Every refunded round, and the refunds split by reason."
+  roundsRefunded: Int!
+  roundsTied: Int!
+  roundsOneSided: Int!
+  roundsNoPrice: Int!
+  "Public wallets with at least one round entry."
+  roundEntrants: Int!
+  "Round entries and their stakes, public wallets only."
+  roundEntries: Int!
+  roundVolume: BigInt!
+  "Round claims (winnings and refunds) by public wallets, and what they were paid."
+  roundClaims: Int!
+  roundClaimed: BigInt!
   updatedAt: Int!
   updatedBlock: Int!
 }

@@ -3,13 +3,13 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { explorerUrl } from '@/lib/chain';
-import { MAKO_ADDRESS } from '@/lib/contract';
+import { MAKO_ADDRESS, ROUNDS_ADDRESS } from '@/lib/contract';
 import { formatAgo, usdc2 } from '@/lib/pool-list';
 import { growthPaths, type StatsWire } from '@/lib/stats';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 
-// /stats ("proof of demand"): figures read from Monad testnet through Mako Market's Envio indexer of the pools
-// contract, and the gas-free actions Mako Market sponsored. Mako Market's own wallets are left out. A figure that
+// /stats ("proof of demand"): figures read from Monad testnet through Mako Market's Envio indexer of the pools and
+// rounds contracts, and the gas-free actions Mako Market sponsored. Mako Market's own wallets are left out. A figure that
 // cannot be read says so; nothing is estimated.
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
@@ -37,7 +37,7 @@ type Figure = { label: string; value: string | null; note: string };
 function figures(s: StatsWire): Figure[] {
   const i = s.indexed;
   return [
-    { label: 'Wallets that used Mako Market', value: i ? int(i.wallets) : null, note: 'placed a bet or created a pool' },
+    { label: 'Wallets that used Mako Market', value: i ? int(i.wallets) : null, note: 'placed a bet, created a pool or entered a round' },
     { label: 'Gas-free actions', value: s.gasFree ? int(s.gasFree.actions) : null, note: s.gasFree ? `sponsored by Mako Market, for ${int(s.gasFree.accounts)} accounts` : 'sponsored by Mako Market' },
     { label: 'Bets placed', value: i ? int(i.bets) : null, note: i ? `by ${int(i.bettors)} ${i.bettors === 1 ? 'person' : 'people'}` : 'on the pools contract' },
     { label: 'Staked', value: i ? `${usdc(i.volume)}` : null, note: 'test USDC placed on the line' },
@@ -96,6 +96,30 @@ function Categories({ s }: { s: StatsWire }) {
   );
 }
 
+function Rounds({ s, big }: { s: StatsWire; big: number }) {
+  const r = s.indexed?.rounds ?? null;
+  const settled = r ? r.up + r.down : 0;
+  const refundNote = r
+    ? [r.tied && `${int(r.tied)} tied`, r.oneSided && `${int(r.oneSided)} one-sided`, r.noPrice && `${int(r.noPrice)} without a price`].filter(Boolean).join(', ')
+    : '';
+  const tile = (t: string, value: string | null, note: string) => (
+    <div key={t} style={{ padding: '18px 18px 16px', borderRadius: 16, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
+      <div style={label}>{t}</div>
+      <div style={{ ...display, fontSize: big, lineHeight: 1, marginTop: 12, fontVariantNumeric: 'tabular-nums' }}>{value ?? '—'}</div>
+      <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 8 }}>{value === null ? 'unavailable right now' : note}</div>
+    </div>
+  );
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+      {tile('Rounds played', r ? int(r.scheduled) : null, r ? `${int(settled)} settled · ${int(r.refunded)} refunded` : '')}
+      {tile('Results', r ? `${int(r.up)} / ${int(r.down)}` : null, 'UP / DOWN wins')}
+      {tile('Entries', r ? int(r.entries) : null, r ? `by ${int(r.entrants)} ${r.entrants === 1 ? 'person' : 'people'}` : '')}
+      {tile('Staked on rounds', r ? usdc(r.volume) : null, r ? `${int(r.claims)} claims paid ${usdc(r.claimed)} USDC` : '')}
+      {r && r.refunded > 0 ? tile('Refunded', int(r.refunded), refundNote) : null}
+    </div>
+  );
+}
+
 function Footer({ s, now }: { s: StatsWire; now: number | null }) {
   const i = s.indexed;
   return (
@@ -124,6 +148,14 @@ export function StatsClient() {
         <a href={explorerUrl('address', MAKO_ADDRESS)} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mako-canvas-fg)' }}>
           pools contract
         </a>
+        {ROUNDS_ADDRESS ? (
+          <>
+            {' '}and its{' '}
+            <a href={explorerUrl('address', ROUNDS_ADDRESS)} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mako-canvas-fg)' }}>
+              rounds contract
+            </a>
+          </>
+        ) : null}
         . Every bet and claim below links to its transaction.
       </p>
     </>
@@ -201,6 +233,7 @@ export function StatsClient() {
             </div>
           </div>,
         )}
+        {section('03', 'Rounds', '15-minute BTC/USD', <Rounds s={s} big={30} />)}
         <Footer s={s} now={now} />
         </div>
       </div>
@@ -211,6 +244,7 @@ export function StatsClient() {
         <IndexNote s={s} />
         {section('01', 'Growth', 'Wallets', <Growth s={s} w={360} h={140} />)}
         {section('02', 'Adoption', 'By category', <Categories s={s} />)}
+        {section('03', 'Rounds', 'BTC/USD', <Rounds s={s} big={24} />)}
         <Footer s={s} now={now} />
       </div>
     </>

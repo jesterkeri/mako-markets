@@ -10,6 +10,8 @@ import { z } from 'zod';
 export const STATS_QUERY = `query Stats {
   GlobalStats(where: { id: { _eq: "global" } }) {
     wallets bettors bets volume communityPools communityPoolsSettled communityPoolsRefunded claims claimed creatorFeesPaid
+    rounds roundsUp roundsDown roundsRefunded roundsTied roundsOneSided roundsNoPrice roundEntrants roundEntries roundVolume
+    roundClaims roundClaimed
     updatedAt updatedBlock
   }
   DailyStats(order_by: { dayStart: asc }) { id dayStart newWallets activeWallets bets volume cumulativeWallets }
@@ -34,6 +36,18 @@ const Response = z.object({
         claims: count,
         claimed: big,
         creatorFeesPaid: big,
+        rounds: count,
+        roundsUp: count,
+        roundsDown: count,
+        roundsRefunded: count,
+        roundsTied: count,
+        roundsOneSided: count,
+        roundsNoPrice: count,
+        roundEntrants: count,
+        roundEntries: count,
+        roundVolume: big,
+        roundClaims: count,
+        roundClaimed: big,
         updatedAt: count,
         updatedBlock: count,
       }),
@@ -85,6 +99,21 @@ export type StatsWire = {
     communityPoolsRefunded: number;
     claims: number;
     claimed: string;
+    /// MakoRoundsV1. Every round is opened by Mako Market's own creator wallets; entries and claims are public wallets'.
+    rounds: {
+      scheduled: number;
+      up: number;
+      down: number;
+      refunded: number;
+      tied: number;
+      oneSided: number;
+      noPrice: number;
+      entrants: number;
+      entries: number;
+      volume: string;
+      claims: number;
+      claimed: string;
+    };
     updatedAt: number;
     updatedBlock: number;
     growth: { day: string; cumulativeWallets: number; newWallets: number; bets: number }[];
@@ -116,6 +145,20 @@ export function toWire(
       communityPoolsRefunded: stats.global.communityPoolsRefunded,
       claims: stats.global.claims,
       claimed: stats.global.claimed.toString(),
+      rounds: {
+        scheduled: stats.global.rounds,
+        up: stats.global.roundsUp,
+        down: stats.global.roundsDown,
+        refunded: stats.global.roundsRefunded,
+        tied: stats.global.roundsTied,
+        oneSided: stats.global.roundsOneSided,
+        noPrice: stats.global.roundsNoPrice,
+        entrants: stats.global.roundEntrants,
+        entries: stats.global.roundEntries,
+        volume: stats.global.roundVolume.toString(),
+        claims: stats.global.roundClaims,
+        claimed: stats.global.roundClaimed.toString(),
+      },
       updatedAt: stats.global.updatedAt,
       updatedBlock: stats.global.updatedBlock,
       growth: stats.days.map((d) => ({ day: d.id, cumulativeWallets: d.cumulativeWallets, newWallets: d.newWallets, bets: d.bets })),

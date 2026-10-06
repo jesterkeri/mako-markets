@@ -1,7 +1,8 @@
 # Mako Market indexer (Envio HyperIndex)
 
 Indexes Mako Market's pools contract, `MakoMarketsV4` at `0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195` on Monad
-testnet (chain 10143), from its deployment block 32603678, using [Envio HyperIndex](https://docs.envio.dev) over
+testnet (chain 10143), from its deployment block 32603678, and its rounds contract, `MakoRoundsV1` at
+`0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921`, from its deployment block 68759154, using [Envio HyperIndex](https://docs.envio.dev) over
 HyperSync (`https://10143.hypersync.xyz`). Today one feature of the site reads it: the public `/stats` page ("proof
 of demand"). The leaderboard, public profiles and search are planned to read it next; until that work ships, the
 leaderboard still reads the site's own database.
@@ -16,10 +17,14 @@ leaderboard still reads the site's own database.
 | `Wallet` | address that bet or created a pool: staked, claimed, creator fees, `net` (claimed + fees - staked; note the leaderboard's profit is claimed - staked, without fees), first and last seen | every event it takes part in |
 | `DailyStats` | UTC day: new and active wallets, bets, volume, pools created, claims, cumulative wallets | the day's events |
 | `CategoryStats` | category: pools, bets, volume | creations and bets |
-| `GlobalStats` | one row, `global`: running totals since deployment | every event |
+| `Round` | 15-minute BTC/USD round: schedule, UP/DOWN pools and entrants, status (Active, Up, Down, Refunded) and refund reason, both prices, fees, claims | every event of that round |
+| `RoundEntry`, `RoundClaim` | `Entered` / `Claimed` (MakoRoundsV1) event, with its transaction hash | the event |
+| `GlobalStats` | one row, `global`: running totals since deployment, pools and rounds | every event |
 
 Envio Cloud does not serve aggregate queries, so every total is derived in the handlers
-(`src/handlers/MakoMarketsV4.ts`). Amounts are USDC base units (6 decimals); times are Unix seconds.
+(`src/handlers/MakoMarketsV4.ts`, `src/handlers/MakoRoundsV1.ts`, shared rows in `src/handlers/common.ts`). A wallet
+is one row whichever product it used, so `wallets` and the growth chart count a person once; `Wallet.net` adds pools
+and rounds (Joshua, 2026-10-06), with the round-only figures beside it. Amounts are USDC base units (6 decimals); times are Unix seconds.
 
 **Mako Market's own wallets** (the contract's owner, resolver and treasury, plus test accounts, listed in
 `src/internal-wallets.ts`) are indexed like any other but left out of every public figure: `DailyStats`,

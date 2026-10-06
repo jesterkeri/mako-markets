@@ -12,7 +12,7 @@ vi.mock('next/link', () => ({
 vi.mock('@/lib/use-live-clock', () => ({ useLiveNowSec: () => 1_790_000_400 }));
 
 import { StatsClient } from '@/app/stats/StatsClient';
-import { MAKO_ADDRESS } from '@/lib/contract';
+import { MAKO_ADDRESS, ROUNDS_ADDRESS } from '@/lib/contract';
 import { growthPaths, type StatsWire } from '@/lib/stats';
 
 const wire = (over: Partial<StatsWire> = {}): StatsWire => ({
@@ -26,6 +26,7 @@ const wire = (over: Partial<StatsWire> = {}): StatsWire => ({
     communityPoolsRefunded: 9,
     claims: 300,
     claimed: '12000000000',
+    rounds: { scheduled: 30, up: 14, down: 12, refunded: 3, tied: 1, oneSided: 2, noPrice: 0, entrants: 21, entries: 95, volume: '310000000', claims: 40, claimed: '280000000' },
     updatedAt: 1_790_000_000,
     updatedBlock: 67_100_000,
     growth: [
@@ -64,10 +65,23 @@ describe('/stats', () => {
     expect(screen.getAllByText('9 refunded').length).toBeGreaterThan(0);
     // No activity, no wallet and no transaction anywhere on the page.
     expect(screen.queryAllByText(/Live activity/)).toHaveLength(0);
-    // The only address on the page is the Pools contract's own explorer link.
-    const html = document.body.innerHTML.split(MAKO_ADDRESS).join('').split(MAKO_ADDRESS.toLowerCase()).join('');
+    // The only addresses on the page are the pools and rounds contracts' own explorer links.
+    let html = document.body.innerHTML;
+    for (const a of [MAKO_ADDRESS, ROUNDS_ADDRESS].filter((x): x is `0x${string}` => !!x)) html = html.split(a).join('').split(a.toLowerCase()).join('');
     expect(html).not.toMatch(/0x[0-9a-fA-F]{4}/);
     expect(document.body.innerHTML).not.toMatch(/\/tx\//);
+  });
+
+  it('shows the Rounds section from the indexed totals', async () => {
+    renderWith(wire());
+    await waitFor(() => expect(screen.getAllByText('Rounds played').length).toBeGreaterThan(0));
+    expect(screen.getAllByText('26 settled · 3 refunded').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('14 / 12').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('by 21 people').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('310.00').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('40 claims paid 280.00 USDC').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1 tied, 2 one-sided').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('placed a bet, created a pool or entered a round').length).toBeGreaterThan(0);
   });
 
   it('says the index is being connected rather than showing zeros, and keeps the gas-free figure', async () => {

@@ -4,99 +4,11 @@
 // Public counts (GlobalStats, DailyStats, CategoryStats) leave out Mako Market's own wallets (src/internal-wallets.ts);
 // pool and wallet rows include everyone, because a pool's money is real whoever put it in.
 
-import { indexer, type DailyStats, type EvmOnEventContext, type GlobalStats, type Wallet } from 'envio';
-
-type HandlerContext = EvmOnEventContext;
+import { indexer } from 'envio';
 
 import { isInternal } from '../internal-wallets';
-import { categoryOf, dayOf, positionId, statusOf, walletDayId } from '../totals';
-
-const GLOBAL_ID = 'global';
-
-async function loadGlobal(context: HandlerContext): Promise<GlobalStats> {
-  return (
-    (await context.GlobalStats.get(GLOBAL_ID)) ?? {
-      id: GLOBAL_ID,
-      wallets: 0,
-      bettors: 0,
-      bets: 0,
-      volume: 0n,
-      pools: 0,
-      communityPools: 0,
-      poolsSettled: 0,
-      poolsRefunded: 0,
-      communityPoolsSettled: 0,
-      communityPoolsRefunded: 0,
-      claims: 0,
-      claimed: 0n,
-      creatorFeesPaid: 0n,
-      internalWallets: 0,
-      updatedAt: 0,
-      updatedBlock: 0,
-    }
-  );
-}
-
-async function loadDay(context: HandlerContext, timestamp: number, global: GlobalStats): Promise<DailyStats> {
-  const day = dayOf(timestamp);
-  return (
-    (await context.DailyStats.get(day.id)) ?? {
-      id: day.id,
-      dayStart: day.start,
-      newWallets: 0,
-      activeWallets: 0,
-      bets: 0,
-      volume: 0n,
-      poolsCreated: 0,
-      claims: 0,
-      claimed: 0n,
-      cumulativeWallets: global.wallets,
-    }
-  );
-}
-
-/// The wallet, created on first sight. A new public wallet counts once, in the global total and on its first day.
-async function loadWallet(
-  context: HandlerContext,
-  rawAddress: string,
-  timestamp: number,
-  global: GlobalStats,
-  day: DailyStats,
-): Promise<{ wallet: Wallet; global: GlobalStats; day: DailyStats }> {
-  const id = rawAddress.toLowerCase();
-  const existing = await context.Wallet.get(id);
-  if (existing) return { wallet: existing, global, day };
-  const internal = isInternal(id);
-  const wallet: Wallet = {
-    id,
-    internal,
-    firstSeenAt: timestamp,
-    lastActiveAt: timestamp,
-    betCount: 0,
-    poolsBet: 0,
-    poolsCreated: 0,
-    staked: 0n,
-    claimed: 0n,
-    creatorFees: 0n,
-    net: 0n,
-  };
-  if (internal) return { wallet, global: { ...global, internalWallets: global.internalWallets + 1 }, day };
-  const wallets = global.wallets + 1;
-  return { wallet, global: { ...global, wallets }, day: { ...day, newWallets: day.newWallets + 1, cumulativeWallets: wallets } };
-}
-
-/// Counts a public wallet as active on the day once.
-async function markActive(context: HandlerContext, wallet: Wallet, day: DailyStats): Promise<DailyStats> {
-  if (wallet.internal) return day;
-  const id = walletDayId(wallet.id, day.id);
-  if (await context.WalletDay.get(id)) return day;
-  context.WalletDay.set({ id });
-  return { ...day, activeWallets: day.activeWallets + 1 };
-}
-
-function stamp(global: GlobalStats, timestamp: number, block: number): GlobalStats {
-  return { ...global, updatedAt: timestamp, updatedBlock: block };
-}
+import { categoryOf, positionId, statusOf } from '../totals';
+import { loadDay, loadGlobal, loadWallet, markActive, stamp } from './common';
 
 indexer.onEvent({ contract: 'MakoMarketsV4', event: 'MarketCreated' }, async ({ event, context }) => {
   const ts = event.block.timestamp;

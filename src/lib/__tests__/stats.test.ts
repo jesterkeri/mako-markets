@@ -23,6 +23,18 @@ const answer = (over: Record<string, unknown> = {}) => ({
         claims: 6,
         claimed: 50_000_000,
         creatorFeesPaid: '1000000',
+        rounds: 30,
+        roundsUp: 14,
+        roundsDown: 12,
+        roundsRefunded: 3,
+        roundsTied: 1,
+        roundsOneSided: 2,
+        roundsNoPrice: 0,
+        roundEntrants: 21,
+        roundEntries: 95,
+        roundVolume: '310000000',
+        roundClaims: 40,
+        roundClaimed: 280_000_000,
         updatedAt: 1_790_000_000,
         updatedBlock: 67_000_000,
       },
@@ -46,6 +58,21 @@ describe('parseIndexedStats', () => {
     const wire = JSON.stringify(toWire(parseIndexedStats(answer()), 'ok', null, 0));
     expect(wire).not.toMatch(/0x[0-9a-fA-F]{40}/);
     expect(wire).not.toMatch(/"activity"|"wallet"|"txHash"/);
+  });
+
+  it('reads the rounds totals and carries them on the wire as counts and decimal strings', () => {
+    const s = parseIndexedStats(answer());
+    expect(s?.global).toMatchObject({ rounds: 30, roundsUp: 14, roundVolume: 310_000_000n, roundClaimed: 280_000_000n });
+    expect(toWire(s, 'ok', null, 0).indexed?.rounds).toEqual({
+      scheduled: 30, up: 14, down: 12, refunded: 3, tied: 1, oneSided: 2, noPrice: 0,
+      entrants: 21, entries: 95, volume: '310000000', claims: 40, claimed: '280000000',
+    });
+  });
+
+  it('refuses an answer from an indexer that does not have the rounds totals yet (an older deployment)', () => {
+    const old = answer();
+    delete (old.data.GlobalStats[0] as Record<string, unknown>).roundVolume;
+    expect(parseIndexedStats(old)).toBeNull();
   });
 
   it('refuses anything less than a complete, well-formed answer', () => {

@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { parseIndexedStats, STATS_QUERY, toWire, type IndexedStats, type StatsWire } from '@/lib/stats';
 
-// GET /api/stats: the figures for /stats, from the Envio indexer of the pools contract (ENVIO_GRAPHQL_URL) and Mako
+// GET /api/stats: the figures for /stats, from the Envio indexer of the pools and rounds contracts (ENVIO_GRAPHQL_URL) and Mako
 // Market's own record of sponsored transactions. Computed at most every 30 minutes and shared by every viewer, so a
 // busy page never wakes the database or the indexer per view (the database is on Neon's capped free plan).
 
@@ -60,7 +60,8 @@ async function fetchGasFree(): Promise<NonNullable<StatsWire['gasFree']>> {
 }
 
 // IndexedStats carries bigints, which the data cache cannot serialise, so the cache holds the wire shape.
-const cachedIndexer = unstable_cache(async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed, ['stats-indexer-v1'], { revalidate: REVALIDATE_SEC });
+// v2: the wire shape gained `rounds`; a new key so no cached v1 answer (without it) is ever served to the new page.
+const cachedIndexer = unstable_cache(async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed, ['stats-indexer-v2'], { revalidate: REVALIDATE_SEC });
 const cachedGasFree = unstable_cache(fetchGasFree, ['stats-gasfree-v1'], { revalidate: REVALIDATE_SEC });
 
 function within<T>(p: Promise<T>, ms: number): Promise<T> {
