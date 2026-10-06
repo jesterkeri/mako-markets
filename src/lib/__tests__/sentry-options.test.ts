@@ -3,7 +3,7 @@
 import type { ErrorEvent } from '@sentry/nextjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DEDUPE_WINDOW_MS, IGNORE_ERRORS, makeBeforeSend, scrub, sentryBaseOptions } from '@/lib/sentry-options';
+import { DEDUPE_WINDOW_MS, IGNORE_ERRORS, makeBeforeSend, scrub, scrubUrl, sentryBaseOptions } from '@/lib/sentry-options';
 
 const WALLET = '0x706cf4A1aaaaaaaaaaaaaaaaaaaaaaaaaab6A51c';
 const event = (value = 'boom'): ErrorEvent =>
@@ -12,7 +12,11 @@ const event = (value = 'boom'): ErrorEvent =>
     exception: { values: [{ type: 'Error', value, stacktrace: { frames: [{ filename: 'app/page.tsx', function: 'f' }] } }] },
     user: { id: 'u1', email: 'a@b.co', ip_address: '1.2.3.4' },
     request: { url: `https://makomarket.xyz/u/${WALLET}?ref=x`, cookies: { s: '1' }, headers: { cookie: 's=1' }, query_string: 'ref=x', data: { email: 'a@b.co' } },
-    breadcrumbs: [{ message: `sent to ${WALLET}`, data: { to: 'owner@example.com' } }],
+    breadcrumbs: [
+      { message: `sent to ${WALLET}`, data: { to: 'owner@example.com' } },
+      { category: 'fetch', data: { url: '/api/user/me?session=abc', method: 'GET' } },
+    ],
+    extra: { note: `paid by ${WALLET}` },
   }) as unknown as ErrorEvent;
 
 afterEach(() => vi.unstubAllEnvs());
@@ -21,6 +25,11 @@ describe('scrub', () => {
   it('masks emails and 0x addresses, leaves the rest', () => {
     expect(scrub(`user a.b+c@example.co.uk paid ${WALLET} ok`)).toBe('user [email] paid 0x[address] ok');
     expect(scrub('tx 0x' + 'ab'.repeat(32))).toBe('tx 0x' + 'ab'.repeat(32)); // a hash is not an address
+    expect(scrub(`${WALLET}_pending`)).toBe('0x[address]_pending');
+    expect(scrub('to=JOSH%40Example.COM')).toBe('to=[email]');
+  });
+  it('drops the query and fragment from a URL', () => {
+    expect(scrubUrl('https://makomarket.xyz/markets/84?ref=x#top')).toBe('https://makomarket.xyz/markets/84');
   });
 });
 
@@ -28,9 +37,11 @@ describe('beforeSend', () => {
   it('strips the user, cookies, headers, body and query, and masks identity everywhere', () => {
     const e = makeBeforeSend(() => 0)(event(`no balance for ${WALLET}, a@b.co`))!;
     expect(e.user).toBeUndefined();
-    expect(e.request).toEqual({ url: 'https://makomarket.xyz/u/0x[address]?ref=x', query_string: '[removed]' });
+    expect(e.request).toEqual({ url: 'https://makomarket.xyz/u/0x[address]', query_string: '[removed]' });
     expect(e.exception!.values![0].value).toBe('no balance for 0x[address], [email]');
     expect(e.breadcrumbs![0]).toEqual({ message: 'sent to 0x[address]', data: { to: '[email]' } });
+    expect(e.breadcrumbs![1].data).toEqual({ url: '/api/user/me', method: 'GET' });
+    expect(e.extra).toEqual({ note: 'paid by 0x[address]' });
   });
   it('drops the same error again inside the window, sends it after, and never drops a different one', () => {
     let t = 0;
