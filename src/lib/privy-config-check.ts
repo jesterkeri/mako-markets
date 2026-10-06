@@ -77,6 +77,19 @@ export function checkPrivyAppConfig(s: PrivyAppSettings, role: AppRole, expected
   if (s.passkeys_for_signup_enabled) f.push('passkeys for signup must be off [B1]');
   if (!s.email_auth) f.push('email login must be on');
   for (const m of OTHER_LOGIN_METHODS) if (s[m] === true) f.push(`${m} must be off: email is the only login method [C7]`);
+  // Fail closed on any login switch this list does not name yet (Privy adds providers): every *_auth / *_oauth flag that
+  // is on, other than email, is another way in.
+  for (const [k, v] of Object.entries(s)) {
+    if (v === true && /(_auth|_oauth)$/.test(k) && k !== 'email_auth' && !(OTHER_LOGIN_METHODS as readonly string[]).includes(k)) {
+      f.push(`${k} must be off: email is the only login method [C7]`);
+    }
+  }
+  // Custom OAuth providers are a list, not a flag (adversary on e1e0679): any enabled one is another way in.
+  const custom = Array.isArray(s.custom_oauth_providers) ? (s.custom_oauth_providers as Array<{ enabled?: unknown; provider?: unknown }>) : [];
+  for (const p of custom) if (p && p.enabled !== false) f.push(`custom OAuth provider ${String(p.provider ?? '?')} must be off [C7]`);
+  for (const k of ['whatsapp_enabled', 'telegram_seamless_auth_enabled', 'external_wallets_for_signup_enabled']) {
+    if (s[k] === true) f.push(`${k} must be off: email is the only login method [C7]`);
+  }
   if (s.merge_accounts_by_email) f.push('merge_accounts_by_email must be off [D3]');
   if (s.allowed_native_app_ids.length > 0) f.push('allowed_native_app_ids must be empty (no native app) [B5]');
   if (s.allowed_native_app_url_schemes.length > 0) f.push('allowed_native_app_url_schemes must be empty [B5]');

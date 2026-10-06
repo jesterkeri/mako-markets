@@ -58,4 +58,11 @@ describe('checkPrivyAppConfig', () => {
     expect(fails(good({ allowed_domains: [...EXPECTED_DOMAINS.development] }), 'development')).toEqual([]);
     expect(fails(good({ allowed_domains: ['https://makomarket.xyz'] }), 'development')[0]).toMatch(/exactly/);
   });
+  it('an unlisted *_oauth or *_auth flag, WhatsApp, Telegram seamless or external wallets at signup fails closed', () => {
+    expect(fails(good({ newprovider_oauth: true }))[0]).toMatch(/newprovider_oauth/);
+    expect(fails(good({ whatsapp_enabled: true }))[0]).toMatch(/whatsapp/);
+    expect(fails(good({ telegram_seamless_auth_enabled: true }))[0]).toMatch(/telegram_seamless/);
+    expect(fails(good({ external_wallets_for_signup_enabled: true }))[0]).toMatch(/external_wallets/);
+    expect(fails(good({ custom_oauth_providers: [{ enabled: false, provider: 'custom:x' }] }))).toEqual([]);
+  });
 });

@@ -92,15 +92,20 @@ async function main() {
       client.getStorageAt({ address: safe, slot: SAFE_FALLBACK_SLOT }),
       client.getStorageAt({ address: safe, slot: '0x0' }),
     ]);
+    // A storage read that returned nothing is not "no guard": block rather than assume (adversary on e1e0679).
+    if (guardSlot === undefined || fallbackSlot === undefined || singletonSlot === undefined) {
+      blockers.push(`${label}: a Safe storage read returned nothing; re-run`);
+      continue;
+    }
     const failures = judgeSafeAuthority(
       {
         owners: owners as readonly string[],
         threshold: threshold as bigint,
         modules: (page as readonly [readonly string[], string])[0],
         modulesNext: (page as readonly [readonly string[], string])[1],
-        guardSlot: guardSlot ?? '0x0',
-        fallbackSlot: fallbackSlot ?? '0x0',
-        singletonSlot: singletonSlot ?? '0x0',
+        guardSlot,
+        fallbackSlot,
+        singletonSlot,
       },
       r.magic_eoa ?? '',
     );
