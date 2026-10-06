@@ -13,7 +13,7 @@
 #
 # Usage (in your own terminal, from the rounds-watch/ directory, logged in with `wrangler login`):
 #   export BW_SESSION=$(bw unlock --raw)
-#   scripts/keeper-secrets.sh
+#   scripts/watch-secrets.sh
 set -euo pipefail
 set +x
 
