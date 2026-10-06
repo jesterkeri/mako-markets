@@ -38,6 +38,9 @@ enabled = true
 # DRY_RUN = "true" does everything except send, and stays on until Joshua switches it off.
 [vars]
 RPC_URL = "https://testnet-rpc.monad.xyz/"
+# MakoRoundsV1, deployed 2026-10-06 (mako-contracts 1d787f6 receipt) and the keeper's gas-only wallet.
+ROUNDS_ADDRESS = "0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921"
+KEEPER_ADDRESS = "0x87ADF596a31D6f30410f174577c1adec4a32319f"
 # Live MakoMarketsV4 (Pools), deployed from d088ced.
 POOLS_ADDRESS = "0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195"
 # The breaker's reset: to resume automatic V4 refunds after a trip, set this to the CURRENT UTC time (after
