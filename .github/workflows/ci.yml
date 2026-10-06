@@ -109,6 +109,60 @@ jobs:
         run: pnpm build
 
   # The Envio indexer (indexer/) is its own package with its own lockfile, so it installs alone.
+  # Codex T1.4 r2: the app's four sponsored Rounds selectors, the contracts repository's surface gate and the compiled
+  # MakoRoundsV1 must agree exactly. This job checks out the public jesterkeri/mako-contracts at the commit pinned in
+  # src/lib/rounds-surface.ts, compiles it with forge, and fails on any one-sided change.
+  rounds-surface:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_MAKO_ADDRESS: '0x000000000000000000000000000000000000abcd'
+      NEXT_PUBLIC_MAKO_DEPLOY_BLOCK: '0'
+      NEXT_PUBLIC_USDC_ADDRESS_MONAD_TESTNET: '0x000000000000000000000000000000000000dcba'
+      NEXT_PUBLIC_PRIVY_APP_ID: 'cm00000000000000000000000'
+      MAKO_STAGE: 'production'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read the pinned contracts commit
+        id: pin
+        run: |
+          sha=$(sed -n "s/^export const ROUNDS_CONTRACTS_COMMIT = '\([0-9a-f]\{40\}\)';$/\1/p" src/lib/rounds-surface.ts)
+          test -n "$sha" || { echo "ROUNDS_CONTRACTS_COMMIT not found"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout mako-contracts at the pin
+        uses: actions/checkout@v4
+        with:
+          repository: jesterkeri/mako-contracts
+          ref: ${{ steps.pin.outputs.sha }}
+          path: mako-contracts
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rounds surface, three copies
+        run: pnpm exec vitest run src/lib/__tests__/rounds-surface.test.ts
+        env:
+          MAKO_CONTRACTS_DIR: ${{ github.workspace }}/mako-contracts
+          REQUIRE_ROUNDS_SURFACE: '1'
+
   indexer:
     runs-on: ubuntu-latest
     timeout-minutes: 10

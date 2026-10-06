@@ -34,6 +34,16 @@ export const ROUND_CLAIM_SELECTOR = '0x379607f5' as const;
 export const ROUND_REFUND_SELECTOR = '0xe6d6aedc' as const;
 export const ROUND_SCHEDULE_SELECTOR = '0x0ad9f5d2' as const;
 
+/// The four sponsored Rounds functions by exact signature (SPEC §9, "nothing else, ever"). CI checks this map against
+/// the contracts repository's surface gate and the compiled MakoRoundsV1 at ROUNDS_CONTRACTS_COMMIT, so neither copy
+/// can drift alone (`rounds-surface.ts`, Codex T1.4 r2).
+export const ROUND_SPONSORED: Readonly<Record<string, `0x${string}`>> = {
+  'enter(uint256,uint8,uint256)': ROUND_ENTER_SELECTOR,
+  'claim(uint256)': ROUND_CLAIM_SELECTOR,
+  'schedule(uint64)': ROUND_SCHEDULE_SELECTOR,
+  'finalizeRefund(uint256)': ROUND_REFUND_SELECTOR,
+};
+
 /// MakoRoundsV1 constants the validators mirror (MIN_ENTRY, BOUNDARY_STEP, MIN_LEAD, MAX_LEAD).
 export const ROUND_MIN_ENTRY = 100_000n; // 0.10 USDC
 export const ROUND_BOUNDARY_STEP = 60n;
