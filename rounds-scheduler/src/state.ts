@@ -3,9 +3,12 @@
 // Each RPC is one synchronous storage transaction, so acquire and release are atomic.
 import { DurableObject } from 'cloudflare:workers';
 
-/// Shorter than the 5-minute cron period, so a crashed run's lease is free for the next one; longer than a run may
-/// send for (SEND_DEADLINE_MS in index.ts), so a lease that expired under a slow run can never meet a send.
+/// Shorter than the 5-minute cron period, so a crashed run's lease is free for the next one.
 export const LEASE_MS = 240_000;
+
+/// A run may sign and send only if, at that moment, it still holds the lease with at least this long left (Codex
+/// Rounds r2, Part B: a time check made earlier does not bound the network calls that follow it).
+export const SEND_MARGIN_MS = 60_000;
 
 export type Acquired = { ok: true; token: number } | { ok: false };
 
@@ -29,6 +32,17 @@ export class SchedulerState extends DurableObject<Record<string, never>> {
       const token = lease.token + 1;
       sql.exec(`UPDATE lease SET token = ?, held = 1, expires_at = ? WHERE id = 1`, token, now + LEASE_MS);
       return { ok: true, token } as const;
+    });
+  }
+
+  /// The last step before a run signs: true only while `token` holds the lease with SEND_MARGIN_MS or more left.
+  /// Nothing but local signing and the one bounded send follows it.
+  confirm(token: number, now: number): { ok: boolean } {
+    return this.ctx.storage.transactionSync(() => {
+      const lease = this.ctx.storage.sql.exec<{ token: number; held: number; expires_at: number }>(
+        `SELECT token, held, expires_at FROM lease WHERE id = 1`,
+      ).one();
+      return { ok: lease.token === token && lease.held === 1 && lease.expires_at - now >= SEND_MARGIN_MS };
     });
   }
 

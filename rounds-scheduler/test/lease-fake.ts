@@ -1,5 +1,5 @@
 // An in-memory stand-in for SchedulerState with the same rules (src/state.ts), for tests that run outside workerd.
-import { LEASE_MS } from '../src/state';
+import { LEASE_MS, SEND_MARGIN_MS } from '../src/state';
 import type { Lease } from '../src/index';
 import type { SchedulerState } from '../src/state';
 
@@ -19,6 +19,9 @@ export function memLease(): Lease & { held: () => boolean } {
       if (t !== token || !held) return { ok: false };
       held = false;
       return { ok: true };
+    },
+    async confirm(t, now) {
+      return { ok: t === token && held && expiresAt - now >= SEND_MARGIN_MS };
     },
     held: () => held,
   };

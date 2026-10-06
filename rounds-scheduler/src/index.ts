@@ -3,11 +3,11 @@
 // call `schedule`. It holds the two house creator keys and nothing else; it never enters, settles, refunds or moves
 // USDC. Every rule it applies the contract enforces again, so a mistake here can at worst waste gas on a refusal.
 
-import { createPublicClient, createWalletClient, defineChain, getAddress, http, parseAbi, type Hex } from 'viem';
+import { createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, parseAbi, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { MAX_LEAD_S, planSchedule, type ChainView, type HouseView } from './plan';
-import { LEASE_MS, type Acquired, type SchedulerState } from './state';
+import { LEASE_MS, SEND_MARGIN_MS, type Acquired, type SchedulerState } from './state';
 
 export { SchedulerState } from './state';
 
@@ -59,34 +59,37 @@ export type RunResult = { ok: true; scheduled: { house: number; startTime: numbe
 export interface Lease {
   acquire(nowMs: number): Promise<Acquired>;
   release(token: number): Promise<{ ok: boolean }>;
+  /// Whether `token` still holds the lease with SEND_MARGIN_MS left: asked once, immediately before signing.
+  confirm(token: number, nowMs: number): Promise<{ ok: boolean }>;
 }
 
 export interface RunDeps {
   lease: Lease;
   /// Milliseconds, for the lease and the send deadline.
   clockMs: () => number;
-  /// Test seam: awaited just before the transaction is signed and sent.
+  /// Test seam: awaited after every read for the send (nonces, gas, fees) and before the lease is confirmed, which
+  /// is where a stalled RPC call would leave a run.
   beforeSend?: () => Promise<void>;
 }
 
-/// A run sends nothing once this long after it took the lease, so a lease that expired under a slow run (and was
-/// taken by the next run) never meets a send from the old one.
-export const SEND_DEADLINE_MS = 180_000;
-const _leaseOutlivesSends: true = (LEASE_MS > SEND_DEADLINE_MS + 30_000) as true;
-void _leaseOutlivesSends;
+/// The one send is abandoned after this long (no retries). Shorter than SEND_MARGIN_MS, so a run that confirmed its
+/// lease finishes sending while it still holds it.
+export const SEND_TIMEOUT_MS = 20_000;
+const _sendFitsTheLease: true = (LEASE_MS > SEND_MARGIN_MS && SEND_MARGIN_MS > SEND_TIMEOUT_MS + 30_000) as true;
+void _sendFitsTheLease;
 
 export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
   const startMs = deps.clockMs();
   const lease = await deps.lease.acquire(startMs);
   if (!lease.ok) return { ok: true, scheduled: [], skips: ['another run holds the lease; nothing done'] };
   try {
-    return await runLocked(env, nowS, deps, startMs);
+    return await runLocked(env, nowS, deps, lease.token);
   } finally {
     await deps.lease.release(lease.token);
   }
 }
 
-async function runLocked(env: Env, nowS: number, deps: RunDeps, startMs: number): Promise<RunResult> {
+async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): Promise<RunResult> {
   const rounds = getAddress(env.ROUNDS_ADDRESS.trim());
   const houses = [getAddress(env.HOUSE_1_ADDRESS.trim()), getAddress(env.HOUSE_2_ADDRESS.trim())] as const;
   const intervalS = Number(env.INTERVAL_S);
@@ -171,11 +174,6 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, startMs: number)
       scheduled.push({ house: a.house + 1, startTime: a.startTime });
       continue;
     }
-    await deps.beforeSend?.();
-    if (deps.clockMs() - startMs > SEND_DEADLINE_MS) {
-      skips.push(`${new Date(a.startTime * 1000).toISOString()} run too slow; nothing sent`);
-      continue;
-    }
     // A transaction of this house still pending (a receipt that timed out last run) means the round may already be
     // on its way: send nothing rather than a duplicate the contract would refuse.
     const [pendingN, latestN] = await Promise.all([
@@ -186,8 +184,39 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, startMs: number)
       skips.push(`${new Date(a.startTime * 1000).toISOString()} house ${a.house + 1} has a transaction pending; nothing sent`);
       continue;
     }
-    const wallet = createWalletClient({ account, chain: monad, transport: http(env.RPC_URL.trim()) });
-    const tx = await wallet.writeContract({ ...c, functionName: 'schedule', args: [BigInt(a.startTime)] });
+    // Every read happens BEFORE the lease is confirmed, and the transaction is built with the nonce read here (Codex
+    // Rounds r2, Part B). After the confirm comes only local signing and one bounded send. So a run whose reads
+    // stalled past its lease is refused at the confirm; and even a send that reaches the node late carries the nonce
+    // a newer run of the same house would also use, so at most one of the two can ever execute.
+    const data = encodeFunctionData({ abi: ROUNDS_ABI, functionName: 'schedule', args: [BigInt(a.startTime)] });
+    const [gas, fees] = await Promise.all([
+      client.estimateGas({ account: account.address, to: rounds, data }),
+      client.estimateFeesPerGas(),
+    ]);
+    await deps.beforeSend?.();
+    if (!(await deps.lease.confirm(token, deps.clockMs())).ok) {
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} run too slow or lease lost; nothing sent`);
+      continue;
+    }
+    const raw = await account.signTransaction({
+      type: 'eip1559',
+      chainId: monad.id,
+      nonce: latestN,
+      to: rounds,
+      data,
+      gas,
+      maxFeePerGas: fees.maxFeePerGas,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+    });
+    const tx = keccak256(raw);
+    const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0 }) });
+    try {
+      await sender.sendRawTransaction({ serializedTransaction: raw });
+    } catch {
+      // Unknown outcome: the node may hold it. The next run sees it pending, or the round, and sends nothing twice.
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} send of ${tx} (nonce ${latestN}) not acknowledged; the next run re-reads the chain`);
+      continue;
+    }
     // Wait for it (Monad blocks are under a second), so the next run sees the round and never sends a duplicate the
     // contract would refuse. A timeout is reported; the next run re-reads the chain either way.
     const receipt = await client.waitForTransactionReceipt({ hash: tx, timeout: 30_000 }).catch(() => null);
@@ -205,7 +234,7 @@ export default {
       if (!env.SCHEDULER_STATE) throw new Error('SCHEDULER_STATE binding missing');
       const stub = env.SCHEDULER_STATE.get(env.SCHEDULER_STATE.idFromName('rounds-scheduler'));
       result = await runScheduler(env, Math.floor(event.scheduledTime / 1000), {
-        lease: { acquire: (now) => stub.acquire(now), release: (t) => stub.release(t) },
+        lease: { acquire: (now) => stub.acquire(now), release: (t) => stub.release(t), confirm: (t, now) => stub.confirm(t, now) },
         clockMs: () => Date.now(),
       });
     } catch (err) {

@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { runScheduler, type Env } from '../src/index';
 import { memLease } from './lease-fake';
+import { LEASE_MS } from '../src/state';
 
 const RPC = process.env.SCHED_ANVIL_RPC ?? '';
 const ROUNDS = process.env.SCHED_ROUNDS ?? '';
@@ -70,5 +71,43 @@ describe.skipIf(!RPC || !ROUNDS)('two overlapping runs', () => {
     });
     expect(res.ok && res.scheduled).toEqual([]);
     expect(res.ok && res.skips.some((s) => s.includes('run too slow'))).toBe(true);
+  }, 120_000);
+
+  it('a run whose reads stall past its lease sends nothing, while the run that took the lease over sends once (Codex Rounds r2)', async () => {
+    const client = createPublicClient({ transport: http(RPC) });
+    const abi = parseAbi(['function roundCount() view returns (uint256)']);
+    const count = () => client.readContract({ address: ROUNDS as `0x${string}`, abi, functionName: 'roundCount' });
+    const before = await count();
+    const now = Number((await client.getBlock()).timestamp);
+
+    const realFetch = globalThis.fetch;
+    let sends = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (...a: Parameters<typeof fetch>) => {
+      if (String(a[1]?.body ?? '').includes('eth_sendRawTransaction')) sends++;
+      return realFetch(...a);
+    });
+
+    const lease = memLease();
+    let t = 5_000_000;
+    let second: Awaited<ReturnType<typeof runScheduler>> | null = null;
+    const first = await runScheduler(env, now, {
+      lease,
+      clockMs: () => t,
+      // A has read its nonces, gas and fees; they "returned" after its lease expired. B takes the lease over and
+      // schedules the same slot before A goes on.
+      beforeSend: async () => {
+        t += LEASE_MS + 1;
+        second = await runScheduler(env, now, { lease, clockMs: () => t });
+      },
+    });
+    vi.restoreAllMocks();
+
+    expect(second).not.toBeNull();
+    const b = second as unknown as Awaited<ReturnType<typeof runScheduler>>;
+    expect(b.ok && b.scheduled).toHaveLength(1);
+    expect(first.ok && first.scheduled).toEqual([]);
+    expect(first.ok && first.skips.some((s) => s.includes('lease lost'))).toBe(true);
+    expect(sends).toBe(1);
+    expect((await count()) - before).toBe(1n);
   }, 120_000);
 });

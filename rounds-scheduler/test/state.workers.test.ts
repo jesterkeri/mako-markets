@@ -2,7 +2,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
-import { LEASE_MS } from '../src/state';
+import { LEASE_MS, SEND_MARGIN_MS } from '../src/state';
 
 const stub = (name: string) => env.SCHEDULER_STATE.get(env.SCHEDULER_STATE.idFromName(name));
 
@@ -25,5 +25,22 @@ describe('the scheduler lease', () => {
     expect(b.ok).toBe(true);
     expect(await s.release(a.token)).toEqual({ ok: false });
     expect((await s.acquire(LEASE_MS + 1)).ok).toBe(false);
+  });
+
+  it('confirms a send only for the holder, and only with SEND_MARGIN_MS left (Codex Rounds r2)', async () => {
+    const s = stub('confirm');
+    const a = await s.acquire(0);
+    if (!a.ok) throw new Error('no lease');
+    expect(await s.confirm(a.token, LEASE_MS - SEND_MARGIN_MS)).toEqual({ ok: true });
+    expect(await s.confirm(a.token, LEASE_MS - SEND_MARGIN_MS + 1)).toEqual({ ok: false });
+    expect(await s.confirm(a.token + 1, 0)).toEqual({ ok: false });
+    // Expired and taken by B: A's confirm fails even at a time A thinks is early; B's succeeds.
+    const b = await s.acquire(LEASE_MS);
+    if (!b.ok) throw new Error('no lease for b');
+    expect(await s.confirm(a.token, 0)).toEqual({ ok: false });
+    expect(await s.confirm(b.token, LEASE_MS + 1)).toEqual({ ok: true });
+    // Released: nobody confirms.
+    await s.release(b.token);
+    expect(await s.confirm(b.token, LEASE_MS + 1)).toEqual({ ok: false });
   });
 });
