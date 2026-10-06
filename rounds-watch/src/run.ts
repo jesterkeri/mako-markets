@@ -367,7 +367,10 @@ export function alertLine(r: RoundView, kind: AlertKind, e: Evidence, nowS: numb
   }
   let cause: string;
   if (e.start === 'exists' && e.close === 'exists')
-    cause = 'Both reports exist inside the settlement window, so this is a DELIVERY failure: the keeper and CRE are not settling. Anyone with Data Streams access can settle it.';
+    // Only what the API said (Codex T2.0d r5): reports existing does not mean they verify on chain or that the
+    // round can settle (a fee manager or a changed verifier configuration would stop it), and this watch checks
+    // neither.
+    cause = 'The API returned reports for both seconds. This watch did not verify them on chain or try to settle. Check the keeper and CRE first, then the verifier: a fee manager or a changed signing configuration would also stop settlement, and the round then refunds NoPrice at its deadline.';
   else if (e.start === 'missing' || e.close === 'missing')
     cause = 'A report is missing for that second; if it never appears, the round cannot settle and refunds NoPrice at its deadline.';
   else cause = 'Report availability could not be checked; the next check repeats it.';

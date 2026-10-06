@@ -151,7 +151,7 @@ beforeEach(() => {
 const at = (closeTime: number, afterS: number) => (w.now = (closeTime + afterS) * 1000);
 
 describe('unsettled rounds', () => {
-  it('flags a two-sided round unsettled 30 minutes after close, once, as a delivery failure when both reports exist', async () => {
+  it('flags a two-sided round unsettled 30 minutes after close, once, saying only what the API returned when both reports exist', async () => {
     w.rounds = [active(C - 900)];
     at(C, UNSETTLED_ALERT_S - 1);
     expect((await run()).status).toBe('quiet');
@@ -162,7 +162,11 @@ describe('unsettled rounds', () => {
     expect(o.status).toBe('alerting');
     expect(w.messages).toHaveLength(1);
     expect(w.messages[0]).toContain('Round 1 is UNSETTLED 30 min after close');
-    expect(w.messages[0]).toContain('DELIVERY failure');
+    expect(w.messages[0]).toContain('The API returned reports for both seconds');
+    // Codex T2.0d r5: reports existing is not proof they verify or that anyone can settle (a fee manager or a
+    // changed verifier configuration stops settlement with both reports published); the watch checks neither.
+    expect(w.messages[0]).not.toMatch(/DELIVERY failure|Anyone with Data Streams access can settle/);
+    expect(w.messages[0]).toContain('did not verify them on chain');
     expect(w.pings.at(-1)?.kind).toBe('fail');
 
     at(C, UNSETTLED_ALERT_S + 300);
