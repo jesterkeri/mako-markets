@@ -25,3 +25,12 @@ HOUSE_1_ADDRESS = "0x0000000000000000000000000000000000000000"
 HOUSE_2_ADDRESS = "0x0000000000000000000000000000000000000000"
 INTERVAL_S = "7200"
 DRY_RUN = "true"
+
+# The run lease (src/state.ts): one run at a time may read, plan and send.
+[[durable_objects.bindings]]
+name = "SCHEDULER_STATE"
+class_name = "SchedulerState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SchedulerState"]

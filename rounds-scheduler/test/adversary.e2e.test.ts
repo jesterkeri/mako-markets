@@ -11,6 +11,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import worker, { runScheduler, type Env } from '../src/index';
+import { deps, memLease, memNamespace } from './lease-fake';
 
 const RPC = process.env.ADV_ANVIL_RPC ?? '';
 const URL_OR_UNUSED = RPC || 'http://127.0.0.1:1'; // clients are built at collection time even when the suite is skipped
@@ -92,7 +93,7 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler adversary on a local fork', () => {
     // An hour before S, S is the first upcoming slot.
     await test.setNextBlockTimestamp({ timestamp: BigInt(S - 3600) });
     await test.mine({ blocks: 1 });
-    const res = await runScheduler(env, await chainNow());
+    const res = await runScheduler(env, await chainNow(), deps());
     expect(res.ok).toBe(true);
 
     // The third creator's round is still the only unfinished round at S.
@@ -107,7 +108,10 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler adversary on a local fork', () => {
     await worker.scheduled({ scheduledTime: now * 1000, cron: '*/5 * * * *', noRetry() {} } as ScheduledController, {
       ...env,
       DRY_RUN: ' false',
+      SCHEDULER_STATE: memNamespace(memLease()),
     });
+    // The run itself happened (a plan was made), so the absence of a send is the dry run, not a missing binding.
+    expect(logs[0]).toContain('"ok":true');
     const after = await roundCount();
     // Spec: never send anything when DRY_RUN is not exactly "false".
     expect({ sent: after - before, log: logs[0] }).toEqual({ sent: 0n, log: logs[0] });
@@ -121,7 +125,7 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler adversary on a local fork', () => {
       n++;
       return realFetch(...a);
     });
-    const res = await runScheduler(env, await chainNow());
+    const res = await runScheduler(env, await chainNow(), deps());
     expect(res.ok && res.scheduled.length).toBe(1);
     console.info(`subrequests for a run that sends: ${n}`);
     expect(n).toBeLessThanOrEqual(20);

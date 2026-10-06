@@ -9,7 +9,9 @@ open for hours and pots build.
 It holds only the two house creator keys. It never enters, settles, refunds or moves USDC; the settlement keeper
 settles the rounds, and the contract re-checks every rule (creator list, one unfinished round per creator, the
 global cap, 10 minutes to 7 days ahead, whole minutes), so a mistake here can at worst waste gas on a refusal.
-It simulates before sending and waits for the receipt, so a later run never sends a duplicate.
+It simulates before sending and waits for the receipt, so a later run never sends a duplicate. A Durable Object
+lease (`src/state.ts`) lets only one run at a time read, plan and send, so overlapping cron runs cannot both send;
+a run that crashes frees it after 4 minutes, and a run sends nothing more than 3 minutes after taking it.
 
 ## Setup, in order
 
@@ -31,5 +33,6 @@ corepack pnpm@10.32.1 install --ignore-workspace
 pnpm typecheck && pnpm test && pnpm bundle
 ```
 
-`test/anvil.e2e.test.ts` runs the scheduler against the real contract bytecode on a local fork of Monad testnet;
-its header has the commands. It is skipped unless `SCHED_ANVIL_RPC` and `SCHED_ROUNDS` are set.
+`pnpm test` runs the Node tests and, in workerd, the lease's Durable Object (`vitest.workers.config.ts`).
+`test/*.e2e.test.ts` run the scheduler against the real contract bytecode on a local fork of Monad testnet, two
+overlapping runs included; their headers have the commands. They are skipped unless their variables are set.

@@ -7,8 +7,12 @@ import { createPublicClient, createWalletClient, defineChain, getAddress, http, 
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { MAX_LEAD_S, planSchedule, type ChainView, type HouseView } from './plan';
+import { LEASE_MS, type Acquired, type SchedulerState } from './state';
+
+export { SchedulerState } from './state';
 
 export interface Env {
+  SCHEDULER_STATE?: DurableObjectNamespace<SchedulerState>;
   RPC_URL: string;
   ROUNDS_ADDRESS: string;
   HOUSE_1_ADDRESS: string;
@@ -51,7 +55,38 @@ export const isDryRun = (env: Pick<Env, 'DRY_RUN'>): boolean => env.DRY_RUN !== 
 
 export type RunResult = { ok: true; scheduled: { house: number; startTime: number; tx?: Hex }[]; skips: string[] } | { ok: false; error: string };
 
-export async function runScheduler(env: Env, nowS: number): Promise<RunResult> {
+/// The run lease, held across the whole run: only one invocation at a time may read, plan and send.
+export interface Lease {
+  acquire(nowMs: number): Promise<Acquired>;
+  release(token: number): Promise<{ ok: boolean }>;
+}
+
+export interface RunDeps {
+  lease: Lease;
+  /// Milliseconds, for the lease and the send deadline.
+  clockMs: () => number;
+  /// Test seam: awaited just before the transaction is signed and sent.
+  beforeSend?: () => Promise<void>;
+}
+
+/// A run sends nothing once this long after it took the lease, so a lease that expired under a slow run (and was
+/// taken by the next run) never meets a send from the old one.
+export const SEND_DEADLINE_MS = 180_000;
+const _leaseOutlivesSends: true = (LEASE_MS > SEND_DEADLINE_MS + 30_000) as true;
+void _leaseOutlivesSends;
+
+export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
+  const startMs = deps.clockMs();
+  const lease = await deps.lease.acquire(startMs);
+  if (!lease.ok) return { ok: true, scheduled: [], skips: ['another run holds the lease; nothing done'] };
+  try {
+    return await runLocked(env, nowS, deps, startMs);
+  } finally {
+    await deps.lease.release(lease.token);
+  }
+}
+
+async function runLocked(env: Env, nowS: number, deps: RunDeps, startMs: number): Promise<RunResult> {
   const rounds = getAddress(env.ROUNDS_ADDRESS.trim());
   const houses = [getAddress(env.HOUSE_1_ADDRESS.trim()), getAddress(env.HOUSE_2_ADDRESS.trim())] as const;
   const intervalS = Number(env.INTERVAL_S);
@@ -136,6 +171,11 @@ export async function runScheduler(env: Env, nowS: number): Promise<RunResult> {
       scheduled.push({ house: a.house + 1, startTime: a.startTime });
       continue;
     }
+    await deps.beforeSend?.();
+    if (deps.clockMs() - startMs > SEND_DEADLINE_MS) {
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} run too slow; nothing sent`);
+      continue;
+    }
     // A transaction of this house still pending (a receipt that timed out last run) means the round may already be
     // on its way: send nothing rather than a duplicate the contract would refuse.
     const [pendingN, latestN] = await Promise.all([
@@ -162,7 +202,12 @@ export default {
   async scheduled(event: ScheduledController, env: Env): Promise<void> {
     let result: RunResult;
     try {
-      result = await runScheduler(env, Math.floor(event.scheduledTime / 1000));
+      if (!env.SCHEDULER_STATE) throw new Error('SCHEDULER_STATE binding missing');
+      const stub = env.SCHEDULER_STATE.get(env.SCHEDULER_STATE.idFromName('rounds-scheduler'));
+      result = await runScheduler(env, Math.floor(event.scheduledTime / 1000), {
+        lease: { acquire: (now) => stub.acquire(now), release: (t) => stub.release(t) },
+        clockMs: () => Date.now(),
+      });
     } catch (err) {
       // Reported by kind only: an error's text could carry the RPC URL.
       result = { ok: false, error: (err as Error)?.name ?? 'error' };

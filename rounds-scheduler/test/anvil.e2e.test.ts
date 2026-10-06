@@ -8,6 +8,7 @@ import { createPublicClient, http, parseAbi } from 'viem';
 import { describe, expect, it } from 'vitest';
 
 import { runScheduler, type Env } from '../src/index';
+import { deps } from './lease-fake';
 import { houseOf } from '../src/plan';
 
 const RPC = process.env.SCHED_ANVIL_RPC ?? '';
@@ -36,9 +37,9 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler on a local fork with the real contra
     const before = await client.readContract({ address: ROUNDS as `0x${string}`, abi, functionName: 'roundCount' });
 
     // One round per run (the cron runs every 5 minutes): two runs fill the next two slots.
-    const first = await runScheduler(env, now);
+    const first = await runScheduler(env, now, deps());
     expect(first.ok && first.scheduled).toHaveLength(1);
-    const firstAgain = await runScheduler(env, now + 10);
+    const firstAgain = await runScheduler(env, now + 10, deps());
     expect(firstAgain.ok && firstAgain.scheduled).toHaveLength(1);
     const after = await client.readContract({ address: ROUNDS as `0x${string}`, abi, functionName: 'roundCount' });
     expect(after - before).toBe(2n);
@@ -53,7 +54,7 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler on a local fork with the real contra
       expect(r.creator.toLowerCase()).toBe(houses[houseOf(start, H)]);
     }
 
-    const second = await runScheduler(env, now + 30);
+    const second = await runScheduler(env, now + 30, deps());
     expect(second.ok && second.scheduled).toEqual([]);
     expect(await client.readContract({ address: ROUNDS as `0x${string}`, abi, functionName: 'roundCount' })).toBe(after);
   }, 120_000);
