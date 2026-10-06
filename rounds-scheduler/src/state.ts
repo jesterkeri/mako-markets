@@ -11,6 +11,7 @@ export const LEASE_MS = 240_000;
 export const SEND_MARGIN_MS = 60_000;
 
 export type Acquired = { ok: true; token: number } | { ok: false };
+export type Confirmed = { ok: true; expiresAt: number } | { ok: false };
 
 export class SchedulerState extends DurableObject<Record<string, never>> {
   constructor(ctx: DurableObjectState, env: Record<string, never>) {
@@ -35,14 +36,16 @@ export class SchedulerState extends DurableObject<Record<string, never>> {
     });
   }
 
-  /// The last step before a run signs: true only while `token` holds the lease with SEND_MARGIN_MS or more left.
-  /// Nothing but local signing and the one bounded send follows it.
-  confirm(token: number, now: number): { ok: boolean } {
+  /// The last step before a run signs: ok only while `token` holds the lease with SEND_MARGIN_MS or more left. It
+  /// also returns when the lease expires, so the caller can re-check against its own clock once this answer
+  /// arrives, however late (adversary on 55fd16a). Nothing but local signing and the one bounded send follows it.
+  confirm(token: number, now: number): Confirmed {
     return this.ctx.storage.transactionSync(() => {
       const lease = this.ctx.storage.sql.exec<{ token: number; held: number; expires_at: number }>(
         `SELECT token, held, expires_at FROM lease WHERE id = 1`,
       ).one();
-      return { ok: lease.token === token && lease.held === 1 && lease.expires_at - now >= SEND_MARGIN_MS };
+      const ok = lease.token === token && lease.held === 1 && lease.expires_at - now >= SEND_MARGIN_MS;
+      return ok ? { ok: true, expiresAt: lease.expires_at } : { ok: false };
     });
   }
 

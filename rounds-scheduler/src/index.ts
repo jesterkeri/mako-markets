@@ -7,7 +7,7 @@ import { createPublicClient, defineChain, encodeFunctionData, getAddress, http, 
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { MAX_LEAD_S, planSchedule, type ChainView, type HouseView } from './plan';
-import { LEASE_MS, SEND_MARGIN_MS, type Acquired, type SchedulerState } from './state';
+import { LEASE_MS, SEND_MARGIN_MS, type Acquired, type Confirmed, type SchedulerState } from './state';
 
 export { SchedulerState } from './state';
 
@@ -60,7 +60,7 @@ export interface Lease {
   acquire(nowMs: number): Promise<Acquired>;
   release(token: number): Promise<{ ok: boolean }>;
   /// Whether `token` still holds the lease with SEND_MARGIN_MS left: asked once, immediately before signing.
-  confirm(token: number, nowMs: number): Promise<{ ok: boolean }>;
+  confirm(token: number, nowMs: number): Promise<Confirmed>;
 }
 
 export interface RunDeps {
@@ -75,7 +75,10 @@ export interface RunDeps {
 /// The one send is abandoned after this long (no retries). Shorter than SEND_MARGIN_MS, so a run that confirmed its
 /// lease finishes sending while it still holds it.
 export const SEND_TIMEOUT_MS = 20_000;
-const _sendFitsTheLease: true = (LEASE_MS > SEND_MARGIN_MS && SEND_MARGIN_MS > SEND_TIMEOUT_MS + 30_000) as true;
+/// After the confirm answer arrives, the send must still fit before the lease expires by this much, on this run's
+/// own clock: the confirm is itself a call whose answer can be late (adversary on 55fd16a).
+export const SEND_SLACK_MS = 10_000;
+const _sendFitsTheLease: true = (LEASE_MS > SEND_MARGIN_MS && SEND_MARGIN_MS > SEND_TIMEOUT_MS + SEND_SLACK_MS + 20_000) as true;
 void _sendFitsTheLease;
 
 export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
@@ -194,7 +197,10 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
       client.estimateFeesPerGas(),
     ]);
     await deps.beforeSend?.();
-    if (!(await deps.lease.confirm(token, deps.clockMs())).ok) {
+    const confirmed = await deps.lease.confirm(token, deps.clockMs());
+    // Re-read the clock AFTER the answer: an ok that arrives late is only good if the send still ends, on this
+    // run's clock, SEND_SLACK_MS before the lease expires.
+    if (!confirmed.ok || confirmed.expiresAt - deps.clockMs() < SEND_TIMEOUT_MS + SEND_SLACK_MS) {
       skips.push(`${new Date(a.startTime * 1000).toISOString()} run too slow or lease lost; nothing sent`);
       continue;
     }

@@ -31,14 +31,14 @@ describe('the scheduler lease', () => {
     const s = stub('confirm');
     const a = await s.acquire(0);
     if (!a.ok) throw new Error('no lease');
-    expect(await s.confirm(a.token, LEASE_MS - SEND_MARGIN_MS)).toEqual({ ok: true });
+    expect(await s.confirm(a.token, LEASE_MS - SEND_MARGIN_MS)).toEqual({ ok: true, expiresAt: LEASE_MS });
     expect(await s.confirm(a.token, LEASE_MS - SEND_MARGIN_MS + 1)).toEqual({ ok: false });
     expect(await s.confirm(a.token + 1, 0)).toEqual({ ok: false });
     // Expired and taken by B: A's confirm fails even at a time A thinks is early; B's succeeds.
     const b = await s.acquire(LEASE_MS);
     if (!b.ok) throw new Error('no lease for b');
     expect(await s.confirm(a.token, 0)).toEqual({ ok: false });
-    expect(await s.confirm(b.token, LEASE_MS + 1)).toEqual({ ok: true });
+    expect(await s.confirm(b.token, LEASE_MS + 1)).toEqual({ ok: true, expiresAt: 2 * LEASE_MS });
     // Released: nobody confirms.
     await s.release(b.token);
     expect(await s.confirm(b.token, LEASE_MS + 1)).toEqual({ ok: false });

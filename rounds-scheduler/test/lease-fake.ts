@@ -21,7 +21,7 @@ export function memLease(): Lease & { held: () => boolean } {
       return { ok: true };
     },
     async confirm(t, now) {
-      return { ok: t === token && held && expiresAt - now >= SEND_MARGIN_MS };
+      return t === token && held && expiresAt - now >= SEND_MARGIN_MS ? { ok: true, expiresAt } : { ok: false };
     },
     held: () => held,
   };
