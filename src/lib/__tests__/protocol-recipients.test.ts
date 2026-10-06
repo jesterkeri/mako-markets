@@ -11,6 +11,9 @@ vi.mock('../contract', () => ({
   ROUNDS_ADDRESS: '0x5555555555555555555555555555555555555555',
 }));
 vi.mock('../usdc', () => ({ USDC_ADDRESS: ' 0x000000000000000000000000000000000000DCBA\n' }));
+// The release record's own address is covered in protocol-recipients-adversary-91fe6ae.test.ts; here it is empty so
+// this list is exactly the configured addresses.
+vi.mock('../rounds-release-record', () => ({ ROUNDS_RELEASE_RECORD: null }));
 
 import { isProtocolRecipient, protocolRecipients } from '../protocol-recipients';
 

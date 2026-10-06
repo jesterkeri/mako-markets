@@ -102,4 +102,17 @@ describe('against the real contracts repository', () => {
     });
     expect(problems).toEqual([]);
   }, 300_000);
+
+  it.runIf(DIR)('the release record is the deployment receipt verifyDeployment wrote against the chain', async () => {
+    const { ROUNDS_RELEASE_RECORD } = await import('@/lib/rounds-release-record');
+    expect(ROUNDS_RELEASE_RECORD).not.toBeNull();
+    const r = ROUNDS_RELEASE_RECORD!;
+    const receipt = JSON.parse(readFileSync(join(DIR, `deployments/rounds-v1-10143-${r.address}.json`), 'utf8')) as Record<string, unknown>;
+    expect({ address: receipt.roundsV1, runtimeCodeHash: receipt.runtimeCodeHash, usdc: receipt.usdc, expected: receipt.expectedRuntimeCodeHash }).toEqual({
+      address: r.address,
+      runtimeCodeHash: r.runtimeCodeHash,
+      usdc: r.usdc,
+      expected: r.runtimeCodeHash,
+    });
+  });
 });

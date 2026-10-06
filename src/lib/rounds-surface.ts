@@ -8,10 +8,11 @@
 // against a fresh checkout of jesterkeri/mako-contracts at the pinned commit (`rounds-surface.test.ts`).
 // ----------------------------------------------------------------------------
 
-/// The mako-contracts commit whose MakoRoundsV1 this app targets: the T1.5 deploy branch, Codex SHIP
-/// (CONTRACTS_R3_REVIEW.md). Its src/MakoRoundsV1.sol is unchanged since d946901 (Codex T1.1 SHIP). Moving it is a
-/// reviewed change, made together with regenerating rounds-abi.ts.
-export const ROUNDS_CONTRACTS_COMMIT = 'c79c9d0fa9607cb42c242cd1c87c212e8a6665a0';
+/// The mako-contracts commit whose MakoRoundsV1 this app targets: the deployment record on the T1.5 deploy branch
+/// (1d787f6 adds only the broadcast and the verified receipt to c79c9d0, Codex SHIP, CONTRACTS_R3_REVIEW.md). Its
+/// src/MakoRoundsV1.sol is unchanged since d946901 (Codex T1.1 SHIP). Moving it is a reviewed change, made together
+/// with regenerating rounds-abi.ts.
+export const ROUNDS_CONTRACTS_COMMIT = '1d787f66838a85a561ac12575300968bcf66c905';
 
 export interface SurfaceInput {
   /// This app's sponsored map, signature -> 0x selector.
