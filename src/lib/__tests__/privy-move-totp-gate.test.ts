@@ -53,7 +53,6 @@ vi.mock('@/lib/privy-server', async () => (await import('./helpers/gate-pass')).
 vi.mock('@/lib/privy-proof', async () => (await import('./helpers/gate-pass')).privyProofPassing());
 vi.mock('@/lib/privy-admission', async () => (await import('./helpers/gate-pass')).privyAdmissionNone());
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
-vi.mock('@/lib/privy-proof-message', () => ({ proofSite: () => 'localhost:3000' }));
 vi.mock('@/lib/allowlist', () => ({ isAllowedForCurrentStage: mocks.isAllowedForCurrentStage }));
 vi.mock('@/lib/auth-challenges', () => ({
   createSigninChallenge: mocks.createSigninChallenge,

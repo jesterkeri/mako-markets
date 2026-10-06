@@ -11,7 +11,6 @@ import type { GateAdmission } from '@/lib/privy-gate';
 import { admissionOf, findMismatchedAccount, readAdmission, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce } from '@/lib/privy-proof';
-import { proofSite } from '@/lib/privy-proof-message';
 import {
   checkIdentity,
   judgeAccount,
@@ -170,13 +169,10 @@ export async function POST(req: Request) {
   // only after the authenticator code. Without it, no session.
   const proof = parseProofBody(body.proof);
   if (!proof) return refusal('proof_required');
-  let site: string;
-  try {
-    site = proofSite(process.env.NEXT_PUBLIC_APP_URL);
-  } catch (err) {
-    console.error('[user/auth] proof site not configured', summarizeError(err));
-    return Response.json({ error: 'internal' }, { status: 500 });
-  }
+  // The site the proof must name: the host of this request's Origin, which checkSameOrigin above has already matched
+  // to the host serving it. So a proof signed on another site (or another deployment) is refused, and each deployment
+  // (production, beta, a preview) accepts proofs made on itself.
+  const site = new URL(req.headers.get('origin') as string).host;
   const nowMs = Date.now();
   const signed = await checkProofSignature({ ...proof, wallet: verdict.wallet, site, nowMs });
   if (!signed.ok || !signed.nonce) return refusal('mfa_proof_required');

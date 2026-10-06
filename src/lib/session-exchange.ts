@@ -30,37 +30,29 @@ const ERRORS: Record<string, string> = {
   cross_origin: 'The request was blocked by a security check. Refresh the page and try again.',
 };
 
-/// POST /api/user/auth with the Privy access token proved by the email code.
-export async function exchangePrivyToken(privyAccessToken: string): Promise<SessionResult> {
-  let res: Response;
-  try {
-    res = await fetch('/api/user/auth', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ privyAccessToken }),
-    });
-  } catch {
-    return { kind: 'retry', message: 'Network error. Your code is still good; try again.' };
-  }
-  if (res.ok) {
-    let body: Record<string, unknown>;
-    try {
-      body = (await res.json()) as Record<string, unknown>;
-    } catch {
-      return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
-    }
-    if (body.status === 'totp_required') return { kind: 'totp', challengeId: typeof body.challengeId === 'string' ? body.challengeId : '' };
-    if (body.authed === true) return { kind: 'signed_in', user: toUser(body), firstSignIn: body.lastSignInAt === null };
-    return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
-  }
-  if (res.status >= 500) return { kind: 'retry', message: 'Server error. Your code is still good; try again.' };
-  let error: string | undefined;
-  try {
-    error = ((await res.json()) as { error?: string }).error;
-  } catch {
-    error = undefined;
-  }
-  return { kind: 'error', message: (error && ERRORS[error]) ?? 'Sign-in failed. Please try again.' };
+/// The inbox-takeover gate's refusals (INBOX_GAP_PLAN r18), in plain language. No em dashes, no "we/our/us".
+export const GATE_MESSAGES = {
+  account_locked:
+    "This account can't be unlocked from here, to keep its funds safe. Contact support from the email address you signed up with. Support never unlocks an account because of an email request alone.",
+  email_changed:
+    "The sign-in email for this account was changed at Mako Market's login provider, Privy, so Mako Market has locked the account. While it is locked, Mako Market will not sign it in, act with its wallet or show its deposit address, and support will not change it because of an email request. If you saved a copy of your wallet key, that copy works outside Mako Market, so keep it safe. Contact support from the email address you signed up with.",
+  mfa_proof_required: "The authenticator check didn't finish, so you're not signed in. Try again.",
+  proof_cancelled: 'Sign-in needs the code from your authenticator app. Try again when you have it.',
+  unavailable: 'Sign-in is unavailable for a moment. Try again shortly.',
+} as const;
+
+/// Any answer from POST /api/user/auth (or a refusal from /api/user/auth/proof) as the dialog's next step.
+export function mapSessionResponse(status: number, body: Record<string, unknown> | null): SessionResult {
+  if (status >= 500) return { kind: 'retry', message: body?.error === 'privy_unavailable' ? GATE_MESSAGES.unavailable : 'Server error. Your code is still good; try again.' };
+  if (!body) return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
+  if (status === 200 && body.status === 'totp_required') return { kind: 'totp', challengeId: typeof body.challengeId === 'string' ? body.challengeId : '' };
+  if (status === 200 && body.authed === true) return { kind: 'signed_in', user: toUser(body), firstSignIn: body.lastSignInAt === null };
+  if (body.status === 'account_locked') return { kind: 'error', message: GATE_MESSAGES.account_locked };
+  if (body.status === 'email_changed') return { kind: 'error', message: GATE_MESSAGES.email_changed };
+  if (body.status === 'mfa_proof_required') return { kind: 'retry', message: GATE_MESSAGES.mfa_proof_required };
+  const error = typeof body.error === 'string' ? body.error : undefined;
+  if (status >= 400) return { kind: 'error', message: (error && ERRORS[error]) ?? 'Sign-in failed. Please try again.' };
+  return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
 }
 
 export type TotpResult = { kind: 'signed_in'; user: AuthedUser; firstSignIn: boolean } | { kind: 'state'; next: TotpRequiredState };

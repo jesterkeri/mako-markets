@@ -1,7 +1,9 @@
 'use client';
 
-import { useLoginWithEmail, usePrivy } from '@privy-io/react-auth';
-import { useEffect } from 'react';
+import { useCreateWallet, useLoginWithEmail, useMfa, useMfaEnrollment, usePrivy, useSignMessage, useWallets } from '@privy-io/react-auth';
+import { useEffect, useRef } from 'react';
+
+import { WALLET_AFTER_ENROLL_MS, type GateBridge } from '@/lib/privy-gated-signin';
 
 // Privy's headless email sign-in, for the sign-in dialog (14a). Privy's hooks need its provider, which exists only
 // when NEXT_PUBLIC_PRIVY_APP_ID is set, so they live in this child, mounted only then; without it the dialog says
@@ -17,12 +19,61 @@ export type EmailAuth = {
   sendCode: (email: string) => Promise<void>;
   /// Checks the code; resolves to Privy's access token (null if Privy returned none), rejects on a wrong code.
   verify: (code: string) => Promise<string | null>;
+  /// The inbox-takeover gate's Privy operations (src/lib/privy-gated-signin.ts).
+  gate: GateBridge;
 };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function PrivyEmailBridge({ register }: { register: (auth: EmailAuth | null) => void }) {
   const { authenticated, logout, getAccessToken } = usePrivy();
   const { sendCode, loginWithCode } = useLoginWithEmail();
+  // Enrollment through Privy's headless calls only: Mako never shows Privy's own MFA screen, which offers "Remove"
+  // ([G1]); the source test fails the build on showMfaEnrollmentModal or any unenroll call.
+  const { initEnrollmentWithTotp, submitEnrollmentWithTotp } = useMfaEnrollment();
+  const { clear: clearMfa, promptMfa } = useMfa();
+  const { createWallet } = useCreateWallet();
+  const { signMessage } = useSignMessage();
+  const { wallets } = useWallets();
+  /// performance.now() when Privy confirmed the authenticator, for the [G3] wait before the wallet is created.
+  const enrolledAt = useRef<number | null>(null);
+  const walletsRef = useRef(wallets);
   useEffect(() => {
+    walletsRef.current = wallets;
+  }, [wallets]);
+
+  useEffect(() => {
+    const gate: GateBridge = {
+      token: () => getAccessToken(),
+      enrollStart: () => initEnrollmentWithTotp(),
+      enrollFinish: async (code) => {
+        await submitEnrollmentWithTotp({ mfaCode: code });
+        enrolledAt.current = performance.now();
+      },
+      freshFactor: async () => {
+        // [H2] A verification left over from earlier must not count: clear it, then ask the code now.
+        await clearMfa();
+        await promptMfa();
+      },
+      createWallet: async () => {
+        if (enrolledAt.current !== null) {
+          const wait = WALLET_AFTER_ENROLL_MS - (performance.now() - enrolledAt.current);
+          if (wait > 0) await sleep(wait);
+        }
+        const w = await createWallet();
+        return w.address;
+      },
+      embeddedAddress: () => {
+        const embedded = walletsRef.current.filter((w) => w.walletClientType === 'privy');
+        return embedded.length === 1 ? embedded[0].address : null;
+      },
+      signProof: async (message, address) => {
+        // A fresh authenticator code for this one signature ([m1]): Privy asks it before the wallet signs.
+        await clearMfa();
+        const { signature } = await signMessage({ message }, { address, uiOptions: { title: 'Confirm your sign-in', description: 'Mako Market asks your wallet to sign this message to prove the authenticator check passed. It moves no funds.' } });
+        return signature;
+      },
+    };
     register({
       sendCode: async (email) => {
         if (authenticated) {
@@ -38,8 +89,9 @@ export function PrivyEmailBridge({ register }: { register: (auth: EmailAuth | nu
         await loginWithCode({ code });
         return getAccessToken();
       },
+      gate,
     });
     return () => register(null);
-  }, [authenticated, logout, getAccessToken, sendCode, loginWithCode, register]);
+  }, [authenticated, logout, getAccessToken, sendCode, loginWithCode, register, initEnrollmentWithTotp, submitEnrollmentWithTotp, clearMfa, promptMfa, createWallet, signMessage]);
   return null;
 }

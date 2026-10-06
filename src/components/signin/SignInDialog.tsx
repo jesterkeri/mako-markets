@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { QRCodeSVG } from 'qrcode.react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccount, useDisconnect, useSignMessage } from 'wagmi';
@@ -14,7 +15,8 @@ import { ROUNDS_ADDRESS } from '@/lib/contract';
 import { useMarkets } from '@/lib/hooks';
 import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
 import { openPools } from '@/lib/pool-display';
-import { exchangePrivyToken, submitTotp, type SessionResult } from '@/lib/session-exchange';
+import { continueGatedSignIn } from '@/lib/privy-gated-signin';
+import { submitTotp, type SessionResult } from '@/lib/session-exchange';
 import { closeSignIn, useSignInOpen } from '@/lib/sign-in-store';
 import { accountAddress, USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
@@ -31,6 +33,9 @@ type Step =
   | { kind: 'email'; error: string | null; sending: boolean }
   | { kind: 'code'; error: string | null; verifying: boolean; retryToken: string | null; sentAt: number }
   | { kind: 'totp'; state: TotpRequiredState }
+  /// INBOX_GAP_PLAN r18: an authenticator first (secret null while Privy prepares it), then the wallet.
+  | { kind: 'enroll'; secret: string | null; authUrl: string | null; code: string; submitting: boolean; error: string | null }
+  | { kind: 'wallet_setup'; busy: boolean; error: string | null }
   | { kind: 'wallet'; error: string | null; busy: boolean }
   | { kind: 'done'; user: AuthedUser };
 
@@ -53,7 +58,13 @@ function SignInFlow() {
   const register = useCallback((a: EmailAuth | null) => {
     auth.current = a;
   }, []);
-  const busy = (step.kind === 'email' && step.sending) || (step.kind === 'code' && step.verifying) || (step.kind === 'totp' && step.state.submitting) || (step.kind === 'wallet' && step.busy);
+  const busy =
+    (step.kind === 'email' && step.sending) ||
+    (step.kind === 'code' && step.verifying) ||
+    (step.kind === 'totp' && step.state.submitting) ||
+    (step.kind === 'enroll' && step.submitting) ||
+    (step.kind === 'wallet_setup' && step.busy) ||
+    (step.kind === 'wallet' && step.busy);
 
   const close = useCallback(() => {
     if (!busy) closeSignIn();
@@ -82,10 +93,72 @@ function SignInFlow() {
     } else if (r.kind === 'totp') {
       setStep({ kind: 'totp', state: { kind: 'totp_required', challengeId: r.challengeId, mode: 'totp', submitting: false, error: null, lockedUntil: null, terminal: null } });
     } else if (r.kind === 'retry') {
-      setStep({ kind: 'code', error: r.message, verifying: false, retryToken: token, sentAt: step.kind === 'code' ? step.sentAt : Date.now() });
+      // The Privy session is kept: a retry runs the gate again (a fresh token and a fresh proof), not the spent code.
+      setStep({ kind: 'code', error: r.message, verifying: false, retryToken: token || 'gate', sentAt: step.kind === 'code' ? step.sentAt : Date.now() });
     } else {
       setStep({ kind: 'code', error: r.message, verifying: false, retryToken: null, sentAt: step.kind === 'code' ? step.sentAt : Date.now() });
     }
+  };
+
+  /// One pass of the inbox-takeover gate (src/lib/privy-gated-signin.ts), from the Privy session this dialog proved.
+  const runGate = async () => {
+    const gate = auth.current?.gate;
+    if (!gate) {
+      setStep({ kind: 'email', error: 'Email sign-in is not set up on this site right now. You can sign in with a wallet instead.', sending: false });
+      return;
+    }
+    const r = await continueGatedSignIn(gate, window.location.host);
+    if (r.kind === 'enroll') {
+      setStep({ kind: 'enroll', secret: null, authUrl: null, code: '', submitting: true, error: null });
+      try {
+        const { secret, authUrl } = await gate.enrollStart();
+        setStep({ kind: 'enroll', secret, authUrl, code: '', submitting: false, error: null });
+      } catch {
+        setStep({ kind: 'enroll', secret: null, authUrl: null, code: '', submitting: false, error: "The authenticator setup couldn't start. Try again." });
+      }
+      return;
+    }
+    if (r.kind === 'wallet_setup') {
+      setStep({ kind: 'wallet_setup', busy: false, error: null });
+      return;
+    }
+    settle(r.result, 'gate');
+  };
+
+  /// [C5] The authenticator first; the wallet only after Privy has recorded it, then the proof and the session.
+  const finishEnroll = async () => {
+    const gate = auth.current?.gate;
+    if (step.kind !== 'enroll' || step.submitting || !gate || !/^\d{6}$/.test(step.code)) return;
+    const prev = step;
+    setStep({ ...prev, submitting: true, error: null });
+    try {
+      await gate.enrollFinish(prev.code);
+    } catch {
+      setStep({ ...prev, code: '', submitting: false, error: 'That code didn’t match. Check the app and enter the current 6-digit code.' });
+      return;
+    }
+    try {
+      await gate.createWallet();
+    } catch {
+      setStep({ kind: 'wallet_setup', busy: false, error: 'Your authenticator is set up, but the wallet wasn’t created. Try again.' });
+      return;
+    }
+    await runGate();
+  };
+
+  /// [H2] Back after an interruption: enrolled, no wallet. A fresh authenticator code, then the wallet.
+  const setupWallet = async () => {
+    const gate = auth.current?.gate;
+    if (step.kind !== 'wallet_setup' || step.busy || !gate) return;
+    setStep({ kind: 'wallet_setup', busy: true, error: null });
+    try {
+      await gate.freshFactor();
+      await gate.createWallet();
+    } catch {
+      setStep({ kind: 'wallet_setup', busy: false, error: 'The wallet needs a code from your authenticator app. Try again.' });
+      return;
+    }
+    await runGate();
   };
 
   const sendCode = async () => {
@@ -109,9 +182,8 @@ function SignInFlow() {
     const sentAt = step.sentAt;
     // A retry after a network or server error reuses the proven token rather than the spent code.
     if (step.retryToken) {
-      const token = step.retryToken;
       setStep({ ...step, verifying: true, error: null });
-      settle(await exchangePrivyToken(token), token);
+      await runGate();
       return;
     }
     if (!/^\d{6}$/.test(code) || !auth.current) return;
@@ -127,7 +199,7 @@ function SignInFlow() {
       setStep({ kind: 'code', error: 'Sign-in returned no token. Please try again.', verifying: false, retryToken: null, sentAt });
       return;
     }
-    settle(await exchangePrivyToken(token), token);
+    await runGate();
   };
 
   const submit2fa = async (value: string) => {
@@ -156,6 +228,8 @@ function SignInFlow() {
     sendCode,
     verify,
     submit2fa,
+    finishEnroll,
+    setupWallet,
     signedIn,
     close,
   };
@@ -182,6 +256,8 @@ type FlowProps = {
   sendCode: () => void;
   verify: () => void;
   submit2fa: (value: string) => void;
+  finishEnroll: () => void;
+  setupWallet: () => void;
   signedIn: (user: AuthedUser, firstSignIn: boolean) => void;
   close: () => void;
 };
@@ -298,6 +374,10 @@ function StepBody(p: FlowProps & { variant: 'desktop' | 'mobile' }) {
       return <CodeStep {...p} />;
     case 'totp':
       return <TotpStepView {...p} />;
+    case 'enroll':
+      return <EnrollStep {...p} />;
+    case 'wallet_setup':
+      return <WalletSetupStep {...p} />;
     case 'wallet':
       return <WalletStep {...p} />;
     case 'done':
@@ -389,6 +469,86 @@ function EmailStep({ step, email, setEmail, sendCode, setStep, variant }: FlowPr
         Use a wallet instead
       </button>
     </form>
+  );
+}
+
+/// INBOX_GAP_PLAN r18: an authenticator app before the account exists. Privy's headless enrollment, on Mako Market's
+/// own screen (Privy's offers "Remove"). Copy: no em dashes, no "we/our/us".
+function EnrollStep({ step, setStep, finishEnroll, variant }: FlowProps & { variant: 'desktop' | 'mobile' }) {
+  if (step.kind !== 'enroll') return null;
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        finishEnroll();
+      }}
+    >
+      {title(variant, 'Protect your account')}
+      <div style={lead}>
+        Anyone who can read your email could otherwise use your wallet. With an authenticator app, your email alone can&apos;t move your funds: it also takes the code from the app.
+      </div>
+      <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)', marginTop: 10 }}>
+        Pick an app that backs up your codes to your account, such as Google Authenticator signed in to Google, Authy, or 1Password, so a new phone gets them back. Lose the app and its backup, and you could lose access.
+      </div>
+      {step.authUrl ? (
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
+          <div style={{ background: '#fff', padding: 10, borderRadius: 12, lineHeight: 0 }}>
+            <QRCodeSVG value={step.authUrl} size={variant === 'desktop' ? 148 : 132} level="M" />
+          </div>
+          <div style={{ flex: 1, minWidth: 160, fontSize: 13, lineHeight: 1.5, color: 'var(--dim)' }}>
+            Scan this with the app, or{' '}
+            <a href={step.authUrl} style={{ color: 'inherit', textDecoration: 'underline' }}>
+              open it on this phone
+            </a>
+            .
+            {step.secret && (
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ cursor: 'pointer' }}>Enter the key by hand</summary>
+                <code style={{ display: 'block', marginTop: 6, wordBreak: 'break-all', fontSize: 13, color: 'var(--mako-canvas-fg)' }}>{step.secret}</code>
+              </details>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 16, fontSize: 14, color: 'var(--dim)' }}>{step.error ? '' : 'Preparing your authenticator…'}</div>
+      )}
+      <CodeBoxes
+        value={step.code}
+        onChange={(v) => setStep({ ...step, code: v, error: null })}
+        bad={!!step.error}
+        variant={variant}
+        label="Code from your authenticator app"
+        onEnter={finishEnroll}
+      />
+      <div role={step.error ? 'alert' : undefined} style={{ fontSize: 13, marginTop: 8, color: step.error ? 'var(--mako-red)' : 'var(--dim)' }}>
+        {step.error ?? 'Enter the 6-digit code the app shows.'}
+      </div>
+      <button type="submit" disabled={step.submitting || step.code.length !== 6 || !step.authUrl} className="m3-press m3-scale96" style={bigButton(!step.submitting && step.code.length === 6 && !!step.authUrl)}>
+        {step.submitting ? 'Setting up…' : 'Turn on and continue'}
+      </button>
+      <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--dim)', marginTop: 12 }}>
+        Changing phones or apps later? Move your codes with your authenticator&apos;s own transfer option. Don&apos;t turn two-factor off.
+      </div>
+    </form>
+  );
+}
+
+/// INBOX_GAP_PLAN r18 [H2]: enrolled but no wallet yet (an interrupted setup). A fresh authenticator code first.
+function WalletSetupStep({ step, setupWallet, variant }: FlowProps & { variant: 'desktop' | 'mobile' }) {
+  if (step.kind !== 'wallet_setup') return null;
+  return (
+    <div>
+      {title(variant, 'Finish setting up')}
+      <div style={lead}>Your authenticator is on. Enter a code from it to create your wallet and finish signing in.</div>
+      {step.error && (
+        <div role="alert" style={{ fontSize: 13, marginTop: 12, color: 'var(--mako-red)' }}>
+          {step.error}
+        </div>
+      )}
+      <button type="button" onClick={setupWallet} disabled={step.busy} className="m3-press m3-scale96" style={bigButton(!step.busy)}>
+        {step.busy ? 'Creating your wallet…' : 'Continue'}
+      </button>
+    </div>
   );
 }
 

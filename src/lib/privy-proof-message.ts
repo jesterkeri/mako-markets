@@ -31,10 +31,3 @@ export function parseProofMessage(message: string): ParsedProof | null {
   if (Number.isNaN(issued.getTime()) || issued.toISOString() !== m[3]) return null;
   return { site: m[1], nonce: m[2], issued };
 }
-
-/// The site a proof must name: the host of the app's own URL (NEXT_PUBLIC_APP_URL), so a proof signed for another
-/// site is refused.
-export function proofSite(appUrl: string | undefined): string {
-  if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL is not set');
-  return new URL(appUrl.trim()).host;
-}

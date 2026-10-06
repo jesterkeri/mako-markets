@@ -36,6 +36,8 @@ on:
       # The inbox-gap fix (INBOX_GAP_PLAN r10), built on the redesign, likewise.
       - 'feat/inbox-gap'
       - 'feat/rounds-ui'
+      # The inbox-takeover fix (INBOX_GAP_PLAN r18), built on rounds-ui, likewise.
+      - 'feat/inbox-fix'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.

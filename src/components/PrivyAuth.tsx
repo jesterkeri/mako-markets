@@ -8,7 +8,7 @@
 // 'privy'`, the lesson from Moray (2026-07: an injected wallet signing instead of the embedded one).
 
 import * as React from 'react';
-import { PrivyProvider, usePrivy, useWallets } from '@privy-io/react-auth';
+import { PrivyProvider, useMfa, usePrivy, useWallets } from '@privy-io/react-auth';
 import type { Address } from 'viem';
 
 import { monadTestnet } from '@/lib/chain';
@@ -51,6 +51,9 @@ export const EXPORT_MISMATCH = "This browser isn't signed in to this account's w
 
 export function EmbeddedActionsProvider({ children }: { children: React.ReactNode }) {
   const { logout, exportWallet, authenticated } = usePrivy();
+  // [H3] Export always asks a fresh code: Privy forces it (shouldForceMFA), and clearing first makes sure a
+  // verification from earlier in the session is never what lets the key out.
+  const { clear: clearMfa } = useMfa();
   const { wallets } = useWallets();
   const value = React.useMemo<EmbeddedActions>(
     () => ({
@@ -64,10 +67,11 @@ export function EmbeddedActionsProvider({ children }: { children: React.ReactNod
           ? wallets.find((w) => w.walletClientType === 'privy' && w.address.toLowerCase() === want)
           : undefined;
         if (!match) throw new Error(EXPORT_MISMATCH);
+        await clearMfa();
         await exportWallet({ address: match.address });
       },
     }),
-    [logout, exportWallet, authenticated, wallets],
+    [logout, exportWallet, authenticated, wallets, clearMfa],
   );
   return <EmbeddedActionsContext.Provider value={value}>{children}</EmbeddedActionsContext.Provider>;
 }
@@ -117,9 +121,6 @@ export function EmbeddedSignerBridge() {
   return null;
 }
 
-/// True only on a local `next dev` run started for the Privy test matrix.
-const MATRIX_RUN = process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_PRIVY_MATRIX === '1';
-
 export function PrivyAuthProvider({ children }: { children: React.ReactNode }) {
   // Without an app id there is no email sign-in; the signup page says so instead of pretending.
   if (!PRIVY_APP_ID) return <>{children}</>;
@@ -128,9 +129,10 @@ export function PrivyAuthProvider({ children }: { children: React.ReactNode }) {
       appId={PRIVY_APP_ID}
       config={{
         loginMethods: ['email'],
-        // The Privy test matrix (mako-design/PRIVY_MATRIX_RUNBOOK.md) needs login without a wallet; only `next dev`
-        // with NEXT_PUBLIC_PRIVY_MATRIX=1 gets it, so today's sign-in keeps working until the inbox fix lands.
-        embeddedWallets: { ethereum: { createOnLogin: MATRIX_RUN ? 'off' : 'users-without-wallets' } },
+        // No wallet at login (INBOX_GAP_PLAN r18 [C5], [D1]): the sign-in dialog creates the one Ethereum wallet only
+        // after the authenticator is enrolled, so it can never have signed anything with the inbox alone. Solana too:
+        // a Solana wallet made first could share the later Ethereum wallet's seed.
+        embeddedWallets: { ethereum: { createOnLogin: 'off' }, solana: { createOnLogin: 'off' } },
         defaultChain: monadTestnet,
         supportedChains: [monadTestnet],
         appearance: { theme: 'dark', accentColor: '#FACC15' },

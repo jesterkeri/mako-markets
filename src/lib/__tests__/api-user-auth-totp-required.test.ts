@@ -40,7 +40,6 @@ vi.mock('@/lib/privy-server', async () => (await import('./helpers/gate-pass')).
 vi.mock('@/lib/privy-proof', async () => (await import('./helpers/gate-pass')).privyProofPassing());
 vi.mock('@/lib/privy-admission', async () => (await import('./helpers/gate-pass')).privyAdmissionNone());
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
-vi.mock('@/lib/privy-proof-message', () => ({ proofSite: () => 'localhost:3000' }));
 vi.mock('@/lib/allowlist', () => ({
   isAllowedForCurrentStage: mocks.isAllowedForCurrentStage,
 }));
@@ -150,7 +149,7 @@ const USER_ID = '00000000-0000-0000-0000-0000000000aa';
 function makeRequest() {
   return new Request('http://localhost/api/user/auth', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
     body: JSON.stringify({ privyAccessToken: TOKEN, proof: { message: 'm', signature: 's' } }),
   });
 }

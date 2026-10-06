@@ -11,7 +11,7 @@ import type { DbOrTx } from '@/db/client';
 import * as schema from '@/db/schema';
 import { recordPrivyMismatchIn } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce, issueProofNonce } from '@/lib/privy-proof';
-import { buildProofMessage, parseProofMessage, PROOF_TTL_MS, proofSite } from '@/lib/privy-proof-message';
+import { buildProofMessage, parseProofMessage, PROOF_TTL_MS } from '@/lib/privy-proof-message';
 
 const DIR = join(__dirname, '../../db/migrations');
 let pg: PGlite;
@@ -121,7 +121,6 @@ describe('the proof message and signature', () => {
     expect(parseProofMessage(msg.replace('Mako Market sign-in', 'Mako sign-in'))).toBeNull();
     expect(parseProofMessage(msg.replace(NONCE, 'A'.repeat(42)))).toBeNull();
     expect(() => buildProofMessage(SITE, 'not-a-nonce', issued)).toThrow();
-    expect(proofSite('https://makomarket.xyz/')).toBe(SITE);
   });
 
   it('a signature by the session wallet over this site and a fresh message passes, and names its nonce', async () => {

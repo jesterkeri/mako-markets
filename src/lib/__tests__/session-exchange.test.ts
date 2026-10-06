@@ -4,7 +4,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TotpRequiredState } from '@/components/signup/TotpStep';
-import { exchangePrivyToken, submitTotp } from '../session-exchange';
+import { continueGatedSignIn, GATE_MESSAGES, type GateBridge } from '../privy-gated-signin';
+import { submitTotp } from '../session-exchange';
 
 const USER = {
   authed: true,
@@ -24,49 +25,106 @@ function respond(status: number, body: unknown) {
 }
 afterEach(() => vi.restoreAllMocks());
 
-describe('exchangePrivyToken', () => {
+const NONCE = 'n'.repeat(43);
+/// A Privy bridge for the gated sign-in: the token, an embedded wallet, and a signature over whatever it is asked.
+function bridge(over: Partial<GateBridge> = {}): GateBridge & { signed: string[] } {
+  const signed: string[] = [];
+  return {
+    signed,
+    token: async () => 'tok-1',
+    enrollStart: async () => ({ secret: 'S', authUrl: 'otpauth://totp/x' }),
+    enrollFinish: async () => {},
+    freshFactor: async () => {},
+    createWallet: async () => '0xabc',
+    embeddedAddress: () => '0xabc',
+    signProof: async (message) => {
+      signed.push(message);
+      return `0x${'1'.repeat(130)}`;
+    },
+    ...over,
+  };
+}
+/// fetch answers the proof route first, then the auth route.
+function routes(proof: [number, unknown], auth?: [number, unknown]) {
+  const answers = [proof, ...(auth ? [auth] : [])];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    const [status, body] = answers.shift() ?? [500, { error: 'internal' }];
+    return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
+  });
+}
+const NONCE_OK: [number, unknown] = [200, { ok: true, status: 'proof_required', nonce: NONCE }];
+
+describe('the gated sign-in (INBOX_GAP_PLAN r18)', () => {
   it('signs in and flags the first sign-in only when the route says there was none before', async () => {
-    respond(200, { ok: true, ...USER, lastSignInAt: null });
-    expect(await exchangePrivyToken('t')).toEqual({ kind: 'signed_in', user: { ...USER, lastSignInAt: null }, firstSignIn: true });
-    respond(200, { ok: true, ...USER, lastSignInAt: '2026-09-01T00:00:00.000Z' });
-    expect(await exchangePrivyToken('t')).toMatchObject({ kind: 'signed_in', firstSignIn: false });
+    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: null }]);
+    expect(await continueGatedSignIn(bridge(), 'makomarket.xyz')).toEqual({ kind: 'session', result: { kind: 'signed_in', user: { ...USER, lastSignInAt: null }, firstSignIn: true } });
+    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: '2026-09-01T00:00:00.000Z' }]);
+    expect(await continueGatedSignIn(bridge(), 'makomarket.xyz')).toMatchObject({ kind: 'session', result: { kind: 'signed_in', firstSignIn: false } });
   });
 
-  it('never puts the route’s ok flag in the cached user', async () => {
-    respond(200, { ok: true, ...USER, lastSignInAt: null });
-    const r = await exchangePrivyToken('t');
-    expect(r.kind === 'signed_in' && 'ok' in r.user).toBe(false);
+  it('never puts the route\u2019s ok flag in the cached user', async () => {
+    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: null }]);
+    const r = await continueGatedSignIn(bridge(), 'makomarket.xyz');
+    expect(r.kind === 'session' && r.result.kind === 'signed_in' && 'ok' in r.result.user).toBe(false);
   });
 
-  it('posts only the Privy token, to the auth route', async () => {
-    respond(200, { ok: true, ...USER, lastSignInAt: null });
-    await exchangePrivyToken('tok-1');
-    const [url, init] = vi.mocked(fetch).mock.calls[0];
-    expect(url).toBe('/api/user/auth');
-    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ privyAccessToken: 'tok-1' });
+  it('signs the message it built itself (this site, the nonce, the time) and posts it with the token', async () => {
+    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: null }]);
+    const b = bridge();
+    await continueGatedSignIn(b, 'makomarket.xyz');
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls.map((c) => c[0])).toEqual(['/api/user/auth/proof', '/api/user/auth']);
+    expect(JSON.parse(String((calls[0][1] as RequestInit).body))).toEqual({ privyAccessToken: 'tok-1' });
+    const sent = JSON.parse(String((calls[1][1] as RequestInit).body));
+    expect(sent.privyAccessToken).toBe('tok-1');
+    expect(b.signed).toEqual([sent.proof.message]);
+    expect(sent.proof.message).toMatch(new RegExp(`^Mako Market sign-in\\nSite: makomarket\\.xyz\\nNonce: ${NONCE}\\nIssued: `));
   });
 
-  it('asks for the second factor when the account has one', async () => {
-    respond(200, { ok: true, status: 'totp_required', challengeId: 'c-1' });
-    expect(await exchangePrivyToken('t')).toEqual({ kind: 'totp', challengeId: 'c-1' });
+  it('refuses to sign a nonce of any other shape [B2]', async () => {
+    const b = bridge();
+    routes([200, { ok: true, status: 'proof_required', nonce: `0x${'ab'.repeat(32)}` }]);
+    expect((await continueGatedSignIn(b, 'makomarket.xyz')).kind).toBe('session');
+    expect(b.signed).toEqual([]);
   });
 
-  it('keeps the proof usable after a network or server error', async () => {
+  it('sends the dialog to enrollment or wallet setup when the server says so, signing nothing', async () => {
+    const b = bridge();
+    routes([200, { ok: false, status: 'mfa_enrollment_required' }]);
+    expect(await continueGatedSignIn(b, 'm')).toEqual({ kind: 'enroll' });
+    routes([200, { ok: false, status: 'wallet_required' }]);
+    expect(await continueGatedSignIn(b, 'm')).toEqual({ kind: 'wallet_setup' });
+    expect(b.signed).toEqual([]);
+  });
+
+  it('asks for the second factor when the account has Mako\u2019s own', async () => {
+    routes(NONCE_OK, [200, { ok: true, status: 'totp_required', challengeId: 'c-1' }]);
+    expect(await continueGatedSignIn(bridge(), 'm')).toEqual({ kind: 'session', result: { kind: 'totp', challengeId: 'c-1' } });
+  });
+
+  it('a cancelled authenticator prompt, a network error or a server error is a retry', async () => {
+    routes(NONCE_OK);
+    expect(await continueGatedSignIn(bridge({ signProof: async () => { throw new Error('MFA canceled'); } }), 'm')).toMatchObject({ result: { kind: 'retry' } });
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'));
-    expect((await exchangePrivyToken('t')).kind).toBe('retry');
-    respond(503, { error: 'internal' });
-    expect((await exchangePrivyToken('t')).kind).toBe('retry');
-    respond(200, 'not json');
-    expect((await exchangePrivyToken('t')).kind).toBe('retry');
+    expect(await continueGatedSignIn(bridge(), 'm')).toMatchObject({ result: { kind: 'retry' } });
+    routes([503, { error: 'internal' }]);
+    expect(await continueGatedSignIn(bridge(), 'm')).toMatchObject({ result: { kind: 'retry' } });
   });
 
   it('names each refusal', async () => {
-    respond(409, { error: 'identity_conflict' });
-    expect(await exchangePrivyToken('t')).toEqual({ kind: 'error', message: 'This email belongs to an account with a different wallet, so sign-in stopped to keep it safe.' });
-    respond(401, { error: 'bad_token' });
-    expect(await exchangePrivyToken('t')).toEqual({ kind: 'error', message: 'The sign-in code expired. Ask for a new one.' });
-    respond(400, { error: 'something_new' });
-    expect(await exchangePrivyToken('t')).toEqual({ kind: 'error', message: 'Sign-in failed. Please try again.' });
+    routes([403, { ok: false, status: 'account_locked' }]);
+    expect(await continueGatedSignIn(bridge(), 'm')).toEqual({ kind: 'session', result: { kind: 'error', message: GATE_MESSAGES.account_locked } });
+    routes(NONCE_OK, [403, { ok: false, status: 'email_changed' }]);
+    expect(await continueGatedSignIn(bridge(), 'm')).toEqual({ kind: 'session', result: { kind: 'error', message: GATE_MESSAGES.email_changed } });
+    routes(NONCE_OK, [401, { error: 'bad_token' }]);
+    expect(await continueGatedSignIn(bridge(), 'm')).toEqual({ kind: 'session', result: { kind: 'error', message: 'The sign-in code expired. Ask for a new one.' } });
+  });
+
+  it('the refusal copy has no em dash and no we/our/us', () => {
+    for (const m of Object.values(GATE_MESSAGES)) {
+      expect(m).not.toMatch(/\u2014/);
+      expect(m).not.toMatch(/\b(we|our|us)\b/i);
+    }
   });
 });
 
