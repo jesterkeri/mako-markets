@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   writeAdmission: vi.fn(),
   readAdmission: vi.fn(),
   findMismatched: vi.fn(),
+  detect: vi.fn(),
   recordMismatch: vi.fn(),
   createSession: vi.fn(),
   revokeAll: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   readAdmission: mocks.readAdmission,
   writeAdmission: mocks.writeAdmission,
   findMismatchedAccount: mocks.findMismatched,
+  detectEmailMismatch: mocks.detect,
 }));
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: mocks.recordMismatch }));
 vi.mock('@/lib/user-upsert', () => ({
@@ -116,6 +118,7 @@ beforeEach(() => {
   mocks.createSession.mockResolvedValue('session-token');
   mocks.findMismatched.mockResolvedValue({ id: 'u1', byPrivyUser: true });
   mocks.issue.mockResolvedValue(NONCE);
+  mocks.detect.mockResolvedValue(null);
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -166,6 +169,18 @@ describe('POST /api/user/auth: the gate decides before anything is written', () 
 });
 
 describe('C4: the Privy login email moved [J2] [K4]', () => {
+  it('a mismatch found by the first read is refused BEFORE the gate, the nonce or the proof (adversary on a2743cb)', async () => {
+    mocks.detect.mockResolvedValue({ id: 'u1', observedEmail: 'attacker@example.com' });
+    expect(await signIn({})).toEqual({ status: 403, json: { ok: false, status: 'email_changed' } });
+    expect(mocks.recordMismatch).toHaveBeenCalledWith('u1', 'attacker@example.com');
+    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    const { POST } = await import('../../app/api/user/auth/proof/route');
+    const res = await POST(req('/api/user/auth/proof', { privyAccessToken: 'tok' }));
+    expect({ status: res.status, json: await res.json() }).toEqual({ status: 403, json: { ok: false, status: 'email_changed' } });
+    expect(mocks.issue).not.toHaveBeenCalled();
+  });
+
   it('the attacker at the new inbox (same Privy user, other email): email_changed, recorded with the observed email', async () => {
     const { IdentityConflictError } = await import('@/lib/user-upsert');
     mocks.upsert.mockRejectedValue(new (IdentityConflictError as unknown as new (r: string) => Error)('eoa_with_different_email'));

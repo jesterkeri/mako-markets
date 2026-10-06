@@ -33,6 +33,7 @@ export const privyAdmissionNone = () => ({
   readAdmission: async () => null,
   writeAdmission: async () => {},
   findMismatchedAccount: async () => null,
+  detectEmailMismatch: async () => null,
 });
 
 export const PROOF_BODY = { message: 'm', signature: 's' };

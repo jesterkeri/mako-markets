@@ -14,11 +14,14 @@ const m = vi.hoisted(() => ({
   wallets: [] as { address: string; walletClientType: string }[],
   exportWallet: vi.fn(async () => {}),
   logout: vi.fn(async () => {}),
+  order: [] as string[],
+  clearMfa: vi.fn(async () => {}),
 }));
 vi.mock('@privy-io/react-auth', () => ({
   PrivyProvider: ({ children }: { children: React.ReactNode }) => children,
   usePrivy: () => ({ authenticated: m.authenticated, exportWallet: m.exportWallet, logout: m.logout, ready: true }),
   useWallets: () => ({ wallets: m.wallets, ready: true }),
+  useMfa: () => ({ clear: m.clearMfa }),
 }));
 vi.mock('@/lib/embedded-signer', () => ({
   clearEmbeddedSigner: vi.fn(),
@@ -47,9 +50,14 @@ describe('exportKey(expectedAddress)', () => {
       { address: OTHER, walletClientType: 'privy' },
       { address: OWNER.toUpperCase().replace('0X', '0x'), walletClientType: 'privy' },
     ];
+    m.order = [];
+    m.clearMfa.mockImplementationOnce(async () => void m.order.push('clear'));
+    m.exportWallet.mockImplementationOnce(async () => void m.order.push('export'));
     await actions().exportKey(OWNER);
     expect(m.exportWallet).toHaveBeenCalledTimes(1);
     expect(m.exportWallet).toHaveBeenCalledWith({ address: OWNER.toUpperCase().replace('0X', '0x') });
+    // INBOX_GAP_PLAN r18 [H3]: an earlier verification is cleared first, so export always asks a fresh code.
+    expect(m.order).toEqual(['clear', 'export']);
   });
 
   it('refuses when the Privy session holds no wallet with that address', async () => {

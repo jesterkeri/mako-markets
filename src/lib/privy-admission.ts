@@ -6,7 +6,7 @@ import 'server-only';
 // read and written in one place so the sign-in routes stay readable and their tests can replace it.
 // ----------------------------------------------------------------------------
 
-import { eq } from 'drizzle-orm';
+import { and, eq, isNotNull, ne } from 'drizzle-orm';
 
 import { db, type DbOrTx } from '@/db/client';
 import { users } from '@/db/schema';
@@ -52,4 +52,26 @@ export async function findMismatchedAccount(privyUserId: string, email: string):
   if (byUser[0]) return { id: byUser[0].id, byPrivyUser: true };
   const byEmail = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
   return byEmail[0] ? { id: byEmail[0].id, byPrivyUser: false } : null;
+}
+
+/// [J2] C4, decided BEFORE the gate, the nonce or the proof (adversary on a2743cb): the inbox holder can never pass the
+/// authenticator, so a check that waits for the proof never fires for them. Two cases, from this Privy read alone:
+///   - the account bound to this Privy user was admitted with another email (the login email moved: the observed
+///     email is new and is kept for support);
+///   - this email's account is bound to ANOTHER Privy user (the owner signing in at the old inbox, which Privy now
+///     gives a new user).
+/// An account not bound to any Privy user yet (Magic era) is the legitimate move path, never a mismatch.
+export async function detectEmailMismatch(privyUserId: string, email: string): Promise<{ id: string; observedEmail: string | null } | null> {
+  const bound = await db
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(eq(users.privyUserId, privyUserId))
+    .limit(1);
+  if (bound[0]) return bound[0].email === email ? null : { id: bound[0].id, observedEmail: email };
+  const other = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.email, email), isNotNull(users.privyUserId), ne(users.privyUserId, privyUserId)))
+    .limit(1);
+  return other[0] ? { id: other[0].id, observedEmail: null } : null;
 }

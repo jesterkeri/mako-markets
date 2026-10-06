@@ -11,7 +11,8 @@
 
 import { db } from '@/db/client';
 import { checkSameOrigin } from '@/lib/csrf';
-import { readAdmission } from '@/lib/privy-admission';
+import { detectEmailMismatch, readAdmission } from '@/lib/privy-admission';
+import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { issueProofNonce } from '@/lib/privy-proof';
 import { judgeAccount, PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 
@@ -37,6 +38,14 @@ export async function POST(req: Request) {
     return Response.json({ error: 'bad_token' }, { status: 401 });
   }
   if (!read.email) return Response.json({ error: 'no_email' }, { status: 422 });
+
+  // [J2] C4 before anything else (see /api/user/auth): a moved login email is refused and recorded here, before an
+  // enrollment or a nonce is offered.
+  const moved = await detectEmailMismatch(read.privyUserId, read.email);
+  if (moved) {
+    await recordPrivyMismatch(moved.id, moved.observedEmail);
+    return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
+  }
 
   const admission = await readAdmission(read.privyUserId);
   const verdict = judgeAccount(read, admission);

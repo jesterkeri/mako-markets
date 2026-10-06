@@ -8,7 +8,7 @@ import { checkSameOrigin } from '@/lib/csrf';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import type { GateAdmission } from '@/lib/privy-gate';
-import { admissionOf, findMismatchedAccount, readAdmission, writeAdmission } from '@/lib/privy-admission';
+import { admissionOf, detectEmailMismatch, findMismatchedAccount, readAdmission, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce } from '@/lib/privy-proof';
 import {
@@ -158,6 +158,15 @@ export async function POST(req: Request) {
   }
   if (!read.email) return Response.json({ error: 'no_email' }, { status: 422 });
   const email = read.email;
+
+  // [J2] C4 first, before the gate, the nonce or the proof: the inbox holder can never sign the proof, so a mismatch
+  // found only after it would never be recorded for them, and the owner at the old inbox would be sent to enroll on a
+  // new Privy user. Recorded with every session deleted, in one transaction (R18-F1).
+  const moved = await detectEmailMismatch(read.privyUserId, email);
+  if (moved) {
+    await recordPrivyMismatch(moved.id, moved.observedEmail);
+    return refusal('email_changed');
+  }
 
   // The gate (INBOX_GAP_PLAN r18): an authenticator and nothing weaker, one embedded wallet that came after it. Judged
   // here against the account as last stored, and again inside the transaction against the row it locks.
