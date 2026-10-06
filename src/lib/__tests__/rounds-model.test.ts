@@ -17,6 +17,7 @@ import {
   RoundStatus,
   scheduleBlocker,
   settledPayout,
+  usdcFloor2,
   type Round,
 } from '../rounds-model';
 
@@ -156,5 +157,14 @@ describe('scheduling: a whole minute, 10 minutes to 7 days ahead', () => {
     expect(scheduleBlocker(START + 1, now)).toMatch(/whole minute/);
     expect(scheduleBlocker(Math.floor((now + 540) / 60) * 60, now)).toMatch(/10 minutes/);
     expect(scheduleBlocker(Math.ceil((now + 8 * 86_400) / 60) * 60, now)).toMatch(/7 days/);
+  });
+});
+
+describe('amounts owed are never shown rounded up', () => {
+  it('floors to cents', () => {
+    expect(usdcFloor2(3_115_500n)).toBe('3.11');
+    expect(usdcFloor2(49_100_000n)).toBe('49.10');
+    expect(usdcFloor2(9_999n)).toBe('0.00');
+    expect(usdcFloor2(1_234_567_890_000n)).toBe('1,234,567.89');
   });
 });

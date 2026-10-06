@@ -27,6 +27,7 @@ import {
   RefundReason,
   RoundOutcome,
   submitDeadlineOf,
+  usdcFloor2,
   V1_ASSET,
   type Position,
   type Round,
@@ -94,12 +95,15 @@ export function RoundClient({ id, initialSide }: { id: bigint; initialSide: Roun
   }
 
   const phase = phaseAt(round, now);
+  // Signed in but the stake not read yet: unknown, not "none" (adversary on 44aa10d). No side choice, no
+  // prediction and no claim until it is known.
+  const stakeKnown = user === null || stakeQ !== null;
   const stake = stakeQ?.stake ?? { side: null, amount: 0n };
   const position = positionOf(round, stake, stakeQ?.claimed ?? false, now);
   // One wallet, one side (N12): once in, the side is fixed.
   const effectiveSide: RoundSide = stake.side ?? side;
   const amount = parseAmount(amountText);
-  const why = enterBlocker({ phase, amount, balance, signedIn: user !== null });
+  const why = stakeKnown ? enterBlocker({ phase, amount, balance, signedIn: user !== null }) : 'Checking your position in this round…';
   const estimate = amount && amount > 0n ? estimateEntry(effectiveSide, amount, stake.amount, round.upPool, round.downPool) : null;
   const creatorFeeDue = isCreatorOfRound && phase === 'settled' && round.creatorFee > 0n && creatorFeeClaimed === false ? round.creatorFee : null;
 
@@ -112,7 +116,7 @@ export function RoundClient({ id, initialSide }: { id: bigint; initialSide: Roun
     if (amount === null || why) return;
     openTx({ kind: 'enter', roundId: id, side: effectiveSide, amount }, enterSpec(round, effectiveSide, amount, estimate));
   };
-  const claimAmount = claimable(position) + (creatorFeeDue ?? 0n);
+  const claimAmount = stakeKnown ? claimable(position) + (creatorFeeDue ?? 0n) : 0n;
   const openClaim = () => openTx({ kind: 'claim', roundId: id }, claimSpec(round, position, creatorFeeDue, claimAmount));
   const refundToMark = pendingRefund(round, now);
   const openMarkRefund = () => openTx({ kind: 'refund', roundId: id }, markRefundSpec(round, refundToMark));
@@ -205,7 +209,7 @@ function enterSpec(r: Round, side: RoundSide, amount: bigint, estimate: bigint |
       { label: 'Round', value: `#${r.id.toString()} · ${V1_ASSET.pair} · ${clock(r.startTime)} to ${clock(closeTimeOf(r))}` },
       { label: 'Side', value: sideName(side), tone: side === 'up' ? 'up' : 'no' },
       { label: 'Stake', value: `${amt} USDC` },
-      { label: `Est. payout if ${sideName(side)} wins`, value: estimate === null ? 'Unknown' : `${usdc2(estimate)} USDC` },
+      { label: `Est. payout if ${sideName(side)} wins`, value: estimate === null ? 'Unknown' : `${usdcFloor2(estimate)} USDC` },
     ],
     note: `The payout is an estimate until predictions close at ${clock(entryCloseOf(r))}. One wallet can only be on one side of a round.`,
     doneTitle: 'You are in',
@@ -218,9 +222,9 @@ function claimSpec(r: Round, p: Position, creatorFee: bigint | null, total: bigi
   const amt = usdcExact(total);
   const refund = p.kind === 'refund';
   const rows: ConfirmSpec['rows'] = [{ label: 'Round', value: `#${r.id.toString()} · ${V1_ASSET.pair}` }];
-  if (p.kind === 'won') rows.push({ label: 'Payout', value: `${usdc2(p.payout)} USDC` });
-  if (refund) rows.push({ label: 'Refund', value: `${usdc2(p.amount)} USDC` });
-  if (creatorFee) rows.push({ label: 'Creator fee', value: `${usdc2(creatorFee)} USDC` });
+  if (p.kind === 'won') rows.push({ label: 'Payout', value: `${usdcExact(p.payout)} USDC` });
+  if (refund) rows.push({ label: 'Refund', value: `${usdcExact(p.amount)} USDC` });
+  if (creatorFee) rows.push({ label: 'Creator fee', value: `${usdcExact(creatorFee)} USDC` });
   return {
     glyph: '$',
     glyphColor: 'var(--mako-teal)',
@@ -461,7 +465,7 @@ function PositionCard(v: View) {
   if (p.kind === 'none') return null;
   const claimButton = v.claimAmount > 0n && (
     <button onClick={v.openClaim} className="mk-press96" style={{ width: '100%', marginTop: 14, height: 56, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', ...display, fontSize: 18, boxShadow: 'var(--edge)' }}>
-      {p.kind === 'refund' ? 'Claim refund' : 'Claim'} {usdc2(v.claimAmount)} USDC
+      {p.kind === 'refund' ? 'Claim refund' : 'Claim'} {usdcExact(v.claimAmount)} USDC
     </button>
   );
   return (
@@ -474,17 +478,17 @@ function PositionCard(v: View) {
       {p.kind === 'in' && (
         <div style={{ display: 'flex', justifyContent: 'space-between', ...mono, fontSize: 12, marginTop: 10 }}>
           <span style={{ color: 'var(--dim)' }}>Est. payout if {sideName(p.side)} wins</span>
-          <span style={{ fontWeight: 700 }}>{usdc2(p.ifWins)} USDC</span>
+          <span style={{ fontWeight: 700 }}>{usdcFloor2(p.ifWins)} USDC</span>
         </div>
       )}
-      {p.kind === 'won' && <div style={{ ...mono, fontSize: 12, marginTop: 10 }}>You won {usdc2(p.payout)} USDC{p.claimed ? ', claimed.' : '.'}</div>}
+      {p.kind === 'won' && <div style={{ ...mono, fontSize: 12, marginTop: 10 }}>You won {usdcExact(p.payout)} USDC{p.claimed ? ', claimed.' : '.'}</div>}
       {p.kind === 'lost' && <div style={{ fontSize: 13, marginTop: 10, color: 'var(--dim)' }}>{sideName(p.side === 'up' ? 'down' : 'up')} won this one. Nothing to claim.</div>}
       {p.kind === 'refund' && (
         <div style={{ fontSize: 13, marginTop: 10, color: 'var(--dim)' }}>
           {p.claimed ? 'Refund claimed.' : p.marked ? 'Your full stake comes back, no fee.' : 'This round refunds everyone once it is marked refunded.'}
         </div>
       )}
-      {v.creatorFeeDue !== null && <div style={{ ...mono, fontSize: 12, marginTop: 8 }}>Plus your creator fee: {usdc2(v.creatorFeeDue)} USDC</div>}
+      {v.creatorFeeDue !== null && <div style={{ ...mono, fontSize: 12, marginTop: 8 }}>Plus your creator fee: {usdcExact(v.creatorFeeDue)} USDC</div>}
       {claimButton}
     </div>
   );
@@ -494,9 +498,9 @@ function CreatorFee(v: View) {
   return (
     <div style={{ borderTop: '1px solid var(--line)', padding: '14px 4px 0' }}>
       <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>YOUR CREATOR FEE</div>
-      <div style={{ ...display, fontSize: 26, marginTop: 8 }}>{usdc2(v.creatorFeeDue!)} USDC</div>
+      <div style={{ ...display, fontSize: 26, marginTop: 8 }}>{usdcExact(v.creatorFeeDue!)} USDC</div>
       <button onClick={v.openClaim} className="mk-press96" style={{ width: '100%', marginTop: 14, height: 56, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', ...display, fontSize: 18, boxShadow: 'var(--edge)' }}>
-        Claim {usdc2(v.creatorFeeDue!)} USDC
+        Claim {usdcExact(v.creatorFeeDue!)} USDC
       </button>
     </div>
   );
@@ -559,7 +563,7 @@ function EnterForm(v: View) {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
           <span style={{ color: 'var(--dim)' }}>EST. PAYOUT IF {sideName(side)} WINS</span>
-          <span style={{ fontWeight: 700 }}>{estimate === null ? '0.00' : usdc2(estimate)} USDC</span>
+          <span style={{ fontWeight: 700 }}>{estimate === null ? '0.00' : usdcFloor2(estimate)} USDC</span>
         </div>
       </div>
       {!signedIn ? (

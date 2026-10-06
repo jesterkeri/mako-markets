@@ -88,6 +88,25 @@ function wrongWallet(user: Extract<AuthedUser, { authType: 'wallet' }>, connecte
 
 const unavailable = (w: OutcomeWords): ConfirmPhase => ({ step: 'failed', title: w.failTitle, body: 'Rounds are not live right now.', nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } });
 
+/// Once a USDC approval went out, an outcome that would say "nothing moved" says what did: the approval (it moves no
+/// USDC; it lets the Rounds contract take exactly the stake later). As usePoolTx does.
+function afterApproval(a: { hash: `0x${string}`; state: 'sent' | 'confirmed' }, p: ConfirmPhase, w: OutcomeWords): ConfirmPhase {
+  if (p.step !== 'cancelled' && !(p.step === 'failed' && p.nothingMoved)) return p;
+  const what =
+    a.state === 'confirmed'
+      ? 'Your USDC approval went through, so the Rounds contract can take exactly this stake when you predict.'
+      : "Your USDC approval was sent, but its confirmation didn't come back.";
+  const why = p.step === 'cancelled' ? `You declined the ${w.noun} in your wallet.` : `${p.title}: ${p.body}`;
+  return {
+    step: 'failed',
+    title: `Approval sent, ${w.noun} not placed`,
+    body: `${what} The ${w.noun} was not placed. ${why} No USDC left your wallet. Approval tx ${a.hash.slice(0, 10)}…`,
+    nothingMoved: true,
+    primary: { label: 'Try again', retry: true },
+    secondary: { label: 'Close' },
+  };
+}
+
 class WalletSwitched extends Error {}
 const isAccountNotConnected = (err: unknown) => (err as { name?: string } | null)?.name === 'ConnectorAccountNotFoundError';
 
@@ -164,63 +183,68 @@ export function useRoundTx(onLanded?: () => void) {
       if (isWalletDrifted(u, account)) return wrongWallet(u, account);
       const client = publicClient;
       const contract = { address: rounds, abi: roundsAbi } as const;
-      let approvalHash: `0x${string}` | null = null;
+      /// The USDC approval, once the wallet hands back its hash: from then on no outcome may hide it (adversary on
+      /// 44aa10d). `confirmed` once Monad included it; reverted approvals are dropped, they moved nothing.
+      let approval: { hash: `0x${string}`; state: 'sent' | 'confirmed' } | null = null;
 
       async function write(request: Parameters<typeof writeContractAsync>[0]): Promise<`0x${string}`> {
         if (!connectedNow.current || isWalletDrifted(u, connectedNow.current)) throw new WalletSwitched();
         return writeContractAsync({ ...request, account: account! } as Parameters<typeof writeContractAsync>[0]);
       }
 
-      setPhase({ step: 'pending', stage: 'signing' });
-      try {
-        await ensureChain();
-      } catch {
-        return { step: 'cancelled' };
-      }
-      let sent = false;
-      try {
-        if (t.kind === 'enter') {
-          const allowance = (await client.readContract({ ...usdcContract, functionName: 'allowance', args: [account, rounds] })) as bigint;
-          if (allowance < t.amount) {
-            // Exactly the stake, never unlimited.
-            approvalHash = await write({ ...usdcContract, functionName: 'approve', args: [rounds, t.amount], chainId: monadTestnet.id });
-            setPhase({ step: 'pending', stage: 'confirming', txHash: approvalHash });
-            const approved = await client.waitForTransactionReceipt({ hash: approvalHash });
-            if (approved.status !== 'success') return undone({ ...w, afterRevert: 'Your USDC approval was turned down on Monad, so the prediction was not sent.' });
-          }
-        }
-        const call =
-          t.kind === 'enter'
-            ? ({ functionName: 'enter', args: [t.roundId, t.side === 'up' ? 1 : 2, t.amount] } as const)
-            : t.kind === 'claim'
-              ? ({ functionName: 'claim', args: [t.roundId] } as const)
-              : t.kind === 'refund'
-                ? ({ functionName: 'finalizeRefund', args: [t.roundId] } as const)
-                : ({ functionName: 'schedule', args: [t.startTime] } as const);
-        try {
-          await client.simulateContract({ ...contract, ...call, account } as Parameters<typeof client.simulateContract>[0]);
-        } catch (err) {
-          const p = roundRefusal(revertName(err), w);
-          return approvalHash && p.step === 'failed'
-            ? { ...p, title: `Approval sent, ${w.noun} not placed`, body: `Your USDC approval went through, but the ${w.noun} was not placed: ${p.body} No USDC left your wallet.` }
-            : p;
-        }
+      const result = await steps();
+      return approval ? afterApproval(approval, result, w) : result;
+
+      async function steps(): Promise<ConfirmPhase> {
         setPhase({ step: 'pending', stage: 'signing' });
-        sent = true;
-        const hash = await write({ ...contract, ...call, chainId: monadTestnet.id } as Parameters<typeof writeContractAsync>[0]);
-        setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
-        const receipt = await client.waitForTransactionReceipt({ hash });
-        return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
-      } catch (err) {
-        if (err instanceof WalletSwitched || isAccountNotConnected(err)) return wrongWallet(u, connectedNow.current ?? account);
-        if (isUserRejection(err)) {
-          return approvalHash
-            ? { step: 'failed', title: `Approval sent, ${w.noun} not placed`, body: `Your USDC approval went through, then you declined the ${w.noun} in your wallet. No USDC left your wallet.`, nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } }
-            : { step: 'cancelled' };
+        try {
+          await ensureChain();
+        } catch {
+          return { step: 'cancelled' };
         }
-        return sent
-          ? { step: 'failed', title: 'Lost track of it', body: `Your ${w.noun} may have been sent, but its confirmation didn't come back. Check Me before you try again.`, nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } }
-          : { step: 'failed', title: w.failTitle, body: 'Your wallet or the network failed before it was sent.', nothingMoved: approvalHash === null, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
+        let sent = false;
+        try {
+          if (t.kind === 'enter') {
+            const allowance = (await client.readContract({ ...usdcContract, functionName: 'allowance', args: [account!, rounds] })) as bigint;
+            if (allowance < t.amount) {
+              // Exactly the stake, never unlimited.
+              const hash = await write({ ...usdcContract, functionName: 'approve', args: [rounds, t.amount], chainId: monadTestnet.id });
+              approval = { hash, state: 'sent' };
+              setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
+              const approved = await client.waitForTransactionReceipt({ hash });
+              if (approved.status !== 'success') {
+                approval = null;
+                return undone({ ...w, afterRevert: 'Your USDC approval was turned down on Monad, so the prediction was not sent.' });
+              }
+              approval = { hash, state: 'confirmed' };
+            }
+          }
+          const call =
+            t.kind === 'enter'
+              ? ({ functionName: 'enter', args: [t.roundId, t.side === 'up' ? 1 : 2, t.amount] } as const)
+              : t.kind === 'claim'
+                ? ({ functionName: 'claim', args: [t.roundId] } as const)
+                : t.kind === 'refund'
+                  ? ({ functionName: 'finalizeRefund', args: [t.roundId] } as const)
+                  : ({ functionName: 'schedule', args: [t.startTime] } as const);
+          try {
+            await client.simulateContract({ ...contract, ...call, account: account! } as Parameters<typeof client.simulateContract>[0]);
+          } catch (err) {
+            return roundRefusal(revertName(err), w);
+          }
+          setPhase({ step: 'pending', stage: 'signing' });
+          sent = true;
+          const hash = await write({ ...contract, ...call, chainId: monadTestnet.id } as Parameters<typeof writeContractAsync>[0]);
+          setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
+          const receipt = await client.waitForTransactionReceipt({ hash });
+          return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
+        } catch (err) {
+          if (err instanceof WalletSwitched || isAccountNotConnected(err)) return wrongWallet(u, connectedNow.current ?? account!);
+          if (isUserRejection(err)) return { step: 'cancelled' };
+          return sent
+            ? { step: 'failed', title: 'Lost track of it', body: `Your ${w.noun} may have been sent, but its confirmation didn't come back. Check Me before you try again.`, nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } }
+            : { step: 'failed', title: w.failTitle, body: 'Your wallet or the network failed before it was sent.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
+        }
       }
     }
   }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded]);

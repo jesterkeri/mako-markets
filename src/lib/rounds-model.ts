@@ -171,6 +171,13 @@ export function mmss(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
 }
 
+/// USDC to two decimals, rounded DOWN: an amount owed or estimated is never shown higher than the contract pays
+/// (adversary on 44aa10d: half-up showed 3.12 for a claim of 3.1155).
+export function usdcFloor2(base: bigint): string {
+  const cents = base / 10_000n;
+  return `${(cents / 100n).toLocaleString('en-US')}.${(cents % 100n).toString().padStart(2, '0')}`;
+}
+
 const usd2 = (base: bigint) => {
   const cents = (base + 5_000n) / 10_000n;
   return `${(cents / 100n).toLocaleString('en-US')}.${(cents % 100n).toString().padStart(2, '0')}`;
@@ -203,10 +210,13 @@ export function commentary(r: Round, nowS: number, asset: RoundAsset = V1_ASSET)
       return pendingRefund(r, nowS) === RefundReason.OneSided
         ? 'Only one side came in, so this round refunds everyone when it is marked.'
         : `Live. ${mmss(closeTimeOf(r) - nowS)} until the closing price decides it. ${lead()}`;
-    case 'settling':
-      return pendingRefund(r, nowS) === RefundReason.OneSided
-        ? 'Only one side came in, so everyone gets their stake back.'
-        : 'The round is over. Waiting for the two signed Chainlink prices to settle it on chain.';
+    case 'settling': {
+      // Past the submit deadline settle reverts (SubmitWindowClosed), so the round can only refund (adversary on 44aa10d).
+      const refund = pendingRefund(r, nowS);
+      if (refund === RefundReason.OneSided) return 'Only one side came in, so everyone gets their stake back.';
+      if (refund === RefundReason.NoPrice) return 'No signed price arrived within 24H of the close, so everyone gets their stake back.';
+      return 'The round is over. Waiting for the two signed Chainlink prices to settle it on chain.';
+    }
     case 'settled': {
       const winner = r.outcome === RoundOutcome.Up ? 'UP' : 'DOWN';
       return `${asset.symbol} went ${priceUsd(r.anchorPrice)} to ${priceUsd(r.closePrice)} (${movePct(r.anchorPrice, r.closePrice)}). ${winner} takes ${usd2(r.distributable)} USDC.`;
