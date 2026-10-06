@@ -88,6 +88,19 @@ export class WatchState extends DurableObject<Record<string, never>> {
     });
   }
 
+  /// Moves the Healthchecks page cursor, after a page was accepted, only if it still points where that page
+  /// began: a concurrent or later run that already moved it wins, and the worst case is a repeated page.
+  advanceHcCursor(from: number, next: number): { ok: boolean } {
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql;
+      const meta = JSON.parse(sql.exec<{ json: string }>(`SELECT json FROM meta WHERE id = 1`).one().json) as Meta;
+      if ((meta.hcCursor ?? 0) !== from) return { ok: false };
+      meta.hcCursor = next;
+      sql.exec(`UPDATE meta SET json = ? WHERE id = 1`, JSON.stringify(meta));
+      return { ok: true };
+    });
+  }
+
   /// Saves what was delivered and releases the lease, only while `token` still holds it.
   commit(token: number, meta: Meta, now: number): { ok: boolean } {
     return this.ctx.storage.transactionSync(() => {

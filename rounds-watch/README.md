@@ -19,7 +19,8 @@ and stays there until Telegram confirms its alert: a refunded round never change
 Report checks are kept per round and rotate (never checked first, then the oldest), so every alerting round
 gets its check within a few runs even while Telegram is down. Healthchecks stores 100,000 bytes per ping, so
 the failure body is a capped summary plus a page of whole alert lines that rotates from ping to ping: every
-line reaches Healthchecks within a few pings however large the backlog.
+line reaches Healthchecks within a few pings however large the backlog. The page moves on only after
+Healthchecks accepts it (HTTP 2xx, body "OK"); a timeout, 429 or 5xx sends the same page again next run.
 
 A one-sided round is not flagged: it never settles by design and refunds OneSided.
 

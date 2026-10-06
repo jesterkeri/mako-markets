@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { REFUND_REASON, STATUS, WATCH_ABI } from '../src/abi';
 import { makeNet } from '../src/net';
 import { multicallAnswer } from './multicall-fake';
-import { runWatch, UNSETTLED_ALERT_S, type WatchConfig, type WatchDeps } from '../src/run';
+import { healthchecksAccepted, runWatch, UNSETTLED_ALERT_S, type WatchConfig, type WatchDeps } from '../src/run';
 import { INITIAL_META, type Meta } from '../src/state';
 import fixture from '../../keeper/test/fixtures/fixture-btcusd-1789529160.json';
 
@@ -45,6 +45,8 @@ let w: {
   dsRequests: number;
   rpcItems: number;
   failReads: Set<number>;
+  /// Healthchecks accepts each ping unless this says otherwise (shifted per ping).
+  hcAccept: boolean[];
 };
 
 function roundResult(r: R) {
@@ -121,6 +123,11 @@ function deps(): WatchDeps {
         w.meta = structuredClone(m);
         return { ok: true };
       },
+      advanceHcCursor: async (from, next) => {
+        if (w.meta.hcCursor !== from) return { ok: false };
+        w.meta.hcCursor = next;
+        return { ok: true };
+      },
     },
     hmac: async () => 'ab'.repeat(32),
     telegram: async (text) => {
@@ -129,6 +136,7 @@ function deps(): WatchDeps {
     },
     ping: async (kind, body) => {
       w.pings.push({ kind, body });
+      return w.hcAccept.length > 0 ? w.hcAccept.shift()! : true;
     },
   };
 }
@@ -137,7 +145,7 @@ const run = () => runWatch(cfg, deps());
 const active = (start: number, up = 1n, down = 1n): R => ({ start, status: STATUS.Active, up, down });
 
 beforeEach(() => {
-  w = { now: 0, rounds: [], missing: new Set(), telegramOk: true, messages: [], pings: [], meta: structuredClone(INITIAL_META), rpcDown: false, dsRequests: 0, rpcItems: 0, failReads: new Set() };
+  w = { now: 0, rounds: [], missing: new Set(), telegramOk: true, messages: [], pings: [], meta: structuredClone(INITIAL_META), rpcDown: false, dsRequests: 0, rpcItems: 0, failReads: new Set(), hcAccept: [] };
 });
 
 const at = (closeTime: number, afterS: number) => (w.now = (closeTime + afterS) * 1000);
@@ -400,6 +408,48 @@ describe('Healthchecks pages through a backlog larger than it stores', () => {
   }, 120_000);
 });
 
+// Codex T2.0d r4 regression: the page cursor is a delivery cursor. A page Healthchecks did not accept (timeout,
+// 429, 5xx) is sent again; the next page is not selected until Healthchecks has this one.
+describe('a Healthchecks page that was not accepted is sent again', () => {
+  const pageOf = (body: string) => [...body.matchAll(/Round (\d+) REFUNDED/g)].map((m) => Number(m[1]));
+  it('repeats page A after a rejected ping and moves to page B only after A is accepted', async () => {
+    const N = 800;
+    w.rounds = Array.from({ length: N }, () => ({ start: C - 900, status: STATUS.Refunded, reason: REFUND_REASON.NoPrice, up: 1n, down: 1n }));
+    w.telegramOk = false;
+    at(C, 86_400 + 60);
+    // Let every round get its report check first, so the alert lines stop changing between runs.
+    for (let i = 0; i < Math.ceil(N / 4) + 4; i++) {
+      await run();
+      w.now += 60_000;
+    }
+    const start = w.meta.hcCursor;
+    w.hcAccept = [false];
+    await run(); // page A, rejected
+    const a1 = pageOf(w.pings.at(-1)!.body);
+    expect(w.meta.hcCursor).toBe(start);
+    w.now += 60_000;
+    await run(); // page A again, accepted this time
+    const a2 = pageOf(w.pings.at(-1)!.body);
+    expect(a2).toEqual(a1);
+    expect(w.meta.hcCursor).not.toBe(start);
+    w.now += 60_000;
+    await run(); // page B
+    const b = pageOf(w.pings.at(-1)!.body);
+    // Lines run in round order and pages wrap, so page B begins at the round right after page A's last one.
+    for (let i = 1; i < a1.length; i++) expect(a1[i]).toBe((a1[i - 1] % N) + 1);
+    expect(b[0]).toBe((a1.at(-1)! % N) + 1);
+  }, 120_000);
+
+  it('a cursor someone else already moved is not moved again', async () => {
+    w.meta.hcCursor = 7;
+    const d = deps();
+    expect(await d.state.advanceHcCursor(3, 9)).toEqual({ ok: false });
+    expect(w.meta.hcCursor).toBe(7);
+    expect(await d.state.advanceHcCursor(7, 9)).toEqual({ ok: true });
+    expect(w.meta.hcCursor).toBe(9);
+  });
+});
+
 // The public Monad RPC refuses JSON-RPC items beyond 15 a second (measured 2026-09-29), so every multi-read
 // goes through one Multicall3 item.
 describe('reads stay within the public RPC limit', () => {
@@ -420,5 +470,18 @@ describe('reads stay within the public RPC limit', () => {
     w.failReads.add(2);
     at(C, UNSETTLED_ALERT_S);
     expect((await run()).status).toBe('rpc-error');
+  });
+});
+
+describe('what counts as Healthchecks accepting a ping', () => {
+  const h = new Headers();
+  it('only HTTP 2xx with the body "OK"', () => {
+    expect(healthchecksAccepted({ ok: true, status: 200, headers: h, text: 'OK' })).toBe(true);
+    expect(healthchecksAccepted({ ok: true, status: 200, headers: h, text: 'OK\n' })).toBe(true);
+    expect(healthchecksAccepted({ ok: true, status: 200, headers: h, text: 'OK (not found)' })).toBe(false);
+    expect(healthchecksAccepted({ ok: false, kind: 'http', status: 404, headers: h, text: 'not found' })).toBe(false);
+    expect(healthchecksAccepted({ ok: false, kind: 'rate_limited', status: 429, headers: h, text: 'rate limited' })).toBe(false);
+    expect(healthchecksAccepted({ ok: false, kind: 'http', status: 503, headers: h, text: 'OK' })).toBe(false);
+    expect(healthchecksAccepted({ ok: false, kind: 'timeout' })).toBe(false);
   });
 });

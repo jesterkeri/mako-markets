@@ -18,7 +18,7 @@
 import { decodeFunctionResult, encodeFunctionData, type Hex } from 'viem';
 import { readReport, reportHeaders, reportPath, type HmacHex } from '../../rounds-delivery/src/index';
 import { REFUND_REASON, STATUS, WATCH_ABI } from './abi';
-import { send, type Net } from './net';
+import { send, type HttpResult, type Net } from './net';
 import { aggregate, decodeAggregate } from './multicall';
 import { rpcBatch, type RpcCall } from './rpc';
 import type { AlertKind, Evidence, Meta, PendingNoPrice } from './state';
@@ -53,11 +53,14 @@ export interface WatchDeps {
   state: {
     acquire(now: number): Promise<{ ok: true; token: number; meta: Meta } | { ok: false }>;
     commit(token: number, meta: Meta, now: number): Promise<{ ok: boolean }>;
+    /// Moves the Healthchecks page cursor from `from` to `next`, only if it is still at `from`.
+    advanceHcCursor(from: number, next: number): Promise<{ ok: boolean }>;
   };
   hmac: HmacHex;
   /// Sends one Telegram message; true only if Telegram confirmed it.
   telegram(text: string): Promise<boolean>;
-  ping(kind: 'ok' | 'fail', body: string): Promise<void>;
+  /// Pings Healthchecks; true only if Healthchecks accepted the ping (HTTP 2xx and an "OK" body).
+  ping(kind: 'ok' | 'fail', body: string): Promise<boolean>;
 }
 
 export type WatchStatus = 'quiet' | 'alerting' | 'telegram-failed' | 'rpc-error' | 'lease-held' | 'lease-lost';
@@ -68,6 +71,10 @@ export interface WatchOutcome {
   lines: string[];
   /// The alert lines for this run's Healthchecks failure body: a page that rotates across runs.
   hcPage?: string[];
+  /// Where that page starts and where the next one would. The saved cursor moves to `hcNext` only after
+  /// Healthchecks accepts the page, so a rejected or lost ping repeats the page (Codex T2.0d r4).
+  hcFrom?: number;
+  hcNext?: number;
   /// Rounds currently in an alert condition, delivered or not.
   conditions: string[];
 }
@@ -86,6 +93,12 @@ type ReportState = 'exists' | 'missing' | string;
 const TELEGRAM_CHARS = 4000;
 
 const iso = (s: number) => new Date(s * 1000).toISOString().replace('.000Z', 'Z');
+
+/// Whether Healthchecks accepted a ping: HTTP 2xx with the body "OK". "OK (not found)" (an unknown check), a
+/// timeout, a 429 or a 5xx is not acceptance, so the page cursor stays and the page is sent again.
+export function healthchecksAccepted(res: HttpResult): boolean {
+  return res.ok && res.text.trim() === 'OK';
+}
 
 export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<WatchOutcome> {
   const now = deps.net.now();
@@ -123,7 +136,13 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
   // worth an email.
   if (outcome.status === 'rpc-error' || outcome.status === 'lease-lost') return outcome;
   if (outcome.status === 'telegram-failed' || outcome.conditions.length > 0) {
-    await deps.ping('fail', failureBody(outcome));
+    const accepted = await deps.ping('fail', failureBody(outcome));
+    // The page cursor is a delivery cursor: it moves past a page only once Healthchecks has that page. The
+    // move is a separate compare-and-set after the commit, so a second run that already moved it, or a
+    // failure here, can only repeat a page, never skip one.
+    if (accepted && outcome.hcFrom !== undefined && outcome.hcNext !== undefined && outcome.hcNext !== outcome.hcFrom) {
+      await deps.state.advanceHcCursor(outcome.hcFrom, outcome.hcNext);
+    }
   } else {
     await deps.ping('ok', 'mako-rounds-watch quiet');
   }
@@ -250,10 +269,13 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     }
   }
 
-  // The Healthchecks page: whole lines from the saved cursor, wrapping, as many as fit; the cursor moves on
-  // so the next run starts where this one stopped. Built whether or not Telegram worked, used when it did not.
+  // The Healthchecks page: whole lines from the saved cursor, wrapping, as many as fit. The cursor is NOT moved
+  // here: runWatch moves it only after Healthchecks accepts this page. Built whether or not Telegram worked,
+  // used when it did not.
   const pageBudget = HC_BODY_BYTES - HC_SUMMARY_BYTES - 200;
   const hcPage: string[] = [];
+  let hcFrom: number | undefined;
+  let hcNext: number | undefined;
   if (lines.length > 0) {
     const from = meta.hcCursor % lines.length;
     let used = 0;
@@ -264,7 +286,8 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
       hcPage.push(l);
       used += size;
     }
-    meta.hcCursor = (from + hcPage.length) % lines.length;
+    hcFrom = meta.hcCursor;
+    hcNext = (from + hcPage.length) % lines.length;
   }
 
   // Forget alert and evidence records only for rounds that are neither active nor waiting on a NoPrice alert.
@@ -272,7 +295,7 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
   for (const k of Object.keys(meta.alerted)) if (!keep.has(k)) delete meta.alerted[k];
   for (const k of Object.keys(meta.evidence)) if (!keep.has(k)) delete meta.evidence[k];
 
-  return { status, lines, conditions, hcPage };
+  return { status, lines, conditions, hcPage, hcFrom, hcNext };
 }
 
 const noPriceView = (id: number, p: PendingNoPrice): RoundView => ({

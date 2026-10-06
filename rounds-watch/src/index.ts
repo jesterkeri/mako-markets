@@ -4,7 +4,7 @@
 
 import { getAddress, type Hex } from 'viem';
 import { makeNet, send } from './net';
-import { runWatch, type WatchConfig } from './run';
+import { healthchecksAccepted, runWatch, type WatchConfig } from './run';
 import type { WatchState } from './state';
 
 export { WatchState } from './state';
@@ -71,7 +71,11 @@ const worker = {
     const stub = env.WATCH_STATE.get(env.WATCH_STATE.idFromName('rounds-watch'));
     const outcome = await runWatch(cfg, {
       net,
-      state: { acquire: (now) => stub.acquire(now), commit: (t, m, now) => stub.commit(t, m, now) },
+      state: {
+        acquire: (now) => stub.acquire(now),
+        commit: (t, m, now) => stub.commit(t, m, now),
+        advanceHcCursor: (from, next) => stub.advanceHcCursor(from, next),
+      },
       hmac: hmacSha256Hex,
       // Confirmed only on HTTP 200 with Telegram's `ok: true`. The URL carries the token, so failures are
       // reduced to a boolean and never logged.
@@ -91,7 +95,8 @@ const worker = {
       ping: async (kind, body) => {
         const base = env.HEALTHCHECKS_PING_URL.trim().replace(/\/$/, '');
         // Healthchecks stores the first 100,000 bytes of a body (healthchecks.io/docs/attaching_logs).
-        await send(net, kind === 'ok' ? base : `${base}/fail`, { method: 'POST', body: body.slice(0, 100_000) });
+        const res = await send(net, kind === 'ok' ? base : `${base}/fail`, { method: 'POST', body: body.slice(0, 100_000) });
+        return healthchecksAccepted(res);
       },
     });
     console.log(JSON.stringify({ watch: outcome.status, conditions: outcome.conditions, cron: event.scheduledTime }));
