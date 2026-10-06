@@ -3,7 +3,7 @@
 import type { ErrorEvent } from '@sentry/nextjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DEDUPE_WINDOW_MS, IGNORE_ERRORS, makeBeforeSend, scrub, scrubUrl, sentryBaseOptions } from '@/lib/sentry-options';
+import { DEDUPE_WINDOW_MS, IGNORE_ERRORS, makeBeforeSend, scrub, scrubDeep, scrubUrl, sentryBaseOptions } from '@/lib/sentry-options';
 
 const WALLET = '0x706cf4A1aaaaaaaaaaaaaaaaaaaaaaaaaab6A51c';
 const event = (value = 'boom'): ErrorEvent =>
@@ -30,6 +30,32 @@ describe('scrub', () => {
   });
   it('drops the query and fragment from a URL', () => {
     expect(scrubUrl('https://makomarket.xyz/markets/84?ref=x#top')).toBe('https://makomarket.xyz/markets/84');
+  });
+});
+
+describe('scrubDeep', () => {
+  it('stays linear on a long run with no @ (a calldata blob in a viem error)', () => {
+    const blob = 'ab'.repeat(100_000);
+    const t0 = performance.now();
+    scrub(blob);
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+  it('never throws on a cycle, a bigint or a class instance, and leaves internal metadata alone', () => {
+    class Scope { client = { timer: setInterval(() => undefined, 1e6) }; note = `x ${WALLET}`; }
+    const scope = new Scope();
+    const meta = { scope, normalizeDepth: 3, raw: `y ${WALLET}` };
+    const e: Record<string, unknown> = { tags: { stake: 10n, who: WALLET }, sdkProcessingMetadata: meta };
+    e.self = e;
+    expect(() => scrubDeep(e)).not.toThrow();
+    expect(e.tags).toEqual({ stake: 10n, who: '0x[address]' });
+    expect(scope.note).toBe(`x ${WALLET}`); // a class instance is not walked
+    expect(meta.raw).toBe(`y ${WALLET}`); // the SDK's own bookkeeping is never sent and never altered
+    clearInterval(scope.client.timer);
+  });
+  it('cuts the query from a span attribute and drops user and header attributes', () => {
+    const span = { name: 'GET /api/names?addresses=x', attributes: { 'url.full': { value: 'https://m.xyz/a?b=c', type: 'string' }, 'user.email': { value: 'a@b.co' }, 'http.request.header.cookie': { value: 's=1' } } };
+    scrubDeep(span);
+    expect(span).toEqual({ name: 'GET /api/names', attributes: { 'url.full': { value: 'https://m.xyz/a', type: 'string' } } });
   });
 });
 
