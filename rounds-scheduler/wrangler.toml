@@ -12,7 +12,7 @@ crons = ["*/5 * * * *"]
 
 [limits]
 cpu_ms = 5000
-# Every fetch and every Durable Object call counts; must stay >= WORST_CASE_SUBREQUESTS in src/index.ts (22).
+# Every fetch and every Durable Object call counts; must stay >= WORST_CASE_SUBREQUESTS in src/index.ts (23).
 subrequests = 30
 
 [observability]

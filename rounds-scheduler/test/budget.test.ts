@@ -22,6 +22,8 @@ const MULTICALL3 = '0xca11bde05977b3631167028862be2a173976ca11';
 const NOW = 1_800_000_000;
 const HORIZON = NOW - (MAX_LEAD_S + 900 + 86_400 + 3600);
 const ROUND_COUNT = BigInt(MAX_SCAN_PAGES * 40); // exactly MAX_SCAN_PAGES pages of 40
+/// Codex Rounds r5: the RPC refuses eth_maxPriorityFeePerGas, so viem falls back to eth_gasPrice (one more request).
+let failPriorityFee = false;
 
 const env: Env = {
   RPC_URL: 'https://rpc.test/',
@@ -89,7 +91,10 @@ function rpc(method: string, params: unknown[]): unknown {
         baseFeePerGas: '0x174876e800', gasLimit: '0x1c9c380', gasUsed: '0x0', transactions: [], uncles: [],
       };
     case 'eth_maxPriorityFeePerGas':
+      if (failPriorityFee) throw Object.assign(new Error('method not found'), { rpcCode: -32601 });
       return '0x3b9aca00';
+    case 'eth_gasPrice':
+      return '0x174876e800';
     case 'eth_getTransactionCount':
       return '0x5';
     case 'eth_sendRawTransaction':
@@ -104,7 +109,13 @@ function counting(status = 200) {
     const body = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
     methods.push(body.method);
     if (status !== 200) return new Response('unavailable', { status });
-    return Response.json({ jsonrpc: '2.0', id: body.id, result: rpc(body.method, body.params) });
+    try {
+      return Response.json({ jsonrpc: '2.0', id: body.id, result: rpc(body.method, body.params) });
+    } catch (e) {
+      const code = (e as { rpcCode?: number }).rpcCode;
+      if (code === undefined) throw e;
+      return Response.json({ jsonrpc: '2.0', id: body.id, error: { code, message: (e as Error).message } });
+    }
   });
   return methods;
 }
@@ -122,7 +133,10 @@ function countedLease() {
   return { lease, calls, inner };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  failPriorityFee = false;
+});
 
 describe('subrequests per run, on the worst path and under failure (Codex Rounds r4)', () => {
   it('the limit is read from wrangler.toml and the computed worst case fits it', () => {
@@ -130,7 +144,7 @@ describe('subrequests per run, on the worst path and under failure (Codex Rounds
     expect(WORST_CASE_SUBREQUESTS).toBeLessThanOrEqual(LIMIT);
   });
 
-  it(`all ${MAX_SCAN_PAGES} scan pages, then a send, is exactly WORST_CASE_SUBREQUESTS`, async () => {
+  it(`all ${MAX_SCAN_PAGES} scan pages, then a send, is one under WORST_CASE_SUBREQUESTS without the fee fallback`, async () => {
     const fetches = counting();
     const { lease, calls, inner } = countedLease();
     const res = await runScheduler(env, NOW, { lease, clockMs: () => 1_000 });
@@ -142,10 +156,22 @@ describe('subrequests per run, on the worst path and under failure (Codex Rounds
     expect(inner.openIntent()?.nonce).toBe(5);
     const total = fetches.length + calls.length;
     const why = JSON.stringify({ fetches, calls });
-    expect(total, why).toBe(WORST_CASE_SUBREQUESTS);
+    expect(total, why).toBe(WORST_CASE_SUBREQUESTS - 1); // no fee fallback
     expect(total, why).toBeLessThanOrEqual(LIMIT);
     // The transaction sent is the one recorded, signed for the house of the planned slot.
     expect(parseTransaction(inner.openIntent()!.raw).nonce).toBe(5);
+  });
+
+  it('the same path when the RPC refuses eth_maxPriorityFeePerGas is exactly WORST_CASE_SUBREQUESTS (Codex Rounds r5)', async () => {
+    failPriorityFee = true;
+    const fetches = counting();
+    const { lease, calls } = countedLease();
+    const res = await runScheduler(env, NOW, { lease, clockMs: () => 1_000 });
+    expect(res.ok && res.scheduled).toHaveLength(1);
+    expect(fetches).toContain('eth_gasPrice');
+    const total = fetches.length + calls.length;
+    expect(total, JSON.stringify({ fetches, calls })).toBe(WORST_CASE_SUBREQUESTS);
+    expect(total).toBeLessThanOrEqual(LIMIT);
   });
 
   for (const status of [503, 429]) {

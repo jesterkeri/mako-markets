@@ -90,9 +90,11 @@ export const READ_TIMEOUT_MS = 10_000;
 ///   - open intent: acquire, intent, latest nonce, then either a rebroadcast, or a receipt and clearIntent, then
 ///     release: at most 7;
 ///   - plan and send: acquire, intent, the state multicall, up to MAX_SCAN_PAGES scan pages, the simulation, the
-///     pending and latest nonces, estimateGas, the two fee reads (block, priority fee), recordIntent, the send,
-///     release: 12 + MAX_SCAN_PAGES (counted exactly by test/budget.test.ts).
-export const WORST_CASE_SUBREQUESTS = 12 + MAX_SCAN_PAGES;
+///     pending and latest nonces, estimateGas, the fee reads (the block and eth_maxPriorityFeePerGas, plus
+///     eth_gasPrice when viem falls back because the priority-fee read failed; Codex Rounds r5), recordIntent, the
+///     send, release: 13 + MAX_SCAN_PAGES with the fallback, one fewer without (both counted exactly by
+///     test/budget.test.ts).
+export const WORST_CASE_SUBREQUESTS = 13 + MAX_SCAN_PAGES;
 
 export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
   const startMs = deps.clockMs();
