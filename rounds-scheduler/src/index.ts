@@ -7,7 +7,7 @@ import { createPublicClient, defineChain, encodeFunctionData, getAddress, http, 
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { MAX_LEAD_S, planSchedule, type ChainView, type HouseView } from './plan';
-import { LEASE_MS, SEND_MARGIN_MS, type Acquired, type Confirmed, type SchedulerState } from './state';
+import { type Acquired, type SchedulerState, type SendIntent } from './state';
 
 export { SchedulerState } from './state';
 
@@ -55,31 +55,30 @@ export const isDryRun = (env: Pick<Env, 'DRY_RUN'>): boolean => env.DRY_RUN !== 
 
 export type RunResult = { ok: true; scheduled: { house: number; startTime: number; tx?: Hex }[]; skips: string[] } | { ok: false; error: string };
 
-/// The run lease, held across the whole run: only one invocation at a time may read, plan and send.
+/// The run lease, held across the whole run, and the one durable send intent (src/state.ts).
 export interface Lease {
   acquire(nowMs: number): Promise<Acquired>;
   release(token: number): Promise<{ ok: boolean }>;
-  /// Whether `token` still holds the lease with SEND_MARGIN_MS left: asked once, immediately before signing.
-  confirm(token: number, nowMs: number): Promise<Confirmed>;
+  /// The unresolved intent, for the lease holder only.
+  intent(token: number, nowMs: number): Promise<{ ok: true; intent: SendIntent | null } | { ok: false }>;
+  /// Records a signed transaction before it is sent; refused unless `token` holds the lease and no intent is open.
+  recordIntent(token: number, nowMs: number, intent: SendIntent): Promise<{ ok: boolean }>;
+  clearIntent(token: number, nowMs: number, hash: `0x${string}`): Promise<{ ok: boolean }>;
 }
 
 export interface RunDeps {
   lease: Lease;
   /// Milliseconds, for the lease and the send deadline.
   clockMs: () => number;
-  /// Test seam: awaited after every read for the send (nonces, gas, fees) and before the lease is confirmed, which
-  /// is where a stalled RPC call would leave a run.
+  /// Test seam: awaited after the transaction is signed and before its intent is recorded, which is where stalled
+  /// reads or a slow signature would leave a run.
   beforeSend?: () => Promise<void>;
+  /// Test seam: awaited after the intent is recorded and before the transaction is sent.
+  afterRecord?: () => Promise<void>;
 }
 
-/// The one send is abandoned after this long (no retries). Shorter than SEND_MARGIN_MS, so a run that confirmed its
-/// lease finishes sending while it still holds it.
+/// The one send request is abandoned after this long (no retries); the intent keeps it for the next run.
 export const SEND_TIMEOUT_MS = 20_000;
-/// After the confirm answer arrives, the send must still fit before the lease expires by this much, on this run's
-/// own clock: the confirm is itself a call whose answer can be late (adversary on 55fd16a).
-export const SEND_SLACK_MS = 10_000;
-const _sendFitsTheLease: true = (LEASE_MS > SEND_MARGIN_MS && SEND_MARGIN_MS > SEND_TIMEOUT_MS + SEND_SLACK_MS + 20_000) as true;
-void _sendFitsTheLease;
 
 export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
   const startMs = deps.clockMs();
@@ -100,6 +99,28 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   const dryRun = isDryRun(env);
   const client = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim()), batch: { multicall: true } });
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
+  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0 }) });
+  const skips: string[] = [];
+
+  // An earlier run's recorded send comes first (Codex Rounds r3). Until the chain shows its nonce used, nothing new
+  // is scheduled: the same signed transaction is rebroadcast instead, so a late send by the run that recorded it is
+  // that same transaction and only one of them can ever execute.
+  const open = await deps.lease.intent(token, deps.clockMs());
+  if (!open.ok) return { ok: true, scheduled: [], skips: ['lease lost; nothing done'] };
+  if (open.intent) {
+    const i = open.intent;
+    const used = await client.getTransactionCount({ address: i.house, blockTag: 'latest' });
+    if (used <= i.nonce) {
+      if (!dryRun) await sender.sendRawTransaction({ serializedTransaction: i.raw }).catch(() => null);
+      const at = new Date(i.startTime * 1000).toISOString();
+      return { ok: true, scheduled: [], skips: [`${at} earlier send ${i.hash} (nonce ${i.nonce}) not mined yet; ${dryRun ? 'dry run, not rebroadcast' : 'rebroadcast it'}, nothing new sent`] };
+    }
+    const receipt = await client.getTransactionReceipt({ hash: i.hash }).catch(() => null);
+    const how = receipt ? (receipt.status === 'success' ? 'landed' : 'reverted') : 'its nonce was used by another transaction';
+    const cleared = await deps.lease.clearIntent(token, deps.clockMs(), i.hash);
+    if (!cleared.ok) return { ok: true, scheduled: [], skips: ['lease lost while clearing the earlier send; nothing done'] };
+    skips.push(`earlier send ${i.hash}: ${how}; cleared`);
+  }
 
   // One Multicall3 call: both houses' unfinished rounds, the count, the cap, and that both are still creators.
   const [a1, a2, count, cap, isC1, isC2, total] = await client.multicall({
@@ -156,7 +177,7 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     scheduledStarts,
   };
   const plan = planSchedule(view, intervalS);
-  const skips = plan.skips.map((s) => `${new Date(s.slot * 1000).toISOString()} ${s.reason}`);
+  skips.push(...plan.skips.map((s) => `${new Date(s.slot * 1000).toISOString()} ${s.reason}`));
 
   const keys = [env.HOUSE_1_PRIVATE_KEY, env.HOUSE_2_PRIVATE_KEY];
   const scheduled: { house: number; startTime: number; tx?: Hex }[] = [];
@@ -187,23 +208,15 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
       skips.push(`${new Date(a.startTime * 1000).toISOString()} house ${a.house + 1} has a transaction pending; nothing sent`);
       continue;
     }
-    // Every read happens BEFORE the lease is confirmed, and the transaction is built with the nonce read here (Codex
-    // Rounds r2, Part B). After the confirm comes only local signing and one bounded send. So a run whose reads
-    // stalled past its lease is refused at the confirm; and even a send that reaches the node late carries the nonce
-    // a newer run of the same house would also use, so at most one of the two can ever execute.
+    // Sign first, then record the signed transaction durably, then send (Codex Rounds r3). The record succeeds only
+    // while this run holds the lease and no earlier intent is open; a run whose lease ran out at any point before
+    // that sends nothing, and a run delayed after it can only ever send this exact transaction, which every later
+    // run rebroadcasts rather than scheduling anything else.
     const data = encodeFunctionData({ abi: ROUNDS_ABI, functionName: 'schedule', args: [BigInt(a.startTime)] });
     const [gas, fees] = await Promise.all([
       client.estimateGas({ account: account.address, to: rounds, data }),
       client.estimateFeesPerGas(),
     ]);
-    await deps.beforeSend?.();
-    const confirmed = await deps.lease.confirm(token, deps.clockMs());
-    // Re-read the clock AFTER the answer: an ok that arrives late is only good if the send still ends, on this
-    // run's clock, SEND_SLACK_MS before the lease expires.
-    if (!confirmed.ok || confirmed.expiresAt - deps.clockMs() < SEND_TIMEOUT_MS + SEND_SLACK_MS) {
-      skips.push(`${new Date(a.startTime * 1000).toISOString()} run too slow or lease lost; nothing sent`);
-      continue;
-    }
     const raw = await account.signTransaction({
       type: 'eip1559',
       chainId: monad.id,
@@ -215,19 +228,36 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
       maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     });
     const tx = keccak256(raw);
-    const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0 }) });
+    await deps.beforeSend?.();
+    const recorded = await deps.lease.recordIntent(token, deps.clockMs(), {
+      house: account.address,
+      nonce: latestN,
+      startTime: a.startTime,
+      hash: tx,
+      raw,
+      recordedAt: deps.clockMs(),
+    });
+    if (!recorded.ok) {
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} lease lost before the send was recorded; nothing sent`);
+      continue;
+    }
+    await deps.afterRecord?.();
     try {
       await sender.sendRawTransaction({ serializedTransaction: raw });
     } catch {
-      // Unknown outcome: the node may hold it. The next run sees it pending, or the round, and sends nothing twice.
-      skips.push(`${new Date(a.startTime * 1000).toISOString()} send of ${tx} (nonce ${latestN}) not acknowledged; the next run re-reads the chain`);
+      // Unknown outcome: the node may hold it. The recorded intent makes the next run rebroadcast this same transaction.
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} send of ${tx} (nonce ${latestN}) not acknowledged; recorded, the next run rebroadcasts it`);
       continue;
     }
     // Wait for it (Monad blocks are under a second), so the next run sees the round and never sends a duplicate the
     // contract would refuse. A timeout is reported; the next run re-reads the chain either way.
     const receipt = await client.waitForTransactionReceipt({ hash: tx, timeout: 30_000 }).catch(() => null);
-    if (!receipt) skips.push(`${new Date(a.startTime * 1000).toISOString()} sent ${tx}, receipt not seen within 30s`);
-    else if (receipt.status !== 'success') skips.push(`${new Date(a.startTime * 1000).toISOString()} sent ${tx}, reverted`);
+    if (!receipt) skips.push(`${new Date(a.startTime * 1000).toISOString()} sent ${tx}, receipt not seen within 30s; the next run resolves it`);
+    else {
+      if (receipt.status !== 'success') skips.push(`${new Date(a.startTime * 1000).toISOString()} sent ${tx}, reverted`);
+      // Mined either way, so its nonce is used: clear it now if this run still holds the lease, else the next run does.
+      await deps.lease.clearIntent(token, deps.clockMs(), tx);
+    }
     scheduled.push({ house: a.house + 1, startTime: a.startTime, tx });
   }
   return { ok: true, scheduled, skips };
@@ -240,7 +270,13 @@ export default {
       if (!env.SCHEDULER_STATE) throw new Error('SCHEDULER_STATE binding missing');
       const stub = env.SCHEDULER_STATE.get(env.SCHEDULER_STATE.idFromName('rounds-scheduler'));
       result = await runScheduler(env, Math.floor(event.scheduledTime / 1000), {
-        lease: { acquire: (now) => stub.acquire(now), release: (t) => stub.release(t), confirm: (t, now) => stub.confirm(t, now) },
+        lease: {
+          acquire: (now) => stub.acquire(now),
+          release: (t) => stub.release(t),
+          intent: (t, now) => stub.intent(t, now),
+          recordIntent: (t, now, i) => stub.recordIntent(t, now, i),
+          clearIntent: (t, now, h) => stub.clearIntent(t, now, h),
+        },
         clockMs: () => Date.now(),
       });
     } catch (err) {

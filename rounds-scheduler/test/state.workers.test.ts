@@ -2,7 +2,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
-import { LEASE_MS, SEND_MARGIN_MS } from '../src/state';
+import { LEASE_MS, type SendIntent } from '../src/state';
 
 const stub = (name: string) => env.SCHEDULER_STATE.get(env.SCHEDULER_STATE.idFromName(name));
 
@@ -27,20 +27,26 @@ describe('the scheduler lease', () => {
     expect((await s.acquire(LEASE_MS + 1)).ok).toBe(false);
   });
 
-  it('confirms a send only for the holder, and only with SEND_MARGIN_MS left (Codex Rounds r2)', async () => {
-    const s = stub('confirm');
+  it('records a send intent only for the live holder and only while none is open, and only the holder clears it (Codex Rounds r3)', async () => {
+    const s = stub('intent');
+    const i1: SendIntent = { house: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', nonce: 4, startTime: 7200, hash: '0x11', raw: '0xaa', recordedAt: 1 };
+    const i2: SendIntent = { ...i1, hash: '0x22', raw: '0xbb' };
     const a = await s.acquire(0);
     if (!a.ok) throw new Error('no lease');
-    expect(await s.confirm(a.token, LEASE_MS - SEND_MARGIN_MS)).toEqual({ ok: true, expiresAt: LEASE_MS });
-    expect(await s.confirm(a.token, LEASE_MS - SEND_MARGIN_MS + 1)).toEqual({ ok: false });
-    expect(await s.confirm(a.token + 1, 0)).toEqual({ ok: false });
-    // Expired and taken by B: A's confirm fails even at a time A thinks is early; B's succeeds.
+    expect(await s.recordIntent(a.token + 1, 1, i1)).toEqual({ ok: false });
+    expect(await s.recordIntent(a.token, LEASE_MS, i1)).toEqual({ ok: false }); // expired at LEASE_MS
+    expect(await s.recordIntent(a.token, 1, i1)).toEqual({ ok: true });
+    expect(await s.recordIntent(a.token, 2, i2)).toEqual({ ok: false }); // one open intent at a time
+    expect(await s.intent(a.token, 3)).toEqual({ ok: true, intent: i1 });
+    // A's lease runs out; B takes over and sees A's intent; A can no longer read or clear it.
     const b = await s.acquire(LEASE_MS);
     if (!b.ok) throw new Error('no lease for b');
-    expect(await s.confirm(a.token, 0)).toEqual({ ok: false });
-    expect(await s.confirm(b.token, LEASE_MS + 1)).toEqual({ ok: true, expiresAt: 2 * LEASE_MS });
-    // Released: nobody confirms.
-    await s.release(b.token);
-    expect(await s.confirm(b.token, LEASE_MS + 1)).toEqual({ ok: false });
+    expect(await s.intent(a.token, LEASE_MS + 1)).toEqual({ ok: false });
+    expect(await s.clearIntent(a.token, LEASE_MS + 1, '0x11')).toEqual({ ok: false });
+    expect(await s.intent(b.token, LEASE_MS + 1)).toEqual({ ok: true, intent: i1 });
+    expect(await s.clearIntent(b.token, LEASE_MS + 1, '0x22')).toEqual({ ok: false }); // only that exact intent
+    expect(await s.clearIntent(b.token, LEASE_MS + 1, '0x11')).toEqual({ ok: true });
+    expect(await s.intent(b.token, LEASE_MS + 2)).toEqual({ ok: true, intent: null });
+    expect(await s.recordIntent(b.token, LEASE_MS + 2, i2)).toEqual({ ok: true });
   });
 });

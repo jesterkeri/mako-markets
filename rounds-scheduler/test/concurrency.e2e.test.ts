@@ -58,7 +58,7 @@ describe.skipIf(!RPC || !ROUNDS)('two overlapping runs', () => {
     expect(lease.held()).toBe(false);
   }, 120_000);
 
-  it('a run past its send deadline sends nothing', async () => {
+  it('a run whose lease ran out before it recorded its send sends nothing', async () => {
     const client = createPublicClient({ transport: http(RPC) });
     const now = Number((await client.getBlock()).timestamp);
     let t = 1_000_000;
@@ -66,11 +66,11 @@ describe.skipIf(!RPC || !ROUNDS)('two overlapping runs', () => {
       lease: memLease(),
       clockMs: () => t,
       beforeSend: async () => {
-        t += 180_001;
+        t += LEASE_MS + 1;
       },
     });
     expect(res.ok && res.scheduled).toEqual([]);
-    expect(res.ok && res.skips.some((s) => s.includes('run too slow'))).toBe(true);
+    expect(res.ok && res.skips.some((s) => s.includes('lease lost before the send was recorded'))).toBe(true);
   }, 120_000);
 
   it('a run whose reads stall past its lease sends nothing, while the run that took the lease over sends once (Codex Rounds r2)', async () => {
