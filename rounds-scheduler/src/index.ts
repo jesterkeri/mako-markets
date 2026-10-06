@@ -25,7 +25,7 @@ export interface Env {
   HOUSE_2_PRIVATE_KEY: string;
 }
 
-const ROUNDS_ABI = parseAbi([
+export const ROUNDS_ABI = parseAbi([
   'function creatorActiveRound(address) view returns (uint256)',
   'function activeRoundCount() view returns (uint256)',
   'function MAX_ACTIVE_ROUNDS() view returns (uint256)',
@@ -79,17 +79,20 @@ export interface RunDeps {
 
 /// The one send request is abandoned after this long (no retries); the intent keeps it for the next run.
 export const SEND_TIMEOUT_MS = 20_000;
+/// Each read request is abandoned after this long, with no retry.
+export const READ_TIMEOUT_MS = 10_000;
 
 /// The most subrequests one run can make. Cloudflare counts every fetch and every Durable Object call
-/// (developers.cloudflare.com/workers/platform/limits/#subrequests), and wrangler.toml's [limits] subrequests must
+/// (developers.cloudflare.com/workers/platform/limits/#subrequests); both RPC clients make no retries, so each read
+/// below is exactly one fetch (test/budget.test.ts drives the worst path offline). wrangler.toml's [limits] subrequests must
 /// stay at or above this (test/subrequests.e2e.test.ts reads both). The paths, each ending the run:
 ///   - lease refused: 1 (acquire);
 ///   - open intent: acquire, intent, latest nonce, then either a rebroadcast, or a receipt and clearIntent, then
 ///     release: at most 7;
 ///   - plan and send: acquire, intent, the state multicall, up to MAX_SCAN_PAGES scan pages, the simulation, the
 ///     pending and latest nonces, estimateGas, the two fee reads (block, priority fee), recordIntent, the send,
-///     release: 13 + MAX_SCAN_PAGES.
-export const WORST_CASE_SUBREQUESTS = 13 + MAX_SCAN_PAGES;
+///     release: 12 + MAX_SCAN_PAGES (counted exactly by test/budget.test.ts).
+export const WORST_CASE_SUBREQUESTS = 12 + MAX_SCAN_PAGES;
 
 export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
   const startMs = deps.clockMs();
@@ -108,7 +111,13 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   const intervalS = Number(env.INTERVAL_S);
   // Sends only when DRY_RUN is exactly "false"; anything else, " false" included, is a dry run (adversary on 0c123a2).
   const dryRun = isDryRun(env);
-  const client = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim()), batch: { multicall: true } });
+  // No retries on reads either (Codex Rounds r4): viem's default retries a 408/429/5xx up to 3 times, each a separate
+  // subrequest, which WORST_CASE_SUBREQUESTS does not count. A failed read ends this run; the next cron tries again.
+  const client = createPublicClient({
+    chain: monad,
+    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0 }),
+    batch: { multicall: true },
+  });
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
   const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0 }) });
   const skips: string[] = [];
@@ -138,6 +147,9 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   // One Multicall3 call: both houses' unfinished rounds, the count, the cap, and that both are still creators.
   const [a1, a2, count, cap, isC1, isC2, total] = await client.multicall({
     allowFailure: false,
+    // One request, never chunked: viem otherwise splits calldata over 1024 bytes into several eth_calls, each a
+    // subrequest that WORST_CASE_SUBREQUESTS would not count (found by test/budget.test.ts).
+    batchSize: 0,
     contracts: [
       { ...c, functionName: 'creatorActiveRound', args: [houses[0]] },
       { ...c, functionName: 'creatorActiveRound', args: [houses[1]] },
@@ -165,6 +177,7 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     next -= BigInt(ids.length);
     const reads = await client.multicall({
       allowFailure: false,
+      batchSize: 0, // one request per page, never chunked (see the state read above)
       contracts: ids.flatMap((id) => [
         { ...c, functionName: 'roundOf', args: [id] },
         { ...c, functionName: 'phaseOf', args: [id] },
