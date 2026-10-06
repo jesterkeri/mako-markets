@@ -52,9 +52,13 @@ describe('resolveRoundsAddress: the environment address must be the reviewed rel
   it('the recorded address, in any case, turns Rounds on', () => {
     expect(resolveRoundsAddress(ROUNDS.toUpperCase().replace('0X', '0x'), others, RELEASE)?.toLowerCase()).toBe(ROUNDS);
   });
-  it('the shipped record is empty, so Rounds is off in this build', async () => {
+  it('the shipped record is the verified 2026-10-06 deployment (cross-checked against its receipt in CI)', async () => {
     const { ROUNDS_RELEASE_RECORD } = await import('@/lib/rounds-release-record');
-    expect(ROUNDS_RELEASE_RECORD).toBeNull();
+    expect(ROUNDS_RELEASE_RECORD).toEqual({
+      address: '0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921',
+      runtimeCodeHash: '0x2b39edd6d2bf8218c4a09c7a1bac643a1693879cd2bd61076d51d69f412770f9',
+      usdc: '0x534b2f3A21130d7a60830c2Df862319e593943A3',
+    });
   });
 });
 
