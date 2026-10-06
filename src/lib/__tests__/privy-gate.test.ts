@@ -35,6 +35,15 @@ describe('factors', () => {
     expect(status(judgePrivyUser(user({ extra: [{ type: 'passkey' }] }), res(), null))).toBe('account_locked:passkey_linked');
     expect(status(judgePrivyUser(user({ mfa: [{ type: 'passkey', verified_at: T }] }), res(), null))).toBe('account_locked:passkey_factor');
   });
+  it('a linked authorization key locks the account (Codex S12 r1)', () => {
+    expect(status(judgePrivyUser(user({ extra: [{ type: 'authorization_key' }] }), res(), null))).toBe('account_locked:authorization_key_linked');
+    expect(status(judgePrivyUser(user({ mfa: [], extra: [{ type: 'authorization_key' }] }), res(), null))).toBe('account_locked:authorization_key_linked');
+  });
+  it('any linked type other than email and wallet locks: OAuth, smart wallet, or one Privy adds later', () => {
+    for (const t of ['google_oauth', 'smart_wallet', 'phone', 'telegram', 'cross_app', 'something_new']) {
+      expect(status(judgePrivyUser(user({ extra: [{ type: t }] }), res(), null))).toBe(`account_locked:linked_${t}`);
+    }
+  });
   it('a passkey locks even before any authenticator exists', () => {
     expect(status(judgePrivyUser(user({ mfa: [], extra: [{ type: 'passkey' }] }), res(), null))).toBe('account_locked:passkey_linked');
   });

@@ -71,8 +71,8 @@ export type GateVerdict =
     }
   | { ok: false; status: GateRefusal; reason: string };
 
-/// Embedded wallets of every chain are linked accounts of type 'wallet'. (Privy smart wallets are a separate type that
-/// Mako never enables, and counting them would lock users for a setting, not a threat.)
+/// Embedded wallets of every chain are linked accounts of type 'wallet'. (Any other linked type, Privy smart wallets
+/// included, is refused outright by judgeFactors.)
 const isWallet = (a: GateUser['linked_accounts'][number]) => a.type === 'wallet';
 const isEmbedded = (a: GateUser['linked_accounts'][number]) =>
   a.connector_type === 'embedded' || a.wallet_client_type === 'privy';
@@ -82,6 +82,14 @@ const isEmbedded = (a: GateUser['linked_accounts'][number]) =>
 export function judgeFactors(user: GateUser): { ok: true; totpVerifiedAt: number } | { ok: false; status: GateRefusal; reason: string } {
   // [B1] Mako offers no passkey during the beta, so one that exists was planted, possibly before the owner enrolled.
   if (user.linked_accounts.some((a) => a.type === 'passkey')) return { ok: false, status: 'account_locked', reason: 'passkey_linked' };
+  // An authorization key can carry wallet authority (root, manager, delegated actions) outside the authenticator check,
+  // and nothing on the linked account proves one harmless (Codex S12 r1): locked.
+  if (user.linked_accounts.some((a) => a.type === 'authorization_key')) return { ok: false, status: 'account_locked', reason: 'authorization_key_linked' };
+  // Fail closed on every other linked-account type (Codex S12 r1): a Mako email account is its email and its embedded
+  // wallet, nothing else. An OAuth account, a smart wallet, or a type Privy adds later is another way in that this gate
+  // cannot judge.
+  const other = user.linked_accounts.find((a) => a.type !== 'email' && a.type !== 'wallet');
+  if (other) return { ok: false, status: 'account_locked', reason: `linked_${other.type}` };
   if (user.mfa_methods.some((m) => m.type === 'passkey')) return { ok: false, status: 'account_locked', reason: 'passkey_factor' };
   // [B5] Only an authenticator: an email factor is the inbox itself and SMS is a SIM swap away.
   const totp = user.mfa_methods.filter((m) => m.type === 'totp');
