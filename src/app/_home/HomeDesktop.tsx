@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import { ListActionButton, ListStateDesktop } from '@/components/ListState';
 import { Mascot } from '@/components/Mascot';
+import { HomeRoundsBand, HomeRoundsColumn } from '@/components/rounds/HomeRounds';
 import { poolHref } from '@/components/pools/PoolMobileCard';
 import { listStateCopy } from '@/lib/list-states';
 import { newsAge } from '@/lib/news-intel';
@@ -35,9 +36,9 @@ type Props = {
 export function HomeDesktop({ pools, filter, setFilter, labelsOf, retry, news, nowMs }: Props) {
   return (
     <div style={{ paddingBottom: 8 }}>
-      <RoundsNotOpenBand />
+      <HomeRoundsBand fallback={<RoundsNotOpenBand />} />
       <div style={{ display: 'grid', gridTemplateColumns: '360px minmax(0,1fr)', marginTop: 22 }}>
-        <RoundsColumn />
+        <HomeRoundsColumn fallback={<RoundsColumn />} />
         <PoolsColumn pools={pools} filter={filter} setFilter={setFilter} labelsOf={labelsOf} retry={retry} />
       </div>
       <MarketIntel news={news} nowMs={nowMs} />

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import { ListStateMobile } from '@/components/ListState';
+import { HomeRoundsCardMobile } from '@/components/rounds/HomeRounds';
 import { PoolMobileCard } from '@/components/pools/PoolMobileCard';
 import { newsAge } from '@/lib/news-intel';
 import { CAT_STYLE, type PoolRow } from '@/lib/pool-list';
@@ -33,7 +34,7 @@ export function HomeMobile({ pools, labelsOf, retry, news, nowMs }: Props) {
   return (
     <div style={{ paddingBottom: 24 }}>
       <section aria-label="Rounds" style={{ ...GUTTER_FIX, marginTop: -12 }}>
-        <ListStateMobile kind="rounds" state="not_open" />
+        <HomeRoundsCardMobile fallback={<ListStateMobile kind="rounds" state="not_open" />} />
       </section>
 
       <section aria-labelledby="home-intel-m">

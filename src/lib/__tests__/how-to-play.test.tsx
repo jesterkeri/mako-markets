@@ -238,6 +238,8 @@ describe('reduced motion', () => {
         'tour=2',
         <div className="mk-desk">
           <nav aria-label="Main">
+            {/* A stand-in for the shell's nav link, which the tour finds by its href. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/rounds">Rounds</a>
           </nav>
         </div>,
@@ -254,6 +256,8 @@ describe('reduced motion', () => {
         'tour=2',
         <div className="mk-mob">
           <nav aria-label="Main">
+            {/* A stand-in for the shell's nav link, which the tour finds by its href. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/rounds">Rounds</a>
           </nav>
         </div>,
