@@ -25,6 +25,8 @@ export interface InFlight {
 
 export interface Meta {
   inFlight: InFlight | null;
+  /// Within one run only (never meaningful once stored): the nonce a replacement send must use.
+  replaceNonce?: number;
   /// When the keeper first became unhealthy, continuously; null while healthy.
   unhealthySince: number | null;
   lastStatus: string | null;

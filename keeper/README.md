@@ -53,7 +53,7 @@ Healthy, and ending an unhealthy stretch: `settled`, `round-refunded`, `pool-ref
 
 Unhealthy: `rpc-rate-limited`, `rpc-error`, `report-api-error`, `report-missing-30m`, `simulation-reverted`
 (with the contract error's name), `gas-over-budget`, `low-gas-balance` (cannot pay for this settlement),
-`sent-low-gas` (sent, but fewer than 20 settlements of gas left), `tx-reverted`, `tx-dropped`,
+`sent-low-gas` (sent, but fewer than 20 settlements of gas left), `tx-reverted`, `tx-dropped` (its nonce was used, or the node lost it and any resend reuses its nonce), `tx-stuck` (no receipt after 3 minutes but it may still land: kept, nothing new sent),
 `refund-breaker-tripped`, `lease-lost`.
 
 ## Setup, in order

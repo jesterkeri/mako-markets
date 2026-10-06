@@ -47,6 +47,11 @@ interface World {
   receipt: null | { status: string };
   latestNonce: number;
   pendingNonce: number;
+  /// Pending nonces answered in turn before falling back to pendingNonce (a nonce that moves mid-run).
+  pendingSeq: number[];
+  /// Whether the node still knows the earlier transaction (eth_getTransactionByHash).
+  knownTx: boolean;
+  signedNonces: number[];
   rpcStatus: number;
   sent: Hex[];
   requests: string[];
@@ -95,7 +100,9 @@ function rpcAnswer(method: string, params: unknown[]): unknown {
     case 'eth_getBalance':
       return { result: '0x' + w.balance.toString(16) };
     case 'eth_getTransactionCount':
-      return { result: '0x' + (params[1] === 'pending' ? w.pendingNonce : w.latestNonce).toString(16) };
+      return { result: '0x' + (params[1] === 'pending' ? (w.pendingSeq.length ? w.pendingSeq.shift()! : w.pendingNonce) : w.latestNonce).toString(16) };
+    case 'eth_getTransactionByHash':
+      return { result: w.knownTx ? { hash: params[0] } : null };
     case 'eth_getTransactionReceipt':
       return { result: w.receipt };
     case 'eth_sendRawTransaction':
@@ -138,8 +145,9 @@ function deps(): Deps {
         return { ok: true };
       },
     },
-    sign: async () => {
+    sign: async (tx) => {
       w.order.push('sign');
+      w.signedNonces.push(Number(tx.nonce));
       return RAW;
     },
     hmac: async () => 'ab'.repeat(32),
@@ -160,6 +168,9 @@ beforeEach(() => {
     receipt: null,
     latestNonce: 4,
     pendingNonce: 4,
+    pendingSeq: [],
+    knownTx: false,
+    signedNonces: [],
     rpcStatus: 200,
     sent: [],
     requests: [],
@@ -240,12 +251,66 @@ describe('never two transactions at once', () => {
     expect(w.meta.txFailures['7']).toBe(1);
   });
 
-  it('after 3 minutes with no receipt, reports it dropped, counts it, and re-simulates before sending again', async () => {
+  // Codex T2.0 r1: a null receipt after 3 minutes does not mean dropped. The node can hold it unmined.
+  it('after 3 minutes, an unmined transaction still pending at the node is kept and nothing new is sent', async () => {
+    w.meta.inFlight = { ...inFlight(), sentAt: w.now - TX_STUCK_MS };
+    w.latestNonce = 4;
+    w.pendingNonce = 5;
+    w.knownTx = true;
+    const o = await run();
+    expect(o.status).toBe('tx-stuck');
+    expect(unhealthyRun(o)).toBe(true);
+    expect(w.sent).toEqual([]);
+    expect(w.order).toEqual([]);
+    expect(w.meta.inFlight).toMatchObject({ nonce: 4 });
+  });
+
+  it('is kept while the node still knows it, even with no pending nonce', async () => {
+    w.meta.inFlight = { ...inFlight(), sentAt: w.now - TX_STUCK_MS };
+    w.knownTx = true;
+    expect((await run()).status).toBe('tx-stuck');
+    expect(w.sent).toEqual([]);
+    expect(w.meta.inFlight).toMatchObject({ nonce: 4 });
+    expect(w.meta.txFailures['7']).toBeUndefined();
+  });
+
+  it('is kept while a transaction is pending at its nonce, even if the node forgot this hash', async () => {
+    w.meta.inFlight = { ...inFlight(), sentAt: w.now - TX_STUCK_MS };
+    w.pendingNonce = 5;
+    expect((await run()).status).toBe('tx-stuck');
+    expect(w.sent).toEqual([]);
+    // Kept, not given up on: the record stays and nothing is counted as failed.
+    expect(w.meta.inFlight).toMatchObject({ nonce: 4 });
+    expect(w.meta.txFailures['7']).toBeUndefined();
+  });
+
+  it('when its nonce is used on chain it can never land: reports it dropped and re-simulates before sending', async () => {
+    w.meta.inFlight = { ...inFlight(), sentAt: w.now - TX_STUCK_MS };
+    w.latestNonce = 5;
+    w.pendingNonce = 5;
+    const o = await run();
+    expect(o.prior?.status).toBe('tx-dropped');
+    expect(o.prior?.detail).toContain('nonce used');
+    expect(w.meta.txFailures['7']).toBe(1);
+    expect(w.order).toEqual(['simulate', 'sign', 'record', 'send']);
+    expect(w.signedNonces).toEqual([5]);
+  });
+
+  it('when the node has no trace and its nonce is unused, the replacement reuses that nonce', async () => {
     w.meta.inFlight = { ...inFlight(), sentAt: w.now - TX_STUCK_MS };
     const o = await run();
     expect(o.prior?.status).toBe('tx-dropped');
-    expect(w.meta.txFailures['7']).toBe(1);
-    expect(w.order).toEqual(['simulate', 'sign', 'record', 'send']);
+    expect(w.signedNonces).toEqual([4]);
+    expect(w.sent).toHaveLength(1);
+  });
+
+  it('a replacement is refused if the pending nonce moved before the send', async () => {
+    w.meta.inFlight = { ...inFlight(), sentAt: w.now - TX_STUCK_MS };
+    w.pendingSeq = [4, 5]; // unused when checked, taken by the time of the send
+    const o = await run();
+    expect(o.status).toBe('tx-stuck');
+    expect(w.sent).toEqual([]);
+    expect(w.signedNonces).toEqual([]);
   });
 
   it('stops sending a round after 2 failed transactions, and raises an alarm every run while it is pending', async () => {

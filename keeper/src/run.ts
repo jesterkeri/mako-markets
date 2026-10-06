@@ -81,6 +81,8 @@ export type Unhealthy =
   | 'sent-low-gas'
   | 'tx-reverted'
   | 'tx-dropped'
+  /// A transaction with no receipt after 3 minutes that may still land: kept, nothing new sent (Codex T2.0 r1).
+  | 'tx-stuck'
   | 'refund-breaker-tripped'
   | 'lease-lost';
 export type Status = Healthy | Unhealthy;
@@ -111,6 +113,7 @@ const UNHEALTHY = new Set<Status>([
   'sent-low-gas',
   'tx-reverted',
   'tx-dropped',
+  'tx-stuck',
   'refund-breaker-tripped',
   'lease-lost',
 ]);
@@ -257,6 +260,9 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
   let prior: Outcome | undefined;
 
   // 1. The earlier transaction, first. Never a second one while it may still land.
+  /// Set when the earlier transaction is provably gone from the node: the next send must reuse its nonce, so the
+  /// old one and the new one can never both execute (Codex T2.0 r1).
+  let replaceNonce: number | undefined;
   if (meta.inFlight) {
     const f = meta.inFlight;
     const items = await rpc(cfg, deps, [
@@ -267,37 +273,64 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
     const [receiptItem, nonceItem] = items;
     if (!receiptItem.ok) return itemFailure(receiptItem);
     const receipt = receiptItem.result as { status?: string } | null;
+    const label = targetLabel(f.kind ?? 'settle', f.roundId);
     if (receipt && typeof receipt === 'object') {
       meta.inFlight = null;
       const kind = f.kind ?? 'settle';
-      if (receipt.status === '0x1')
-        prior = { status: LANDED[kind], detail: `${targetLabel(kind, f.roundId)} ${f.hash}` };
+      if (receipt.status === '0x1') prior = { status: LANDED[kind], detail: `${targetLabel(kind, f.roundId)} ${f.hash}` };
       else {
         meta.txFailures[failKey(kind, f.roundId)] = (meta.txFailures[failKey(kind, f.roundId)] ?? 0) + 1;
         prior = { status: 'tx-reverted', detail: `${targetLabel(kind, f.roundId)} ${f.hash}` };
       }
-    }
-    else {
-    if (!nonceItem.ok) return itemFailure(nonceItem);
-    const latestNonce = safeQuantity(nonceItem.result);
-    if (latestNonce === null) return { status: 'rpc-error', detail: 'bad_nonce' };
-    // No receipt yet. Within 3 minutes, wait: never send a second transaction while this one may still land.
-    const label = targetLabel(f.kind ?? 'settle', f.roundId);
-    if (nowMs - f.sentAt < TX_STUCK_MS) return { status: 'tx-pending', detail: `${label} ${f.hash}` };
-    // After 3 minutes with no receipt: if the nonce is still unused it was dropped (or never sent); if it was
-    // used, another transaction took it. Either way this one will not land. Clear it and report it; the next
-    // run re-simulates, so a round someone else settled meanwhile is not sent again.
-    meta.inFlight = null;
-    const fk = failKey(f.kind ?? 'settle', f.roundId);
-    meta.txFailures[fk] = (meta.txFailures[fk] ?? 0) + 1;
-    prior = { status: 'tx-dropped', detail: `${label} ${f.hash} nonce ${latestNonce > f.nonce ? 'used' : 'unused'}` };
+    } else {
+      if (!nonceItem.ok) return itemFailure(nonceItem);
+      const latestNonce = safeQuantity(nonceItem.result);
+      if (latestNonce === null) return { status: 'rpc-error', detail: 'bad_nonce' };
+      // No receipt yet. Within 3 minutes, wait: never send a second transaction while this one may still land.
+      if (nowMs - f.sentAt < TX_STUCK_MS) return { status: 'tx-pending', detail: `${label} ${f.hash}` };
+      const fk = failKey(f.kind ?? 'settle', f.roundId);
+      if (latestNonce > f.nonce) {
+        // Its nonce is used on chain and it has no receipt: another transaction took the nonce, so this one can
+        // never land. Clear it; the next run re-simulates, so a round settled meanwhile is not sent again.
+        meta.inFlight = null;
+        meta.txFailures[fk] = (meta.txFailures[fk] ?? 0) + 1;
+        prior = { status: 'tx-dropped', detail: `${label} ${f.hash} nonce used` };
+      } else {
+        // The nonce is unused. A null receipt does not mean dropped: the node may hold it, unmined. Ask.
+        const more = await rpc(cfg, deps, [
+          { method: 'eth_getTransactionByHash', params: [f.hash] },
+          { method: 'eth_getTransactionCount', params: [cfg.keeperAddress, 'pending'] },
+        ]);
+        if (isOutcome(more)) return more;
+        const [byHash, pendingItem] = more;
+        if (!byHash.ok) return itemFailure(byHash);
+        if (!pendingItem.ok) return itemFailure(pendingItem);
+        const pendingNonce = safeQuantity(pendingItem.result);
+        if (pendingNonce === null) return { status: 'rpc-error', detail: 'bad_nonce' };
+        const known = byHash.result !== null && byHash.result !== undefined;
+        if (known || pendingNonce > f.nonce) {
+          // It may still land: keep it, send nothing, and say so every run until it resolves.
+          return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} ${known ? 'still known to the node' : 'pending'}` };
+        }
+        // Unknown to the node and its nonce unused: replace it at the SAME nonce, so at most one of the two can
+        // ever execute. The send below refuses if the nonce has moved by then.
+        meta.inFlight = null;
+        meta.txFailures[fk] = (meta.txFailures[fk] ?? 0) + 1;
+        replaceNonce = f.nonce;
+        prior = { status: 'tx-dropped', detail: `${label} ${f.hash} unknown to the node; any resend reuses nonce ${f.nonce}` };
+      }
     }
   }
 
   // Resolved or none: go on to this run's round (SPEC §5.5 step 1: every run takes one round), so a
   // receipt never costs a minute. At most 7 requests plus the ping (T0.1c: 10 per round).
-  const next = await takeRound(cfg, deps, token, meta, nowMs, call);
-  return prior ? { ...next, prior } : next;
+  meta.replaceNonce = replaceNonce;
+  try {
+    const next = await takeRound(cfg, deps, token, meta, nowMs, call);
+    return prior ? { ...next, prior } : next;
+  } finally {
+    delete meta.replaceNonce;
+  }
 }
 
 async function takeRound(
@@ -475,6 +508,10 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
   const lowAfter = balance - cost < cost * LOW_BALANCE_SETTLEMENTS;
 
   if (cfg.dryRun) return { status: 'dry-run-would-send', detail: `${label} gas ${gas}` };
+  // Replacing a transaction the node lost: only at its nonce, or not at all (Codex T2.0 r1).
+  if (meta.replaceNonce !== undefined && nonce !== meta.replaceNonce) {
+    return { status: 'tx-stuck', detail: `${label} replacement needs nonce ${meta.replaceNonce}, pending is ${nonce}; nothing sent` };
+  }
 
   const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
