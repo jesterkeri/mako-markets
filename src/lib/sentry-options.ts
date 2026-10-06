@@ -55,21 +55,43 @@ export const DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 const EMAIL = /[A-Za-z0-9._%+-]{1,64}(?:@|%40)[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}/gi;
 // The lookarounds stop an address inside a longer hex string (a transaction hash) from matching, and still match one
 // followed by `_` or a letter.
-const HEX_ADDRESS = /(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
+const HEX_ADDRESS = /(?<![0-9a-fA-F])0[xX][0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
+/// An absolute URL inside free text (an exception message, a console breadcrumb): its query and fragment are cut.
+const URL_QUERY_IN_TEXT = /(\bhttps?:\/\/[^\s?#"'<>]+)[?#][^\s"'<>]*/g;
 /// A query string or fragment inside a longer string, such as a span name `GET /api/names?addresses=...`.
 const QUERY_IN_TEXT = /[?#][^\s"]*/g;
 /// Fields that hold a URL or a name built from one: their query string and fragment are cut. Covers events (request
 /// url, breadcrumb url/from/to, transaction), streamed spans (name, url.full, http.url) and the envelope header's
 /// transaction name.
-const URL_KEYS = new Set(['url', 'from', 'to', 'http.url', 'url.full', 'http.target', 'url.path', 'transaction', 'name', 'description']);
+const URL_KEYS = new Set([
+  'url',
+  'from',
+  'to',
+  'http.url',
+  'url.full',
+  'http.target',
+  'url.path',
+  'transaction',
+  'name',
+  'description',
+  // A streamed span repeats its root span's name here (adversary r3 on 8b376df).
+  'sentry.segment.name',
+  // A stack frame named by a page URL (inline or eval'd script): its filename, absolute path and derived module.
+  'filename',
+  'abs_path',
+  'module',
+]);
 /// Fields deleted wherever they appear: a query by itself, the user, and header attributes.
-const DROP_KEY = /^(?:user|http\.query|http\.fragment|url\.query|url\.fragment|user\..*|http\.request\.header\..*|http\.response\.header\..*)$/;
-/// The SDK's in-process bookkeeping on an event (live Scopes, a client holding a timer). Never sent, never walked.
-const INTERNAL_KEYS = new Set(['sdkProcessingMetadata']);
+const DROP_KEY = /^(?:user|user_agent|http\.query|http\.fragment|url\.query|url\.fragment|user\..*|http\.request\.header\..*|http\.response\.header\..*)$/;
+/// Never walked: the SDK's in-process bookkeeping on an event (live Scopes, a client holding a timer), and the envelope
+/// header's `dsn`. Behind the /monitoring tunnel the header DSN is the only thing that tells Sentry which key and
+/// project an envelope is for, and its `<public key>@o<org>.ingest...` form looks like an email: masking it made every
+/// browser report unauthenticatable (adversary r3 on 8b376df). It holds the public key only, which is public by design.
+const INTERNAL_KEYS = new Set(['sdkProcessingMetadata', 'dsn']);
 
 /// Masks email addresses and 0x addresses in a string: identities are not Sentry's to keep.
 export function scrub(text: string): string {
-  return text.replace(EMAIL, '[email]').replace(HEX_ADDRESS, '0x[address]');
+  return text.replace(URL_QUERY_IN_TEXT, '$1').replace(EMAIL, '[email]').replace(HEX_ADDRESS, '0x[address]');
 }
 
 /// A URL without its query string or fragment, then masked. Campaign links and API calls carry identity in the query.
