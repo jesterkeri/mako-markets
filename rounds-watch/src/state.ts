@@ -39,8 +39,9 @@ export interface Meta {
   /// Per round id in an alert condition: the report check, kept across runs so checks rotate through every
   /// due round even while Telegram is down (Codex T2.0d r1).
   evidence: Record<string, Evidence>;
-  /// Where the next Healthchecks failure body starts in the alert lines, so a body larger than Healthchecks
-  /// stores pages through every line across runs instead of repeating the same prefix (Codex T2.0d r3).
+  /// The round id the next Healthchecks failure page starts at (lines are paged in round-id order), so a body
+  /// larger than Healthchecks stores pages through every line across runs (Codex T2.0d r3). A round id, not a
+  /// position, so lines appearing or leaving between runs cannot shift it past one (adversary on 5ac8a70).
   hcCursor: number;
   lastStatus: string | null;
   lastRunAt: number | null;

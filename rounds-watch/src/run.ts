@@ -71,8 +71,9 @@ export interface WatchOutcome {
   lines: string[];
   /// The alert lines for this run's Healthchecks failure body: a page that rotates across runs.
   hcPage?: string[];
-  /// Where that page starts and where the next one would. The saved cursor moves to `hcNext` only after
-  /// Healthchecks accepts the page, so a rejected or lost ping repeats the page (Codex T2.0d r4).
+  /// The saved cursor (a round id) this page started from, and the round id the next page would start at. The
+  /// cursor moves to `hcNext` only after Healthchecks accepts a ping that carried the page, so a rejected or
+  /// lost ping, or one sent without the page, repeats it (Codex T2.0d r4; adversary on 5ac8a70).
   hcFrom?: number;
   hcNext?: number;
   /// Rounds currently in an alert condition, delivered or not.
@@ -140,7 +141,16 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
     // The page cursor is a delivery cursor: it moves past a page only once Healthchecks has that page. The
     // move is a separate compare-and-set after the commit, so a second run that already moved it, or a
     // failure here, can only repeat a page, never skip one.
-    if (accepted && outcome.hcFrom !== undefined && outcome.hcNext !== undefined && outcome.hcNext !== outcome.hcFrom) {
+    // Only a ping that CARRIED the page can move past it: with Telegram working the body is the summary
+    // alone, and moving then would skip lines no channel delivered (adversary on 5ac8a70).
+    const carriedPage = outcome.status === 'telegram-failed' && (outcome.hcPage?.length ?? 0) > 0;
+    if (
+      accepted &&
+      carriedPage &&
+      outcome.hcFrom !== undefined &&
+      outcome.hcNext !== undefined &&
+      outcome.hcNext !== outcome.hcFrom
+    ) {
       await deps.state.advanceHcCursor(outcome.hcFrom, outcome.hcNext);
     }
   } else {
@@ -269,25 +279,31 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     }
   }
 
-  // The Healthchecks page: whole lines from the saved cursor, wrapping, as many as fit. The cursor is NOT moved
-  // here: runWatch moves it only after Healthchecks accepts this page. Built whether or not Telegram worked,
-  // used when it did not.
+  // The Healthchecks page: whole lines in round-id order, starting at the first round id at or after the saved
+  // cursor, wrapping, as many as fit. The cursor is a ROUND ID, not a position, so rounds settling or new
+  // alerts arriving between runs cannot shift it past a line (adversary on 5ac8a70). It is NOT moved here:
+  // runWatch moves it only after Healthchecks accepts a ping that carried this page.
   const pageBudget = HC_BODY_BYTES - HC_SUMMARY_BYTES - 200;
   const hcPage: string[] = [];
   let hcFrom: number | undefined;
   let hcNext: number | undefined;
   if (lines.length > 0) {
-    const from = meta.hcCursor % lines.length;
+    const byId = ready.map((r, i) => ({ id: r.round.id, line: lines[i] })).sort((a, b) => a.id - b.id);
+    const startAt = byId.findIndex((x) => x.id >= meta.hcCursor);
+    const from = startAt === -1 ? 0 : startAt;
     let used = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[(from + i) % lines.length];
-      const size = bytes(l) + 1;
+    let lastId = -1;
+    for (let i = 0; i < byId.length; i++) {
+      const { id, line } = byId[(from + i) % byId.length];
+      const size = bytes(line) + 1;
       if (used + size > pageBudget) break;
-      hcPage.push(l);
+      hcPage.push(line);
       used += size;
+      lastId = id;
     }
     hcFrom = meta.hcCursor;
-    hcNext = (from + hcPage.length) % lines.length;
+    // The next page starts after the last round on this one; past the highest id it wraps to the lowest.
+    hcNext = lastId === -1 ? meta.hcCursor : lastId + 1;
   }
 
   // Forget alert and evidence records only for rounds that are neither active nor waiting on a NoPrice alert.
