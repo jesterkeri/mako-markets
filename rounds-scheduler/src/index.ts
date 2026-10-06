@@ -6,7 +6,7 @@
 import { createPublicClient, createWalletClient, defineChain, getAddress, http, parseAbi, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-import { planSchedule, type ChainView, type HouseView } from './plan';
+import { MAX_LEAD_S, planSchedule, type ChainView, type HouseView } from './plan';
 
 export interface Env {
   RPC_URL: string;
@@ -32,8 +32,12 @@ const ROUNDS_ABI = parseAbi([
   'function schedule(uint64 startTime) returns (uint256)',
 ]);
 
-/// Unfinished rounds the contract can hold at once is small (MAX_ACTIVE_ROUNDS), so the newest rounds cover them.
-const SCAN = 24n;
+/// Rounds read per Multicall3 call while looking back for unfinished rounds, and the most such calls in one run.
+const SCAN_PAGE = 40;
+const MAX_SCAN_PAGES = 10;
+/// MakoRoundsV1's fixed durations (SPEC §4).
+const DURATION_S = 900;
+const SUBMIT_WINDOW_S = 86_400;
 
 const monad = defineChain({
   id: 10143,
@@ -43,13 +47,16 @@ const monad = defineChain({
   contracts: { multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' } },
 });
 
+export const isDryRun = (env: Pick<Env, 'DRY_RUN'>): boolean => env.DRY_RUN !== 'false';
+
 export type RunResult = { ok: true; scheduled: { house: number; startTime: number; tx?: Hex }[]; skips: string[] } | { ok: false; error: string };
 
 export async function runScheduler(env: Env, nowS: number): Promise<RunResult> {
   const rounds = getAddress(env.ROUNDS_ADDRESS.trim());
   const houses = [getAddress(env.HOUSE_1_ADDRESS.trim()), getAddress(env.HOUSE_2_ADDRESS.trim())] as const;
   const intervalS = Number(env.INTERVAL_S);
-  const dryRun = env.DRY_RUN.trim() !== 'false';
+  // Sends only when DRY_RUN is exactly "false"; anything else, " false" included, is a dry run (adversary on 0c123a2).
+  const dryRun = isDryRun(env);
   const client = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim()), batch: { multicall: true } });
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
 
@@ -68,27 +75,37 @@ export async function runScheduler(env: Env, nowS: number): Promise<RunResult> {
   });
   if (!isC1 || !isC2) return { ok: false, error: 'a house address is not on the creator list' };
 
-  // The newest rounds, for start times already taken by anyone and the houses' own start times.
-  const ids: bigint[] = [];
-  for (let id = total; id >= 1n && ids.length < Number(SCAN); id--) ids.push(id);
-  const reads = ids.length
-    ? await client.multicall({
-        allowFailure: false,
-        contracts: ids.flatMap((id) => [
-          { ...c, functionName: 'roundOf', args: [id] },
-          { ...c, functionName: 'phaseOf', args: [id] },
-        ]),
-      })
-    : [];
+  // Every round that can still be unfinished, for start times already taken by anyone and the houses' own start
+  // times. Not just the newest few: a round booked up to 7 days ahead stays unfinished until 24H after its close,
+  // and the contract does not refuse a second round at the same start (adversary on 0c123a2). Round ids grow in
+  // scheduling order, so reading back from the newest until a round opened before that horizon covers them all.
+  const horizon = nowS - (MAX_LEAD_S + DURATION_S + SUBMIT_WINDOW_S + 3600);
   const startOf = new Map<bigint, number>();
   const scheduledStarts: number[] = [];
-  ids.forEach((id, i) => {
-    const r = reads[2 * i] as unknown as { startTime: bigint };
-    const phase = Number(reads[2 * i + 1]);
-    startOf.set(id, Number(r.startTime));
-    // Phase 4 Settled, 5 Refunded: finished; anything else is unfinished.
-    if (phase !== 4 && phase !== 5) scheduledStarts.push(Number(r.startTime));
-  });
+  let next = total as bigint;
+  for (let page = 0; next >= 1n; page++) {
+    if (page >= MAX_SCAN_PAGES) return { ok: false, error: 'more unfinished-round candidates than one run can read; nothing sent' };
+    const ids: bigint[] = [];
+    for (let id = next; id >= 1n && ids.length < SCAN_PAGE; id--) ids.push(id);
+    next -= BigInt(ids.length);
+    const reads = await client.multicall({
+      allowFailure: false,
+      contracts: ids.flatMap((id) => [
+        { ...c, functionName: 'roundOf', args: [id] },
+        { ...c, functionName: 'phaseOf', args: [id] },
+      ]),
+    });
+    let reachedHorizon = false;
+    ids.forEach((id, i) => {
+      const r = reads[2 * i] as unknown as { openTime: bigint; startTime: bigint };
+      const phase = Number(reads[2 * i + 1]);
+      startOf.set(id, Number(r.startTime));
+      // Phase 4 Settled, 5 Refunded: finished; anything else is unfinished.
+      if (phase !== 4 && phase !== 5) scheduledStarts.push(Number(r.startTime));
+      if (Number(r.openTime) < horizon) reachedHorizon = true;
+    });
+    if (reachedHorizon) break;
+  }
   const house = (addr: `0x${string}`, active: bigint): HouseView => ({ address: addr, activeRoundId: active, activeStart: active === 0n ? null : (startOf.get(active) ?? null) });
   const view: ChainView = {
     nowS,
@@ -102,7 +119,9 @@ export async function runScheduler(env: Env, nowS: number): Promise<RunResult> {
 
   const keys = [env.HOUSE_1_PRIVATE_KEY, env.HOUSE_2_PRIVATE_KEY];
   const scheduled: { house: number; startTime: number; tx?: Hex }[] = [];
-  for (const a of plan.actions) {
+  // At most one round per run: the cron runs every 5 minutes, and one send keeps a run well inside the Worker's
+  // subrequest limit while it waits for the receipt.
+  for (const a of plan.actions.slice(0, 1)) {
     const account = privateKeyToAccount(keys[a.house].trim() as Hex);
     // The key must be the house it claims to be, or nothing is sent.
     if (account.address !== houses[a.house]) return { ok: false, error: `house ${a.house + 1} key does not match its address` };
@@ -115,6 +134,16 @@ export async function runScheduler(env: Env, nowS: number): Promise<RunResult> {
     }
     if (dryRun) {
       scheduled.push({ house: a.house + 1, startTime: a.startTime });
+      continue;
+    }
+    // A transaction of this house still pending (a receipt that timed out last run) means the round may already be
+    // on its way: send nothing rather than a duplicate the contract would refuse.
+    const [pendingN, latestN] = await Promise.all([
+      client.getTransactionCount({ address: account.address, blockTag: 'pending' }),
+      client.getTransactionCount({ address: account.address, blockTag: 'latest' }),
+    ]);
+    if (pendingN > latestN) {
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} house ${a.house + 1} has a transaction pending; nothing sent`);
       continue;
     }
     const wallet = createWalletClient({ account, chain: monad, transport: http(env.RPC_URL.trim()) });
@@ -138,6 +167,6 @@ export default {
       // Reported by kind only: an error's text could carry the RPC URL.
       result = { ok: false, error: (err as Error)?.name ?? 'error' };
     }
-    console.log(JSON.stringify({ scheduler: result, dryRun: env.DRY_RUN !== 'false', cron: event.scheduledTime }));
+    console.log(JSON.stringify({ scheduler: result, dryRun: isDryRun(env), cron: event.scheduledTime }));
   },
 };

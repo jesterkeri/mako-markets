@@ -26,7 +26,7 @@ const env: Env = {
 };
 
 describe.skipIf(!RPC || !ROUNDS)('scheduler on a local fork with the real contract', () => {
-  it('schedules the next two slots from alternating houses, then nothing on a second run', async () => {
+  it('fills the next two slots from alternating houses, one per run, then nothing more', async () => {
     const client = createPublicClient({ transport: http(RPC) });
     const abi = parseAbi([
       'function roundCount() view returns (uint256)',
@@ -35,10 +35,11 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler on a local fork with the real contra
     const now = Number((await client.getBlock()).timestamp);
     const before = await client.readContract({ address: ROUNDS as `0x${string}`, abi, functionName: 'roundCount' });
 
+    // One round per run (the cron runs every 5 minutes): two runs fill the next two slots.
     const first = await runScheduler(env, now);
-    expect(first.ok).toBe(true);
-    if (!first.ok) return;
-    expect(first.scheduled).toHaveLength(2);
+    expect(first.ok && first.scheduled).toHaveLength(1);
+    const firstAgain = await runScheduler(env, now + 10);
+    expect(firstAgain.ok && firstAgain.scheduled).toHaveLength(1);
     const after = await client.readContract({ address: ROUNDS as `0x${string}`, abi, functionName: 'roundCount' });
     expect(after - before).toBe(2n);
 
