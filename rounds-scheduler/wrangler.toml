@@ -1,0 +1,27 @@
+name = "mako-rounds-scheduler"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Keeps Mako's own BTC rounds on the calendar (Joshua, 2026-10-06: one round every 2 hours, two house creators
+# alternating). Every 5 minutes: if an upcoming slot has no round, its house creator schedules one. Holds only the
+# two house creator keys (secrets HOUSE_1_PRIVATE_KEY, HOUSE_2_PRIVATE_KEY); never enters, settles or moves USDC.
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[limits]
+cpu_ms = 5000
+subrequests = 20
+
+[observability]
+enabled = true
+
+[vars]
+RPC_URL = "https://testnet-rpc.monad.xyz/"
+# Set both after MakoRoundsV1 is deployed and the house keys exist (house-keys.sh prints the addresses).
+ROUNDS_ADDRESS = "0x0000000000000000000000000000000000000000"
+HOUSE_1_ADDRESS = "0x0000000000000000000000000000000000000000"
+HOUSE_2_ADDRESS = "0x0000000000000000000000000000000000000000"
+INTERVAL_S = "7200"
+DRY_RUN = "true"
