@@ -20,6 +20,8 @@ const eslintConfig = defineConfig([
     "keeper/.wrangler/**",
     "rounds-watch/dist/**",
     "rounds-watch/.wrangler/**",
+    "rounds-scheduler/dist/**",
+    "rounds-scheduler/.wrangler/**",
   ]),
 ]);
 
