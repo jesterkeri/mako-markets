@@ -10,6 +10,7 @@ import { createPublicClient, createTestClient, createWalletClient, http, parseAb
 import { privateKeyToAccount } from 'viem/accounts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { mined } from './mined';
 import worker, { runScheduler, type Env } from '../src/index';
 import { deps, memLease, memNamespace } from './lease-fake';
 
@@ -95,6 +96,7 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler adversary on a local fork', () => {
     await test.mine({ blocks: 1 });
     const res = await runScheduler(env, await chainNow(), deps());
     expect(res.ok).toBe(true);
+    await mined(pub, res);
 
     // The third creator's round is still the only unfinished round at S.
     expect(await unfinishedAt(S)).toBe(1);

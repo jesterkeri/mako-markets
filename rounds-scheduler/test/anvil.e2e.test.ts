@@ -7,6 +7,7 @@
 import { createPublicClient, http, parseAbi } from 'viem';
 import { describe, expect, it } from 'vitest';
 
+import { mined } from './mined';
 import { runScheduler, type Env } from '../src/index';
 import { deps } from './lease-fake';
 import { houseOf } from '../src/plan';
@@ -39,8 +40,12 @@ describe.skipIf(!RPC || !ROUNDS)('scheduler on a local fork with the real contra
     // One round per run (the cron runs every 5 minutes): two runs fill the next two slots.
     const first = await runScheduler(env, now, deps());
     expect(first.ok && first.scheduled).toHaveLength(1);
+    // The next cron is 5 minutes later, long after this is mined; without the wait the run correctly sees the house's
+    // transaction still pending and sends nothing.
+    await mined(client, first);
     const firstAgain = await runScheduler(env, now + 10, deps());
     expect(firstAgain.ok && firstAgain.scheduled).toHaveLength(1);
+    await mined(client, firstAgain);
     const after = await client.readContract({ address: ROUNDS as `0x${string}`, abi, functionName: 'roundCount' });
     expect(after - before).toBe(2n);
 

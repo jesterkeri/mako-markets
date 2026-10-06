@@ -38,7 +38,7 @@ const ROUNDS_ABI = parseAbi([
 
 /// Rounds read per Multicall3 call while looking back for unfinished rounds, and the most such calls in one run.
 const SCAN_PAGE = 40;
-const MAX_SCAN_PAGES = 10;
+export const MAX_SCAN_PAGES = 10;
 /// MakoRoundsV1's fixed durations (SPEC §4).
 const DURATION_S = 900;
 const SUBMIT_WINDOW_S = 86_400;
@@ -80,6 +80,17 @@ export interface RunDeps {
 /// The one send request is abandoned after this long (no retries); the intent keeps it for the next run.
 export const SEND_TIMEOUT_MS = 20_000;
 
+/// The most subrequests one run can make. Cloudflare counts every fetch and every Durable Object call
+/// (developers.cloudflare.com/workers/platform/limits/#subrequests), and wrangler.toml's [limits] subrequests must
+/// stay at or above this (test/subrequests.e2e.test.ts reads both). The paths, each ending the run:
+///   - lease refused: 1 (acquire);
+///   - open intent: acquire, intent, latest nonce, then either a rebroadcast, or a receipt and clearIntent, then
+///     release: at most 7;
+///   - plan and send: acquire, intent, the state multicall, up to MAX_SCAN_PAGES scan pages, the simulation, the
+///     pending and latest nonces, estimateGas, the two fee reads (block, priority fee), recordIntent, the send,
+///     release: 13 + MAX_SCAN_PAGES.
+export const WORST_CASE_SUBREQUESTS = 13 + MAX_SCAN_PAGES;
+
 export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
   const startMs = deps.clockMs();
   const lease = await deps.lease.acquire(startMs);
@@ -119,7 +130,9 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     const how = receipt ? (receipt.status === 'success' ? 'landed' : 'reverted') : 'its nonce was used by another transaction';
     const cleared = await deps.lease.clearIntent(token, deps.clockMs(), i.hash);
     if (!cleared.ok) return { ok: true, scheduled: [], skips: ['lease lost while clearing the earlier send; nothing done'] };
-    skips.push(`earlier send ${i.hash}: ${how}; cleared`);
+    // Clearing is this run's one job: the next run books. Each house holds at most one unfinished round, so waiting one
+    // cron period costs nothing, and it keeps every run inside WORST_CASE_SUBREQUESTS (adversary on 3f08d05).
+    return { ok: true, scheduled: [], skips: [`earlier send ${i.hash}: ${how}; cleared, the next run plans`] };
   }
 
   // One Multicall3 call: both houses' unfinished rounds, the count, the cap, and that both are still creators.
@@ -249,15 +262,8 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
       skips.push(`${new Date(a.startTime * 1000).toISOString()} send of ${tx} (nonce ${latestN}) not acknowledged; recorded, the next run rebroadcasts it`);
       continue;
     }
-    // Wait for it (Monad blocks are under a second), so the next run sees the round and never sends a duplicate the
-    // contract would refuse. A timeout is reported; the next run re-reads the chain either way.
-    const receipt = await client.waitForTransactionReceipt({ hash: tx, timeout: 30_000 }).catch(() => null);
-    if (!receipt) skips.push(`${new Date(a.startTime * 1000).toISOString()} sent ${tx}, receipt not seen within 30s; the next run resolves it`);
-    else {
-      if (receipt.status !== 'success') skips.push(`${new Date(a.startTime * 1000).toISOString()} sent ${tx}, reverted`);
-      // Mined either way, so its nonce is used: clear it now if this run still holds the lease, else the next run does.
-      await deps.lease.clearIntent(token, deps.clockMs(), tx);
-    }
+    // No receipt wait: polling for it made the run's subrequest count unbounded (adversary on 3f08d05). The intent
+    // stays open, so the next run sees whether its nonce was used, records how it ended, and clears it.
     scheduled.push({ house: a.house + 1, startTime: a.startTime, tx });
   }
   return { ok: true, scheduled, skips };

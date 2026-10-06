@@ -6,6 +6,7 @@
 import { createPublicClient, http, parseAbi } from 'viem';
 import { describe, expect, it, vi } from 'vitest';
 
+import { mined } from './mined';
 import { runScheduler, type Env } from '../src/index';
 import { memLease } from './lease-fake';
 import { LEASE_MS } from '../src/state';
@@ -54,6 +55,7 @@ describe.skipIf(!RPC || !ROUNDS)('two overlapping runs', () => {
     expect(second).toEqual({ ok: true, scheduled: [], skips: ['another run holds the lease; nothing done'] });
     expect(first.ok && first.scheduled).toHaveLength(1);
     expect(sends).toBe(1);
+    await mined(client, first, second);
     expect((await count()) - before).toBe(1n);
     expect(lease.held()).toBe(false);
   }, 120_000);
@@ -108,6 +110,7 @@ describe.skipIf(!RPC || !ROUNDS)('two overlapping runs', () => {
     expect(first.ok && first.scheduled).toEqual([]);
     expect(first.ok && first.skips.some((s) => s.includes('lease lost'))).toBe(true);
     expect(sends).toBe(1);
+    await mined(client, first, b);
     expect((await count()) - before).toBe(1n);
   }, 120_000);
 });
