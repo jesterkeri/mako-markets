@@ -35,11 +35,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
-vi.mock('@/lib/privy-server', () => ({
-  verifyPrivyLogin: mocks.verifyPrivyLogin,
-  PrivyConfigError: class PrivyConfigError extends Error {},
-  PrivyIdentityError: class PrivyIdentityError extends Error {},
-}));
+// The inbox-takeover gate passes in this file (its own tests are api-user-auth-gate.test.ts).
+vi.mock('@/lib/privy-server', async () => (await import('./helpers/gate-pass')).privyServerPassing((t) => mocks.verifyPrivyLogin(t)));
+vi.mock('@/lib/privy-proof', async () => (await import('./helpers/gate-pass')).privyProofPassing());
+vi.mock('@/lib/privy-admission', async () => (await import('./helpers/gate-pass')).privyAdmissionNone());
+vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
+vi.mock('@/lib/privy-proof-message', () => ({ proofSite: () => 'localhost:3000' }));
 vi.mock('@/lib/allowlist', () => ({
   isAllowedForCurrentStage: mocks.isAllowedForCurrentStage,
 }));
@@ -52,6 +53,7 @@ vi.mock('@/lib/user-upsert', () => ({
 }));
 vi.mock('@/lib/user-session', () => ({
   createSession: mocks.createSession,
+  revokeAllSessionsForUser: async () => {},
   USER_SESSION_COOKIE: 'mako_user_session',
   USER_SESSION_MAX_AGE_SEC: 7 * 24 * 60 * 60,
 }));
@@ -149,7 +151,7 @@ function makeRequest() {
   return new Request('http://localhost/api/user/auth', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ privyAccessToken: TOKEN }),
+    body: JSON.stringify({ privyAccessToken: TOKEN, proof: { message: 'm', signature: 's' } }),
   });
 }
 

@@ -26,7 +26,7 @@
 // transactions, preserving the route's branching even with the mock.
 // ----------------------------------------------------------------------------
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   return {
@@ -39,6 +39,8 @@ const mocks = vi.hoisted(() => {
     deriveSafeAddress: vi.fn(),
     createSession: vi.fn(),
     applyEmbeddedMove: vi.fn(),
+    gateWallet: { value: null as string | null },
+    revokeAll: vi.fn(),
     cookiesStore: { set: vi.fn() },
     // db query builders. The route runs:
     //   db.select(...).from(users).where(eq(id)).limit(1)            — load user
@@ -89,7 +91,18 @@ vi.mock('@/lib/safe', () => ({
   deriveSafeAddress: mocks.deriveSafeAddress,
 }));
 
+// The inbox-takeover gate passes in this file (its own tests are api-user-auth-gate.test.ts): Privy still shows the
+// account's email, and the gate's wallet is the one the session will carry (the move target for a pending move).
+vi.mock('@/lib/privy-server', () => ({
+  readPrivyAccountById: async () => ({ email: 'a@b.com', _wallet: null }),
+  judgeAccount: () => ({ ok: true, wallet: (mocks.gateWallet.value ?? '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa').toLowerCase(), walletId: 'w', totpVerifiedAt: 1, exportedAtMs: null }),
+  checkIdentity: () => ({ ok: true }),
+}));
+vi.mock('@/lib/privy-admission', () => ({ writeAdmission: async () => {} }));
+vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
+vi.mock('@/lib/email', () => ({ normalizeEmail: (e: string) => e.trim().toLowerCase() }));
 vi.mock('@/lib/user-session', () => ({
+  revokeAllSessionsForUser: mocks.revokeAll,
   createSession: mocks.createSession,
   USER_SESSION_COOKIE: 'mako_user_session',
   USER_SESSION_MAX_AGE_SEC: 7 * 24 * 60 * 60,
@@ -191,6 +204,9 @@ vi.mock('@/db/schema', () => {
       totpFailedAttempts: 'users.totp_failed_attempts',
       totpLockedUntil: 'users.totp_locked_until',
       lastEmailChangedAt: 'users.last_email_changed_at',
+      privyUserId: 'users.privy_user_id',
+      privyTotpAdmittedAt: 'users.privy_totp_admitted_at',
+      keyExportedAt: 'users.key_exported_at',
     },
     sessions: {
       id: 'sessions.id',
@@ -260,6 +276,9 @@ function userRow(overrides: Partial<{
     totpLastUsedStep: null,
     totpLockedUntil: null,
     lastEmailChangedAt: null,
+    privyUserId: 'did:privy:u1',
+    privyTotpAdmittedAt: 1,
+    keyExportedAt: null,
     ...overrides,
   }];
 }
@@ -714,6 +733,13 @@ describe('POST /api/user/auth/totp', () => {
   describe('pending move to a Privy wallet', () => {
     const PRIVY_EOA = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     const moveChallenge = { userId: USER_ID, magicEoa: PRIVY_EOA, purpose: 'totp_signin_move', privyUserId: 'did:privy:u1' };
+    // A pending move: the account is not yet bound, and the gate's wallet is the move target.
+    beforeEach(() => {
+      mocks.gateWallet.value = PRIVY_EOA;
+    });
+    afterEach(() => {
+      mocks.gateWallet.value = null;
+    });
 
     function succeedFactor() {
       mocks.checkSameOrigin.mockReturnValue({ ok: true });
@@ -785,6 +811,7 @@ describe('POST /api/user/auth/totp', () => {
     });
 
     it('an ordinary TOTP challenge never moves the account', async () => {
+      mocks.gateWallet.value = null; // an ordinary challenge: the gate's wallet is the account's own signer
       succeedFactor();
       mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA, purpose: 'totp_signin' });
       mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });

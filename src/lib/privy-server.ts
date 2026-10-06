@@ -20,6 +20,9 @@ import 'server-only';
 
 import { PrivyClient } from '@privy-io/node';
 
+import { embeddedWallets, judgeFactors, judgePrivyUser, type GateAdmission, type GateUser, type GateVerdict, type GateWallet } from '@/lib/privy-gate';
+import { normalizeEmail } from '@/lib/email';
+
 /// A deploy/config problem (missing app id or secret): the route answers 500,
 /// not "your token is invalid", so the misconfiguration is visible in logs.
 export class PrivyConfigError extends Error {
@@ -100,4 +103,80 @@ export async function verifyPrivyLogin(accessToken: string): Promise<PrivyIdenti
   const claims = await client.utils().auth().verifyAccessToken(accessToken);
   const user = await client.users()._get(claims.user_id);
   return identityFromPrivyUser(user as unknown as { id: string; linked_accounts: LinkedAccount[] });
+}
+
+// ----------------------------------------------------------------------------
+// The inbox-takeover gate's reads (INBOX_GAP_PLAN r18). Everything the gate judges comes from Privy's API with the
+// app secret, never from the browser.
+// ----------------------------------------------------------------------------
+
+export interface PrivyAccountRead {
+  privyUserId: string;
+  /// The user's one linked email, normalized; null when there is none.
+  email: string | null;
+  user: GateUser;
+  /// The resource of the single embedded wallet, when there is exactly one with an id; otherwise null.
+  wallet: GateWallet | null;
+}
+
+async function readById(client: PrivyClient, userId: string): Promise<PrivyAccountRead> {
+  const raw = (await client.users()._get(userId)) as unknown as GateUser & {
+    linked_accounts: Array<GateUser['linked_accounts'][number]>;
+  };
+  const emails = raw.linked_accounts.filter((a) => a.type === 'email' && typeof a.address === 'string');
+  const email = emails.length === 1 ? normalizeEmail(emails[0].address as string) : null;
+  const embedded = embeddedWallets(raw);
+  let wallet: GateWallet | null = null;
+  // The resource is read only when the factors pass and there is exactly one embedded wallet with an id: a refusal
+  // that needs no resource costs no second call.
+  if (judgeFactors(raw).ok && embedded.length === 1 && embedded[0].id) {
+    const w = (await client.wallets().get(embedded[0].id)) as unknown as {
+      id: string;
+      address: string;
+      exported_at: number | null;
+      imported_at: number | null;
+      additional_signers: unknown[] | null;
+    };
+    wallet = {
+      id: w.id,
+      address: w.address,
+      exported_at: w.exported_at ?? null,
+      imported_at: w.imported_at ?? null,
+      additional_signers: w.additional_signers ?? [],
+    };
+  }
+  return { privyUserId: raw.id, email, user: raw, wallet };
+}
+
+/// Verifies the access token, then reads the user and its wallet resource.
+export async function readPrivyAccount(accessToken: string): Promise<PrivyAccountRead> {
+  const client = privy();
+  const claims = await client.utils().auth().verifyAccessToken(accessToken);
+  return readById(client, claims.user_id);
+}
+
+/// A fresh read by Privy user id, for the re-checks after a session exists ([J3], [K4]). Throws when Privy cannot be
+/// read: the caller fails closed.
+export async function readPrivyAccountById(privyUserId: string): Promise<PrivyAccountRead> {
+  return readById(privy(), privyUserId);
+}
+
+export function judgeAccount(read: PrivyAccountRead, admission: GateAdmission | null): GateVerdict {
+  return judgePrivyUser(read.user, read.wallet, admission);
+}
+
+export type IdentityCheck =
+  | { ok: true }
+  | { ok: false; status: 'email_changed'; observedEmail: string | null }
+  | { ok: false; status: 'account_locked' | 'mfa_enrollment_required' | 'wallet_required'; reason: string };
+
+/// [J3] The bound account still matches Privy: the same Privy user, its one email equal to the admitted one, and the
+/// gate still passing on the admitted wallet. Pure over a fresh read.
+export function checkIdentity(read: PrivyAccountRead, account: { email: string; admission: GateAdmission }): IdentityCheck {
+  if (read.email === null || read.email !== normalizeEmail(account.email)) {
+    return { ok: false, status: 'email_changed', observedEmail: read.email };
+  }
+  const v = judgeAccount(read, account.admission);
+  if (!v.ok) return { ok: false, status: v.status, reason: v.reason };
+  return { ok: true };
 }

@@ -158,6 +158,18 @@ export const users = pgTable('users', {
   /// The campaign tag (an X post's `utm_campaign` or `ref`) that brought this account, set once when the account is
   /// created (migration 0011); NULL without one. Same rule as src/lib/ref-tag.ts (CHECK users_ref_format_chk).
   ref: text('ref'),
+  /// Inbox-takeover gate (migration 0013, INBOX_GAP_PLAN r18). The authenticator's `verified_at` (Unix seconds) this
+  /// account was first admitted with under the gate ([G1]); NULL until then. Set once: the wallet-after-authenticator
+  /// order rule runs only at that first admission, and later exports are judged against this time.
+  privyTotpAdmittedAt: bigint('privy_totp_admitted_at', { mode: 'number' }),
+  /// The embedded wallet's `exported_at` as last seen at a sign-in ([F1], [G4]); a change shows a notice once.
+  keyExportedAt: timestamp('key_exported_at', { withTimezone: true }),
+  /// First detection of a Privy login email that differs from the admitted one ([J3], C4). Audit and support only:
+  /// no code path reads it to allow or refuse ([K10]).
+  privyEmailMismatchAt: timestamp('privy_email_mismatch_at', { withTimezone: true }),
+  /// The email Privy showed at that detection, normalized and length-bounded. Attacker-chosen input: support only,
+  /// never in a route response or a raw log ([J3]).
+  privyEmailObserved: text('privy_email_observed'),
   /// Wallet-side identity. NULL for Magic rows. Stored canonical
   /// lowercase (DB CHECK + helper assertion both enforce). Partial
   /// unique index `users_wallet_address_uniq` lives in raw migration
@@ -638,6 +650,21 @@ export const pendingTotpEnrollments = pgTable(
     userIdx: index('pending_totp_user_idx').on(t.userId),
     expiresIdx: index('pending_totp_expires_idx').on(t.expiresAt),
   }),
+);
+
+/// Sign-in proof nonces (migration 0013, INBOX_GAP_PLAN r18 item 1). Issued before an account may exist, so keyed by
+/// the Privy user and the wallet, not a Mako user id; single use, five minutes.
+export const privyProofNonces = pgTable(
+  'privy_proof_nonces',
+  {
+    nonce: text('nonce').primaryKey(),
+    privyUserId: text('privy_user_id').notNull(),
+    wallet: text('wallet').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (t) => ({ expiresIdx: index('privy_proof_nonces_expires_idx').on(t.expiresAt) }),
 );
 
 export const authChallenges = pgTable(

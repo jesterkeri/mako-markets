@@ -7,10 +7,24 @@ import { createSigninChallenge, TOTP_SIGNIN_MOVE_PURPOSE } from '@/lib/auth-chal
 import { checkSameOrigin } from '@/lib/csrf';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
 import { readLastSignIn } from '@/lib/last-sign-in';
-import { PrivyConfigError, PrivyIdentityError, verifyPrivyLogin, type PrivyIdentity } from '@/lib/privy-server';
+import type { GateAdmission } from '@/lib/privy-gate';
+import { admissionOf, findMismatchedAccount, readAdmission, writeAdmission } from '@/lib/privy-admission';
+import { recordPrivyMismatch } from '@/lib/privy-mismatch';
+import { checkProofSignature, consumeProofNonce } from '@/lib/privy-proof';
+import { proofSite } from '@/lib/privy-proof-message';
+import {
+  checkIdentity,
+  judgeAccount,
+  PrivyConfigError,
+  readPrivyAccount,
+  readPrivyAccountById,
+  type IdentityCheck,
+  type PrivyAccountRead,
+} from '@/lib/privy-server';
 import { deriveSafeAddress } from '@/lib/safe';
 import {
   createSession,
+  revokeAllSessionsForUser,
   USER_SESSION_COOKIE,
   USER_SESSION_MAX_AGE_SEC,
 } from '@/lib/user-session';
@@ -97,13 +111,28 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // only from Privy's API.
 // ----------------------------------------------------------------------------
 
+/// Gate states that ask the dialog for its next step: no cookie, no account data.
+const FLOW_STATUS = new Set(['mfa_enrollment_required', 'wallet_required', 'proof_required']);
+
+function refusal(status: string, httpStatus?: number) {
+  return Response.json({ ok: false, status }, { status: httpStatus ?? (FLOW_STATUS.has(status) ? 200 : 403) });
+}
+
+/// A refusal decided inside the sign-in transaction: thrown to roll the whole transaction back.
+class GateRefused extends Error {
+  constructor(public readonly status: string) {
+    super(`GATE_REFUSED: ${status}`);
+    this.name = 'GateRefused';
+  }
+}
+
 export async function POST(req: Request) {
   const origin = checkSameOrigin(req);
   if (!origin.ok) {
     return Response.json({ error: 'cross_origin' }, { status: 403 });
   }
 
-  let body: { privyAccessToken?: unknown };
+  let body: { privyAccessToken?: unknown; proof?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -114,25 +143,43 @@ export async function POST(req: Request) {
     return Response.json({ error: 'bad_body' }, { status: 400 });
   }
 
-  // Verify the token, then read the identity from Privy's API. The email and the wallets come only from
-  // there, never from the browser.
-  let identity: PrivyIdentity;
+  // Verify the token, then read the user and its wallet from Privy's API with the app secret. Nothing the gate judges
+  // comes from the browser.
+  let read: PrivyAccountRead;
   try {
-    identity = await verifyPrivyLogin(body.privyAccessToken);
+    read = await readPrivyAccount(body.privyAccessToken);
   } catch (err) {
     if (err instanceof PrivyConfigError) {
       console.error('[user/auth] Privy config error', summarizeError(err));
       return Response.json({ error: 'internal' }, { status: 500 });
     }
-    if (err instanceof PrivyIdentityError) {
-      // A valid Privy user without a verified email or an embedded wallet: not a Mako email account yet.
-      return Response.json({ error: err.reason }, { status: 422 });
-    }
     // A structured summary, never the raw error: it could carry the token.
     console.warn('[user/auth] Privy token verification failed', summarizeError(err));
     return Response.json({ error: 'bad_token' }, { status: 401 });
   }
-  const email = identity.email.trim().toLowerCase();
+  if (!read.email) return Response.json({ error: 'no_email' }, { status: 422 });
+  const email = read.email;
+
+  // The gate (INBOX_GAP_PLAN r18): an authenticator and nothing weaker, one embedded wallet that came after it. Judged
+  // here against the account as last stored, and again inside the transaction against the row it locks.
+  const stored = await readAdmission(read.privyUserId);
+  const verdict = judgeAccount(read, stored);
+  if (!verdict.ok) return refusal(verdict.status);
+
+  // The sign-in proof (item 1): a personal_sign by that wallet over the browser-built message, which Privy releases
+  // only after the authenticator code. Without it, no session.
+  const proof = parseProofBody(body.proof);
+  if (!proof) return refusal('proof_required');
+  let site: string;
+  try {
+    site = proofSite(process.env.NEXT_PUBLIC_APP_URL);
+  } catch (err) {
+    console.error('[user/auth] proof site not configured', summarizeError(err));
+    return Response.json({ error: 'internal' }, { status: 500 });
+  }
+  const nowMs = Date.now();
+  const signed = await checkProofSignature({ ...proof, wallet: verdict.wallet, site, nowMs });
+  if (!signed.ok || !signed.nonce) return refusal('mfa_proof_required');
 
   if (!(await isAllowedForCurrentStage(email))) {
     return Response.json({ error: 'not_allowlisted' }, { status: 403 });
@@ -140,8 +187,10 @@ export async function POST(req: Request) {
 
   type SessionOutcome = {
     kind: 'session';
+    userId: string;
     token: string;
     safeAddress: Address;
+    admission: GateAdmission;
     user: {
       email: string;
       magicEoa: string;
@@ -152,6 +201,8 @@ export async function POST(req: Request) {
     };
     lastSignInAt: string | null;
     nextEmailChangeAvailableAt: string | null;
+    keyExportedAt: string | null;
+    keyExportChanged: boolean;
   };
   type Outcome =
     | SessionOutcome
@@ -160,7 +211,14 @@ export async function POST(req: Request) {
   let outcome: Outcome;
   try {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
-      const { user, moved, pendingMoveTo } = await upsertEmbeddedUser(tx, email, identity.wallets, identity.privyUserId, {
+      // Single use, bound to this Privy user and this wallet, unexpired. Consumed inside the transaction, so a replay
+      // finds it gone and a sign-in that fails later rolls the consumption back with everything else.
+      const fresh = await consumeProofNonce(tx, { nonce: signed.nonce as string, privyUserId: read.privyUserId, wallet: verdict.wallet, nowMs });
+      if (!fresh) throw new GateRefused('mfa_proof_required');
+
+      // [J2] The account is looked up by email, wallet AND Privy user, and its admitted email is never rewritten: a
+      // Privy email that moved (C4) lands in IdentityConflictError below and becomes email_changed.
+      const { user, moved, pendingMoveTo } = await upsertEmbeddedUser(tx, email, [verdict.wallet], read.privyUserId, {
         deferMoveIfTotp: true,
         ref: refFromCookieHeader(req.headers.get('cookie')),
       });
@@ -171,24 +229,37 @@ export async function POST(req: Request) {
       // A 2FA account due to move to its Privy wallet: nothing changes yet. The challenge records the wallet
       // it moves TO, and /api/user/auth/totp moves it only after the second factor passes.
       if (pendingMoveTo) {
+        const pendingVerdict = judgeAccount(read, null);
+        if (!pendingVerdict.ok) throw new GateRefused(pendingVerdict.status);
         const challengeId = await createSigninChallenge({
           tx,
           userId: user.id,
           magicEoa: pendingMoveTo,
           purpose: TOTP_SIGNIN_MOVE_PURPOSE,
-          privyUserId: identity.privyUserId,
+          privyUserId: read.privyUserId,
         });
         return { kind: 'totp_required', challengeId };
       }
-      // The Safe belongs to the ACCOUNT's signer, which is not necessarily the wallet Privy listed first
-      // (upsertEmbeddedUser keeps an account on the Privy wallet it already has). Pure CREATE2, no RPC.
+      // Re-judge against the row this transaction holds: the order rule runs only at first admission ([G1]). Written
+      // only for an account bound to this Privy wallet; a pending move is admitted by /api/user/auth/totp after it moves.
+      const admitted = admissionOf(user);
+      const inTx = judgeAccount(read, admitted);
+      if (!inTx.ok) throw new GateRefused(inTx.status);
+      const admission: GateAdmission = admitted ?? { wallet: inTx.wallet, totpVerifiedAt: inTx.totpVerifiedAt };
+      const keyExportedAt = inTx.exportedAtMs === null ? null : new Date(inTx.exportedAtMs);
+      const keyExportChanged = (keyExportedAt?.getTime() ?? null) !== (user.keyExportedAt?.getTime() ?? null);
+      await writeAdmission(tx, user.id, {
+        firstAdmissionTotpAt: admitted === null ? inTx.totpVerifiedAt : null,
+        keyExportedAt,
+        keyExportChanged,
+      });
+
+      // The Safe belongs to the ACCOUNT's signer. Pure CREATE2, no RPC.
       const eoa = user.magicEoa as Address;
       const safeAddress = deriveSafeAddress(eoa);
 
       // A moved account (no 2FA) already has its Safe repointed and its sessions revoked (applyEmbeddedMove).
       if (!moved) {
-        // user_safes is keyed (user_id, chain_id). A returning user already has the row; the value is
-        // deterministic per signer, so there is nothing to update.
         for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
           await tx
             .insert(userSafes)
@@ -197,9 +268,7 @@ export async function POST(req: Request) {
         }
       }
 
-      // Phase 1G: split on TOTP. upsertEmbeddedUser returns the full users
-      // row including `totpSecret`. Non-null means 2FA is on for this
-      // user; gate the session cookie behind /api/user/auth/totp.
+      // Phase 1G: Mako's own TOTP, when on, gates the cookie behind /api/user/auth/totp.
       if (user.totpSecret) {
         const challengeId = await createSigninChallenge({
           tx,
@@ -209,11 +278,7 @@ export async function POST(req: Request) {
         return { kind: 'totp_required', challengeId };
       }
 
-      // Read prior-session row BEFORE createSession (see header comment
-      // on lastSignInAt ordering). At this point the user has zero or
-      // more existing sessions; none of them are "current" because we
-      // haven't issued one yet, so the latest is the prior sign-in
-      // moment. First-ever sign-in returns lastSignInAt: null.
+      // Read prior-session row BEFORE createSession (see header comment on lastSignInAt ordering).
       const lastSignInAt = await readLastSignIn(user.id, null, { tx });
 
       const cooldownAvailable =
@@ -228,8 +293,10 @@ export async function POST(req: Request) {
       const token = await createSession(user.id, { tx });
       return {
         kind: 'session',
+        userId: user.id,
         token,
         safeAddress,
+        admission,
         user: {
           email: user.email,
           magicEoa: user.magicEoa,
@@ -240,10 +307,21 @@ export async function POST(req: Request) {
         },
         lastSignInAt,
         nextEmailChangeAvailableAt,
+        keyExportedAt: keyExportedAt ? keyExportedAt.toISOString() : null,
+        keyExportChanged: keyExportChanged && keyExportedAt !== null,
       };
     });
   } catch (err) {
+    if (err instanceof GateRefused) return refusal(err.status);
     if (err instanceof IdentityConflictError) {
+      if (err.reason === 'eoa_with_different_email' || err.reason === 'privy_identity_mismatch') {
+        // [J2] C4: the Privy login email moved away from the admitted one (or the admitted email now belongs to a
+        // new Privy user). Recorded for support and every session deleted, in one transaction (R18-F1).
+        const accountId = await findMismatchedAccount(read.privyUserId, email);
+        if (accountId) await recordPrivyMismatch(accountId.id, accountId.byPrivyUser ? email : null);
+        return refusal('email_changed');
+      }
+      if (err.reason === 'wallet_set_changed') return refusal('account_locked');
       return Response.json({ error: 'identity_conflict' }, { status: 409 });
     }
     console.error('[user/auth] transaction failed', summarizeError(err));
@@ -251,14 +329,28 @@ export async function POST(req: Request) {
   }
 
   if (outcome.kind === 'totp_required') {
-    // No userId / email / display name in this response — challengeId is
-    // the bearer credential. /api/user/auth/totp re-loads everything from
-    // the consumed challenge.
+    // No userId / email / display name in this response: challengeId is the bearer credential.
     return Response.json({
       ok: true,
       status: 'totp_required',
       challengeId: outcome.challengeId,
     });
+  }
+
+  // [K4] Privy and this database share no transaction, so the email could move between the read above and the
+  // commit. Read Privy again now, BEFORE any cookie or address leaves: a mismatch deletes the session just made.
+  let after: IdentityCheck;
+  try {
+    after = checkIdentity(await readPrivyAccountById(read.privyUserId), { email: outcome.user.email, admission: outcome.admission });
+  } catch (err) {
+    console.error('[user/auth] post-commit Privy read failed', summarizeError(err));
+    await revokeAllSessionsForUser(outcome.userId);
+    return Response.json({ error: 'privy_unavailable' }, { status: 503 });
+  }
+  if (!after.ok) {
+    if (after.status === 'email_changed') await recordPrivyMismatch(outcome.userId, after.observedEmail);
+    else await revokeAllSessionsForUser(outcome.userId);
+    return refusal(after.status);
   }
 
   const store = await cookies();
@@ -277,6 +369,14 @@ export async function POST(req: Request) {
     lastSignInAt: outcome.lastSignInAt,
     nextEmailChangeAvailableAt: outcome.nextEmailChangeAvailableAt,
   });
+}
+
+function parseProofBody(proof: unknown): { message: string; signature: string } | null {
+  if (!proof || typeof proof !== 'object') return null;
+  const { message, signature } = proof as Record<string, unknown>;
+  if (typeof message !== 'string' || typeof signature !== 'string') return null;
+  if (message.length > 512 || signature.length > 200) return null;
+  return { message, signature };
 }
 
 /// Pull the safe diagnostic fields off an unknown error for logging. Avoids

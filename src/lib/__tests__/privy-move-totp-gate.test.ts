@@ -48,11 +48,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
-vi.mock('@/lib/privy-server', () => ({
-  verifyPrivyLogin: mocks.verifyPrivyLogin,
-  PrivyConfigError: class PrivyConfigError extends Error {},
-  PrivyIdentityError: class PrivyIdentityError extends Error {},
-}));
+// The inbox-takeover gate passes in this file (its own tests are api-user-auth-gate.test.ts).
+vi.mock('@/lib/privy-server', async () => (await import('./helpers/gate-pass')).privyServerPassing((t) => mocks.verifyPrivyLogin(t)));
+vi.mock('@/lib/privy-proof', async () => (await import('./helpers/gate-pass')).privyProofPassing());
+vi.mock('@/lib/privy-admission', async () => (await import('./helpers/gate-pass')).privyAdmissionNone());
+vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
+vi.mock('@/lib/privy-proof-message', () => ({ proofSite: () => 'localhost:3000' }));
 vi.mock('@/lib/allowlist', () => ({ isAllowedForCurrentStage: mocks.isAllowedForCurrentStage }));
 vi.mock('@/lib/auth-challenges', () => ({
   createSigninChallenge: mocks.createSigninChallenge,
@@ -60,6 +61,7 @@ vi.mock('@/lib/auth-challenges', () => ({
 }));
 vi.mock('@/lib/user-session', () => ({
   createSession: mocks.createSession,
+  revokeAllSessionsForUser: async () => {},
   USER_SESSION_COOKIE: 'mako_user_session',
   USER_SESSION_MAX_AGE_SEC: 7 * 24 * 60 * 60,
 }));
@@ -177,7 +179,7 @@ function privySignIn() {
   return new Request('http://localhost/api/user/auth', {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'http://localhost' },
-    body: JSON.stringify({ privyAccessToken: 'privy-access-token-stub' }),
+    body: JSON.stringify({ privyAccessToken: 'privy-access-token-stub', proof: { message: 'm', signature: 's' } }),
   });
 }
 
@@ -234,8 +236,11 @@ describe('POST /api/user/auth: Privy move of a TOTP-enabled Magic-era account', 
 
     const { POST } = await import('../../app/api/user/auth/route');
     const res = await POST(privySignIn());
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'identity_conflict' });
+    // INBOX_GAP_PLAN r18 [J2]: the admitted email under a NEW Privy user is C4 (the owner signing in at the old inbox
+    // after the login email moved away): a named refusal, not a bare conflict. The mismatch recording itself is
+    // tested in api-user-auth-gate.test.ts.
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ ok: false, status: 'email_changed' });
     expect(mocks.createSession).not.toHaveBeenCalled();
     expect(store.users[0].magicEoa).toBe(W1);
     expect(store.users[0].privyUserId).toBe('did:privy:u1');
@@ -251,7 +256,7 @@ describe('POST /api/user/auth: the campaign tag', () => {
     new Request('http://localhost/api/user/auth', {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: 'http://localhost', cookie },
-      body: JSON.stringify({ privyAccessToken: 'privy-access-token-stub' }),
+      body: JSON.stringify({ privyAccessToken: 'privy-access-token-stub', proof: { message: 'm', signature: 's' } }),
     });
 
   it('is recorded on a new account, and a bad tag is dropped rather than failing the sign-in', async () => {

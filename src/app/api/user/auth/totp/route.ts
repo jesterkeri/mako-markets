@@ -25,7 +25,13 @@ import {
   USER_SESSION_COOKIE,
   USER_SESSION_MAX_AGE_SEC,
   createSession,
+  revokeAllSessionsForUser,
 } from '@/lib/user-session';
+import { normalizeEmail } from '@/lib/email';
+import type { GateAdmission, GateVerdict } from '@/lib/privy-gate';
+import { writeAdmission } from '@/lib/privy-admission';
+import { recordPrivyMismatch } from '@/lib/privy-mismatch';
+import { checkIdentity, judgeAccount, readPrivyAccountById } from '@/lib/privy-server';
 import { applyEmbeddedMove } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
@@ -166,6 +172,9 @@ export async function POST(req: Request) {
       totpLastUsedStep: users.totpLastUsedStep,
       totpLockedUntil: users.totpLockedUntil,
       lastEmailChangedAt: users.lastEmailChangedAt,
+      privyUserId: users.privyUserId,
+      privyTotpAdmittedAt: users.privyTotpAdmittedAt,
+      keyExportedAt: users.keyExportedAt,
     })
     .from(users)
     .where(eq(users.id, challenge.userId))
@@ -224,6 +233,35 @@ export async function POST(req: Request) {
     // remain. Surface as challenge_invalid (uniform with other "go back
     // to start" cases).
     return Response.json({ error: 'challenge_invalid' }, { status: 401 });
+  }
+
+  // Step 3b ([J3], [K1]): a challenge issued before the Privy email moved can be completed after it, so Privy is read
+  // again here, BEFORE the transaction that would move the account, mint the session or return the address. The
+  // account must still be its admitted email, and the gate must still pass on the wallet the session will carry.
+  const privyId = user.privyUserId ?? challenge.privyUserId;
+  if (!privyId) return Response.json({ error: 'challenge_invalid' }, { status: 401 });
+  const expectedWallet = (moveTo ?? user.magicEoa).toLowerCase();
+  const admission: GateAdmission | null =
+    user.privyUserId && user.privyTotpAdmittedAt !== null
+      ? { wallet: user.magicEoa.toLowerCase(), totpVerifiedAt: user.privyTotpAdmittedAt }
+      : null;
+  let gate: Extract<GateVerdict, { ok: true }>;
+  try {
+    const read = await readPrivyAccountById(privyId);
+    if (read.email === null || read.email !== normalizeEmail(user.email)) {
+      await recordPrivyMismatch(user.id, read.email);
+      return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
+    }
+    const v = judgeAccount(read, admission);
+    if (!v.ok) {
+      const flow = v.status === 'mfa_enrollment_required' || v.status === 'wallet_required';
+      return Response.json({ ok: false, status: v.status }, { status: flow ? 200 : 403 });
+    }
+    if (v.wallet !== expectedWallet) return Response.json({ ok: false, status: 'account_locked' }, { status: 403 });
+    gate = v;
+  } catch (err) {
+    console.error('[user/auth/totp] Privy read failed', err instanceof Error ? err.name : 'unknown');
+    return Response.json({ error: 'privy_unavailable' }, { status: 503 });
   }
 
   // Step 4: factor-specific verification + atomic success transaction.
@@ -364,6 +402,14 @@ export async function POST(req: Request) {
         if (!moved) throw new ChallengeInvalid();
       }
 
+      // Step 6c ([G1]): the account is now bound to this Privy wallet; record its admission the first time.
+      const keyExportedAt = gate.exportedAtMs === null ? null : new Date(gate.exportedAtMs);
+      await writeAdmission(tx, user.id, {
+        firstAdmissionTotpAt: admission === null ? gate.totpVerifiedAt : null,
+        keyExportedAt,
+        keyExportChanged: (keyExportedAt?.getTime() ?? null) !== (user.keyExportedAt?.getTime() ?? null),
+      });
+
       // Step 7: issue session cookie. createSession participates in the
       // same transaction so a ROLLBACK from any earlier step also drops
       // the would-be-issued session row.
@@ -401,6 +447,24 @@ export async function POST(req: Request) {
     // Belt-and-braces: the only way to fall here is an unexpected
     // codepath. Refuse rather than issue an empty cookie.
     return Response.json({ error: 'internal' }, { status: 500 });
+  }
+
+  // [K4] Privy and this database share no transaction: read Privy once more, BEFORE any cookie or address leaves. A
+  // mismatch deletes the session just made (with every other session of the account).
+  try {
+    const after = checkIdentity(await readPrivyAccountById(privyId), {
+      email: user.email,
+      admission: admission ?? { wallet: expectedWallet, totpVerifiedAt: gate.totpVerifiedAt },
+    });
+    if (!after.ok) {
+      if (after.status === 'email_changed') await recordPrivyMismatch(user.id, after.observedEmail);
+      else await revokeAllSessionsForUser(user.id);
+      return Response.json({ ok: false, status: after.status }, { status: 403 });
+    }
+  } catch (err) {
+    console.error('[user/auth/totp] post-commit Privy read failed', err instanceof Error ? err.name : 'unknown');
+    await revokeAllSessionsForUser(user.id);
+    return Response.json({ error: 'privy_unavailable' }, { status: 503 });
   }
 
   const store = await cookies();
