@@ -5,7 +5,7 @@
 import type { AppResponse } from '@privy-io/node';
 import { describe, expect, it } from 'vitest';
 
-import { checkPrivyAppConfig, OTHER_LOGIN_METHODS, type PrivyAppSettings } from '@/lib/privy-config-check';
+import { checkPrivyAppConfig, OTHER_LOGIN_METHODS } from '@/lib/privy-config-check';
 
 const PROD = 'cm-prod-app-id-0000000000';
 
@@ -14,7 +14,8 @@ const customOAuth: Pick<AppResponse, 'custom_oauth_providers'> = {
   custom_oauth_providers: [{ enabled: true, provider: 'custom:attacker-idp', provider_display_name: 'Attacker IdP', provider_icon_url: 'https://example.invalid/icon.png' }],
 };
 
-const settings: PrivyAppSettings = {
+// Checked at runtime now (Codex gates F3), so the SDK-typed fixture goes in as plain data.
+const settings: Record<string, unknown> = {
   id: PROD,
   allowed_domains: ['https://makomarket.xyz'],
   allowed_native_app_ids: [],
@@ -24,6 +25,9 @@ const settings: PrivyAppSettings = {
   passkeys_for_signup_enabled: false,
   email_auth: true,
   merge_accounts_by_email: false,
+  max_linked_wallets_per_user: null,
+  whatsapp_enabled: false,
+  external_wallets_for_signup_enabled: false,
   embedded_wallet_config: { create_on_login: 'off', ethereum: { create_on_login: 'off' }, solana: { create_on_login: 'off' }, mode: 'user-controlled-server-wallets-only', user_owned_recovery_options: [] },
   ...Object.fromEntries(OTHER_LOGIN_METHODS.map((m) => [m, false])),
   ...customOAuth,

@@ -43,3 +43,51 @@ export function judgeSafeAuthority(a: SafeAuthority, expectedOwner: string): str
   if (lc(a.singletonSlot) !== word(SAFE_CONFIG.singleton)) f.push(`singleton is ${a.singletonSlot}, expected Safe v1.4.1 ${SAFE_CONFIG.singleton}`);
   return f;
 }
+
+/// One email (Magic-era) account as the pre-beta audit reads it: every `auth_type = 'magic'` user, with its Monad
+/// registry row if there is one (LEFT JOIN, Codex release-gates F2).
+export interface EmailAccountRow {
+  id: string;
+  email: string | null;
+  magic_eoa: string | null;
+  privy_user_id: string | null;
+  privy_totp_admitted_at: string | null;
+  /// The `user_safes` row for Monad, or null when the account has none.
+  safe_address: string | null;
+}
+
+/// What the audit reads for one account, and what already blocks before any chain read.
+export interface AuditTarget {
+  row: EmailAccountRow;
+  /// The Safe whose balance and authority are audited: the one the signer derives to (the address the app itself
+  /// uses, src/app/api/user/auth/route.ts), else the registry's. Null when the account has neither.
+  safe: string | null;
+  /// The Safe the signer derives to, when there is a signer.
+  derived: string | null;
+  blockers: string[];
+}
+
+/// The registry is not the authority for the address: the app derives the Safe from `magic_eoa` and writes the registry
+/// row opportunistically after sign-in. So every email account is audited at its derived Safe, a registry row that
+/// disagrees with it blocks, and an account with no registry row is audited all the same (Codex release-gates F2).
+export function planEmailAccountAudit(rows: readonly EmailAccountRow[], derive: (eoa: string) => string): AuditTarget[] {
+  return rows.map((row) => {
+    const derived = row.magic_eoa ? derive(row.magic_eoa) : null;
+    const blockers: string[] = [];
+    if (derived && row.safe_address && lc(derived) !== lc(row.safe_address)) {
+      blockers.push(`registry Safe ${row.safe_address} differs from the Safe its signer derives to, ${derived}`);
+    }
+    return { row, safe: derived ?? row.safe_address, derived, blockers };
+  });
+}
+
+/// The balance verdict for one account: funded and linked to Privy without a gate admission blocks; funded with no
+/// registry row blocks (the app would show and use a Safe nothing recorded). Returns the blockers, and whether the
+/// account belongs on the old-balance notice list (funded, still a Magic-era account).
+export function judgeFundedAccount(t: AuditTarget, balance: bigint): { blockers: string[]; magicFunded: boolean } {
+  const blockers: string[] = [];
+  const funded = balance > 0n;
+  if (funded && t.row.privy_user_id && t.row.privy_totp_admitted_at === null) blockers.push(`linked to Privy, funded (${balance}), not admitted under the gate`);
+  if (funded && t.row.safe_address === null) blockers.push(`funded (${balance}) with no user_safes row for its Safe`);
+  return { blockers, magicFunded: funded && !t.row.privy_user_id };
+}

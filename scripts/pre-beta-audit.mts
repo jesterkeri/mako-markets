@@ -3,7 +3,9 @@
 //
 // Release gate (INBOX_GAP_PLAN r18 [C1], [M4]), READ-ONLY: before the beta deploy, against the database and chain it
 // is pointed at.
-//   1. Every email account's Safe and its USDC balance.
+//   1. Every email account (auth_type 'magic', with or without a user_safes row) at the Safe its signer derives to,
+//      and that Safe's USDC balance. A registry row that names another Safe blocks; a funded account with no registry
+//      row blocks (Codex release-gates F2: the registry is not the authority for the address).
 //   2. Accounts already linked to a Privy user: expected 0 in production before the first Privy deploy. Any with a
 //      balance and no recorded gate admission (privy_totp_admitted_at) blocks the beta until enrolled or emptied.
 //   3. Every FUNDED Safe's authority: exactly one owner (the account's signer), threshold 1, only the Safe4337 module,
@@ -23,7 +25,14 @@ import { createPublicClient, erc20Abi, getAddress, http, parseAbi, type Address 
 
 import { monadTestnet } from '../src/lib/chain.js';
 import { deriveSafeAddress } from '../src/lib/safe.js';
-import { judgeSafeAuthority, SAFE_FALLBACK_SLOT, SAFE_GUARD_SLOT } from '../src/lib/safe-authority-audit.js';
+import {
+  judgeFundedAccount,
+  judgeSafeAuthority,
+  planEmailAccountAudit,
+  SAFE_FALLBACK_SLOT,
+  SAFE_GUARD_SLOT,
+  type EmailAccountRow,
+} from '../src/lib/safe-authority-audit.js';
 
 loadEnv({ path: '.env.development.local' });
 loadEnv({ path: '.env.local' });
@@ -44,37 +53,41 @@ async function main() {
   console.log(`pre-beta audit, database host ${new URL(url).host}, ${new Date().toISOString()}`);
 
   const sql = postgres(url, { max: 1 });
-  const rows = await sql<{ id: string; email: string | null; magic_eoa: string | null; privy_user_id: string | null; privy_totp_admitted_at: string | null; safe_address: string }[]>`
+  // Every email account, LEFT JOINed: one with no registry row is still audited at its derived Safe.
+  const rows = await sql<EmailAccountRow[]>`
     SELECT u.id, u.email, u.magic_eoa, u.privy_user_id, u.privy_totp_admitted_at, s.safe_address
-    FROM users u JOIN user_safes s ON s.user_id = u.id
-    WHERE u.auth_type = 'magic' AND s.chain_id = ${monadTestnet.id}`;
+    FROM users u LEFT JOIN user_safes s ON s.user_id = u.id AND s.chain_id = ${monadTestnet.id}
+    WHERE u.auth_type = 'magic'`;
   await sql.end();
 
+  const targets = planEmailAccountAudit(rows, (eoa) => deriveSafeAddress(getAddress(eoa)));
+  const readable = targets.filter((t): t is typeof t & { safe: string } => t.safe !== null);
   const client = createPublicClient({ chain: monadTestnet, transport: http(process.env.MONAD_RPC_URL?.trim() || undefined, { retryCount: 1 }), batch: { multicall: true } });
   const balances = await client.multicall({
     allowFailure: false,
-    contracts: rows.map((r) => ({ address: usdc, abi: erc20Abi, functionName: 'balanceOf', args: [getAddress(r.safe_address)] }) as const),
+    contracts: readable.map((t) => ({ address: usdc, abi: erc20Abi, functionName: 'balanceOf', args: [getAddress(t.safe)] }) as const),
   });
 
   const blockers: string[] = [];
   let privyLinked = 0;
   const magicFunded: string[] = [];
-  for (const [i, r] of rows.entries()) {
+  const noSafe = targets.filter((t) => t.safe === null);
+  for (const t of targets) for (const b of t.blockers) blockers.push(`${t.row.id}: ${b}`);
+  for (const [i, t] of readable.entries()) {
+    const r = t.row;
     const balance = balances[i] as bigint;
-    const label = `${r.id} safe ${r.safe_address}`;
-    if (r.privy_user_id) {
-      privyLinked += 1;
-      if (balance > 0n && r.privy_totp_admitted_at === null) blockers.push(`${label}: linked to Privy, funded (${balance}), not admitted under the gate`);
-    } else if (balance > 0n) {
-      magicFunded.push(showEmails && r.email ? `${label} ${r.email} (${balance})` : `${label} (${balance})`);
-    }
+    const label = `${r.id} safe ${t.safe}${r.safe_address === null ? ' (no registry row)' : ''}`;
+    if (r.privy_user_id) privyLinked += 1;
+    const verdict = judgeFundedAccount(t, balance);
+    for (const b of verdict.blockers) blockers.push(`${label}: ${b}`);
+    if (verdict.magicFunded) magicFunded.push(showEmails && r.email ? `${label} ${r.email} (${balance})` : `${label} (${balance})`);
     if (balance === 0n) continue;
 
-    const safe = getAddress(r.safe_address);
+    const safe = getAddress(t.safe);
     const code = await client.getCode({ address: safe });
     if (!code || code === '0x') {
       // Not deployed: the Safe that will be deployed is the one its signer derives to.
-      if (!r.magic_eoa || deriveSafeAddress(getAddress(r.magic_eoa)).toLowerCase() !== safe.toLowerCase()) {
+      if (!t.derived || t.derived.toLowerCase() !== safe.toLowerCase()) {
         blockers.push(`${label}: funded, not deployed, and not the Safe its signer derives to`);
       }
       continue;
@@ -112,7 +125,12 @@ async function main() {
     for (const f of failures) blockers.push(`${label}: ${f}`);
   }
 
-  console.log(`email accounts with a Safe: ${rows.length}`);
+  console.log(`email accounts: ${rows.length} (${rows.filter((r) => r.safe_address === null).length} with no user_safes row, audited at the derived Safe)`);
+  console.log(`email accounts with no signer and no Safe (nothing to read): ${noSafe.length}`);
+  for (const t of noSafe) {
+    if (t.row.privy_user_id) privyLinked += 1;
+    console.log(`  ${t.row.id}`);
+  }
   console.log(`linked to a Privy user: ${privyLinked} (expected 0 in production before the first Privy deploy)`);
   console.log(`funded Magic-era Safes (notice email list): ${magicFunded.length}`);
   for (const m of magicFunded) console.log(`  ${m}`);

@@ -4,30 +4,21 @@
 // The Privy app's settings as a checked release artifact (INBOX_GAP_PLAN r18 [M5], [B1], [B5], [C5], [C7], [D3]).
 // Pure: scripts/check-privy-config.ts reads the settings with the app secret (Joshua's shell) and prints this verdict.
 // A release needs a passing run from the same day, for the production app and for the development app.
+//
+// A pass must PROVE each setting, never assume it (Codex release-gates review, F1 and F3):
+// - The answer is parsed at runtime. A security-relevant field that is absent or of the wrong type is a failure, not
+//   "off": a partial or changed API response cannot pass as a secure one.
+// - The wallet mode is compared with EXPECTED_WALLET_MODE, a reviewed constant in this file, for both apps. There is
+//   no way to run the check without it.
 // ----------------------------------------------------------------------------
 
-/// The parts of `@privy-io/node` AppResponse this check reads.
-export interface PrivyAppSettings {
-  id: string;
-  allowed_domains: string[];
-  allowed_native_app_ids: string[];
-  allowed_native_app_url_schemes: string[];
-  mfa_methods: string[];
-  passkey_auth: boolean;
-  passkeys_for_signup_enabled: boolean;
-  email_auth: boolean;
-  merge_accounts_by_email: boolean;
-  embedded_wallet_config: {
-    create_on_login: string;
-    ethereum: { create_on_login: string };
-    solana: { create_on_login: string };
-    mode?: string;
-    user_owned_recovery_options?: string[];
-  };
-  max_linked_wallets_per_user?: number | null;
-  /// Every other login method, true when on; all must be off ([C7]).
-  [loginMethod: string]: unknown;
-}
+import { z } from 'zod';
+
+/// [A3] [D1]: the embedded wallet mode the development app runs and the live matrix (mako-design INBOX_LIVE_RUNBOOK.md
+/// L1 to L9) is proven on. It decides where Privy enforces MFA and whether wallets share entropy. `null` until that
+/// matrix has run: every check then fails with the mode the app actually reports, and pinning it here is a reviewed
+/// change made from that evidence. Both apps must match it exactly.
+export const EXPECTED_WALLET_MODE: string | null = null;
 
 /// Every login method besides email that the settings carry as a boolean ([C7]: email is the only way in).
 export const OTHER_LOGIN_METHODS = [
@@ -52,6 +43,9 @@ export const OTHER_LOGIN_METHODS = [
   'telegram_oauth',
 ] as const;
 
+/// Sign-up and seamless switches that are another way in ([C7]).
+export const OTHER_SIGNUP_FLAGS = ['whatsapp_enabled', 'external_wallets_for_signup_enabled'] as const;
+
 /// The reviewed allowed-domain lists ([M5], [C7]). Changing them is a reviewed change to this file.
 export const EXPECTED_DOMAINS = {
   production: ['https://makomarket.xyz'],
@@ -60,23 +54,68 @@ export const EXPECTED_DOMAINS = {
 
 export type AppRole = keyof typeof EXPECTED_DOMAINS;
 
+const strings = z.array(z.string());
+const createOnLogin = z.string();
+
+/// Every field the verdict depends on, required and typed as @privy-io/node 0.35.0 AppResponse declares it
+/// (resources/apps/apps.d.ts). Unknown extra fields pass through, so a new `*_auth`/`*_oauth` switch is still seen.
+const SettingsSchema = z
+  .object({
+    id: z.string(),
+    allowed_domains: strings,
+    allowed_native_app_ids: strings,
+    allowed_native_app_url_schemes: strings,
+    mfa_methods: strings,
+    passkey_auth: z.boolean(),
+    passkeys_for_signup_enabled: z.boolean(),
+    email_auth: z.boolean(),
+    merge_accounts_by_email: z.boolean(),
+    custom_oauth_providers: z.array(z.object({ enabled: z.boolean(), provider: z.string() }).passthrough()),
+    max_linked_wallets_per_user: z.number().nullable(),
+    // Declared optional by the SDK (`telegram_seamless_auth_enabled?`), so absence alone is not a failure; it is
+    // judged below together with Telegram login, which must be off for it to mean anything.
+    telegram_seamless_auth_enabled: z.boolean().optional(),
+    embedded_wallet_config: z
+      .object({
+        create_on_login: createOnLogin,
+        ethereum: z.object({ create_on_login: createOnLogin }).passthrough(),
+        solana: z.object({ create_on_login: createOnLogin }).passthrough(),
+        mode: z.string(),
+        user_owned_recovery_options: strings,
+      })
+      .passthrough(),
+    ...Object.fromEntries(OTHER_LOGIN_METHODS.map((m) => [m, z.boolean()])),
+    ...Object.fromEntries(OTHER_SIGNUP_FLAGS.map((m) => [m, z.boolean()])),
+  })
+  .passthrough();
+
+export type PrivyAppSettings = z.input<typeof SettingsSchema>;
+
 export interface ConfigVerdict {
   ok: boolean;
   failures: string[];
-  /// Recorded with the evidence, not judged here: the wallet mode the matrix was proven on, and the recovery options.
+  /// Recorded with the evidence, not judged here: the wallet mode, the recovery options, the linked-wallet cap.
   recorded: Record<string, unknown>;
 }
 
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
 
-export function checkPrivyAppConfig(s: PrivyAppSettings, role: AppRole, expectedAppId: string, expectedMode?: string): ConfigVerdict {
+/// The verdict on a settings answer. `expectedMode` is required: the CLI passes EXPECTED_WALLET_MODE, and `null` (not
+/// pinned yet) is a failure that names the mode the app reports.
+export function checkPrivyAppConfig(raw: unknown, role: AppRole, expectedAppId: string, expectedMode: string | null): ConfigVerdict {
+  const parsed = SettingsSchema.safeParse(raw);
+  if (!parsed.success) {
+    const failures = parsed.error.issues.map((i) => `${i.path.join('.') || '(answer)'} is missing or malformed (${i.message}): it cannot be proven [M5]`);
+    return { ok: false, failures, recorded: {} };
+  }
+  const s = parsed.data as z.output<typeof SettingsSchema> & Record<string, unknown>;
   const f: string[] = [];
   if (s.id !== expectedAppId) f.push(`app id is ${s.id}, expected the ${role} app ${expectedAppId}`);
   if (!sameSet(s.mfa_methods, ['totp'])) f.push(`mfa_methods must be exactly [totp], is [${s.mfa_methods.join(', ')}]`);
-  if (s.passkey_auth) f.push('passkey login (passkey_auth) must be off [B1]');
-  if (s.passkeys_for_signup_enabled) f.push('passkeys for signup must be off [B1]');
-  if (!s.email_auth) f.push('email login must be on');
-  for (const m of OTHER_LOGIN_METHODS) if (s[m] === true) f.push(`${m} must be off: email is the only login method [C7]`);
+  if (s.passkey_auth !== false) f.push('passkey login (passkey_auth) must be off [B1]');
+  if (s.passkeys_for_signup_enabled !== false) f.push('passkeys for signup must be off [B1]');
+  if (s.email_auth !== true) f.push('email login must be on');
+  for (const m of OTHER_LOGIN_METHODS) if (s[m] !== false) f.push(`${m} must be off: email is the only login method [C7]`);
   // Fail closed on any login switch this list does not name yet (Privy adds providers): every *_auth / *_oauth flag that
   // is on, other than email, is another way in.
   for (const [k, v] of Object.entries(s)) {
@@ -85,19 +124,21 @@ export function checkPrivyAppConfig(s: PrivyAppSettings, role: AppRole, expected
     }
   }
   // Custom OAuth providers are a list, not a flag (adversary on e1e0679): any enabled one is another way in.
-  const custom = Array.isArray(s.custom_oauth_providers) ? (s.custom_oauth_providers as Array<{ enabled?: unknown; provider?: unknown }>) : [];
-  for (const p of custom) if (p && p.enabled !== false) f.push(`custom OAuth provider ${String(p.provider ?? '?')} must be off [C7]`);
-  for (const k of ['whatsapp_enabled', 'telegram_seamless_auth_enabled', 'external_wallets_for_signup_enabled']) {
-    if (s[k] === true) f.push(`${k} must be off: email is the only login method [C7]`);
-  }
-  if (s.merge_accounts_by_email) f.push('merge_accounts_by_email must be off [D3]');
+  for (const p of s.custom_oauth_providers) if (p.enabled !== false) f.push(`custom OAuth provider ${p.provider} must be off [C7]`);
+  for (const k of OTHER_SIGNUP_FLAGS) if (s[k] !== false) f.push(`${k} must be off: email is the only login method [C7]`);
+  if (s.telegram_seamless_auth_enabled === true) f.push('telegram_seamless_auth_enabled must be off: email is the only login method [C7]');
+  if (s.merge_accounts_by_email !== false) f.push('merge_accounts_by_email must be off [D3]');
   if (s.allowed_native_app_ids.length > 0) f.push('allowed_native_app_ids must be empty (no native app) [B5]');
   if (s.allowed_native_app_url_schemes.length > 0) f.push('allowed_native_app_url_schemes must be empty [B5]');
   const w = s.embedded_wallet_config;
   if (w.create_on_login !== 'off') f.push(`embedded wallet create_on_login must be off, is ${w.create_on_login} [C5]`);
   if (w.ethereum.create_on_login !== 'off') f.push(`ethereum create_on_login must be off, is ${w.ethereum.create_on_login} [C5]`);
   if (w.solana.create_on_login !== 'off') f.push(`solana create_on_login must be off, is ${w.solana.create_on_login} [D3]`);
-  if (expectedMode !== undefined && w.mode !== expectedMode) f.push(`embedded wallet mode is ${w.mode}, expected ${expectedMode} (the mode the matrix was proven on) [A3] [D1]`);
+  if (expectedMode === null) {
+    f.push(`embedded wallet mode is not pinned yet: this app runs ${w.mode}; pin EXPECTED_WALLET_MODE once the live matrix has passed on it [A3] [D1]`);
+  } else if (w.mode !== expectedMode) {
+    f.push(`embedded wallet mode is ${w.mode}, expected ${expectedMode} (the mode the matrix was proven on) [A3] [D1]`);
+  }
   const expected = EXPECTED_DOMAINS[role];
   if (s.allowed_domains.length === 0) f.push('allowed_domains must not be empty');
   if (s.allowed_domains.some((d) => d.includes('*'))) f.push('allowed_domains must not contain a wildcard');
@@ -106,9 +147,39 @@ export function checkPrivyAppConfig(s: PrivyAppSettings, role: AppRole, expected
     ok: f.length === 0,
     failures: f,
     recorded: {
-      mode: w.mode ?? null,
-      user_owned_recovery_options: w.user_owned_recovery_options ?? [],
-      max_linked_wallets_per_user: s.max_linked_wallets_per_user ?? null,
+      mode: w.mode,
+      user_owned_recovery_options: w.user_owned_recovery_options,
+      max_linked_wallets_per_user: s.max_linked_wallets_per_user,
+      telegram_seamless_auth_enabled: s.telegram_seamless_auth_enabled ?? 'absent',
     },
+  };
+}
+
+/// The whole command (scripts/check-privy-config.ts), testable: argv as documented in mako-design RELEASE_RUNBOOK.md
+/// step 7 (the role and nothing else), the app id and secret from the shell, and the settings reader. Returns the
+/// printed lines and the exit code. `pinnedMode` is EXPECTED_WALLET_MODE in the script; tests pass their own.
+export async function runPrivyConfigCheck(
+  argv: readonly string[],
+  env: Readonly<Record<string, string | undefined>>,
+  readSettings: (appId: string, appSecret: string) => Promise<unknown>,
+  pinnedMode: string | null,
+  now: Date = new Date(),
+): Promise<{ exitCode: number; lines: string[] }> {
+  const [role, ...extra] = argv;
+  if ((role !== 'production' && role !== 'development') || extra.length > 0) {
+    return { exitCode: 2, lines: ['usage: check-privy-config.ts production|development (the wallet mode is the reviewed EXPECTED_WALLET_MODE, never an argument)'] };
+  }
+  const appId = env.NEXT_PUBLIC_PRIVY_APP_ID?.trim();
+  const appSecret = env.PRIVY_APP_SECRET?.trim();
+  if (!appId || !appSecret) return { exitCode: 2, lines: ['NEXT_PUBLIC_PRIVY_APP_ID and PRIVY_APP_SECRET must be set in this shell'] };
+  const v = checkPrivyAppConfig(await readSettings(appId, appSecret), role, appId, pinnedMode);
+  return {
+    exitCode: v.ok ? 0 : 1,
+    lines: [
+      `privy config check, ${role} app ${appId}, ${now.toISOString()}`,
+      `recorded: ${JSON.stringify(v.recorded)}`,
+      ...v.failures.map((x) => `FAIL ${x}`),
+      v.ok ? 'PASS' : `FAIL (${v.failures.length})`,
+    ],
   };
 }
