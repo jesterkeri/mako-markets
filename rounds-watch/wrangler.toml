@@ -31,6 +31,8 @@ enabled = true
 # ROUNDS_ADDRESS is set once the contract is deployed; the Worker refuses to run without it.
 [vars]
 RPC_URL = "https://testnet-rpc.monad.xyz/"
+# MakoRoundsV1, deployed 2026-10-06 (mako-contracts 1d787f6 receipt).
+ROUNDS_ADDRESS = "0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921"
 DATASTREAMS_URL = "https://api.testnet-dataengine.chain.link"
 
 # Secrets, via `wrangler secret put`, from Bitwarden, never in this file:
