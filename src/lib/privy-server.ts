@@ -20,7 +20,7 @@ import 'server-only';
 
 import { PrivyClient } from '@privy-io/node';
 
-import { embeddedWallets, judgeFactors, judgePrivyUser, type GateAdmission, type GateUser, type GateVerdict, type GateWallet } from '@/lib/privy-gate';
+import { embeddedWallets, judgeFactors, judgePrivyUser, type EnrollmentCheckpoint, type GateAdmission, type GateUser, type GateVerdict, type GateWallet } from '@/lib/privy-gate';
 import { normalizeEmail } from '@/lib/email';
 
 /// A deploy/config problem (missing app id or secret): the route answers 500,
@@ -161,8 +161,8 @@ export async function readPrivyAccountById(privyUserId: string): Promise<PrivyAc
   return readById(privy(), privyUserId);
 }
 
-export function judgeAccount(read: PrivyAccountRead, admission: GateAdmission | null): GateVerdict {
-  return judgePrivyUser(read.user, read.wallet, admission);
+export function judgeAccount(read: PrivyAccountRead, admission: GateAdmission | null, checkpoint: EnrollmentCheckpoint | null): GateVerdict {
+  return judgePrivyUser(read.user, read.wallet, admission, checkpoint);
 }
 
 export type IdentityCheck =
@@ -176,7 +176,8 @@ export function checkIdentity(read: PrivyAccountRead, account: { email: string; 
   if (read.email === null || read.email !== normalizeEmail(account.email)) {
     return { ok: false, status: 'email_changed', observedEmail: read.email };
   }
-  const v = judgeAccount(read, account.admission);
+  // An admitted account: the checkpoint mattered only at its first admission.
+  const v = judgeAccount(read, account.admission, null);
   if (!v.ok) return { ok: false, status: v.status, reason: v.reason };
   return { ok: true };
 }

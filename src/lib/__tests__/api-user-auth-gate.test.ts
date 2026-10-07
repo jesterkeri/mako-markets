@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   issue: vi.fn(),
   writeAdmission: vi.fn(),
   readAdmission: vi.fn(),
+  readCheckpoint: vi.fn(),
+  recordCheckpoint: vi.fn(),
   findMismatched: vi.fn(),
   detect: vi.fn(),
   recordMismatch: vi.fn(),
@@ -44,6 +46,8 @@ vi.mock('@/lib/privy-proof', async (orig) => ({
 vi.mock('@/lib/privy-admission', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-admission')>()),
   readAdmission: mocks.readAdmission,
+  readCheckpoint: mocks.readCheckpoint,
+  recordCheckpoint: mocks.recordCheckpoint,
   writeAdmission: mocks.writeAdmission,
   findMismatchedAccount: mocks.findMismatched,
   detectEmailMismatch: mocks.detect,
@@ -113,6 +117,9 @@ beforeEach(() => {
   mocks.read.mockResolvedValue(privyRead());
   mocks.readById.mockResolvedValue(privyRead());
   mocks.readAdmission.mockResolvedValue(null);
+  // The enrollment checkpoint the server recorded while the user had the authenticator and no wallet (migration 0014).
+  mocks.readCheckpoint.mockResolvedValue({ totpVerifiedAt: T });
+  mocks.recordCheckpoint.mockResolvedValue(undefined);
   mocks.consume.mockResolvedValue(true);
   mocks.upsert.mockResolvedValue({ user: ROW, moved: false });
   mocks.createSession.mockResolvedValue('session-token');
@@ -138,10 +145,19 @@ describe('POST /api/user/auth: the gate decides before anything is written', () 
     expect((await signIn({ proof: await proof() })).json).toEqual({ ok: false, status: 'wallet_required' });
   });
 
-  it('a wallet linked before the authenticator: account_locked [C5]', async () => {
-    mocks.read.mockResolvedValue(privyRead({ linkedAt: T - 1 }));
+  it('a first admission with no enrollment checkpoint: account_locked, whatever the timestamps [C5]', async () => {
+    mocks.readCheckpoint.mockResolvedValue(null);
     expect(await signIn({ proof: await proof() })).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it('the live sign-up (wallet stamped a second BEFORE the re-stamped authenticator) signs in with its checkpoint', async () => {
+    mocks.read.mockResolvedValue(privyRead({ totpAt: T + 1, linkedAt: T }));
+    const r = await signIn({ proof: await proof() });
+    expect(r.status).toBe(200);
+    expect(mocks.writeAdmission).toHaveBeenCalledWith(expect.anything(), 'u1', expect.objectContaining({ firstAdmissionTotpAt: T }));
+    expect(mocks.cookieSet).toHaveBeenCalled();
   });
 
   it('no proof: proof_required; a proof by another key: mfa_proof_required; neither touches the account', async () => {
@@ -226,8 +242,73 @@ describe('POST /api/user/auth/proof', () => {
   it('a refused user gets only its status and no nonce', async () => {
     mocks.read.mockResolvedValue(privyRead({ totpAt: null }));
     expect((await nonceFor()).json).toEqual({ ok: false, status: 'mfa_enrollment_required' });
+    mocks.readCheckpoint.mockResolvedValue(null);
     mocks.read.mockResolvedValue(privyRead({ linkedAt: T }));
     expect(await nonceFor()).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
     expect(mocks.issue).not.toHaveBeenCalled();
+  });
+});
+
+describe('the enrollment checkpoint (migration 0014; owner decision 2026-10-07)', () => {
+  async function proofStep() {
+    const { POST } = await import('../../app/api/user/auth/proof/route');
+    const res = await POST(req('/api/user/auth/proof', { privyAccessToken: 'tok' }));
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('enrolled, no wallet on any chain: the server records the checkpoint from its own read BEFORE answering wallet_required', async () => {
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
+    expect(await proofStep()).toEqual({ status: 200, json: { ok: false, status: 'wallet_required' } });
+    expect(mocks.recordCheckpoint).toHaveBeenCalledWith(expect.anything(), 'did:privy:owner', { totpVerifiedAt: T });
+  });
+
+  it('fails closed: a checkpoint that cannot be written is a 503, never wallet_required (so no wallet gets created)', async () => {
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
+    mocks.recordCheckpoint.mockRejectedValue(new Error('db down'));
+    expect(await proofStep()).toEqual({ status: 503, json: { error: 'unavailable' } });
+  });
+
+  it('fails closed: an unreadable Privy user records nothing', async () => {
+    mocks.read.mockRejectedValue(new Error('privy down'));
+    expect((await proofStep()).status).toBe(401);
+    expect(mocks.recordCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('race 1, attacker wallet before enrollment: the owner enrolls, but a wallet already exists, so no checkpoint and the first admission is locked', async () => {
+    // The inbox-only attacker created the wallet before the owner's authenticator existed: every read the owner's
+    // browser can cause shows the authenticator AND a wallet, so the checkpoint is never written.
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: T - 60 }));
+    mocks.readCheckpoint.mockResolvedValue(null);
+    expect(await proofStep()).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(mocks.recordCheckpoint).not.toHaveBeenCalled();
+    expect(await signIn({ proof: await proof() })).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it('race 2, a second email-only browser after the checkpoint: without the authenticator it cannot sign the proof, so no session', async () => {
+    // The checkpoint exists (the owner's sign-up recorded it); the attacker's browser has the email code only and
+    // Privy will not release a signature without the authenticator, so whatever it sends is not the wallet's.
+    expect(await signIn({})).toEqual({ status: 200, json: { ok: false, status: 'proof_required' } });
+    expect(await signIn({ proof: await proof(OTHER) })).toEqual({ status: 403, json: { ok: false, status: 'mfa_proof_required' } });
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.cookieSet).not.toHaveBeenCalled();
+  });
+
+  it('race 3, interrupted sign-up: enrolled but closed before the checkpoint, the next visit records it and the wallet is still offered', async () => {
+    mocks.readCheckpoint.mockResolvedValue(null);
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
+    expect((await proofStep()).json).toEqual({ ok: false, status: 'wallet_required' });
+    expect(mocks.recordCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('race 4, repeated checkpoint calls: each qualifying read asks to record, and the store keeps the first (no overwrite path)', async () => {
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
+    await proofStep();
+    await proofStep();
+    expect(mocks.recordCheckpoint).toHaveBeenCalledTimes(2);
+    // Once a wallet exists the read no longer qualifies: nothing is recorded, so a later state cannot replace it.
+    mocks.read.mockResolvedValue(privyRead());
+    await proofStep();
+    expect(mocks.recordCheckpoint).toHaveBeenCalledTimes(2);
   });
 });

@@ -31,6 +31,8 @@ export const privyProofPassing = () => ({
 export const privyAdmissionNone = () => ({
   admissionOf: () => null,
   readAdmission: async () => null,
+  readCheckpoint: async () => ({ totpVerifiedAt: 1 }),
+  recordCheckpoint: async () => {},
   writeAdmission: async () => {},
   findMismatchedAccount: async () => null,
   detectEmailMismatch: async () => null,

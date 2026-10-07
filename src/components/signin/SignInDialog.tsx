@@ -15,7 +15,7 @@ import { ROUNDS_ADDRESS } from '@/lib/contract';
 import { useMarkets } from '@/lib/hooks';
 import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
 import { openPools } from '@/lib/pool-display';
-import { continueGatedSignIn } from '@/lib/privy-gated-signin';
+import { confirmWalletFree, continueGatedSignIn } from '@/lib/privy-gated-signin';
 import { submitTotp, type SessionResult } from '@/lib/session-exchange';
 import { closeSignIn, useSignInOpen } from '@/lib/sign-in-store';
 import { accountAddress, USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
@@ -137,6 +137,14 @@ function SignInFlow() {
       setStep({ ...prev, code: '', submitting: false, error: 'That code didn’t match. Check the app and enter the current 6-digit code.' });
       return;
     }
+    // The server records the enrollment checkpoint before the wallet exists; only its `wallet_required` lets the
+    // wallet be created (migration 0014).
+    const cp = await confirmWalletFree(gate);
+    if (!cp.ok) {
+      if (cp.retry) setStep({ kind: 'wallet_setup', busy: false, error: 'Your authenticator is set up, but Mako Market couldn’t finish the next step. Try again.' });
+      else await runGate();
+      return;
+    }
     try {
       await gate.createWallet();
     } catch {
@@ -153,9 +161,20 @@ function SignInFlow() {
     setStep({ kind: 'wallet_setup', busy: true, error: null });
     try {
       await gate.freshFactor();
-      await gate.createWallet();
     } catch {
       setStep({ kind: 'wallet_setup', busy: false, error: 'The wallet needs a code from your authenticator app. Try again.' });
+      return;
+    }
+    const cp = await confirmWalletFree(gate);
+    if (!cp.ok) {
+      if (cp.retry) setStep({ kind: 'wallet_setup', busy: false, error: 'Mako Market couldn’t finish setting up your wallet. Try again.' });
+      else await runGate();
+      return;
+    }
+    try {
+      await gate.createWallet();
+    } catch {
+      setStep({ kind: 'wallet_setup', busy: false, error: 'The wallet wasn’t created. Try again.' });
       return;
     }
     await runGate();

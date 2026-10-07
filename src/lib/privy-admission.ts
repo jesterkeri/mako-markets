@@ -9,8 +9,8 @@ import 'server-only';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
 
 import { db, type DbOrTx } from '@/db/client';
-import { users } from '@/db/schema';
-import type { GateAdmission } from '@/lib/privy-gate';
+import { privyEnrollmentCheckpoints, users } from '@/db/schema';
+import type { EnrollmentCheckpoint, GateAdmission } from '@/lib/privy-gate';
 
 /// The admission an account recorded: only for an account bound to a Privy user, whose signer IS the admitted wallet.
 export function admissionOf(user: { privyTotpAdmittedAt: number | null; magicEoa: string | null; privyUserId: string | null }): GateAdmission | null {
@@ -27,6 +27,27 @@ export async function readAdmission(privyUserId: string): Promise<GateAdmission 
     .where(eq(users.privyUserId, privyUserId))
     .limit(1);
   return rows[0] ? admissionOf(rows[0]) : null;
+}
+
+/// The enrollment checkpoint recorded for this Privy user, or null. Read with the transaction that admits, so the
+/// admission and the checkpoint it relies on are one consistent view.
+export async function readCheckpoint(tx: DbOrTx, privyUserId: string): Promise<EnrollmentCheckpoint | null> {
+  const rows = await tx
+    .select({ totpVerifiedAt: privyEnrollmentCheckpoints.totpVerifiedAt })
+    .from(privyEnrollmentCheckpoints)
+    .where(eq(privyEnrollmentCheckpoints.privyUserId, privyUserId))
+    .limit(1);
+  return rows[0] ? { totpVerifiedAt: rows[0].totpVerifiedAt } : null;
+}
+
+/// Records the checkpoint once. The first row wins and is never changed, so a repeated call, or one made later when the
+/// state no longer qualifies, cannot move it. The caller passes only what checkpointFrom() derived from its own Privy
+/// read with the app secret; nothing from the browser reaches here. Throws on a database error: the caller fails closed.
+export async function recordCheckpoint(tx: DbOrTx, privyUserId: string, checkpoint: EnrollmentCheckpoint): Promise<void> {
+  await tx
+    .insert(privyEnrollmentCheckpoints)
+    .values({ privyUserId, totpVerifiedAt: checkpoint.totpVerifiedAt })
+    .onConflictDoNothing({ target: privyEnrollmentCheckpoints.privyUserId });
 }
 
 /// Records the first admission ([G1]) and the export time last seen ([F1], [G4]); writes only what changed.

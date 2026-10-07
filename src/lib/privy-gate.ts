@@ -49,6 +49,14 @@ export interface GateAdmission {
   totpVerifiedAt: number;
 }
 
+/// The server's own record (privy_enrollment_checkpoints, migration 0014) that this Privy user once had exactly one
+/// factor, an authenticator, and no embedded wallet on any chain. Written only by the server from its read of Privy;
+/// never from anything the browser sent.
+export interface EnrollmentCheckpoint {
+  /// The authenticator's verified_at (seconds) as the server read it then, before any wallet existed.
+  totpVerifiedAt: number;
+}
+
 export type GateRefusal =
   /// No authenticator yet, or a factor other than an authenticator: the dialog enrolls one. No cookie.
   | 'mfa_enrollment_required'
@@ -104,9 +112,24 @@ export function embeddedWallets(user: GateUser) {
   return user.linked_accounts.filter((a) => isWallet(a) && isEmbedded(a));
 }
 
+/// Whether this read may be recorded as the enrollment checkpoint: the factors pass (exactly one, an authenticator,
+/// nothing locked) and there is no embedded wallet on ANY chain. Returns the authenticator time to record, or null.
+export function checkpointFrom(user: GateUser): EnrollmentCheckpoint | null {
+  const factors = judgeFactors(user);
+  if (!factors.ok) return null;
+  if (embeddedWallets(user).length !== 0) return null;
+  return { totpVerifiedAt: factors.totpVerifiedAt };
+}
+
 /// The full verdict. `wallet` is the resource of the single embedded Ethereum wallet, read by the caller only when
-/// judgeFactors passed and exactly one embedded wallet exists (pass null otherwise).
-export function judgePrivyUser(user: GateUser, wallet: GateWallet | null, admission: GateAdmission | null): GateVerdict {
+/// judgeFactors passed and exactly one embedded wallet exists (pass null otherwise). `checkpoint` is the server's
+/// enrollment checkpoint for this Privy user, or null when none was ever recorded.
+export function judgePrivyUser(
+  user: GateUser,
+  wallet: GateWallet | null,
+  admission: GateAdmission | null,
+  checkpoint: EnrollmentCheckpoint | null,
+): GateVerdict {
   const factors = judgeFactors(user);
   if (!factors.ok) return factors;
 
@@ -132,15 +155,15 @@ export function judgePrivyUser(user: GateUser, wallet: GateWallet | null, admiss
   if (wallet.imported_at !== null) return { ok: false, status: 'account_locked', reason: 'imported_wallet' };
   if (wallet.additional_signers.length > 0) return { ok: false, status: 'account_locked', reason: 'additional_signers' };
 
-  let totpVerifiedAt = factors.totpVerifiedAt;
+  let totpVerifiedAt: number;
   if (admission === null) {
-    // First admission ([C5], [D2]): the wallet must have been linked strictly AFTER the authenticator was verified.
-    // first_verified_at must exist and equal verified_at (latest_verified_at may move on a reconnect and is unused).
-    const first = linked.first_verified_at;
-    if (typeof first !== 'number' || first !== linked.verified_at) {
-      return { ok: false, status: 'account_locked', reason: 'wallet_link_time_unproven' };
-    }
-    if (!(first > factors.totpVerifiedAt)) return { ok: false, status: 'account_locked', reason: 'wallet_before_totp' };
+    // First admission ([C5], [D2]): the wallet must have been created after the authenticator existed. Proven by the
+    // server's enrollment checkpoint, NOT by comparing Privy's timestamps: the live test (2026-10-07) found Privy
+    // re-stamps the authenticator's verified_at about a second after the wallet is created, so the two times cannot
+    // order the events. A checkpoint is written only while no embedded wallet existed, so the one wallet here was
+    // created after it; an inbox-only attacker's wallet made before the owner enrolled prevents the checkpoint.
+    if (checkpoint === null) return { ok: false, status: 'account_locked', reason: 'no_enrollment_checkpoint' };
+    totpVerifiedAt = checkpoint.totpVerifiedAt;
   } else {
     // [G1] The order rule bound once, at first admission. Later sign-ins need the SAME wallet and an authenticator
     // present now (judgeFactors); a re-enrolled authenticator does not re-run the order check.

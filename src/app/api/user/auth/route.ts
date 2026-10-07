@@ -8,7 +8,7 @@ import { checkSameOrigin } from '@/lib/csrf';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import type { GateAdmission } from '@/lib/privy-gate';
-import { admissionOf, detectEmailMismatch, findMismatchedAccount, readAdmission, writeAdmission } from '@/lib/privy-admission';
+import { admissionOf, detectEmailMismatch, findMismatchedAccount, readAdmission, readCheckpoint, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce } from '@/lib/privy-proof';
 import {
@@ -171,7 +171,7 @@ export async function POST(req: Request) {
   // The gate (INBOX_GAP_PLAN r18): an authenticator and nothing weaker, one embedded wallet that came after it. Judged
   // here against the account as last stored, and again inside the transaction against the row it locks.
   const stored = await readAdmission(read.privyUserId);
-  const verdict = judgeAccount(read, stored);
+  const verdict = judgeAccount(read, stored, stored ? null : await readCheckpoint(db, read.privyUserId));
   if (!verdict.ok) return refusal(verdict.status);
 
   // The sign-in proof (item 1): a personal_sign by that wallet over the browser-built message, which Privy releases
@@ -234,7 +234,7 @@ export async function POST(req: Request) {
       // A 2FA account due to move to its Privy wallet: nothing changes yet. The challenge records the wallet
       // it moves TO, and /api/user/auth/totp moves it only after the second factor passes.
       if (pendingMoveTo) {
-        const pendingVerdict = judgeAccount(read, null);
+        const pendingVerdict = judgeAccount(read, null, await readCheckpoint(tx, read.privyUserId));
         if (!pendingVerdict.ok) throw new GateRefused(pendingVerdict.status);
         const challengeId = await createSigninChallenge({
           tx,
@@ -248,7 +248,8 @@ export async function POST(req: Request) {
       // Re-judge against the row this transaction holds: the order rule runs only at first admission ([G1]). Written
       // only for an account bound to this Privy wallet; a pending move is admitted by /api/user/auth/totp after it moves.
       const admitted = admissionOf(user);
-      const inTx = judgeAccount(read, admitted);
+      // The checkpoint, read in this transaction, decides a first admission (migration 0014).
+      const inTx = judgeAccount(read, admitted, admitted ? null : await readCheckpoint(tx, read.privyUserId));
       if (!inTx.ok) throw new GateRefused(inTx.status);
       const admission: GateAdmission = admitted ?? { wallet: inTx.wallet, totpVerifiedAt: inTx.totpVerifiedAt };
       const keyExportedAt = inTx.exportedAtMs === null ? null : new Date(inTx.exportedAtMs);

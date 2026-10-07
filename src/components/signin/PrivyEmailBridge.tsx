@@ -3,7 +3,7 @@
 import { useCreateWallet, useLoginWithEmail, useMfa, useMfaEnrollment, usePrivy, useSignMessage, useWallets } from '@privy-io/react-auth';
 import { useEffect, useRef } from 'react';
 
-import { WALLET_AFTER_ENROLL_MS, type GateBridge } from '@/lib/privy-gated-signin';
+import { type GateBridge } from '@/lib/privy-gated-signin';
 
 // Privy's headless email sign-in, for the sign-in dialog (14a). Privy's hooks need its provider, which exists only
 // when NEXT_PUBLIC_PRIVY_APP_ID is set, so they live in this child, mounted only then; without it the dialog says
@@ -23,7 +23,6 @@ export type EmailAuth = {
   gate: GateBridge;
 };
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function PrivyEmailBridge({ register }: { register: (auth: EmailAuth | null) => void }) {
   const { authenticated, logout, getAccessToken } = usePrivy();
@@ -35,8 +34,6 @@ export function PrivyEmailBridge({ register }: { register: (auth: EmailAuth | nu
   const { createWallet } = useCreateWallet();
   const { signMessage } = useSignMessage();
   const { wallets } = useWallets();
-  /// performance.now() when Privy confirmed the authenticator, for the [G3] wait before the wallet is created.
-  const enrolledAt = useRef<number | null>(null);
   const walletsRef = useRef(wallets);
   useEffect(() => {
     walletsRef.current = wallets;
@@ -48,7 +45,6 @@ export function PrivyEmailBridge({ register }: { register: (auth: EmailAuth | nu
       enrollStart: () => initEnrollmentWithTotp(),
       enrollFinish: async (code) => {
         await submitEnrollmentWithTotp({ mfaCode: code });
-        enrolledAt.current = performance.now();
       },
       freshFactor: async () => {
         // [H2] A verification left over from earlier must not count: clear it, then ask the code now.
@@ -56,10 +52,6 @@ export function PrivyEmailBridge({ register }: { register: (auth: EmailAuth | nu
         await promptMfa();
       },
       createWallet: async () => {
-        if (enrolledAt.current !== null) {
-          const wait = WALLET_AFTER_ENROLL_MS - (performance.now() - enrolledAt.current);
-          if (wait > 0) await sleep(wait);
-        }
         const w = await createWallet();
         return w.address;
       },

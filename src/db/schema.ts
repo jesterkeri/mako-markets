@@ -667,6 +667,14 @@ export const privyProofNonces = pgTable(
   (t) => ({ expiresIdx: index('privy_proof_nonces_expires_idx').on(t.expiresAt) }),
 );
 
+/// Enrollment checkpoints (migration 0014, owner decision 2026-10-07): the server saw this Privy user with only an
+/// authenticator and no embedded wallet on any chain. Required at a first admission; written once, never changed.
+export const privyEnrollmentCheckpoints = pgTable('privy_enrollment_checkpoints', {
+  privyUserId: text('privy_user_id').primaryKey(),
+  totpVerifiedAt: bigint('totp_verified_at', { mode: 'number' }).notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const authChallenges = pgTable(
   'auth_challenges',
   {

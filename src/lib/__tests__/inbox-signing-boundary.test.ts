@@ -73,3 +73,30 @@ describe('the embedded wallet signs and exports only from the listed modules (it
     ]);
   });
 });
+
+describe('the wallet is created only after the server recorded the enrollment checkpoint (migration 0014)', () => {
+  const dialog = code(readFileSync(join(SRC, 'components/signin/SignInDialog.tsx'), 'utf8'));
+  /// The body of one handler, from its declaration to the next `const ... = async` handler.
+  const handler = (name: string) => {
+    const start = dialog.indexOf(`const ${name} = async`);
+    expect(start, name).toBeGreaterThan(-1);
+    const next = dialog.indexOf('= async', start + name.length + 20);
+    return dialog.slice(start, next === -1 ? undefined : next);
+  };
+  it('every createWallet call in the dialog comes after confirmWalletFree in the same handler', () => {
+    for (const name of ['finishEnroll', 'setupWallet']) {
+      const body = handler(name);
+      const cp = body.indexOf('confirmWalletFree(');
+      const create = body.indexOf('gate.createWallet(');
+      expect(cp, `${name} calls confirmWalletFree`).toBeGreaterThan(-1);
+      expect(create, `${name} creates the wallet`).toBeGreaterThan(cp);
+    }
+    // And no other place in the app creates an embedded wallet.
+    expect(filesMatching(/\.createWallet\s*\(|\bcreateWallet\s*\(\s*\)/)).toEqual([
+      'src/app/dev/privy-matrix/Harness.tsx', // dev pages only (devPagesAllowed; privy-matrix-gate.test.ts)
+      'src/components/signin/PrivyEmailBridge.tsx', // the bridge's createWallet, called only by the dialog's two handlers
+      'src/components/signin/SignInDialog.tsx', // finishEnroll and setupWallet, each after confirmWalletFree
+      'src/lib/privy-gated-signin.ts', // the GateBridge interface's declaration, not a call
+    ]);
+  });
+});

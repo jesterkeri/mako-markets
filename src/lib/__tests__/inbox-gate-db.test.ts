@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { DbOrTx } from '@/db/client';
 import * as schema from '@/db/schema';
+import { readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatchIn } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce, issueProofNonce } from '@/lib/privy-proof';
 import { buildProofMessage, parseProofMessage, PROOF_TTL_MS } from '@/lib/privy-proof-message';
@@ -51,6 +52,21 @@ describe('migration 0013', () => {
     await expect(pg.query(`INSERT INTO privy_proof_nonces (nonce, privy_user_id, wallet, expires_at) VALUES ('short','u','0x${'a'.repeat(40)}', now())`)).rejects.toThrow();
     await expect(pg.query(`INSERT INTO privy_proof_nonces (nonce, privy_user_id, wallet, expires_at) VALUES ($1,'u','0xABC', now())`, [NONCE])).rejects.toThrow();
     await expect(pg.query(`INSERT INTO users (email, magic_eoa, auth_type, privy_email_observed) VALUES ('x@y.z', '0x${'1'.repeat(40)}', 'magic', $1)`, ['a'.repeat(321)])).rejects.toThrow();
+  });
+});
+
+describe('migration 0014: the enrollment checkpoint', () => {
+  it('is written once per Privy user: the first row wins and a later call cannot move it', async () => {
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1')).toBeNull();
+    await recordCheckpoint(asDb(pdb), 'did:privy:cp1', { totpVerifiedAt: 1_791_367_000 });
+    await recordCheckpoint(asDb(pdb), 'did:privy:cp1', { totpVerifiedAt: 1_791_369_999 });
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1')).toEqual({ totpVerifiedAt: 1_791_367_000 });
+    // Bound to its own Privy user: another user has none.
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp2')).toBeNull();
+  });
+  it('rejects a non-positive authenticator time and an empty Privy user id', async () => {
+    await expect(pg.query(`INSERT INTO privy_enrollment_checkpoints (privy_user_id, totp_verified_at) VALUES ('did:privy:x', 0)`)).rejects.toThrow();
+    await expect(pg.query(`INSERT INTO privy_enrollment_checkpoints (privy_user_id, totp_verified_at) VALUES ('', 5)`)).rejects.toThrow();
   });
 });
 

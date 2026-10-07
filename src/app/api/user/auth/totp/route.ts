@@ -29,7 +29,7 @@ import {
 } from '@/lib/user-session';
 import { normalizeEmail } from '@/lib/email';
 import type { GateAdmission, GateVerdict } from '@/lib/privy-gate';
-import { writeAdmission } from '@/lib/privy-admission';
+import { readCheckpoint, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkIdentity, judgeAccount, readPrivyAccountById } from '@/lib/privy-server';
 import { applyEmbeddedMove } from '@/lib/user-upsert';
@@ -252,7 +252,9 @@ export async function POST(req: Request) {
       await recordPrivyMismatch(user.id, read.email);
       return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
     }
-    const v = judgeAccount(read, admission);
+    // A first admission needs the enrollment checkpoint (migration 0014). Written once and never changed, so reading it
+    // here, before the transaction, cannot go stale.
+    const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId));
     if (!v.ok) {
       const flow = v.status === 'mfa_enrollment_required' || v.status === 'wallet_required';
       return Response.json({ ok: false, status: v.status }, { status: flow ? 200 : 403 });

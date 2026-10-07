@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TotpRequiredState } from '@/components/signup/TotpStep';
-import { continueGatedSignIn, GATE_MESSAGES, type GateBridge } from '../privy-gated-signin';
+import { confirmWalletFree, continueGatedSignIn, GATE_MESSAGES, type GateBridge } from '../privy-gated-signin';
 import { submitTotp } from '../session-exchange';
 
 const USER = {
@@ -125,6 +125,28 @@ describe('the gated sign-in (INBOX_GAP_PLAN r18)', () => {
       expect(m).not.toMatch(/\u2014/);
       expect(m).not.toMatch(/\b(we|our|us)\b/i);
     }
+  });
+});
+
+describe('confirmWalletFree: the checkpoint before a wallet is created (migration 0014)', () => {
+  it('only the server\'s wallet_required lets the wallet be created', async () => {
+    routes([200, { ok: false, status: 'wallet_required' }]);
+    expect(await confirmWalletFree(bridge())).toEqual({ ok: true });
+  });
+  it('any other answer means do not create one: a lock, an enrollment, or a wallet that already exists', async () => {
+    for (const body of [{ ok: false, status: 'account_locked' }, { ok: false, status: 'mfa_enrollment_required' }, { ok: true, status: 'proof_required', nonce: NONCE }]) {
+      routes([body.status === 'account_locked' ? 403 : 200, body]);
+      expect(await confirmWalletFree(bridge())).toEqual({ ok: false, retry: false });
+      vi.restoreAllMocks();
+    }
+  });
+  it('a failed checkpoint write (503), a network error or no token is a retry, never a go-ahead', async () => {
+    routes([503, { error: 'unavailable' }]);
+    expect(await confirmWalletFree(bridge())).toEqual({ ok: false, retry: true });
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
+    expect(await confirmWalletFree(bridge())).toEqual({ ok: false, retry: true });
+    expect(await confirmWalletFree(bridge({ token: async () => null }))).toEqual({ ok: false, retry: true });
   });
 });
 

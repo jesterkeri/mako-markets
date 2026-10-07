@@ -4,9 +4,10 @@
 // The browser side of the inbox-takeover gate (mako-design INBOX_GAP_PLAN r18). After Privy's email code, the dialog
 // asks the server where this user stands and walks the same order the server enforces:
 //   1. no authenticator  -> enroll one (Mako's own screen, Privy's headless calls; never Privy's screen with Remove);
-//   2. no wallet         -> create it, only after the authenticator: right after enrollment (and at least 1.1 s
-//                           after it, so its link time is a later second, [G3]), or behind a fresh code if the user
-//                           came back after an interruption ([H2]);
+//   2. no wallet         -> create it, only after the authenticator AND only after the server answered
+//                           `wallet_required`, which is when it records the enrollment checkpoint (migration 0014):
+//                           right after enrollment, or behind a fresh code if the user came back after an
+//                           interruption ([H2]). A wallet created before that answer would fail the first admission;
 //   3. a sign-in proof   -> the embedded wallet signs a message THIS code builds (site, server nonce, time); Privy asks
 //                           the authenticator first, so the signature shows the factor was passed now ([B2]);
 //   4. the session       -> POST /api/user/auth with the proof.
@@ -34,10 +35,6 @@ export interface GateBridge {
   /// personal_sign by that wallet over `message`, after clearing any earlier verification (Privy asks the code).
   signProof(message: string, address: string): Promise<string>;
 }
-
-/// [G3] The wallet's link time must be a later whole second than the authenticator's: wait this long, on the
-/// monotonic clock, after enrollment resolves before creating the wallet.
-export const WALLET_AFTER_ENROLL_MS = 1100;
 
 export type GateStep =
   | { kind: 'enroll' }
@@ -95,4 +92,16 @@ export async function continueGatedSignIn(bridge: GateBridge, site: string): Pro
   const auth = await postJson('/api/user/auth', { privyAccessToken: token, proof: { message, signature } });
   if (!auth) return { kind: 'session', result: { kind: 'retry', message: 'Network error. Your code is still good; try again.' } };
   return { kind: 'session', result: mapSessionResponse(auth.status, auth.json) };
+}
+
+/// The enrollment checkpoint, asked for right before a wallet is created (migration 0014). Only the server's
+/// `wallet_required` answer means it recorded the checkpoint (an authenticator, no wallet on any chain); only then may
+/// the wallet be created. Any other answer means do not create one: `retry` for a network or server failure, otherwise
+/// the caller runs the gate again to show where the user stands.
+export async function confirmWalletFree(bridge: GateBridge): Promise<{ ok: true } | { ok: false; retry: boolean }> {
+  const token = await bridge.token();
+  if (!token) return { ok: false, retry: true };
+  const step = await postJson('/api/user/auth/proof', { privyAccessToken: token });
+  if (!step || step.status >= 500) return { ok: false, retry: true };
+  return step.json?.status === 'wallet_required' ? { ok: true } : { ok: false, retry: false };
 }
