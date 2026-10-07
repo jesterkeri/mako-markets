@@ -296,6 +296,21 @@ describe('the enrollment checkpoint (migration 0014; owner decision 2026-10-07)'
     expect(mocks.cookieSet).toHaveBeenCalledWith('mako_enroll_cp', expect.stringMatching(/^[A-Za-z0-9_-]{43}$/), expect.objectContaining({ httpOnly: true, path: '/api/user/auth' }));
   });
 
+  it('records the checkpoint inside a transaction that first takes the Start over lock (adversary on e0d63e9)', async () => {
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
+    const order: string[] = [];
+    let lockTx: unknown = null;
+    mocks.lock.mockImplementation(async (tx: unknown, id: string) => {
+      lockTx = tx;
+      order.push(`lock:${id}`);
+    });
+    mocks.recordCheckpoint.mockImplementation(async (tx: unknown) => {
+      order.push(tx === lockTx ? 'record:same-tx' : 'record:other');
+    });
+    expect((await proofStep()).json).toEqual({ ok: false, status: 'wallet_required' });
+    expect(order).toEqual(['lock:did:privy:owner', 'record:same-tx']);
+  });
+
   it('fails closed: a checkpoint that cannot be written is a 503, never wallet_required (so no wallet gets created)', async () => {
     mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
     mocks.recordCheckpoint.mockRejectedValue(new Error('db down'));

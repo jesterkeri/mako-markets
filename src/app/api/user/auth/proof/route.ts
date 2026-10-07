@@ -29,7 +29,7 @@ import {
   hashCheckpointToken,
   newCheckpointToken,
 } from '@/lib/enrollment-checkpoint';
-import { detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, readAdmission, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
+import { detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, lockPrivyUser, readAdmission, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { issueProofNonce } from '@/lib/privy-proof';
 import { checkpointFrom } from '@/lib/privy-gate';
@@ -72,7 +72,13 @@ export async function POST(req: Request) {
   if (checkpointNow) {
     const token = newCheckpointToken();
     try {
-      await recordCheckpoint(db, read.privyUserId, checkpointNow, hashCheckpointToken(token), new Date(nowMs + ENROLL_CHECKPOINT_TTL_SEC * 1000));
+      // Under the Start over lock (lockPrivyUser; adversary on e0d63e9): a checkpoint is never committed between Start
+      // over's "no live checkpoint" re-check and its Privy delete. One recorded after that delete is for an identity
+      // that no longer exists, so nothing can use it (every later step reads Privy again).
+      await db.transaction(async (tx) => {
+        await lockPrivyUser(tx, read.privyUserId);
+        await recordCheckpoint(tx, read.privyUserId, checkpointNow, hashCheckpointToken(token), new Date(nowMs + ENROLL_CHECKPOINT_TTL_SEC * 1000));
+      });
       const store = await cookies();
       store.set(ENROLL_CHECKPOINT_COOKIE, token, {
         httpOnly: true,
