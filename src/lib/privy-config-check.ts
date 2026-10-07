@@ -15,10 +15,11 @@
 import { z } from 'zod';
 
 /// [A3] [D1]: the embedded wallet mode the development app runs and the live matrix (mako-design INBOX_LIVE_RUNBOOK.md
-/// L1 to L9) is proven on. It decides where Privy enforces MFA and whether wallets share entropy. `null` until that
-/// matrix has run: every check then fails with the mode the app actually reports, and pinning it here is a reviewed
-/// change made from that evidence. Both apps must match it exactly.
-export const EXPECTED_WALLET_MODE: string | null = null;
+/// L1 to L9) is proven on. It decides where Privy enforces MFA and whether wallets share entropy. Pinned 2026-10-07
+/// from the evidence: the live test passed (L1-L4, L6, L8, L9) on the development app cmumupole01p20bl20bvn4ikf, whose
+/// config check that day recorded mode "user-controlled-server-wallets-only". Both apps must match it exactly; changing
+/// it is a reviewed change that needs the live test run again on the new mode.
+export const EXPECTED_WALLET_MODE: string | null = 'user-controlled-server-wallets-only';
 
 /// Every login method besides email that the settings carry as a boolean ([C7]: email is the only way in).
 export const OTHER_LOGIN_METHODS = [
