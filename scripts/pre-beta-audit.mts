@@ -23,16 +23,16 @@ import { config as loadEnv } from 'dotenv';
 import postgres from 'postgres';
 import { createPublicClient, erc20Abi, getAddress, http, parseAbi, type Address } from 'viem';
 
-import { monadTestnet } from '../src/lib/chain.js';
-import { deriveSafeAddress } from '../src/lib/safe.js';
-import {
-  judgeFundedAccount,
-  judgeSafeAuthority,
-  planEmailAccountAudit,
-  SAFE_FALLBACK_SLOT,
-  SAFE_GUARD_SLOT,
-  type EmailAccountRow,
-} from '../src/lib/safe-authority-audit.js';
+// src/lib is CommonJS under tsx, and an ES module's NAMED imports from it are guessed by Node's export detector, which
+// misses some (the first production run, 2026-10-07: "does not provide an export named 'SAFE_FALLBACK_SLOT'"). The
+// whole module object always arrives, so take the names from it.
+import chainLib from '../src/lib/chain.js';
+import safeLib from '../src/lib/safe.js';
+import auditLib, { type EmailAccountRow } from '../src/lib/safe-authority-audit.js';
+
+const { monadTestnet } = chainLib;
+const { deriveSafeAddress } = safeLib;
+const { judgeFundedAccount, judgeSafeAuthority, planEmailAccountAudit, SAFE_FALLBACK_SLOT, SAFE_GUARD_SLOT } = auditLib;
 
 loadEnv({ path: '.env.development.local' });
 loadEnv({ path: '.env.local' });
