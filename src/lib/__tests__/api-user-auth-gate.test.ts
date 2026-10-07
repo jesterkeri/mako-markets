@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   readCheckpoint: vi.fn(),
   lock: vi.fn(),
   clear: vi.fn(),
+  fence: vi.fn(),
+  markDeleted: vi.fn(),
+  txEnd: vi.fn(),
   recordCheckpoint: vi.fn(),
   bound: vi.fn(),
   live: vi.fn(),
@@ -58,6 +61,8 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   readAdmission: mocks.readAdmission,
   lockPrivyUser: mocks.lock,
   clearCheckpoints: mocks.clear,
+  fenceStartOver: mocks.fence,
+  markStartOverDeleted: mocks.markDeleted,
   readCheckpoint: mocks.readCheckpoint,
   recordCheckpoint: mocks.recordCheckpoint,
   isBoundToAccount: mocks.bound,
@@ -87,7 +92,15 @@ vi.mock('@/lib/safe', () => ({ deriveSafeAddress: (e: string) => `safe-of-${e}` 
 vi.mock('next/headers', () => ({ cookies: async () => ({ set: mocks.cookieSet }) }));
 vi.mock('@/db/client', () => {
   const tx = { insert: () => ({ values: () => ({ onConflictDoNothing: async () => [] }) }) };
-  return { db: { transaction: async (cb: (t: unknown) => unknown) => cb(tx) } };
+  return {
+    db: {
+      transaction: async (cb: (t: unknown) => unknown) => {
+        const r = await cb(tx);
+        mocks.txEnd(); // the transaction committed
+        return r;
+      },
+    },
+  };
 });
 
 /// A Privy user as the API returns it. `linkedAt` is the wallet's link time; no wallet when null.
@@ -140,6 +153,8 @@ beforeEach(() => {
   mocks.recordCheckpoint.mockResolvedValue(undefined);
   mocks.lock.mockImplementation(async () => Date.now());
   mocks.clear.mockResolvedValue(undefined);
+  mocks.fence.mockResolvedValue(undefined);
+  mocks.markDeleted.mockResolvedValue(undefined);
   // Start over: by default the account is bound (never eligible), so the existing exact answers hold.
   mocks.bound.mockResolvedValue(true);
   mocks.live.mockResolvedValue(false);
@@ -486,6 +501,7 @@ describe('Start over: an unfinished sign-up that is locked (Codex SIGNIN_R1 A1; 
     expect(await startOverCall()).toEqual({ status: 409, json: { ok: false, status: 'admitted' } });
     expect(mocks.deleteUser).not.toHaveBeenCalled();
     expect(mocks.clear).not.toHaveBeenCalled();
+    expect(mocks.fence).not.toHaveBeenCalled();
   });
 
   it('a browser that can still finish (a live checkpoint anywhere) is sent there; nothing deleted', async () => {
@@ -598,6 +614,10 @@ describe('Start over and a first admission take turns on the Privy user (adversa
     mocks.clear.mockImplementation(async (_tx: unknown, id: string) => {
       order.push(`clear:${id}`);
     });
+    mocks.fence.mockImplementation(async (_tx: unknown, id: string) => {
+      order.push(`fence:${id}`);
+    });
+    mocks.txEnd.mockImplementation(() => order.push('commit'));
     mocks.deleteUser.mockImplementation(async () => {
       order.push('delete');
     });
@@ -605,8 +625,10 @@ describe('Start over and a first admission take turns on the Privy user (adversa
     const { POST } = await import('../../app/api/user/auth/start-over/route');
     const res = await POST(req('/api/user/auth/start-over', { privyAccessToken: 'tok' }));
     expect(res.status).toBe(200);
-    // Its checkpoints are cleared under the lock before the Privy delete (adversary on 151cad5).
-    expect(order).toEqual(['lock:did:privy:owner', 'bound', 'live', 'clear:did:privy:owner', 'delete']);
+    // Its checkpoints are cleared and the fence written under the lock (adversary on 151cad5), and that transaction
+    // COMMITS before the Privy delete is sent (Codex SIGNIN_R2 B1).
+    expect(order).toEqual(['lock:did:privy:owner', 'bound', 'live', 'clear:did:privy:owner', 'fence:did:privy:owner', 'commit', 'delete']);
+    expect(mocks.markDeleted).toHaveBeenCalledWith('did:privy:owner');
     expect(liveAt).toBe(before + 60_000); // the database's time from the lock, not this instance's
   });
 

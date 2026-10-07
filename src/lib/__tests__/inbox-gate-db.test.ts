@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { DbOrTx } from '@/db/client';
 import * as schema from '@/db/schema';
-import { clearCheckpoints, hasLiveCheckpoint, isBoundToAccount, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
+import { clearCheckpoints, fenceStartOver, hasLiveCheckpoint, isBoundToAccount, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatchIn } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce, issueProofNonce } from '@/lib/privy-proof';
 import { buildProofMessage, parseProofMessage, PROOF_TTL_MS } from '@/lib/privy-proof-message';
@@ -94,6 +94,23 @@ describe('migration 0014: the enrollment checkpoint, bound to the browser', () =
     expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:cp1', NOW)).toBe(false);
     expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H1, NOW)).toBeNull();
     expect(await readCheckpoint(asDb(pdb), 'did:privy:cp-other', other, NOW)).toEqual({ totpVerifiedAt: 1_791_367_000 });
+  });
+  it('a Start over fence makes every checkpoint of its Privy user, even a fresh one, count for nothing (Codex SIGNIN_R2 B1)', async () => {
+    const fresh = 'f'.repeat(64);
+    const others = 'a1'.repeat(32);
+    await recordCheckpoint(asDb(pdb), 'did:privy:fenced', { totpVerifiedAt: 1_791_367_000 }, fresh, LATER);
+    await recordCheckpoint(asDb(pdb), 'did:privy:unfenced', { totpVerifiedAt: 1_791_367_000 }, others, LATER);
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:fenced', fresh, NOW)).not.toBeNull();
+    await fenceStartOver(asDb(pdb), 'did:privy:fenced');
+    await fenceStartOver(asDb(pdb), 'did:privy:fenced'); // idempotent
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:fenced', fresh, NOW)).toBeNull();
+    expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:fenced', NOW)).toBe(false);
+    // Another Privy user is untouched.
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:unfenced', others, NOW)).toEqual({ totpVerifiedAt: 1_791_367_000 });
+    expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:unfenced', NOW)).toBe(true);
+    const rows = (await pg.query(`SELECT deleted_at FROM privy_start_over_fences WHERE privy_user_id = 'did:privy:fenced'`)).rows;
+    expect(rows).toEqual([{ deleted_at: null }]);
+    await expect(pg.query(`INSERT INTO privy_start_over_fences (privy_user_id) VALUES ('')`)).rejects.toThrow();
   });
   it('rejects a malformed hash, an empty Privy user id and a non-positive authenticator time', async () => {
     const exp = new Date(NOW).toISOString();

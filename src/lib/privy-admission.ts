@@ -6,10 +6,10 @@ import 'server-only';
 // read and written in one place so the sign-in routes stay readable and their tests can replace it.
 // ----------------------------------------------------------------------------
 
-import { and, eq, gt, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, isNull, ne, notExists, sql } from 'drizzle-orm';
 
 import { db, type DbOrTx } from '@/db/client';
-import { privyEnrollmentCheckpoints, users } from '@/db/schema';
+import { privyEnrollmentCheckpoints, privyStartOverFences, users } from '@/db/schema';
 import { databaseNowMs } from '@/lib/db-clock';
 import type { EnrollmentCheckpoint, GateAdmission } from '@/lib/privy-gate';
 
@@ -41,6 +41,11 @@ export async function lockPrivyUser(tx: DbOrTx, privyUserId: string): Promise<nu
   return databaseNowMs(tx);
 }
 
+/// No Start over fence for this Privy user (migration 0015): a fenced user's checkpoints never count again.
+function notFenced(tx: DbOrTx, privyUserId: string) {
+  return notExists(tx.select({ one: sql`1` }).from(privyStartOverFences).where(eq(privyStartOverFences.privyUserId, privyUserId)));
+}
+
 /// The enrollment checkpoint this browser holds for this Privy user: the row whose hash matches the browser's cookie
 /// secret, recorded for this Privy user, unexpired. Null without a secret. Read with the transaction that admits.
 export async function readCheckpoint(tx: DbOrTx, privyUserId: string, tokenHash: string | null, nowMs: number): Promise<EnrollmentCheckpoint | null> {
@@ -53,6 +58,7 @@ export async function readCheckpoint(tx: DbOrTx, privyUserId: string, tokenHash:
         eq(privyEnrollmentCheckpoints.tokenHash, tokenHash),
         eq(privyEnrollmentCheckpoints.privyUserId, privyUserId),
         gt(privyEnrollmentCheckpoints.expiresAt, new Date(nowMs)),
+        notFenced(tx, privyUserId),
       ),
     )
     .limit(1);
@@ -65,7 +71,13 @@ export async function hasLiveCheckpoint(tx: DbOrTx, privyUserId: string, nowMs: 
   const rows = await tx
     .select({ tokenHash: privyEnrollmentCheckpoints.tokenHash })
     .from(privyEnrollmentCheckpoints)
-    .where(and(eq(privyEnrollmentCheckpoints.privyUserId, privyUserId), gt(privyEnrollmentCheckpoints.expiresAt, new Date(nowMs))))
+    .where(
+      and(
+        eq(privyEnrollmentCheckpoints.privyUserId, privyUserId),
+        gt(privyEnrollmentCheckpoints.expiresAt, new Date(nowMs)),
+        notFenced(tx, privyUserId),
+      ),
+    )
     .limit(1);
   return rows.length > 0;
 }
@@ -75,6 +87,21 @@ export async function hasLiveCheckpoint(tx: DbOrTx, privyUserId: string, nowMs: 
 /// 151cad5). Only expired rows can exist then: Start over refuses while one is live.
 export async function clearCheckpoints(tx: DbOrTx, privyUserId: string): Promise<void> {
   await tx.delete(privyEnrollmentCheckpoints).where(eq(privyEnrollmentCheckpoints.privyUserId, privyUserId));
+}
+
+/// Fences this Privy user for Start over (migration 0015, Codex SIGNIN_R2 B1). Called under lockPrivyUser once Start over
+/// found it eligible, and COMMITTED before the Privy delete is sent: from then on no checkpoint of this user counts, so no
+/// first admission can bind it, even if the function or the transaction ends while Privy is still deleting. Idempotent.
+export async function fenceStartOver(tx: DbOrTx, privyUserId: string): Promise<void> {
+  await tx.insert(privyStartOverFences).values({ privyUserId }).onConflictDoNothing({ target: privyStartOverFences.privyUserId });
+}
+
+/// Records that Privy confirmed this fenced user deleted (an audit fact; the fence works without it).
+export async function markStartOverDeleted(privyUserId: string): Promise<void> {
+  await db
+    .update(privyStartOverFences)
+    .set({ deletedAt: sql`clock_timestamp()` })
+    .where(and(eq(privyStartOverFences.privyUserId, privyUserId), isNull(privyStartOverFences.deletedAt)));
 }
 
 /// Whether a Mako account is bound to this Privy user (it completed a first sign-in, or is bound by a move). Such an

@@ -4,8 +4,9 @@
 //
 // Self-service Start over for an email account that never completed its first sign-in and is locked
 // (src/lib/start-over.ts holds the rule and why it is safe). Every condition is re-checked here from the server's own
-// reads of Privy and the database; any failed read deletes nothing. On success the unfinished Privy user is deleted
-// and the browser signs up again from the email step.
+// reads of Privy and the database; any failed read deletes nothing. An eligible user is first FENCED (a committed row
+// that stops any first admission binding it), then deleted at Privy outside any transaction. On success the browser
+// signs up again from the email step.
 // ----------------------------------------------------------------------------
 
 import { cookies } from 'next/headers';
@@ -13,22 +14,21 @@ import { cookies } from 'next/headers';
 import { db } from '@/db/client';
 import { checkSameOrigin } from '@/lib/csrf';
 import { checkpointHashFrom, ENROLL_CHECKPOINT_COOKIE } from '@/lib/enrollment-checkpoint';
-import { clearCheckpoints, detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, lockPrivyUser, readAdmission, readCheckpoint } from '@/lib/privy-admission';
+import {
+  clearCheckpoints,
+  detectEmailMismatch,
+  fenceStartOver,
+  hasLiveCheckpoint,
+  isBoundToAccount,
+  lockPrivyUser,
+  markStartOverDeleted,
+  readAdmission,
+  readCheckpoint,
+} from '@/lib/privy-admission';
 import { deletePrivyUser, judgeAccount, PrivyConfigError, privyUserExists, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 import { startOverDecision } from '@/lib/start-over';
 
 export const runtime = 'nodejs';
-
-/// A read or the Privy delete failed inside the locked re-check: nothing was deleted, or Privy's own answer is unknown.
-class StartOverUnavailable extends Error {
-  constructor(
-    readonly step: 'read' | 'delete',
-    readonly inner: unknown,
-  ) {
-    super(`start_over_${step}`);
-    this.name = 'StartOverUnavailable';
-  }
-}
 
 export async function POST(req: Request) {
   if (!checkSameOrigin(req).ok) return Response.json({ error: 'cross_origin' }, { status: 403 });
@@ -66,60 +66,55 @@ export async function POST(req: Request) {
     return Response.json({ error: 'unavailable' }, { status: 503 });
   }
 
-  type Result = { kind: 'ineligible'; reason: string } | { kind: 'deleted' };
+  // Step 1, a short transaction under the lock first admissions take (lockPrivyUser), judged on the database's clock
+  // after the wait: re-check eligibility, clear this user's checkpoints, and write the Start over FENCE (migration 0015).
+  // It commits BEFORE Privy is asked to delete (Codex SIGNIN_R2 B1): a lock dies with its transaction, so it cannot
+  // guard a remote delete that may outlive this function; the fence does, since no checkpoint of a fenced user counts.
+  type Result = { kind: 'ineligible'; reason: string } | { kind: 'fenced' };
   let result: Result;
-  // Set once Privy has deleted the user: from then on the answer is success, even if the commit below fails (adversary on
-  // 151cad5), since the identity is gone either way and this transaction's only write is clearing expired checkpoints.
-  let privyDeleted = false;
   try {
     result = await db.transaction(async (tx): Promise<Result> => {
       const nowMs = await lockPrivyUser(tx, read.privyUserId);
-      let decision: ReturnType<typeof startOverDecision>;
-      try {
-        const checkpoint = admission ? null : await readCheckpoint(tx, read.privyUserId, checkpointHashFrom(req), nowMs);
-        const verdict = judgeAccount(read, admission, checkpoint);
-        decision = startOverDecision({
-          verdictStatus: verdict.ok ? 'ok' : verdict.status,
-          boundToAccount: await isBoundToAccount(tx, read.privyUserId),
-          emailMoved: moved !== null,
-          liveCheckpoint: await hasLiveCheckpoint(tx, read.privyUserId, nowMs),
-        });
-      } catch (err) {
-        throw new StartOverUnavailable('read', err);
-      }
+      const checkpoint = admission ? null : await readCheckpoint(tx, read.privyUserId, checkpointHashFrom(req), nowMs);
+      const verdict = judgeAccount(read, admission, checkpoint);
+      const decision = startOverDecision({
+        verdictStatus: verdict.ok ? 'ok' : verdict.status,
+        boundToAccount: await isBoundToAccount(tx, read.privyUserId),
+        emailMoved: moved !== null,
+        liveCheckpoint: await hasLiveCheckpoint(tx, read.privyUserId, nowMs),
+      });
       if (!decision.eligible) return { kind: 'ineligible', reason: decision.reason };
-      try {
-        // Its (expired) checkpoints go first, in this transaction: nothing is left for a waiting sign-in to admit with.
-        await clearCheckpoints(tx, read.privyUserId);
-      } catch (err) {
-        throw new StartOverUnavailable('read', err);
-      }
-      try {
-        await deletePrivyUser(read.privyUserId);
-      } catch (err) {
-        // The delete may still have happened at Privy (a timeout after the fact, or a second Start over finding the
-        // user already gone): only Privy's own "not found" counts as deleted; anything else, or no answer, is a 503.
-        const gone = await privyUserExists(read.privyUserId).then(
-          (exists) => !exists,
-          () => false,
-        );
-        if (!gone) throw new StartOverUnavailable('delete', err);
-      }
-      privyDeleted = true;
-      return { kind: 'deleted' };
+      await clearCheckpoints(tx, read.privyUserId);
+      await fenceStartOver(tx, read.privyUserId);
+      return { kind: 'fenced' };
     });
   } catch (err) {
-    if (!privyDeleted) {
-      const step = err instanceof StartOverUnavailable ? err.step : 'lock';
-      const cause = err instanceof StartOverUnavailable ? err.inner : err;
-      console.error(`[user/auth/start-over] ${step} failed`, cause instanceof Error ? cause.name : 'unknown');
-      return Response.json({ error: 'unavailable' }, { status: 503 });
-    }
-    // The Privy user is deleted and only the commit failed: the sign-up is cleared all the same.
-    console.error('[user/auth/start-over] commit failed after the Privy delete', err instanceof Error ? err.name : 'unknown');
-    result = { kind: 'deleted' };
+    // Rolled back: nothing cleared, nothing fenced, nothing deleted.
+    console.error('[user/auth/start-over] fence failed', err instanceof Error ? err.name : 'unknown');
+    return Response.json({ error: 'unavailable' }, { status: 503 });
   }
   if (result.kind === 'ineligible') return Response.json({ ok: false, status: result.reason }, { status: 409 });
+
+  // Step 2, outside any transaction: the delete. The fence stays whatever happens; a failed or unknown delete answers
+  // 503 and the next Start over (still eligible: fenced users stay locked) finishes it.
+  try {
+    await deletePrivyUser(read.privyUserId);
+  } catch (err) {
+    // The delete may still have happened at Privy (a timeout after the fact, or a second Start over finding the user
+    // already gone): only Privy's own "not found" counts as deleted; anything else, or no answer, is a 503.
+    const gone = await privyUserExists(read.privyUserId).then(
+      (exists) => !exists,
+      () => false,
+    );
+    if (!gone) {
+      console.error('[user/auth/start-over] delete failed; fence kept', err instanceof Error ? err.name : 'unknown');
+      return Response.json({ error: 'unavailable' }, { status: 503 });
+    }
+  }
+  // Audit only: the fence protects without it, so a failure here does not change the answer.
+  await markStartOverDeleted(read.privyUserId).catch((err: unknown) => {
+    console.error('[user/auth/start-over] could not record the confirmed delete', err instanceof Error ? err.name : 'unknown');
+  });
 
   // An audit line: which unfinished Privy identity was cleared (an id, no email).
   console.info('[user/auth/start-over] deleted unfinished Privy user', read.privyUserId);

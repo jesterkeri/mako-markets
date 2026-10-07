@@ -682,6 +682,14 @@ export const privyEnrollmentCheckpoints = pgTable(
   (t) => ({ userIdx: index('privy_enrollment_checkpoints_user_idx').on(t.privyUserId) }),
 );
 
+/// Start over fence (migration 0015, Codex SIGNIN_R2 B1): a Privy user Start over committed to delete. Written before the
+/// Privy delete is sent; while it exists no checkpoint of that user counts, so no first admission can bind it.
+export const privyStartOverFences = pgTable('privy_start_over_fences', {
+  privyUserId: text('privy_user_id').primaryKey(),
+  fencedAt: timestamp('fenced_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+});
+
 export const authChallenges = pgTable(
   'auth_challenges',
   {

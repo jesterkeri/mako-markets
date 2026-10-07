@@ -17,7 +17,9 @@
 //   3. no email-moved conflict (C4 keeps its own handling);
 //   4. no browser holds an unexpired checkpoint for this Privy user (it could still finish there).
 // Rules 2 and 4 alone do not stop a first admission already in flight (adversary on 5c8d81c): the route re-checks them
-// under lockPrivyUser, the lock that first admission holds until it commits, with the clock read after the wait.
+// under lockPrivyUser, the lock that first admission holds until it commits, on the database's clock after the wait,
+// then commits a Start over FENCE before the Privy delete (Codex SIGNIN_R2 B1), since the lock ends with its
+// transaction and a remote delete may outlive it.
 // ----------------------------------------------------------------------------
 
 export interface StartOverFacts {
