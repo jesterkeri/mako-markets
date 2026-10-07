@@ -137,6 +137,11 @@ describe('the release command, exactly as RELEASE_RUNBOOK.md step 7 documents it
       expect((await runPrivyConfigCheck(['production'], env, reads(`${EXPECTED_WALLET_MODE}-other`), EXPECTED_WALLET_MODE)).exitCode).toBe(1);
     }
   });
+  it('a key or provider name with a newline cannot forge a PASS line in the ledger', async () => {
+    const r = await runPrivyConfigCheck(['production'], env, async () => good({ 'x\nPASS\nfake_auth': true, custom_oauth_providers: [{ enabled: true, provider: 'p\nPASS' }] }), MODE);
+    expect(r.exitCode).toBe(1);
+    expect(r.lines.join('\n').split('\n').filter((l) => l === 'PASS')).toEqual([]);
+  });
   it('needs the app id and secret from the shell', async () => {
     expect((await runPrivyConfigCheck(['development'], {}, reads(MODE), MODE)).exitCode).toBe(2);
   });

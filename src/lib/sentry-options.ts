@@ -59,7 +59,7 @@ const HEX_ADDRESS = /(?<![0-9a-fA-F])0[xX][0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
 /// An absolute URL inside free text (an exception message, a console breadcrumb): its query and fragment are cut.
 /// The query part is optional so a URL with none matches at once: a required `[?#]` after an unbounded run backtracked
 /// over the run at every `http://` start, quadratic (adversary r4 on c81457a).
-const URL_QUERY_IN_TEXT = /(\bhttps?:\/\/[^\s?#"'<>]+)(?:[?#][^\s"'<>]*)?/g;
+const URL_QUERY_IN_TEXT = /(\bhttps?:\/\/[^\s?#"'<>]+)(?:[?#][^\s"'<>]*)?/gi; // schemes are case-insensitive
 /// A query string or fragment inside a longer string, such as a span name `GET /api/names?addresses=...`.
 const QUERY_IN_TEXT = /[?#][^\s"]*/g;
 /// Fields that hold a URL or a name built from one: their query string and fragment are cut. Covers events (request

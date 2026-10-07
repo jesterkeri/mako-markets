@@ -123,11 +123,11 @@ export function checkPrivyAppConfig(raw: unknown, role: AppRole, expectedAppId: 
   // Only a literal `false` proves an unlisted switch off: "true", 1 or an object is on or unknown (adversary on 0f4e0f9).
   for (const [k, v] of Object.entries(s)) {
     if (v !== false && /(_auth|_oauth)$/.test(k) && k !== 'email_auth' && !(OTHER_LOGIN_METHODS as readonly string[]).includes(k)) {
-      f.push(`${k} must be off (is ${JSON.stringify(v)}): email is the only login method [C7]`);
+      f.push(`${JSON.stringify(k)} must be off (is ${JSON.stringify(v)}): email is the only login method [C7]`);
     }
   }
   // Custom OAuth providers are a list, not a flag (adversary on e1e0679): any enabled one is another way in.
-  for (const p of s.custom_oauth_providers) if (p.enabled !== false) f.push(`custom OAuth provider ${p.provider} must be off [C7]`);
+  for (const p of s.custom_oauth_providers) if (p.enabled !== false) f.push(`custom OAuth provider ${JSON.stringify(p.provider)} must be off [C7]`);
   for (const k of OTHER_SIGNUP_FLAGS) if (s[k] !== false) f.push(`${k} must be off: email is the only login method [C7]`);
   const seamless = [s.telegram_seamless_auth_enabled, s.telegram_auth_config?.seamless_auth_enabled].filter((v) => v !== undefined);
   if (seamless.length === 0) f.push('Telegram seamless login is absent from the answer (telegram_seamless_auth_enabled and telegram_auth_config.seamless_auth_enabled): it cannot be proven off [C7]');
