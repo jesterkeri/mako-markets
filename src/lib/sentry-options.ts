@@ -57,7 +57,9 @@ const EMAIL = /[A-Za-z0-9._%+-]{1,64}(?:@|%40)[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,2
 // followed by `_` or a letter.
 const HEX_ADDRESS = /(?<![0-9a-fA-F])0[xX][0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
 /// An absolute URL inside free text (an exception message, a console breadcrumb): its query and fragment are cut.
-const URL_QUERY_IN_TEXT = /(\bhttps?:\/\/[^\s?#"'<>]+)[?#][^\s"'<>]*/g;
+/// The query part is optional so a URL with none matches at once: a required `[?#]` after an unbounded run backtracked
+/// over the run at every `http://` start, quadratic (adversary r4 on c81457a).
+const URL_QUERY_IN_TEXT = /(\bhttps?:\/\/[^\s?#"'<>]+)(?:[?#][^\s"'<>]*)?/g;
 /// A query string or fragment inside a longer string, such as a span name `GET /api/names?addresses=...`.
 const QUERY_IN_TEXT = /[?#][^\s"]*/g;
 /// Fields that hold a URL or a name built from one: their query string and fragment are cut. Covers events (request
@@ -80,14 +82,15 @@ const URL_KEYS = new Set([
   'filename',
   'abs_path',
   'module',
+  // The SDK builds a debug-ID image's code_file from the same frame filename; both must be cut alike or the frame stops
+  // naming its source-map image (adversary r4 on c81457a: `?dpl=` chunk URLs under app:///).
+  'code_file',
+  'debug_file',
 ]);
 /// Fields deleted wherever they appear: a query by itself, the user, and header attributes.
 const DROP_KEY = /^(?:user|user_agent|http\.query|http\.fragment|url\.query|url\.fragment|user\..*|http\.request\.header\..*|http\.response\.header\..*)$/;
-/// Never walked: the SDK's in-process bookkeeping on an event (live Scopes, a client holding a timer), and the envelope
-/// header's `dsn`. Behind the /monitoring tunnel the header DSN is the only thing that tells Sentry which key and
-/// project an envelope is for, and its `<public key>@o<org>.ingest...` form looks like an email: masking it made every
-/// browser report unauthenticatable (adversary r3 on 8b376df). It holds the public key only, which is public by design.
-const INTERNAL_KEYS = new Set(['sdkProcessingMetadata', 'dsn']);
+/// Never walked: the SDK's in-process bookkeeping on an event (live Scopes, a client holding a timer).
+const INTERNAL_KEYS = new Set(['sdkProcessingMetadata']);
 
 /// Masks email addresses and 0x addresses in a string: identities are not Sentry's to keep.
 export function scrub(text: string): string {
@@ -181,7 +184,14 @@ export function scrubEnvelopes(): ScrubIntegration {
     name: 'MakoScrubEnvelopes',
     setup(client) {
       client.on('beforeEnvelope', (envelope) => {
+        // The envelope HEADER's dsn is the one value left whole. Behind the /monitoring tunnel it is the only thing that
+        // tells Sentry which key and project an envelope is for, and its `<public key>@o<org>.ingest...` form looks like
+        // an email: masking it made every browser report unauthenticatable (adversary r3 on 8b376df). It carries the
+        // public key only, public by design. A `dsn` anywhere else is masked like any field (adversary r4).
+        const header = Array.isArray(envelope) ? (envelope[0] as Record<string, unknown> | undefined) : undefined;
+        const dsn = header && typeof header.dsn === 'string' ? header.dsn : undefined;
         scrubDeep(envelope);
+        if (header && dsn !== undefined) header.dsn = dsn;
       });
     },
   };

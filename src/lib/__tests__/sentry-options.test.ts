@@ -36,11 +36,11 @@ describe('scrub', () => {
     scrub(long);
     expect(performance.now() - t0).toBeLessThan(200);
   });
-  it('leaves an envelope header DSN whole and drops a session user agent', () => {
+  it('drops a session user agent; scrubDeep alone masks a dsn-named field (the envelope layer restores the header one)', () => {
     const dsn = 'https://0123456789abcdef0123456789abcdef@o1.ingest.us.sentry.io/2';
     const env = [{ dsn, sent_at: 'x' }, [[{ type: 'session' }, { attrs: { release: 'r', user_agent: 'Mozilla/5.0' } }]]];
     scrubDeep(env);
-    expect(env).toEqual([{ dsn, sent_at: 'x' }, [[{ type: 'session' }, { attrs: { release: 'r' } }]]]);
+    expect(env).toEqual([{ dsn: 'https://[email]/2', sent_at: 'x' }, [[{ type: 'session' }, { attrs: { release: 'r' } }]]]);
   });
   it('drops the query and fragment from a URL', () => {
     expect(scrubUrl('https://makomarket.xyz/markets/84?ref=x#top')).toBe('https://makomarket.xyz/markets/84');
