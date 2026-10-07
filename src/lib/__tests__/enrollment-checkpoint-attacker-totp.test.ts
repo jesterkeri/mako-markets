@@ -120,7 +120,9 @@ const req = (path: string, body: unknown) =>
 async function proofStep(state: ReturnType<typeof privyRead>) {
   mocks.read.mockResolvedValue(state);
   const { POST } = await import('../../app/api/user/auth/proof/route');
-  const res = await POST(req('/api/user/auth/proof', { privyAccessToken: 'tok' }));
+  // (Updated after the adversary pass on fa2db07: a checkpoint is recorded only on the explicit `checkpoint: true` request. The attacker drives their
+  // own client, so every call here sends it: the strongest form of this attack.)
+  const res = await POST(req('/api/user/auth/proof', { privyAccessToken: 'tok', checkpoint: true }));
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
 }
 

@@ -129,9 +129,17 @@ describe('the gated sign-in (INBOX_GAP_PLAN r18)', () => {
 });
 
 describe('confirmWalletFree: the checkpoint before a wallet is created (migration 0014)', () => {
-  it('only the server\'s wallet_required lets the wallet be created', async () => {
+  it('only the server\'s wallet_required lets the wallet be created, and it asks explicitly for the checkpoint', async () => {
     routes([200, { ok: false, status: 'wallet_required' }]);
     expect(await confirmWalletFree(bridge())).toEqual({ ok: true });
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ privyAccessToken: 'tok-1', checkpoint: true });
+  });
+  it('the plain status call (continueGatedSignIn) never asks for a checkpoint', async () => {
+    routes([200, { ok: false, status: 'wallet_required' }]);
+    await continueGatedSignIn(bridge(), 'm');
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ privyAccessToken: 'tok-1' });
   });
   it('any other answer means do not create one: a lock, an enrollment, or a wallet that already exists', async () => {
     for (const body of [{ ok: false, status: 'account_locked' }, { ok: false, status: 'mfa_enrollment_required' }, { ok: true, status: 'proof_required', nonce: NONCE }]) {

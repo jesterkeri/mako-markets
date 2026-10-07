@@ -8,11 +8,14 @@
 // to its Privy user and wallet, which the browser frames into the sign-in message its embedded wallet signs (Privy
 // asks the authenticator first) and sends to POST /api/user/auth. No session, no account data, no Safe address here.
 //
-// The enrollment checkpoint (migration 0014): when this read shows exactly one factor, an authenticator, and no embedded
-// wallet on any chain, the server records that here for THIS browser (a fresh secret in an httpOnly cookie, stored only
-// as its hash) BEFORE answering `wallet_required`, and the browser creates the wallet only after this answer. A first
-// admission requires a checkpoint held by the browser signing in (src/lib/enrollment-checkpoint.ts). If it cannot be
-// recorded the answer is 503, never `wallet_required`, so no wallet is ever created that the checkpoint does not precede.
+// The enrollment checkpoint (migration 0014): ONLY on the dialog's explicit `checkpoint: true` request, which it sends
+// right after THIS browser passed the authenticator (it finished enrolling it, or entered a fresh code to resume), and
+// only when this read shows exactly one factor, an authenticator, and no embedded wallet on any chain, the server
+// records that for THIS browser (a fresh secret in an httpOnly cookie, stored only as its hash) BEFORE answering
+// `wallet_required`; the browser creates the wallet only after this answer. A first admission requires a checkpoint
+// held by the browser signing in (src/lib/enrollment-checkpoint.ts). The plain status call never records one: the
+// owner's browser could otherwise be given a checkpoint while the only authenticator was an inbox attacker's (adversary
+// on fa2db07). If it cannot be recorded the answer is 503, never `wallet_required`.
 // ----------------------------------------------------------------------------
 
 import { cookies } from 'next/headers';
@@ -36,7 +39,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
   if (!checkSameOrigin(req).ok) return Response.json({ error: 'cross_origin' }, { status: 403 });
-  let body: { privyAccessToken?: unknown };
+  let body: { privyAccessToken?: unknown; checkpoint?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -64,7 +67,7 @@ export async function POST(req: Request) {
   }
 
   const nowMs = Date.now();
-  const checkpointNow = checkpointFrom(read.user);
+  const checkpointNow = body.checkpoint === true ? checkpointFrom(read.user) : null;
   if (checkpointNow) {
     const token = newCheckpointToken();
     try {

@@ -94,14 +94,16 @@ export async function continueGatedSignIn(bridge: GateBridge, site: string): Pro
   return { kind: 'session', result: mapSessionResponse(auth.status, auth.json) };
 }
 
-/// The enrollment checkpoint, asked for right before a wallet is created (migration 0014). Only the server's
+/// The enrollment checkpoint, asked for right before a wallet is created (migration 0014), and ONLY right after this
+/// browser passed the authenticator (finished enrolling it, or entered a fresh code): the server records a checkpoint
+/// only on this request, so the authenticator it saw is the one this browser just proved. Only the server's
 /// `wallet_required` answer means it recorded the checkpoint (an authenticator, no wallet on any chain); only then may
 /// the wallet be created. Any other answer means do not create one: `retry` for a network or server failure, otherwise
 /// the caller runs the gate again to show where the user stands.
 export async function confirmWalletFree(bridge: GateBridge): Promise<{ ok: true } | { ok: false; retry: boolean }> {
   const token = await bridge.token();
   if (!token) return { ok: false, retry: true };
-  const step = await postJson('/api/user/auth/proof', { privyAccessToken: token });
+  const step = await postJson('/api/user/auth/proof', { privyAccessToken: token, checkpoint: true });
   if (!step || step.status >= 500) return { ok: false, retry: true };
   return step.json?.status === 'wallet_required' ? { ok: true } : { ok: false, retry: false };
 }
