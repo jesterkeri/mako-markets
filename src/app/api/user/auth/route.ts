@@ -9,6 +9,7 @@ import { checkpointHashFrom } from '@/lib/enrollment-checkpoint';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import type { GateAdmission } from '@/lib/privy-gate';
+import { databaseNowMs } from '@/lib/db-clock';
 import { admissionOf, detectEmailMismatch, findMismatchedAccount, lockPrivyUser, readAdmission, readCheckpoint, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce } from '@/lib/privy-proof';
@@ -174,7 +175,8 @@ export async function POST(req: Request) {
   const stored = await readAdmission(read.privyUserId);
   // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014).
   const checkpointHash = checkpointHashFrom(req);
-  const verdict = judgeAccount(read, stored, stored ? null : await readCheckpoint(db, read.privyUserId, checkpointHash, Date.now()));
+  // Judged on the database's clock, as the checkpoint's expiry was stamped (adversary on 151cad5).
+  const verdict = judgeAccount(read, stored, stored ? null : await readCheckpoint(db, read.privyUserId, checkpointHash, await databaseNowMs(db)));
   if (!verdict.ok) return refusal(verdict.status);
 
   // The sign-in proof (item 1): a personal_sign by that wallet over the browser-built message, which Privy releases

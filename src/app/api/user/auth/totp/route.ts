@@ -30,6 +30,7 @@ import {
 } from '@/lib/user-session';
 import { normalizeEmail } from '@/lib/email';
 import type { GateAdmission, GateVerdict } from '@/lib/privy-gate';
+import { databaseNowMs } from '@/lib/db-clock';
 import { lockPrivyUser, readCheckpoint, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkIdentity, judgeAccount, readPrivyAccountById } from '@/lib/privy-server';
@@ -263,7 +264,7 @@ export async function POST(req: Request) {
     }
     // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014). Read again inside the
     // transaction, after the Start over lock, since it can expire in between.
-    const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId, checkpointHashFrom(req), Date.now()));
+    const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId, checkpointHashFrom(req), await databaseNowMs(db)));
     if (!v.ok) {
       const flow = v.status === 'mfa_enrollment_required' || v.status === 'wallet_required';
       return Response.json({ ok: false, status: v.status }, { status: flow ? 200 : 403 });

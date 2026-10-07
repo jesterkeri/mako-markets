@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   readAdmission: vi.fn(),
   readCheckpoint: vi.fn(),
   lock: vi.fn(),
+  clear: vi.fn(),
   recordCheckpoint: vi.fn(),
   bound: vi.fn(),
   live: vi.fn(),
@@ -35,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   cookieSet: vi.fn(),
 }));
 
+// The checkpoint's clock (db-clock.ts) reads the test's own clock here; the real query is covered by db-clock.test.ts.
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => Date.now() }));
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: () => ({ ok: true }) }));
 vi.mock('@/lib/allowlist', () => ({ isAllowedForCurrentStage: async () => true }));
 vi.mock('@/lib/privy-server', async (orig) => ({
@@ -52,6 +55,7 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-admission')>()),
   readAdmission: mocks.readAdmission,
   lockPrivyUser: mocks.lock,
+  clearCheckpoints: mocks.clear,
   readCheckpoint: mocks.readCheckpoint,
   recordCheckpoint: mocks.recordCheckpoint,
   isBoundToAccount: mocks.bound,
@@ -133,6 +137,7 @@ beforeEach(() => {
   mocks.readCheckpoint.mockResolvedValue({ totpVerifiedAt: T });
   mocks.recordCheckpoint.mockResolvedValue(undefined);
   mocks.lock.mockImplementation(async () => Date.now());
+  mocks.clear.mockResolvedValue(undefined);
   // Start over: by default the account is bound (never eligible), so the existing exact answers hold.
   mocks.bound.mockResolvedValue(true);
   mocks.live.mockResolvedValue(false);
@@ -472,11 +477,12 @@ describe('Start over: an unfinished sign-up that is locked (Codex SIGNIN_R1 A1; 
     expect(mocks.cookieSet).toHaveBeenCalledWith('mako_enroll_cp', '', expect.objectContaining({ maxAge: 0 }));
   });
 
-  it('an account that ever signed in is never deleted', async () => {
+  it('an account that ever signed in is never deleted, and its checkpoints are left alone', async () => {
     unfinished();
     mocks.bound.mockResolvedValue(true);
     expect(await startOverCall()).toEqual({ status: 409, json: { ok: false, status: 'admitted' } });
     expect(mocks.deleteUser).not.toHaveBeenCalled();
+    expect(mocks.clear).not.toHaveBeenCalled();
   });
 
   it('a browser that can still finish (a live checkpoint anywhere) is sent there; nothing deleted', async () => {
@@ -572,6 +578,9 @@ describe('Start over and a first admission take turns on the Privy user (adversa
       liveAt = nowMs;
       return false;
     });
+    mocks.clear.mockImplementation(async (_tx: unknown, id: string) => {
+      order.push(`clear:${id}`);
+    });
     mocks.deleteUser.mockImplementation(async () => {
       order.push('delete');
     });
@@ -579,7 +588,8 @@ describe('Start over and a first admission take turns on the Privy user (adversa
     const { POST } = await import('../../app/api/user/auth/start-over/route');
     const res = await POST(req('/api/user/auth/start-over', { privyAccessToken: 'tok' }));
     expect(res.status).toBe(200);
-    expect(order).toEqual(['lock:did:privy:owner', 'bound', 'live', 'delete']);
+    // Its checkpoints are cleared under the lock before the Privy delete (adversary on 151cad5).
+    expect(order).toEqual(['lock:did:privy:owner', 'bound', 'live', 'clear:did:privy:owner', 'delete']);
     expect(liveAt).toBe(before + 60_000); // the database's time from the lock, not this instance's
   });
 

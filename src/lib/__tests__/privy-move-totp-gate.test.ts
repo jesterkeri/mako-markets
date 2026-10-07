@@ -47,6 +47,8 @@ const mocks = vi.hoisted(() => ({
   cookiesStore: { set: vi.fn() },
 }));
 
+// The checkpoint's clock (db-clock.ts) reads the test's own clock here; the real query is covered by db-clock.test.ts.
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => Date.now() }));
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
 // The inbox-takeover gate passes in this file (its own tests are api-user-auth-gate.test.ts).
 vi.mock('@/lib/privy-server', async () => (await import('./helpers/gate-pass')).privyServerPassing((t) => mocks.verifyPrivyLogin(t)));

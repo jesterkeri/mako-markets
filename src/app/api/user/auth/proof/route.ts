@@ -29,6 +29,7 @@ import {
   hashCheckpointToken,
   newCheckpointToken,
 } from '@/lib/enrollment-checkpoint';
+import { databaseNowMs } from '@/lib/db-clock';
 import { detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, lockPrivyUser, readAdmission, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { issueProofNonce } from '@/lib/privy-proof';
@@ -67,7 +68,8 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
   }
 
-  const nowMs = Date.now();
+  // The checkpoint's expiry is stamped and judged on the database's clock, never this instance's (adversary on 151cad5).
+  const nowMs = await databaseNowMs(db);
   const checkpointNow = body.checkpoint === true ? checkpointFrom(read.user) : null;
   if (checkpointNow) {
     const token = newCheckpointToken();

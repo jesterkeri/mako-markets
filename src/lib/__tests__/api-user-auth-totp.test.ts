@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
     deriveSafeAddress: vi.fn(),
     createSession: vi.fn(),
     applyEmbeddedMove: vi.fn(),
+    dbNow: vi.fn(async () => Date.now()),
     lockPrivyUser: vi.fn<(tx: unknown, id: string) => Promise<number>>(async () => Date.now()),
     readCheckpoint: vi.fn<(tx: unknown, id: string, hash: string | null, nowMs: number) => Promise<{ totpVerifiedAt: number } | null>>(
       async () => ({ totpVerifiedAt: 1 }),
@@ -62,6 +63,8 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+// The checkpoint's clock (db-clock.ts) reads the test's own clock here; the real query is covered by db-clock.test.ts.
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: () => mocks.dbNow() }));
 vi.mock('@/lib/totp-lockout', () => ({
   bumpTotpFailedAttempts: mocks.bumpTotpFailedAttempts,
   isLockoutActive: (d: Date | null) => !!d && d.getTime() > Date.now(),
@@ -834,14 +837,16 @@ describe('POST /api/user/auth/totp', () => {
         order.push(`lock:${id}`);
         return DB_NOW;
       });
-      // Live for the gate before the transaction; gone when re-read after the lock, judged at the database's time.
+      // Live for the gate before the transaction; gone when re-read after the lock. Both judged at the database's time.
+      const DB_PRE = Date.UTC(2029, 0, 1);
+      mocks.dbNow.mockResolvedValueOnce(DB_PRE);
       mocks.readCheckpoint
-        .mockImplementationOnce(async () => (order.push('checkpoint'), { totpVerifiedAt: 1 }))
+        .mockImplementationOnce(async (_tx: unknown, _id: string, _hash: string | null, nowMs: number) => (order.push(`checkpoint@${nowMs === DB_PRE ? 'db' : 'instance'}`), { totpVerifiedAt: 1 }))
         .mockImplementationOnce(async (_tx: unknown, _id: string, _hash: string | null, nowMs: number) => (order.push(`checkpoint@${nowMs === DB_NOW ? 'db' : 'instance'}`), null));
       const { POST } = await import('../../app/api/user/auth/totp/route');
       const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
       expect({ status: res.status, body: await res.json() }).toEqual({ status: 403, body: { ok: false, status: 'account_locked' } });
-      expect(order).toEqual(['checkpoint', 'lock:did:privy:u1', 'checkpoint@db']);
+      expect(order).toEqual(['checkpoint@db', 'lock:did:privy:u1', 'checkpoint@db']);
       expect(mocks.applyEmbeddedMove).not.toHaveBeenCalled();
       expect(mocks.createSession).not.toHaveBeenCalled();
     });

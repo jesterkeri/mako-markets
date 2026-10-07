@@ -50,6 +50,8 @@ const mocks = vi.hoisted(() => ({
   checkpoints: new Map<string, { privyUserId: string; totpVerifiedAt: number; expiresAt: Date }>(),
 }));
 
+// The checkpoint's clock (db-clock.ts) reads the test's own clock here; the real query is covered by db-clock.test.ts.
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => Date.now() }));
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: () => ({ ok: true }) }));
 vi.mock('@/lib/allowlist', () => ({ isAllowedForCurrentStage: async () => true }));
 vi.mock('@/lib/privy-server', async (orig) => ({

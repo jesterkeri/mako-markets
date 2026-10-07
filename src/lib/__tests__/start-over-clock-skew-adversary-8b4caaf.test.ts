@@ -196,9 +196,14 @@ describe('Start over and a first admission judging one checkpoint on two clocks 
       // Privy (the user still exists) and waits on the lock.
       state.clock = E - 1_000;
       state.waiting = false;
-      signIn = post(B, '/api/user/auth', { privyAccessToken: P, proof: { message, signature } });
-      for (let i = 0; i < 400 && !state.waiting; i++) await new Promise((r) => setTimeout(r, 5));
-      expect(state.waiting, 'the sign-in reached its transaction while Start over held the lock').toBe(true);
+      let settled = false;
+      signIn = post(B, '/api/user/auth', { privyAccessToken: P, proof: { message, signature } }).finally(() => {
+        settled = true;
+      });
+      // Either it now waits on the lock, or (151cad5: its pre-lock check also reads the database's clock) it is refused
+      // before reaching it. Both are safe; the assertions below are on the outcome.
+      for (let i = 0; i < 400 && !state.waiting && !settled; i++) await new Promise((r) => setTimeout(r, 5));
+      expect(state.waiting || settled, 'the sign-in either waits on the lock or has already been refused').toBe(true);
     };
     // True time is now 1 s past E: the database's clock, and instance S's (accurate) clock. Instance A, which serves the
     // sign-in above, runs 2 s slow.

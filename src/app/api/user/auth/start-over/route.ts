@@ -13,7 +13,7 @@ import { cookies } from 'next/headers';
 import { db } from '@/db/client';
 import { checkSameOrigin } from '@/lib/csrf';
 import { checkpointHashFrom, ENROLL_CHECKPOINT_COOKIE } from '@/lib/enrollment-checkpoint';
-import { detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, lockPrivyUser, readAdmission, readCheckpoint } from '@/lib/privy-admission';
+import { clearCheckpoints, detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, lockPrivyUser, readAdmission, readCheckpoint } from '@/lib/privy-admission';
 import { deletePrivyUser, judgeAccount, PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 import { startOverDecision } from '@/lib/start-over';
 
@@ -68,6 +68,9 @@ export async function POST(req: Request) {
 
   type Result = { kind: 'ineligible'; reason: string } | { kind: 'deleted' };
   let result: Result;
+  // Set once Privy has deleted the user: from then on the answer is success, even if the commit below fails (adversary on
+  // 151cad5), since the identity is gone either way and this transaction's only write is clearing expired checkpoints.
+  let privyDeleted = false;
   try {
     result = await db.transaction(async (tx): Promise<Result> => {
       const nowMs = await lockPrivyUser(tx, read.privyUserId);
@@ -86,17 +89,29 @@ export async function POST(req: Request) {
       }
       if (!decision.eligible) return { kind: 'ineligible', reason: decision.reason };
       try {
+        // Its (expired) checkpoints go first, in this transaction: nothing is left for a waiting sign-in to admit with.
+        await clearCheckpoints(tx, read.privyUserId);
+      } catch (err) {
+        throw new StartOverUnavailable('read', err);
+      }
+      try {
         await deletePrivyUser(read.privyUserId);
       } catch (err) {
         throw new StartOverUnavailable('delete', err);
       }
+      privyDeleted = true;
       return { kind: 'deleted' };
     });
   } catch (err) {
-    const step = err instanceof StartOverUnavailable ? err.step : 'lock';
-    const cause = err instanceof StartOverUnavailable ? err.inner : err;
-    console.error(`[user/auth/start-over] ${step} failed`, cause instanceof Error ? cause.name : 'unknown');
-    return Response.json({ error: 'unavailable' }, { status: 503 });
+    if (!privyDeleted) {
+      const step = err instanceof StartOverUnavailable ? err.step : 'lock';
+      const cause = err instanceof StartOverUnavailable ? err.inner : err;
+      console.error(`[user/auth/start-over] ${step} failed`, cause instanceof Error ? cause.name : 'unknown');
+      return Response.json({ error: 'unavailable' }, { status: 503 });
+    }
+    // The Privy user is deleted and only the commit failed: the sign-up is cleared all the same.
+    console.error('[user/auth/start-over] commit failed after the Privy delete', err instanceof Error ? err.name : 'unknown');
+    result = { kind: 'deleted' };
   }
   if (result.kind === 'ineligible') return Response.json({ ok: false, status: result.reason }, { status: 409 });
 

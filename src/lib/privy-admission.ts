@@ -70,6 +70,13 @@ export async function hasLiveCheckpoint(tx: DbOrTx, privyUserId: string, nowMs: 
   return rows.length > 0;
 }
 
+/// Deletes every checkpoint recorded for this Privy user. Start over calls it under lockPrivyUser just before it deletes
+/// the Privy user, so a sign-in waiting on that lock finds nothing to admit with, whatever any clock says (adversary on
+/// 151cad5). Only expired rows can exist then: Start over refuses while one is live.
+export async function clearCheckpoints(tx: DbOrTx, privyUserId: string): Promise<void> {
+  await tx.delete(privyEnrollmentCheckpoints).where(eq(privyEnrollmentCheckpoints.privyUserId, privyUserId));
+}
+
 /// Whether a Mako account is bound to this Privy user (it completed a first sign-in, or is bound by a move). Such an
 /// identity is never eligible for Start over.
 export async function isBoundToAccount(tx: DbOrTx, privyUserId: string): Promise<boolean> {

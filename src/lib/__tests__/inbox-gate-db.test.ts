@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { DbOrTx } from '@/db/client';
 import * as schema from '@/db/schema';
-import { hasLiveCheckpoint, isBoundToAccount, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
+import { clearCheckpoints, hasLiveCheckpoint, isBoundToAccount, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatchIn } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce, issueProofNonce } from '@/lib/privy-proof';
 import { buildProofMessage, parseProofMessage, PROOF_TTL_MS } from '@/lib/privy-proof-message';
@@ -85,6 +85,15 @@ describe('migration 0014: the enrollment checkpoint, bound to the browser', () =
     expect(await isBoundToAccount(asDb(pdb), 'did:privy:start-over-bound')).toBe(false);
     await pg.query(`INSERT INTO users (email, magic_eoa, auth_type, privy_user_id) VALUES ('bound@x.y', '0x${'7'.repeat(40)}', 'magic', 'did:privy:start-over-bound')`);
     expect(await isBoundToAccount(asDb(pdb), 'did:privy:start-over-bound')).toBe(true);
+  });
+  it('Start over clears every checkpoint of its Privy user and no other (adversary on 151cad5)', async () => {
+    const other = 'e'.repeat(64);
+    await recordCheckpoint(asDb(pdb), 'did:privy:cp-other', { totpVerifiedAt: 1_791_367_000 }, other, LATER);
+    expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:cp1', NOW)).toBe(true); // two browsers' rows (H1, H2)
+    await clearCheckpoints(asDb(pdb), 'did:privy:cp1');
+    expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:cp1', NOW)).toBe(false);
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H1, NOW)).toBeNull();
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp-other', other, NOW)).toEqual({ totpVerifiedAt: 1_791_367_000 });
   });
   it('rejects a malformed hash, an empty Privy user id and a non-positive authenticator time', async () => {
     const exp = new Date(NOW).toISOString();
