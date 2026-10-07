@@ -29,10 +29,19 @@ const CP: EnrollmentCheckpoint = { totpVerifiedAt: T };
 const judge = (u: GateUser, w: GateWallet | null, a: GateAdmission | null, cp: EnrollmentCheckpoint | null = CP) => judgePrivyUser(u, w, a, cp);
 
 describe('factors', () => {
-  it('no factor: enroll', () => expect(status(judge(user({ mfa: [] }), res(), null))).toBe('mfa_enrollment_required:no_totp_only'));
-  it('an SMS or email factor beside or instead of TOTP: enroll, never admit', () => {
-    expect(status(judge(user({ mfa: [{ type: 'sms', verified_at: T }] }), res(), null))).toMatch(/^mfa_enrollment_required/);
-    expect(status(judge(user({ mfa: [{ type: 'totp', verified_at: T }, { type: 'email', verified_at: T }] }), res(), null))).toMatch(/^mfa_enrollment_required/);
+  it('no factor and no wallet: enroll', () => expect(status(judge(user({ mfa: [], wallet: null }), null, null))).toBe('mfa_enrollment_required:no_totp_only'));
+  it('an SMS or email factor beside or instead of TOTP, no wallet: enroll, never admit', () => {
+    expect(status(judge(user({ wallet: null, mfa: [{ type: 'sms', verified_at: T }] }), null, null))).toMatch(/^mfa_enrollment_required/);
+    expect(status(judge(user({ wallet: null, mfa: [{ type: 'totp', verified_at: T }, { type: 'email', verified_at: T }] }), null, null))).toMatch(/^mfa_enrollment_required/);
+  });
+  it('never admitted, a wallet already there and no authenticator: locked at once, never offered enrolment (live L6)', () => {
+    expect(status(judge(user({ mfa: [] }), res(), null))).toBe('account_locked:wallet_without_authenticator');
+    expect(status(judge(user({ mfa: [{ type: 'sms', verified_at: T }] }), res(), null))).toBe('account_locked:wallet_without_authenticator');
+    // Whatever chain the wallet is on, and with or without a checkpoint.
+    expect(status(judge(user({ mfa: [], wallet: { chain_type: 'solana' } }), null, null, null))).toBe('account_locked:wallet_without_authenticator');
+  });
+  it('an ADMITTED account that lost its authenticator still re-enrols [G1]', () => {
+    expect(status(judge(user({ mfa: [] }), res(), { wallet: ADDR.toLowerCase(), totpVerifiedAt: T }, null))).toMatch(/^mfa_enrollment_required/);
   });
   it('a linked passkey, or a passkey factor, locks the account [B1]', () => {
     expect(status(judge(user({ extra: [{ type: 'passkey' }] }), res(), null))).toBe('account_locked:passkey_linked');

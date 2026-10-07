@@ -138,7 +138,7 @@ afterEach(() => {
 
 describe('POST /api/user/auth: the gate decides before anything is written', () => {
   it('no authenticator: mfa_enrollment_required, no account touched, no cookie', async () => {
-    mocks.read.mockResolvedValue(privyRead({ totpAt: null }));
+    mocks.read.mockResolvedValue(privyRead({ totpAt: null, linkedAt: null }));
     expect(await signIn({ proof: await proof() })).toEqual({ status: 200, json: { ok: false, status: 'mfa_enrollment_required' } });
     expect(mocks.upsert).not.toHaveBeenCalled();
     expect(mocks.cookieSet).not.toHaveBeenCalled();
@@ -244,8 +244,11 @@ describe('POST /api/user/auth/proof', () => {
     expect(mocks.issue).toHaveBeenCalledWith(expect.anything(), 'did:privy:owner', WALLET, expect.any(Number));
   });
   it('a refused user gets only its status and no nonce', async () => {
-    mocks.read.mockResolvedValue(privyRead({ totpAt: null }));
+    mocks.read.mockResolvedValue(privyRead({ totpAt: null, linkedAt: null }));
     expect((await nonceFor()).json).toEqual({ ok: false, status: 'mfa_enrollment_required' });
+    // A never-admitted account with a wallet and no authenticator is locked, not offered enrolment (live L6).
+    mocks.read.mockResolvedValue(privyRead({ totpAt: null }));
+    expect(await nonceFor()).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
     mocks.readCheckpoint.mockResolvedValue(null);
     mocks.read.mockResolvedValue(privyRead({ linkedAt: T }));
     expect(await nonceFor()).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });

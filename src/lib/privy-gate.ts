@@ -131,7 +131,16 @@ export function judgePrivyUser(
   checkpoint: EnrollmentCheckpoint | null,
 ): GateVerdict {
   const factors = judgeFactors(user);
-  if (!factors.ok) return factors;
+  if (!factors.ok) {
+    // An account never admitted that already holds an embedded wallet but no authenticator can never be admitted: no
+    // checkpoint can be recorded while a wallet exists, so enrolling now would only lead to a lock. Locked at once
+    // rather than asking the owner to enrol an authenticator that cannot unlock it (live test L6, 2026-10-07). An
+    // admitted account that lost its authenticator still re-enrols ([G1]).
+    if (factors.status === 'mfa_enrollment_required' && admission === null && embeddedWallets(user).length > 0) {
+      return { ok: false, status: 'account_locked', reason: 'wallet_without_authenticator' };
+    }
+    return factors;
+  }
 
   const embedded = embeddedWallets(user);
   // [H2] Enrolled, no wallet yet: a named state, never a lockout.
