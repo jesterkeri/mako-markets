@@ -72,9 +72,11 @@ const SettingsSchema = z
     merge_accounts_by_email: z.boolean(),
     custom_oauth_providers: z.array(z.object({ enabled: z.boolean(), provider: z.string() }).passthrough()),
     max_linked_wallets_per_user: z.number().nullable(),
-    // Declared optional by the SDK (`telegram_seamless_auth_enabled?`), so absence alone is not a failure; it is
-    // judged below together with Telegram login, which must be off for it to mean anything.
+    // Telegram seamless login is declared in two optional places (apps.d.ts: `telegram_seamless_auth_enabled?` and
+    // `telegram_auth_config?.seamless_auth_enabled`). Each that is present must be a boolean; at least one must be
+    // present for it to be proven off (adversary on 0f4e0f9), judged below.
     telegram_seamless_auth_enabled: z.boolean().optional(),
+    telegram_auth_config: z.object({ seamless_auth_enabled: z.boolean() }).passthrough().optional(),
     embedded_wallet_config: z
       .object({
         create_on_login: createOnLogin,
@@ -118,15 +120,18 @@ export function checkPrivyAppConfig(raw: unknown, role: AppRole, expectedAppId: 
   for (const m of OTHER_LOGIN_METHODS) if (s[m] !== false) f.push(`${m} must be off: email is the only login method [C7]`);
   // Fail closed on any login switch this list does not name yet (Privy adds providers): every *_auth / *_oauth flag that
   // is on, other than email, is another way in.
+  // Only a literal `false` proves an unlisted switch off: "true", 1 or an object is on or unknown (adversary on 0f4e0f9).
   for (const [k, v] of Object.entries(s)) {
-    if (v === true && /(_auth|_oauth)$/.test(k) && k !== 'email_auth' && !(OTHER_LOGIN_METHODS as readonly string[]).includes(k)) {
-      f.push(`${k} must be off: email is the only login method [C7]`);
+    if (v !== false && /(_auth|_oauth)$/.test(k) && k !== 'email_auth' && !(OTHER_LOGIN_METHODS as readonly string[]).includes(k)) {
+      f.push(`${k} must be off (is ${JSON.stringify(v)}): email is the only login method [C7]`);
     }
   }
   // Custom OAuth providers are a list, not a flag (adversary on e1e0679): any enabled one is another way in.
   for (const p of s.custom_oauth_providers) if (p.enabled !== false) f.push(`custom OAuth provider ${p.provider} must be off [C7]`);
   for (const k of OTHER_SIGNUP_FLAGS) if (s[k] !== false) f.push(`${k} must be off: email is the only login method [C7]`);
-  if (s.telegram_seamless_auth_enabled === true) f.push('telegram_seamless_auth_enabled must be off: email is the only login method [C7]');
+  const seamless = [s.telegram_seamless_auth_enabled, s.telegram_auth_config?.seamless_auth_enabled].filter((v) => v !== undefined);
+  if (seamless.length === 0) f.push('Telegram seamless login is absent from the answer (telegram_seamless_auth_enabled and telegram_auth_config.seamless_auth_enabled): it cannot be proven off [C7]');
+  else if (seamless.some((v) => v !== false)) f.push('Telegram seamless login must be off: email is the only login method [C7]');
   if (s.merge_accounts_by_email !== false) f.push('merge_accounts_by_email must be off [D3]');
   if (s.allowed_native_app_ids.length > 0) f.push('allowed_native_app_ids must be empty (no native app) [B5]');
   if (s.allowed_native_app_url_schemes.length > 0) f.push('allowed_native_app_url_schemes must be empty [B5]');
@@ -151,6 +156,7 @@ export function checkPrivyAppConfig(raw: unknown, role: AppRole, expectedAppId: 
       user_owned_recovery_options: w.user_owned_recovery_options,
       max_linked_wallets_per_user: s.max_linked_wallets_per_user,
       telegram_seamless_auth_enabled: s.telegram_seamless_auth_enabled ?? 'absent',
+      telegram_auth_config_seamless: s.telegram_auth_config?.seamless_auth_enabled ?? 'absent',
     },
   };
 }
