@@ -148,7 +148,7 @@ export async function POST(req: Request) {
   // transaction. Ordering is load-bearing: readLastSignIn MUST run
   // before createSession or it would surface the new session as
   // "previously signed in".
-  let userRow: { id: string; displayName: string | null; avatarUrl: string | null };
+  let userRow: { id: string; displayName: string | null; avatarUrl: string | null; created: boolean };
   let lastSignInAt: string | null;
   let sessionCookie: string;
   try {
@@ -183,5 +183,8 @@ export async function POST(req: Request) {
     authed: true,
     ...walletUserToWire(userRow, wallet),
     lastSignInAt,
+    // The first-sign-in welcome shows only when this sign-in created the account (signing out deletes sessions, so
+    // lastSignInAt cannot say it; live test, 2026-10-07).
+    firstSignIn: userRow.created,
   });
 }

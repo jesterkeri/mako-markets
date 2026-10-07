@@ -715,7 +715,7 @@ function WalletStep({ step, setStep, signedIn, variant }: FlowProps & { variant:
     if (!address) return;
     setStep({ kind: 'wallet', error: null, busy: true });
     const r = await signInWithWallet({ address, signMessageAsync });
-    if (r.ok) signedIn(r.user, r.user.lastSignInAt === null);
+    if (r.ok) signedIn(r.user, r.firstSignIn);
     else setStep({ kind: 'wallet', error: r.error === 'nonce_failed' ? "Couldn't start the sign-in. Try again." : 'The wallet did not sign, or the signature was refused. Try again.', busy: false });
   };
   return (

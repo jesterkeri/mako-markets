@@ -62,7 +62,10 @@ export function PrivyEmailBridge({ register }: { register: (auth: EmailAuth | nu
       signProof: async (message, address) => {
         // A fresh authenticator code for this one signature ([m1]): Privy asks it before the wallet signs.
         await clearMfa();
-        const { signature } = await signMessage({ message }, { address, uiOptions: { title: 'Confirm your sign-in', description: 'Mako Market asks your wallet to sign this message to prove the authenticator check passed. It moves no funds.' } });
+        // No confirmation box showing the raw message (Joshua, 2026-10-07: it looked like a developer tool). Privy still
+        // asks the authenticator code before the wallet signs: the factor is enforced by Privy, not by this box, and a
+        // signature it refuses fails the sign-in closed.
+        const { signature } = await signMessage({ message }, { address, uiOptions: { showWalletUIs: false } });
         return signature;
       },
     };

@@ -87,7 +87,10 @@ function FeedbackFlow() {
     setPhase({ step: 'failed', failure: failureFor(res.ok ? null : res.status, error) });
   };
 
-  const from = user ? `Sent with ${formatAddress(accountAddress(user))}` : 'Sent without an account';
+  // One short line on what goes with the note (Joshua, 2026-10-07: the old copy was too much).
+  const from = user
+    ? `Sent with this page, your account (${formatAddress(accountAddress(user))}) and browser name. Never include codes.`
+    : 'Sent with this page and your browser name. Never include codes.';
   return (
     <SheetFrame label="Send feedback" onScrim={sending ? undefined : close}>
       {(variant) => (
@@ -129,11 +132,7 @@ function Body({ variant, from, text, setText, n, ready, phase, onSend, onEdit, o
   const disabled: React.CSSProperties = { background: 'var(--raise2)', color: 'var(--dim)', boxShadow: 'none', cursor: 'not-allowed' };
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Svg d={CHAT_ICON} size={16} />
-          {from}
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {!sending && (
           <button onClick={onClose} aria-label="Close" className="m3-press" style={{ width: 40, height: 40, borderRadius: 9999, background: variant === 'desktop' ? 'var(--raise)' : 'var(--raise2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Svg d={CLOSE_ICON} size={16} />
@@ -148,9 +147,11 @@ function Body({ variant, from, text, setText, n, ready, phase, onSend, onEdit, o
               {sending ? <Spinner size={28} /> : <span className="mk-onsig" style={{ display: 'flex' }}><Svg d={CHAT_ICON} size={26} /></span>}
             </span>
             <div style={{ minWidth: 0 }}>
-              <div className="wl-eyebrow" style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>
-                {sending ? 'Don’t close this' : 'Something broken or unclear?'}
-              </div>
+              {sending && (
+                <div className="wl-eyebrow" style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>
+                  Don’t close this
+                </div>
+              )}
               <div role={sending ? 'status' : undefined} style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: variant === 'desktop' ? 32 : 30, lineHeight: 1.05, letterSpacing: '-0.02em' }}>
                 {sending ? 'Sending' : 'Send feedback'}
               </div>
@@ -185,14 +186,11 @@ function Body({ variant, from, text, setText, n, ready, phase, onSend, onEdit, o
               }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 8, fontSize: 13, color: over ? 'var(--mako-red)' : 'var(--dim)' }}>
-              <span role={over ? 'alert' : undefined}>{over ? `That’s over ${FEEDBACK_MAX_CHARS.toLocaleString('en-US')} characters.` : 'Plain text. Links are not opened.'}</span>
+              <span role={over ? 'alert' : undefined}>{over ? `That’s over ${FEEDBACK_MAX_CHARS.toLocaleString('en-US')} characters.` : from}</span>
               <span style={{ flex: 'none', fontVariantNumeric: 'tabular-nums' }}>
                 {n.toLocaleString('en-US')} / {FEEDBACK_MAX_CHARS.toLocaleString('en-US')}
               </span>
             </div>
-          </div>
-          <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)' }}>
-            It goes to Mako Market on Telegram with this page’s address, your account address if you’re signed in, and your browser’s name. Never include sign-in codes or recovery codes.
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button onClick={onClose} disabled={sending} className="m3-press" style={{ ...sheetButton(false), flex: 'none', width: 112 }}>

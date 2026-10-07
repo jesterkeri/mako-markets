@@ -19,6 +19,9 @@ import { INTEL_COUNT, type NewsView } from './use-news';
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const h2: React.CSSProperties = { margin: 0, ...display, fontSize: 24, letterSpacing: '-0.02em' };
+/// The Rounds and Pools column headers share one box, so their titles and the rules under them form one line
+/// (Joshua, 2026-10-07).
+const colHead: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 18, minHeight: 32, padding: '14px 14px 12px 20px' };
 const BAR = 'color-mix(in srgb, var(--mako-canvas-fg) 16%, transparent)';
 /// 2a's pools table: market, YES, NO, pool, closes.
 const COLS = 'minmax(0,1fr) 96px 96px 120px 90px';
@@ -72,7 +75,7 @@ function RoundsNotOpenBand() {
 function RoundsColumn() {
   return (
     <section aria-labelledby="home-rounds-col" style={{ borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '18px 20px 12px' }}>
+      <div style={colHead}>
         <h2 id="home-rounds-col" style={h2}>
           Rounds
         </h2>
@@ -85,7 +88,7 @@ function RoundsColumn() {
 function PoolsColumn({ pools, filter, setFilter, labelsOf, retry }: Pick<Props, 'pools' | 'filter' | 'setFilter' | 'labelsOf' | 'retry'>) {
   return (
     <section aria-labelledby="home-pools" style={{ borderTop: '1px solid var(--line)', borderLeft: '1px solid var(--line)', minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 18, minHeight: 32, padding: '14px 14px 12px 20px' }}>
+      <div style={colHead}>
         <h2 id="home-pools" style={h2}>
           Pools
         </h2>

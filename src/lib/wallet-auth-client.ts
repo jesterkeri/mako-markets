@@ -29,7 +29,7 @@ import type { WalletAuthedUser } from './use-user';
 const STATEMENT = 'Sign in to Mako Market profile.';
 
 export type SignInResult =
-  | { ok: true; user: WalletAuthedUser }
+  | { ok: true; user: WalletAuthedUser; firstSignIn: boolean }
   | { ok: false; error: string };
 
 export async function signInWithWallet(opts: {
@@ -103,9 +103,12 @@ export async function signInWithWallet(opts: {
       displayName: string | null;
       avatarUrl: string | null;
       lastSignInAt: string | null;
+      firstSignIn?: boolean;
     };
-    const { ok: _ok, ...rest } = body;
-    return { ok: true, user: rest as WalletAuthedUser };
+    const { ok: _ok, firstSignIn, ...rest } = body;
+    void _ok;
+    // Only the route's own "this sign-in created the account" shows the welcome; without it, never.
+    return { ok: true, user: rest as WalletAuthedUser, firstSignIn: firstSignIn === true };
   } catch {
     return { ok: false, error: 'verify_failed' };
   }

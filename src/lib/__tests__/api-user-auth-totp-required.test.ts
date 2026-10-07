@@ -193,6 +193,7 @@ describe('POST /api/user/auth — TOTP branch', () => {
       'avatarUrl',
       'displayName',
       'email',
+      'firstSignIn',
       'lastSignInAt',
       'magicEoa',
       'nextEmailChangeAvailableAt',

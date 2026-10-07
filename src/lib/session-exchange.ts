@@ -6,8 +6,8 @@ import { mapTotpResponse, type TotpRequiredState } from '@/components/signup/Tot
 import type { AuthedUser } from './use-user';
 
 export type SessionResult =
-  /// `firstSignIn`: this sign-in created the account. The route says so (`firstSignIn`); an answer without it (the
-  /// /totp route) falls back to "no earlier session", which is never true after a sign-out of an existing account there.
+  /// `firstSignIn`: this sign-in created the account, exactly as the route says (`firstSignIn`). Never inferred from
+  /// "no earlier session": signing out deletes sessions (live test and adversary on 454c020, 2026-10-07).
   | { kind: 'signed_in'; user: AuthedUser; firstSignIn: boolean }
   | { kind: 'totp'; challengeId: string }
   /// The identity proof is still valid; the same request can be retried.
@@ -16,9 +16,11 @@ export type SessionResult =
 
 /// The success envelope, minus the route's `ok` flag, which must never reach the user cache.
 function toUser(body: Record<string, unknown>): AuthedUser {
-  const { ok: _ok, status: _status, ...user } = body;
+  // firstSignIn is about this sign-in, not the account: it never goes into the cached user.
+  const { ok: _ok, status: _status, firstSignIn: _first, ...user } = body;
   void _ok;
   void _status;
+  void _first;
   return user as unknown as AuthedUser;
 }
 
@@ -48,8 +50,7 @@ export function mapSessionResponse(status: number, body: Record<string, unknown>
   if (!body) return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
   if (status === 200 && body.status === 'totp_required') return { kind: 'totp', challengeId: typeof body.challengeId === 'string' ? body.challengeId : '' };
   if (status === 200 && body.authed === true) {
-    const firstSignIn = typeof body.firstSignIn === 'boolean' ? body.firstSignIn : body.lastSignInAt === null;
-    return { kind: 'signed_in', user: toUser(body), firstSignIn };
+    return { kind: 'signed_in', user: toUser(body), firstSignIn: body.firstSignIn === true };
   }
   if (body.status === 'account_locked') return { kind: 'error', message: GATE_MESSAGES.account_locked };
   if (body.status === 'email_changed') return { kind: 'error', message: GATE_MESSAGES.email_changed };
@@ -83,6 +84,6 @@ export async function submitTotp(state: TotpRequiredState, code: string): Promis
   }
   const outcome = mapTotpResponse(state, res.status, body);
   if (outcome.kind === 'state') return outcome;
-  if (body && body.authed === true) return { kind: 'signed_in', user: toUser(body), firstSignIn: body.lastSignInAt === null };
+  if (body && body.authed === true) return { kind: 'signed_in', user: toUser(body), firstSignIn: body.firstSignIn === true };
   return { kind: 'state', next: { ...state, submitting: false, error: 'Unexpected response. Please retry.' } };
 }

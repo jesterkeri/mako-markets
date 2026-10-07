@@ -55,8 +55,8 @@ function routes(proof: [number, unknown], auth?: [number, unknown]) {
 const NONCE_OK: [number, unknown] = [200, { ok: true, status: 'proof_required', nonce: NONCE }];
 
 describe('the gated sign-in (INBOX_GAP_PLAN r18)', () => {
-  it('signs in and flags the first sign-in only when the route says there was none before', async () => {
-    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: null }]);
+  it('signs in and flags the first sign-in only when the route says this sign-in created the account', async () => {
+    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: null, firstSignIn: true }]);
     expect(await continueGatedSignIn(bridge(), 'makomarket.xyz')).toEqual({ kind: 'session', result: { kind: 'signed_in', user: { ...USER, lastSignInAt: null }, firstSignIn: true } });
     routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: '2026-09-01T00:00:00.000Z' }]);
     expect(await continueGatedSignIn(bridge(), 'makomarket.xyz')).toMatchObject({ kind: 'session', result: { kind: 'signed_in', firstSignIn: false } });
@@ -181,9 +181,12 @@ describe('submitTotp', () => {
     expect(JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body))).toEqual({ challengeId: 'c-1', recoveryCode: 'abcd-efgh' });
   });
 
-  it('signs in on success, carrying the first-sign-in flag', async () => {
+  it('signs in on success; the /totp path is never the account-creating sign-in, even with no earlier session', async () => {
+    respond(200, { ok: true, ...USER, lastSignInAt: null, firstSignIn: false });
+    expect(await submitTotp(state, '123456')).toMatchObject({ kind: 'signed_in', firstSignIn: false });
+    vi.restoreAllMocks();
     respond(200, { ok: true, ...USER, lastSignInAt: null });
-    expect(await submitTotp(state, '123456')).toMatchObject({ kind: 'signed_in', firstSignIn: true });
+    expect(await submitTotp(state, '123456')).toMatchObject({ kind: 'signed_in', firstSignIn: false });
   });
 
   it('reads failures through the reviewed mapper: wrong code, lockout, expired challenge', async () => {

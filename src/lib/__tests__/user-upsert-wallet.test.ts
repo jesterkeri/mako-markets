@@ -75,7 +75,7 @@ describe('upsertWalletUser', () => {
 
     const out = await upsertWalletUser(ADDR, { tx });
 
-    expect(out).toEqual({ id: 'u1', displayName: null, avatarUrl: null });
+    expect(out).toEqual({ id: 'u1', displayName: null, avatarUrl: null, created: true });
     expect(spies.execute).toHaveBeenCalledOnce();
     expect(spies.select).not.toHaveBeenCalled();
   });
@@ -88,7 +88,7 @@ describe('upsertWalletUser', () => {
 
     const out = await upsertWalletUser(ADDR, { tx });
 
-    expect(out).toEqual({ id: 'u2', displayName: 'alice', avatarUrl: null });
+    expect(out).toEqual({ id: 'u2', displayName: 'alice', avatarUrl: null, created: false });
     expect(spies.execute).toHaveBeenCalledOnce();
     expect(spies.select).toHaveBeenCalledOnce();
   });

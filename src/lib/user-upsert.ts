@@ -317,7 +317,7 @@ export async function upsertWalletUser(
   raw: `0x${string}` | string,
   /// `ref`: as for upsertEmbeddedUser, recorded only when this call creates the account.
   opts: { tx: DbOrTx; ref?: string | null },
-): Promise<{ id: string; displayName: string | null; avatarUrl: string | null }> {
+): Promise<{ id: string; displayName: string | null; avatarUrl: string | null; created: boolean }> {
   const walletAddress = raw.toLowerCase() as `0x${string}`;
   if (!/^0x[0-9a-f]{40}$/.test(walletAddress)) {
     throw new Error(`upsertWalletUser: invalid address format: ${raw}`);
@@ -352,6 +352,8 @@ export async function upsertWalletUser(
       id: inserted[0].id,
       displayName: inserted[0].display_name,
       avatarUrl: inserted[0].avatar_url,
+      // This call created the account: the one sign-in that shows the first-sign-in welcome (live test, 2026-10-07).
+      created: true,
     };
   }
 
@@ -370,5 +372,5 @@ export async function upsertWalletUser(
     throw new Error('upsertWalletUser: row missing after ON CONFLICT DO NOTHING');
   }
 
-  return existing[0];
+  return { ...existing[0], created: false };
 }

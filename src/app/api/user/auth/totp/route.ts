@@ -488,6 +488,9 @@ export async function POST(req: Request) {
     authed: true,
     ...magicUserToWire({ ...user, magicEoa: signer }, safeAddress),
     lastSignInAt: success.lastSignInAt,
+    // This path completes a sign-in of an account that already exists (it has Mako's own TOTP on), so it is never the
+    // sign-in that created the account: no first-sign-in welcome (adversary on 454c020).
+    firstSignIn: false,
     nextEmailChangeAvailableAt: success.nextEmailChangeAvailableAt,
   });
 }

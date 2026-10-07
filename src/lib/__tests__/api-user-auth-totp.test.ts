@@ -398,7 +398,7 @@ describe('POST /api/user/auth/totp', () => {
     );
   });
 
-  it('TOTP success: response keys match WireUser ∪ {ok, authed, lastSignInAt, nextEmailChangeAvailableAt}; no sensitive fields', async () => {
+  it('TOTP success: response keys match WireUser ∪ {ok, authed, lastSignInAt, firstSignIn, nextEmailChangeAvailableAt}; no sensitive fields', async () => {
     mocks.checkSameOrigin.mockReturnValue({ ok: true });
     mocks.validateSigninChallenge.mockResolvedValue({ userId: USER_ID, magicEoa: MAGIC_EOA });
     mocks.selectUser.mockResolvedValue(userRow({
@@ -425,6 +425,7 @@ describe('POST /api/user/auth/totp', () => {
       'avatarUrl',
       'displayName',
       'email',
+      'firstSignIn',
       'lastSignInAt',
       'magicEoa',
       'nextEmailChangeAvailableAt',
@@ -433,6 +434,8 @@ describe('POST /api/user/auth/totp', () => {
       'totpEnabled',
       'totpEnabledAt',
     ]);
+    // This path never creates the account: the first-sign-in welcome never shows from it (adversary on 454c020).
+    expect(body.firstSignIn).toBe(false);
     expect(body).not.toHaveProperty('totpSecret');
     expect(body).not.toHaveProperty('totpFailedAttempts');
     expect(body).not.toHaveProperty('totpLockedUntil');

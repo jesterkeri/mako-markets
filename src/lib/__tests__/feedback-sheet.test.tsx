@@ -61,14 +61,14 @@ describe('FeedbackSheet', () => {
     expect(screen.getAllByText('That’s over 1,000 characters.').length).toBeGreaterThan(0);
   });
 
-  it('says who it is sent as', () => {
+  it('says in one line what goes with the note', () => {
     mount();
-    expect(screen.getAllByText('Sent without an account').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Sent with this page and your browser name. Never include codes.').length).toBeGreaterThan(0);
     cleanup();
     act(() => closeFeedback());
     mocks.user = { authType: 'magic', safeAddress: '0xC8BF000000000000000000000000000000090F1a' };
     mount();
-    expect(screen.getAllByText('Sent with 0xC8BF…0F1a').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Sent with this page, your account (0xC8BF…0F1a) and browser name. Never include codes.').length).toBeGreaterThan(0);
   });
 
   it('posts the message and the page path, and says Sent only on success', async () => {
