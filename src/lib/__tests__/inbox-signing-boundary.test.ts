@@ -100,3 +100,17 @@ describe('the wallet is created only after the server recorded the enrollment ch
     ]);
   });
 });
+
+describe('the Privy client configuration (src/components/PrivyAuth.tsx)', () => {
+  const config = readFileSync(join(SRC, 'components/PrivyAuth.tsx'), 'utf8');
+  const wallets = config.match(/embeddedWallets:\s*\{[^\n]*\}/)?.[0] ?? '';
+
+  it('creates no wallet at login on either chain ([C5], [D1])', () => {
+    expect(wallets).toMatch(/ethereum:\s*\{\s*createOnLogin:\s*'off'\s*\}/);
+    expect(wallets).toMatch(/solana:\s*\{\s*createOnLogin:\s*'off'\s*\}/);
+  });
+
+  it("hides Privy's own sign/send pop-up: Mako's confirm sheet is the confirmation (live beta test 2026-10-07)", () => {
+    expect(wallets).toMatch(/showWalletUIs:\s*false/);
+  });
+});

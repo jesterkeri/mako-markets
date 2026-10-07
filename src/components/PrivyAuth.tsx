@@ -132,7 +132,11 @@ export function PrivyAuthProvider({ children }: { children: React.ReactNode }) {
         // No wallet at login (INBOX_GAP_PLAN r18 [C5], [D1]): the sign-in dialog creates the one Ethereum wallet only
         // after the authenticator is enrolled, so it can never have signed anything with the inbox alone. Solana too:
         // a Solana wallet made first could share the later Ethereum wallet's seed.
-        embeddedWallets: { ethereum: { createOnLogin: 'off' }, solana: { createOnLogin: 'off' } },
+        // showWalletUIs false: Privy's own sign/send pop-up showed users a raw 32-byte hash (live beta test 2026-10-07),
+        // which nobody can check. Every money-moving action is confirmed first in Mako's own sheet (ConfirmSheet, the
+        // create-pool review). Privy's authenticator prompt still appears whenever Privy requires one; key export is a
+        // separate Privy window and is unaffected.
+        embeddedWallets: { ethereum: { createOnLogin: 'off' }, solana: { createOnLogin: 'off' }, showWalletUIs: false },
         defaultChain: monadTestnet,
         supportedChains: [monadTestnet],
         appearance: { theme: 'dark', accentColor: '#FACC15' },
