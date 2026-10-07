@@ -39,8 +39,10 @@ const mocks = vi.hoisted(() => {
     deriveSafeAddress: vi.fn(),
     createSession: vi.fn(),
     applyEmbeddedMove: vi.fn(),
-    lockPrivyUser: vi.fn<(tx: unknown, id: string) => Promise<void>>(async () => {}),
-    readCheckpoint: vi.fn(async () => ({ totpVerifiedAt: 1 }) as { totpVerifiedAt: number } | null),
+    lockPrivyUser: vi.fn<(tx: unknown, id: string) => Promise<number>>(async () => Date.now()),
+    readCheckpoint: vi.fn<(tx: unknown, id: string, hash: string | null, nowMs: number) => Promise<{ totpVerifiedAt: number } | null>>(
+      async () => ({ totpVerifiedAt: 1 }),
+    ),
     gateWallet: { value: null as string | null },
     revokeAll: vi.fn(),
     cookiesStore: { set: vi.fn() },
@@ -827,17 +829,19 @@ describe('POST /api/user/auth/totp', () => {
       mocks.selectUser.mockResolvedValue(userRow({ privyUserId: null, privyTotpAdmittedAt: null }));
       mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
       const order: string[] = [];
+      const DB_NOW = Date.UTC(2030, 0, 1); // the database's clock after the wait, far from this instance's
       mocks.lockPrivyUser.mockImplementationOnce(async (_tx: unknown, id: string) => {
         order.push(`lock:${id}`);
+        return DB_NOW;
       });
-      // Live for the gate before the transaction; gone when re-read after the lock.
+      // Live for the gate before the transaction; gone when re-read after the lock, judged at the database's time.
       mocks.readCheckpoint
         .mockImplementationOnce(async () => (order.push('checkpoint'), { totpVerifiedAt: 1 }))
-        .mockImplementationOnce(async () => (order.push('checkpoint'), null));
+        .mockImplementationOnce(async (_tx: unknown, _id: string, _hash: string | null, nowMs: number) => (order.push(`checkpoint@${nowMs === DB_NOW ? 'db' : 'instance'}`), null));
       const { POST } = await import('../../app/api/user/auth/totp/route');
       const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
       expect({ status: res.status, body: await res.json() }).toEqual({ status: 403, body: { ok: false, status: 'account_locked' } });
-      expect(order).toEqual(['checkpoint', 'lock:did:privy:u1', 'checkpoint']);
+      expect(order).toEqual(['checkpoint', 'lock:did:privy:u1', 'checkpoint@db']);
       expect(mocks.applyEmbeddedMove).not.toHaveBeenCalled();
       expect(mocks.createSession).not.toHaveBeenCalled();
     });

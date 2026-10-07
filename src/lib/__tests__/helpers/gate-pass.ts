@@ -31,7 +31,7 @@ export const privyProofPassing = () => ({
 export const privyAdmissionNone = () => ({
   admissionOf: () => null,
   readAdmission: async () => null,
-  lockPrivyUser: async () => {},
+  lockPrivyUser: async () => Date.now(),
   readCheckpoint: async () => ({ totpVerifiedAt: 1 }),
   recordCheckpoint: async () => {},
   isBoundToAccount: async () => true,

@@ -1,27 +1,26 @@
-// Adversary on e0d63e9 (Start over and a first admission take turns on lockPrivyUser; owner decision 2026-10-07).
+// Adversary on 8b4caaf (Start over, /proof, /auth and /totp take turns on lockPrivyUser; owner decisions 2026-10-07).
 //
-// Spec: Start over must "never act while any browser still holds an unexpired checkpoint for that Privy user", and
-// "a Privy user that Start over deleted is never the Privy user of any Mako account, by any ordering, route, retry or
-// concurrent request". The change serialises Start over with POST /api/user/auth and /totp through lockPrivyUser.
+// Spec: a first admission needs a checkpoint "UNEXPIRED when the binding commits"; Start over must "never act while
+// any browser still holds an unexpired checkpoint"; and "a Privy user that Start over deleted is never the Privy user
+// of any Mako account, by any ordering, route, retry or concurrent request". Production runs many server instances.
 //
-// It does not serialise Start over with the route that WRITES the checkpoint: POST /api/user/auth/proof calls
-// recordCheckpoint on the bare db, without lockPrivyUser. So a checkpoint can be committed after Start over has read
-// "no live checkpoint" under the lock and before its Privy delete lands. A sign-in from the browser holding that
-// checkpoint reads Privy before the delete lands, waits on the lock, and once Start over commits it finds a live
-// checkpoint and binds a new account to the Privy user that was just deleted.
+// The lock orders Start over and the sign-in, but each route judges expiry with its OWN instance's Date.now(), read
+// after the wait. Two instances whose clocks differ (or one whose clock is stepped back by NTP) can disagree about
+// the same checkpoint: Start over, on the instance whose clock reads past the expiry, finds no live checkpoint and
+// deletes the Privy user; the sign-in that was waiting on the lock, on an instance whose clock still reads before the
+// expiry, then finds the same checkpoint live and binds a new account to the deleted Privy user. The order the lock
+// enforces in real time is not the order the two clocks report.
 //
-// Privy state flip used (a user action Privy allows): the Privy user starts with an authenticator, no wallet and a
-// linked Google account, so the gate says account_locked (linked_google_oauth) and Start over is eligible. While Start
-// over's delete is in flight, the user unlinks Google in another tab, asks /proof for the checkpoint, creates the
-// wallet and signs in.
+// Modelled here by switching the mocked Date.now() between the two requests: Start over reads 1 s past the expiry,
+// the sign-in (which reads Privy before the delete lands, then waits on the lock) reads 1 s before it. The skew must
+// exceed the time from Start over's clock read to its commit (its Privy delete), so in production it is a window of
+// a few hundred milliseconds of skew around the moment a checkpoint expires.
 //
-// Harness: real Postgres (PGlite, every migration in the journal), the real routes, gate, proof, upsert, checkpoint
-// and lock code. Only Privy's network calls, the same-origin check, the allowlist and the cookie store are replaced
-// (as in start-over-race-adversary.test.ts). PGlite has one connection, so the production interleaving is modelled by
-// a small db wrapper: while a transaction is open, a statement from another request runs on that connection (in
-// production it runs on its own pooled connection and autocommits; Start over writes nothing, so what each statement
-// sees is the same), and a second transaction waits for the first to commit (STRONGER than production, where only
-// the advisory lock makes it wait, so this cannot create a false failure).
+// Harness copied from start-over-checkpoint-race-adversary-e0d63e9.test.ts: real Postgres (PGlite, every migration),
+// the real routes, gate, proof, upsert, checkpoint and lock code; only Privy's network calls, the same-origin check,
+// the allowlist and the cookie store are replaced. PGlite has one connection, so a second transaction waits for the
+// first to commit, which is STRONGER than production (where only the advisory lock makes it wait): the interleaving
+// below is the one the advisory lock produces, so this cannot create a false failure.
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { readFileSync } from 'node:fs';
@@ -35,6 +34,8 @@ import { buildProofMessage } from '@/lib/privy-proof-message';
 const state = vi.hoisted(() => ({
   db: null as unknown,
   clock: 0,
+  /// The database's clock: one clock, true time. `clock` above is the serving instance's own, which may be skewed.
+  dbClock: 0,
   privy: new Map<string, { email: string; enrolled: boolean; wallet: boolean; google: boolean }>(),
   cookieSet: vi.fn(),
   /// Runs inside Start over's Privy delete, before Privy has deleted the user (the request is in flight).
@@ -49,9 +50,9 @@ vi.mock('@/db/client', () => ({
   },
 }));
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: () => ({ ok: true }) }));
-// One clock in this test: the database's (db-clock.ts) reads the same time as the instance's.
-vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => state.clock }));
 vi.mock('@/lib/allowlist', () => ({ isAllowedForCurrentStage: async () => true }));
+// The fix (db-clock.ts): every checkpoint is stamped and judged on the database's clock after the lock.
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => state.dbClock }));
 vi.mock('next/headers', () => ({ cookies: async () => ({ set: state.cookieSet }) }));
 
 // anvil's published development key: exists only on local test chains.
@@ -59,7 +60,6 @@ const PRIVY_WALLET = privateKeyToAccount('0x59c6995e998f97a5a0044966f0945389dc9e
 const T = 1_791_222_000;
 const EMAIL = 'owner@example.com';
 const P = 'did:privy:owner';
-const P2 = 'did:privy:fresh';
 
 /// A Privy user read as src/lib/privy-server.ts builds it; throws when Privy has no such user (deleted).
 function privyRead(id: string) {
@@ -167,53 +167,44 @@ async function post(browser: Browser, path: string, body: Record<string, unknown
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
 }
 
-describe('Start over racing a checkpoint written by /proof (spec 2026-10-07)', () => {
-  it('never deletes a Privy user that a Mako account is then bound to', async () => {
-    state.clock = Date.UTC(2026, 9, 7, 12, 0, 0);
-    // Authenticator enrolled, no wallet, a linked Google account: locked, never admitted, no checkpoint anywhere.
-    state.privy.set(P, { email: EMAIL, enrolled: true, wallet: false, google: true });
+describe('Start over and a first admission judging one checkpoint on two clocks (spec 2026-10-07)', () => {
+  it('never binds a Mako account to the Privy user Start over deleted', async () => {
+    const C0 = Date.UTC(2026, 9, 6, 12, 0, 0);
+    state.clock = C0;
+    state.dbClock = C0;
+    // Authenticator enrolled, no wallet yet: browser B records its checkpoint (expires 24 h later, at E).
+    state.privy.set(P, { email: EMAIL, enrolled: true, wallet: false, google: false });
     const B: Browser = { jar: new Map() };
-    const hint = await post(B, '/api/user/auth/proof', { privyAccessToken: P });
-    expect(hint.json).toEqual({ ok: false, status: 'account_locked', startOver: true });
+    const cp = await post(B, '/api/user/auth/proof', { privyAccessToken: P, checkpoint: true });
+    expect(cp.json).toEqual({ ok: false, status: 'wallet_required' });
+    expect(B.jar.get('mako_enroll_cp')).toBeTruthy();
+    const E = C0 + 24 * 60 * 60 * 1000;
 
-    // While Start over's Privy delete is in flight (it already passed its re-check under the lock), the same person
-    // in another tab unlinks Google, gets the checkpoint, creates the wallet and signs in. The sign-in reads Privy
-    // now, before the delete lands, then waits on the lock Start over holds.
-    // If the checkpoint write is ever made to wait for Start over (the lock), the steps continue after it instead.
-    const waitFor = async (done: () => boolean) => {
-      for (let i = 0; i < 400 && !done(); i++) await new Promise((r) => setTimeout(r, 5));
-    };
-    let cpDone = false;
-    let cp: Promise<{ status: number; json: Record<string, unknown> }> | null = null;
+    // The wallet is created; just before E, browser B asks for its sign-in nonce and signs it.
+    state.privy.set(P, { email: EMAIL, enrolled: true, wallet: true, google: false });
+    state.clock = E - 5_000;
+    state.dbClock = E - 5_000;
+    const step = await post(B, '/api/user/auth/proof', { privyAccessToken: P });
+    expect(step.json.status).toBe('proof_required');
+    const message = buildProofMessage('localhost:3000', step.json.nonce as string, new Date(state.clock));
+    const signature = await PRIVY_WALLET.signMessage({ message });
+
+    // Another browser (no checkpoint) asks for Start over, served by instance S whose clock reads 1 s past E.
     let signIn: Promise<{ status: number; json: Record<string, unknown> }> | null = null;
-    const rest = async () => {
-      // The wallet is created, if the Privy user still exists (a deleted one is never brought back).
-      if (state.privy.has(P)) state.privy.set(P, { email: EMAIL, enrolled: true, wallet: true, google: false });
-      const step = await post(B, '/api/user/auth/proof', { privyAccessToken: P });
-      if (step.json.status !== 'proof_required') return step;
-      const message = buildProofMessage('localhost:3000', step.json.nonce as string, new Date(state.clock));
-      const signature = await PRIVY_WALLET.signMessage({ message });
+    state.duringDelete = async () => {
+      // While Start over holds the lock, B's sign-in arrives on instance A, whose clock reads 1 s before E. It reads
+      // Privy (the user still exists) and waits on the lock.
+      state.clock = E - 1_000;
       state.waiting = false;
       signIn = post(B, '/api/user/auth', { privyAccessToken: P, proof: { message, signature } });
-      // Let the sign-in run up to the point where it waits for its transaction (its Privy read is done by then).
-      await waitFor(() => state.waiting);
-      return null;
-    };
-    state.duringDelete = async () => {
-      state.privy.set(P, { email: EMAIL, enrolled: true, wallet: false, google: false });
-      state.waiting = false;
-      cp = post(B, '/api/user/auth/proof', { privyAccessToken: P, checkpoint: true }).finally(() => (cpDone = true));
-      await waitFor(() => cpDone || state.waiting);
-      if (!cpDone) return; // the checkpoint write waits for Start over: the delete lands first
-      expect((await cp).json).toEqual({ ok: false, status: 'wallet_required' });
-      expect(B.jar.get('mako_enroll_cp')).toBeTruthy();
-      await rest();
+      for (let i = 0; i < 400 && !state.waiting; i++) await new Promise((r) => setTimeout(r, 5));
       expect(state.waiting, 'the sign-in reached its transaction while Start over held the lock').toBe(true);
     };
+    // True time is now 1 s past E: the database's clock, and instance S's (accurate) clock. Instance A, which serves the
+    // sign-in above, runs 2 s slow.
+    state.clock = E + 1_000;
+    state.dbClock = E + 1_000;
     const startOver = await post({ jar: new Map() }, '/api/user/auth/start-over', { privyAccessToken: P });
-    expect(cp).not.toBeNull();
-    await cp;
-    if (signIn === null) await rest();
     const signInResult = signIn === null ? null : await signIn;
 
     const deleted = !state.privy.has(P);
@@ -221,12 +212,9 @@ describe('Start over racing a checkpoint written by /proof (spec 2026-10-07)', (
     console.info('[adversary] start-over:', JSON.stringify(startOver), 'sign-in:', JSON.stringify(signInResult), 'P deleted:', deleted, 'rows bound to P:', bound.length);
 
     // The spec invariant: a Privy user that Start over deleted is never the Privy user of any Mako account.
-    if (deleted) {
-      expect.soft(bound.length, 'accounts bound to the Privy user Start over deleted').toBe(0);
-      // And the fresh sign-up Start over exists for (Privy gives the email a new user) is not refused as C4.
-      state.privy.set(P2, { email: EMAIL, enrolled: false, wallet: false, google: false });
-      const fresh = await post({ jar: new Map() }, '/api/user/auth/proof', { privyAccessToken: P2 });
-      expect.soft(fresh.json.status, 'the fresh sign-up after Start over').not.toBe('email_changed');
-    }
+    if (deleted) expect(bound.length, 'accounts bound to the Privy user Start over deleted').toBe(0);
+    // Not vacuous: the race really ran (Start over deleted, the sign-in waited and was then refused).
+    expect(deleted, 'Start over deleted the expired, unfinished identity').toBe(true);
+    expect((signInResult as { json: unknown } | null)?.json, 'the sign-in, judged on the database clock, finds the checkpoint expired').toEqual({ ok: false, status: 'account_locked' });
   });
 });

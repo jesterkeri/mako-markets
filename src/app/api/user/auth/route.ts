@@ -221,11 +221,11 @@ export async function POST(req: Request) {
   let outcome: Outcome;
   try {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
-      // Takes turns with Start over for this Privy user, and judges the checkpoint at the time AFTER the wait: a sign-in
-      // that began before the checkpoint expired is refused once it has (adversary on 5c8d81c), and Start over can never
-      // delete this Privy user between this transaction's checks and its commit.
-      await lockPrivyUser(tx, read.privyUserId);
-      const checkpointNowMs = Date.now();
+      // Takes turns with Start over for this Privy user, and judges the checkpoint on the database's clock read AFTER the
+      // wait: a sign-in that began before the checkpoint expired is refused once it has (adversary on 5c8d81c), whatever
+      // this instance's own clock says (8b4caaf), and Start over can never delete this Privy user between this
+      // transaction's checks and its commit.
+      const checkpointNowMs = await lockPrivyUser(tx, read.privyUserId);
 
       // Single use, bound to this Privy user and this wallet, unexpired. Consumed inside the transaction, so a replay
       // finds it gone and a sign-in that fails later rolls the consumption back with everything else.

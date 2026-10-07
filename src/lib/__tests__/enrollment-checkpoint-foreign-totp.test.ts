@@ -65,7 +65,7 @@ vi.mock('@/lib/privy-proof', async (orig) => ({
 vi.mock('@/lib/privy-admission', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-admission')>()),
   readAdmission: mocks.readAdmission,
-  lockPrivyUser: async () => {},
+  lockPrivyUser: async () => Date.now(),
   readCheckpoint: async (_tx: unknown, id: string, hash: string | null, nowMs: number) => {
     const row = hash ? mocks.checkpoints.get(hash) : undefined;
     return row && row.privyUserId === id && row.expiresAt.getTime() > nowMs ? { totpVerifiedAt: row.totpVerifiedAt } : null;

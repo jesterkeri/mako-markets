@@ -46,6 +46,8 @@ vi.mock('@/db/client', () => ({
   },
 }));
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: () => ({ ok: true }) }));
+// One clock in this test: the database's (db-clock.ts) reads the same time as the instance's.
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => state.clock }));
 vi.mock('@/lib/allowlist', () => ({
   isAllowedForCurrentStage: async () => {
     const hook = state.duringAllowlist;

@@ -292,9 +292,9 @@ export async function POST(req: Request) {
   try {
     success = await db.transaction(async (tx): Promise<SuccessPayload> => {
       // Takes turns with Start over for this Privy user (see /api/user/auth). A first admission re-reads its checkpoint
-      // at the time after the wait, so one that expired since the gate above binds nothing.
-      await lockPrivyUser(tx, privyId);
-      if (admission === null && (await readCheckpoint(tx, privyId, checkpointHashFrom(req), Date.now())) === null) {
+      // on the database's clock after the wait, so one that expired since the gate above binds nothing.
+      const lockedNowMs = await lockPrivyUser(tx, privyId);
+      if (admission === null && (await readCheckpoint(tx, privyId, checkpointHashFrom(req), lockedNowMs)) === null) {
         throw new CheckpointGone();
       }
 

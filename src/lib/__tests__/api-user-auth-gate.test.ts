@@ -132,7 +132,7 @@ beforeEach(() => {
   // The enrollment checkpoint the server recorded while the user had the authenticator and no wallet (migration 0014).
   mocks.readCheckpoint.mockResolvedValue({ totpVerifiedAt: T });
   mocks.recordCheckpoint.mockResolvedValue(undefined);
-  mocks.lock.mockResolvedValue(undefined);
+  mocks.lock.mockImplementation(async () => Date.now());
   // Start over: by default the account is bound (never eligible), so the existing exact answers hold.
   mocks.bound.mockResolvedValue(true);
   mocks.live.mockResolvedValue(false);
@@ -300,15 +300,21 @@ describe('the enrollment checkpoint (migration 0014; owner decision 2026-10-07)'
     mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
     const order: string[] = [];
     let lockTx: unknown = null;
+    const DB_NOW = Date.UTC(2030, 0, 1); // the database's clock, far from this instance's
     mocks.lock.mockImplementation(async (tx: unknown, id: string) => {
       lockTx = tx;
       order.push(`lock:${id}`);
+      return DB_NOW;
     });
-    mocks.recordCheckpoint.mockImplementation(async (tx: unknown) => {
+    let expiresAt: Date | null = null;
+    mocks.recordCheckpoint.mockImplementation(async (tx: unknown, _id: string, _cp: unknown, _hash: string, exp: Date) => {
       order.push(tx === lockTx ? 'record:same-tx' : 'record:other');
+      expiresAt = exp;
     });
     expect((await proofStep()).json).toEqual({ ok: false, status: 'wallet_required' });
     expect(order).toEqual(['lock:did:privy:owner', 'record:same-tx']);
+    // Its expiry is stamped on the database's clock (adversary on 8b4caaf), 24 h after it.
+    expect((expiresAt as Date | null)?.getTime()).toBe(DB_NOW + 24 * 60 * 60 * 1000);
   });
 
   it('fails closed: a checkpoint that cannot be written is a 503, never wallet_required (so no wallet gets created)', async () => {
@@ -520,9 +526,10 @@ describe('Start over: an unfinished sign-up that is locked (Codex SIGNIN_R1 A1; 
 });
 
 describe('Start over and a first admission take turns on the Privy user (adversary on 5c8d81c)', () => {
-  // Each side holds lockPrivyUser for its whole transaction and reads the clock only once it has the lock, so the side
-  // that waited sees the other's commit (start-over-race-adversary.test.ts drives the interleaving on real Postgres).
-  // Here: the lock comes first, and the checkpoint is judged at the time read AFTER it, not at the request's start.
+  // Each side holds lockPrivyUser for its whole transaction and judges expiry on the DATABASE's clock, which the lock
+  // returns after the wait (start-over-*-adversary tests drive the interleavings on real Postgres). Here: the lock comes
+  // first, and the checkpoint is judged at the database time it returned, never at this instance's own clock, which
+  // stays at the request's start (as a slow instance's would).
   const order: string[] = [];
   let clock = 0;
   beforeEach(() => {
@@ -532,7 +539,7 @@ describe('Start over and a first admission take turns on the Privy user (adversa
     // The wait for the lock: the checkpoint expires while this request queues behind the other.
     mocks.lock.mockImplementation(async (_tx: unknown, id: string) => {
       order.push(`lock:${id}`);
-      clock += 60_000;
+      return clock + 60_000; // the database's clock after the wait; the instance's own clock does not move
     });
   });
   afterEach(() => {
@@ -573,7 +580,7 @@ describe('Start over and a first admission take turns on the Privy user (adversa
     const res = await POST(req('/api/user/auth/start-over', { privyAccessToken: 'tok' }));
     expect(res.status).toBe(200);
     expect(order).toEqual(['lock:did:privy:owner', 'bound', 'live', 'delete']);
-    expect(liveAt).toBe(before + 60_000);
+    expect(liveAt).toBe(before + 60_000); // the database's time from the lock, not this instance's
   });
 
   it('Start over that waited for a sign-in sees it bound and deletes nothing', async () => {
@@ -583,6 +590,7 @@ describe('Start over and a first admission take turns on the Privy user (adversa
     let committed = false;
     mocks.lock.mockImplementation(async () => {
       committed = true;
+      return clock;
     });
     mocks.bound.mockImplementation(async () => committed);
     const { POST } = await import('../../app/api/user/auth/start-over/route');

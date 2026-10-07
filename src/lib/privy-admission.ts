@@ -10,6 +10,7 @@ import { and, eq, gt, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { db, type DbOrTx } from '@/db/client';
 import { privyEnrollmentCheckpoints, users } from '@/db/schema';
+import { databaseNowMs } from '@/lib/db-clock';
 import type { EnrollmentCheckpoint, GateAdmission } from '@/lib/privy-gate';
 
 /// The admission an account recorded: only for an account bound to a Privy user, whose signer IS the admitted wallet.
@@ -31,10 +32,13 @@ export async function readAdmission(privyUserId: string): Promise<GateAdmission 
 
 /// Makes a first admission and Start over for one Privy user take turns: a lock held until the calling transaction
 /// commits or rolls back. /api/user/auth and /api/user/auth/totp take it before they read the checkpoint; Start over takes
-/// it around its re-check and the Privy delete. Whichever runs second waits, then reads what the first committed, with
-/// the clock read after the wait. Pass a transaction: on the bare `db` it would be released at once.
-export async function lockPrivyUser(tx: DbOrTx, privyUserId: string): Promise<void> {
+/// it around its re-check and the Privy delete. Whichever runs second waits, then reads what the first committed.
+/// Returns the DATABASE's time read after the wait (databaseNowMs): the one clock every instance stamps and judges a
+/// checkpoint's expiry on, so two instances whose own clocks differ cannot disagree about it (adversary on 8b4caaf).
+/// Pass a transaction: on the bare `db` the lock would be released at once.
+export async function lockPrivyUser(tx: DbOrTx, privyUserId: string): Promise<number> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'privy-user:' + privyUserId}))`);
+  return databaseNowMs(tx);
 }
 
 /// The enrollment checkpoint this browser holds for this Privy user: the row whose hash matches the browser's cookie

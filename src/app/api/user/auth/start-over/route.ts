@@ -51,9 +51,9 @@ export async function POST(req: Request) {
   }
   if (!read.email) return Response.json({ error: 'no_email' }, { status: 422 });
 
-  // The re-check and the delete run under the lock a first admission takes for this Privy user (lockPrivyUser), with the
-  // clock read after the wait: a sign-in in progress commits first and is then seen as bound, and one that starts later
-  // finds the identity gone. Nothing is written here, so the transaction only holds the lock.
+  // The re-check and the delete run under the lock a first admission takes for this Privy user (lockPrivyUser), judged on
+  // the database's clock read after the wait: a sign-in in progress commits first and is then seen as bound, and one
+  // that starts later finds the identity gone. Nothing is written here, so the transaction only holds the lock.
   // The email and admission reads come first, on their own: a sign-in that commits after them is caught by the bound
   // check under the lock, which startOverDecision weighs before the verdict.
   let moved: Awaited<ReturnType<typeof detectEmailMismatch>>;
@@ -70,8 +70,7 @@ export async function POST(req: Request) {
   let result: Result;
   try {
     result = await db.transaction(async (tx): Promise<Result> => {
-      await lockPrivyUser(tx, read.privyUserId);
-      const nowMs = Date.now();
+      const nowMs = await lockPrivyUser(tx, read.privyUserId);
       let decision: ReturnType<typeof startOverDecision>;
       try {
         const checkpoint = admission ? null : await readCheckpoint(tx, read.privyUserId, checkpointHashFrom(req), nowMs);

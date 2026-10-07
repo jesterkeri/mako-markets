@@ -76,8 +76,9 @@ export async function POST(req: Request) {
       // over's "no live checkpoint" re-check and its Privy delete. One recorded after that delete is for an identity
       // that no longer exists, so nothing can use it (every later step reads Privy again).
       await db.transaction(async (tx) => {
-        await lockPrivyUser(tx, read.privyUserId);
-        await recordCheckpoint(tx, read.privyUserId, checkpointNow, hashCheckpointToken(token), new Date(nowMs + ENROLL_CHECKPOINT_TTL_SEC * 1000));
+        // Its expiry is stamped on the database's clock, the one every instance judges it on (adversary on 8b4caaf).
+        const dbNowMs = await lockPrivyUser(tx, read.privyUserId);
+        await recordCheckpoint(tx, read.privyUserId, checkpointNow, hashCheckpointToken(token), new Date(dbNowMs + ENROLL_CHECKPOINT_TTL_SEC * 1000));
       });
       const store = await cookies();
       store.set(ENROLL_CHECKPOINT_COOKIE, token, {
