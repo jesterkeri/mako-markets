@@ -155,6 +155,12 @@ export async function readPrivyAccount(accessToken: string): Promise<PrivyAccoun
   return readById(client, claims.user_id);
 }
 
+/// Deletes a Privy user: ONLY for the self-service Start over of an account that never completed its first sign-in
+/// (src/lib/start-over.ts decides; /api/user/auth/start-over re-checks before calling). Throws on failure.
+export async function deletePrivyUser(privyUserId: string): Promise<void> {
+  await privy().users().delete(privyUserId);
+}
+
 /// A fresh read by Privy user id, for the re-checks after a session exists ([J3], [K4]). Throws when Privy cannot be
 /// read: the caller fails closed.
 export async function readPrivyAccountById(privyUserId: string): Promise<PrivyAccountRead> {

@@ -72,6 +72,9 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   recordCheckpoint: async (_tx: unknown, id: string, cp: { totpVerifiedAt: number }, hash: string, expiresAt: Date) => {
     if (!mocks.checkpoints.has(hash)) mocks.checkpoints.set(hash, { privyUserId: id, totpVerifiedAt: cp.totpVerifiedAt, expiresAt });
   },
+  // (Ported for Start over: the true state here, never admitted and no live checkpoint elsewhere.)
+  isBoundToAccount: async () => false,
+  hasLiveCheckpoint: async () => false,
   writeAdmission: mocks.writeAdmission,
   findMismatchedAccount: async () => null,
   detectEmailMismatch: mocks.detect,
@@ -193,10 +196,10 @@ describe('enrollment checkpoint: the owner\'s browser must not be given a checkp
     const ownerView = privyRead({ totpAt: OWNER_TOTP_AT, linkedAt: WALLET_AT, exportedAtMs });
 
     const step = await proofStep(owner, ownerView);
-    expect(step).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(step).toMatchObject({ status: 403, json: { ok: false, status: 'account_locked' } });
 
     const session = await signIn(owner, ownerView);
-    expect(session).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(session).toMatchObject({ status: 403, json: { ok: false, status: 'account_locked' } });
     expect(mocks.createSession).not.toHaveBeenCalled();
     expect(mocks.cookieSet).not.toHaveBeenCalledWith('mako_user_session', expect.anything(), expect.anything());
   });
@@ -206,7 +209,7 @@ describe('enrollment checkpoint: the owner\'s browser must not be given a checkp
     await proofStep(owner, privyRead({ totpAt: ATTACKER_TOTP_AT, linkedAt: null }));
     const ownerView = privyRead({ totpAt: OWNER_TOTP_AT, linkedAt: WALLET_AT });
 
-    expect(await signIn(owner, ownerView)).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(await signIn(owner, ownerView)).toMatchObject({ status: 403, json: { ok: false, status: 'account_locked' } });
     expect(mocks.createSession).not.toHaveBeenCalled();
   });
 });

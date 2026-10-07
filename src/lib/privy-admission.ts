@@ -47,6 +47,24 @@ export async function readCheckpoint(tx: DbOrTx, privyUserId: string, tokenHash:
   return rows[0] ? { totpVerifiedAt: rows[0].totpVerifiedAt } : null;
 }
 
+/// Whether ANY browser still holds an unexpired checkpoint for this Privy user. The Start over gate: while one does,
+/// the person can still finish in that browser, so the unfinished identity is never deleted under them.
+export async function hasLiveCheckpoint(tx: DbOrTx, privyUserId: string, nowMs: number): Promise<boolean> {
+  const rows = await tx
+    .select({ tokenHash: privyEnrollmentCheckpoints.tokenHash })
+    .from(privyEnrollmentCheckpoints)
+    .where(and(eq(privyEnrollmentCheckpoints.privyUserId, privyUserId), gt(privyEnrollmentCheckpoints.expiresAt, new Date(nowMs))))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/// Whether a Mako account is bound to this Privy user (it completed a first sign-in, or is bound by a move). Such an
+/// identity is never eligible for Start over.
+export async function isBoundToAccount(tx: DbOrTx, privyUserId: string): Promise<boolean> {
+  const rows = await tx.select({ id: users.id }).from(users).where(eq(users.privyUserId, privyUserId)).limit(1);
+  return rows.length > 0;
+}
+
 /// Records a checkpoint for the browser holding the secret whose hash is given. Insert only: a hash already present is
 /// left as it is. The caller passes only what checkpointFrom() derived from its own Privy read with the app secret and a
 /// hash of a secret it just generated; nothing from the browser reaches here. Throws on a database error: the caller

@@ -29,10 +29,11 @@ import {
   hashCheckpointToken,
   newCheckpointToken,
 } from '@/lib/enrollment-checkpoint';
-import { detectEmailMismatch, readAdmission, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
+import { detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, readAdmission, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { issueProofNonce } from '@/lib/privy-proof';
 import { checkpointFrom } from '@/lib/privy-gate';
+import { startOverDecision } from '@/lib/start-over';
 import { judgeAccount, PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 
 export const runtime = 'nodejs';
@@ -91,7 +92,16 @@ export async function POST(req: Request) {
   const verdict = judgeAccount(read, admission, checkpoint);
   if (!verdict.ok) {
     const flow = verdict.status === 'mfa_enrollment_required' || verdict.status === 'wallet_required';
-    return Response.json({ ok: false, status: verdict.status }, { status: flow ? 200 : 403 });
+    if (flow) return Response.json({ ok: false, status: verdict.status }, { status: 200 });
+    // A locked account that never completed its first sign-in may be offered Start over (src/lib/start-over.ts); the
+    // start-over route re-checks every condition before deleting anything, so this is only a hint for the dialog.
+    const offer = startOverDecision({
+      verdictStatus: verdict.status,
+      boundToAccount: await isBoundToAccount(db, read.privyUserId),
+      emailMoved: false, // C4 answered above
+      liveCheckpoint: await hasLiveCheckpoint(db, read.privyUserId, nowMs),
+    });
+    return Response.json({ ok: false, status: verdict.status, ...(offer.eligible ? { startOver: true } : {}) }, { status: 403 });
   }
   const nonce = await issueProofNonce(db, read.privyUserId, verdict.wallet, Date.now());
   return Response.json({ ok: true, status: 'proof_required', nonce });

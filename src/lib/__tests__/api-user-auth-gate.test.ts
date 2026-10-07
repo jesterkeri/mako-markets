@@ -23,6 +23,9 @@ const mocks = vi.hoisted(() => ({
   readAdmission: vi.fn(),
   readCheckpoint: vi.fn(),
   recordCheckpoint: vi.fn(),
+  bound: vi.fn(),
+  live: vi.fn(),
+  deleteUser: vi.fn(),
   findMismatched: vi.fn(),
   detect: vi.fn(),
   recordMismatch: vi.fn(),
@@ -37,6 +40,7 @@ vi.mock('@/lib/privy-server', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-server')>()),
   readPrivyAccount: mocks.read,
   readPrivyAccountById: mocks.readById,
+  deletePrivyUser: mocks.deleteUser,
 }));
 vi.mock('@/lib/privy-proof', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-proof')>()),
@@ -48,6 +52,8 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   readAdmission: mocks.readAdmission,
   readCheckpoint: mocks.readCheckpoint,
   recordCheckpoint: mocks.recordCheckpoint,
+  isBoundToAccount: mocks.bound,
+  hasLiveCheckpoint: mocks.live,
   writeAdmission: mocks.writeAdmission,
   findMismatchedAccount: mocks.findMismatched,
   detectEmailMismatch: mocks.detect,
@@ -124,6 +130,10 @@ beforeEach(() => {
   // The enrollment checkpoint the server recorded while the user had the authenticator and no wallet (migration 0014).
   mocks.readCheckpoint.mockResolvedValue({ totpVerifiedAt: T });
   mocks.recordCheckpoint.mockResolvedValue(undefined);
+  // Start over: by default the account is bound (never eligible), so the existing exact answers hold.
+  mocks.bound.mockResolvedValue(true);
+  mocks.live.mockResolvedValue(false);
+  mocks.deleteUser.mockResolvedValue(undefined);
   mocks.consume.mockResolvedValue(true);
   mocks.upsert.mockResolvedValue({ user: ROW, moved: false });
   mocks.createSession.mockResolvedValue('session-token');
@@ -404,5 +414,89 @@ describe('the first-sign-in welcome (live test L2, 2026-10-07)', () => {
     mocks.upsert.mockResolvedValue({ user: ROW, moved: false, created: true });
     const created = await signIn({ proof: await proof() });
     expect(created.json).toMatchObject({ authed: true, firstSignIn: true });
+  });
+});
+
+describe('Start over: an unfinished sign-up that is locked (Codex SIGNIN_R1 A1; owner decision 2026-10-07)', () => {
+  async function startOverCall(cookie?: string) {
+    const { POST } = await import('../../app/api/user/auth/start-over/route');
+    const res = await POST(req('/api/user/auth/start-over', { privyAccessToken: 'tok' }, cookie));
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  }
+  // The A1 sequence: the wallet exists, the first sign-in never finished, the checkpoint expired (none readable).
+  const unfinished = () => {
+    mocks.read.mockResolvedValue(privyRead());
+    mocks.readCheckpoint.mockResolvedValue(null);
+    mocks.bound.mockResolvedValue(false);
+    mocks.live.mockResolvedValue(false);
+  };
+
+  it('/proof offers Start over only for an eligible lock', async () => {
+    unfinished();
+    const { POST } = await import('../../app/api/user/auth/proof/route');
+    const offered = await POST(req('/api/user/auth/proof', { privyAccessToken: 'tok' }));
+    expect(await offered.json()).toEqual({ ok: false, status: 'account_locked', startOver: true });
+    mocks.bound.mockResolvedValue(true);
+    const notOffered = await POST(req('/api/user/auth/proof', { privyAccessToken: 'tok' }));
+    expect(await notOffered.json()).toEqual({ ok: false, status: 'account_locked' });
+  });
+
+  it('eligible: the unfinished Privy user is deleted and the checkpoint cookie cleared', async () => {
+    unfinished();
+    expect(await startOverCall()).toEqual({ status: 200, json: { ok: true } });
+    expect(mocks.deleteUser).toHaveBeenCalledWith('did:privy:owner');
+    expect(mocks.cookieSet).toHaveBeenCalledWith('mako_enroll_cp', '', expect.objectContaining({ maxAge: 0 }));
+  });
+
+  it('an account that ever signed in is never deleted', async () => {
+    unfinished();
+    mocks.bound.mockResolvedValue(true);
+    expect(await startOverCall()).toEqual({ status: 409, json: { ok: false, status: 'admitted' } });
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('a browser that can still finish (a live checkpoint anywhere) is sent there; nothing deleted', async () => {
+    unfinished();
+    mocks.live.mockResolvedValue(true);
+    expect(await startOverCall()).toEqual({ status: 409, json: { ok: false, status: 'finish_elsewhere' } });
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('an account that is not locked (it can sign in) is not deleted', async () => {
+    unfinished();
+    mocks.readCheckpoint.mockResolvedValue({ totpVerifiedAt: T });
+    expect(await startOverCall()).toEqual({ status: 409, json: { ok: false, status: 'not_locked' } });
+    mocks.read.mockResolvedValue(privyRead({ totpAt: null, linkedAt: null }));
+    expect((await startOverCall()).json).toEqual({ ok: false, status: 'not_locked' });
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('an email-moved conflict keeps its own handling; nothing deleted', async () => {
+    unfinished();
+    mocks.detect.mockResolvedValue({ id: 'u1', observedEmail: 'x@y.z' });
+    expect(await startOverCall()).toEqual({ status: 409, json: { ok: false, status: 'email_changed' } });
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('fails closed: a failed read or a failed delete deletes nothing and says try again; a bad token is refused', async () => {
+    unfinished();
+    mocks.live.mockRejectedValue(new Error('db down'));
+    expect(await startOverCall()).toEqual({ status: 503, json: { error: 'unavailable' } });
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+    mocks.live.mockResolvedValue(false);
+    mocks.deleteUser.mockRejectedValue(new Error('privy down'));
+    expect(await startOverCall()).toEqual({ status: 503, json: { error: 'unavailable' } });
+    mocks.read.mockRejectedValue(new Error('bad token'));
+    expect((await startOverCall()).status).toBe(401);
+  });
+
+  it('the inbox attack end to end: the owner, locked by an attacker-made wallet, starts over; the planted identity is deleted', async () => {
+    // Attacker's wallet, created before the owner's authenticator; the owner's browser holds no checkpoint.
+    mocks.read.mockResolvedValue(privyRead({ totpAt: T + 3600, linkedAt: T + 60, exportedAt: (T + 120) * 1000 }));
+    mocks.readCheckpoint.mockResolvedValue(null);
+    mocks.bound.mockResolvedValue(false);
+    expect(await startOverCall()).toEqual({ status: 200, json: { ok: true } });
+    expect(mocks.deleteUser).toHaveBeenCalledWith('did:privy:owner');
+    expect(mocks.createSession).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TotpRequiredState } from '@/components/signup/TotpStep';
-import { confirmWalletFree, continueGatedSignIn, GATE_MESSAGES, type GateBridge } from '../privy-gated-signin';
+import { confirmWalletFree, continueGatedSignIn, GATE_MESSAGES, START_OVER_MESSAGE, startOver, type GateBridge } from '../privy-gated-signin';
 import { submitTotp } from '../session-exchange';
 
 const USER = {
@@ -135,6 +135,27 @@ describe('the first-sign-in welcome (live test L2, 2026-10-07)', () => {
     vi.restoreAllMocks();
     routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: '2026-10-01T00:00:00.000Z', firstSignIn: true }]);
     expect(await continueGatedSignIn(bridge(), 'm')).toMatchObject({ kind: 'session', result: { kind: 'signed_in', firstSignIn: true } });
+  });
+});
+
+describe('Start over in the client', () => {
+  it('a lock the server offers to start over carries the flag and the start-over message; a plain lock does not', async () => {
+    routes([403, { ok: false, status: 'account_locked', startOver: true }]);
+    expect(await continueGatedSignIn(bridge(), 'm')).toEqual({ kind: 'session', result: { kind: 'error', message: START_OVER_MESSAGE, startOver: true } });
+    vi.restoreAllMocks();
+    routes([403, { ok: false, status: 'account_locked' }]);
+    expect(await continueGatedSignIn(bridge(), 'm')).toEqual({ kind: 'session', result: { kind: 'error', message: GATE_MESSAGES.account_locked } });
+  });
+  it('startOver reports success only on the server\'s ok, and says why otherwise', async () => {
+    respond(200, { ok: true });
+    expect(await startOver(bridge())).toEqual({ ok: true });
+    vi.restoreAllMocks();
+    respond(409, { ok: false, status: 'finish_elsewhere' });
+    expect(await startOver(bridge())).toMatchObject({ ok: false, message: expect.stringMatching(/browser where you set up/) });
+    vi.restoreAllMocks();
+    respond(503, { error: 'unavailable' });
+    expect(await startOver(bridge())).toMatchObject({ ok: false });
+    expect(await startOver(bridge({ token: async () => null }))).toMatchObject({ ok: false });
   });
 });
 

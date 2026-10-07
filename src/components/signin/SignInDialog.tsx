@@ -15,7 +15,7 @@ import { ROUNDS_ADDRESS } from '@/lib/contract';
 import { useMarkets } from '@/lib/hooks';
 import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
 import { openPools } from '@/lib/pool-display';
-import { confirmWalletFree, continueGatedSignIn } from '@/lib/privy-gated-signin';
+import { confirmWalletFree, continueGatedSignIn, startOver as requestStartOver } from '@/lib/privy-gated-signin';
 import { submitTotp, type SessionResult } from '@/lib/session-exchange';
 import { closeSignIn, useSignInOpen } from '@/lib/sign-in-store';
 import { accountAddress, USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
@@ -31,7 +31,7 @@ import { PrivyEmailBridge, type EmailAuth } from './PrivyEmailBridge';
 
 type Step =
   | { kind: 'email'; error: string | null; sending: boolean }
-  | { kind: 'code'; error: string | null; verifying: boolean; retryToken: string | null; sentAt: number }
+  | { kind: 'code'; error: string | null; verifying: boolean; retryToken: string | null; sentAt: number; startOver?: boolean }
   | { kind: 'totp'; state: TotpRequiredState }
   /// INBOX_GAP_PLAN r18: an authenticator first (secret null while Privy prepares it), then the wallet.
   | { kind: 'enroll'; secret: string | null; authUrl: string | null; code: string; submitting: boolean; error: string | null }
@@ -96,7 +96,7 @@ function SignInFlow() {
       // The Privy session is kept: a retry runs the gate again (a fresh token and a fresh proof), not the spent code.
       setStep({ kind: 'code', error: r.message, verifying: false, retryToken: token || 'gate', sentAt: step.kind === 'code' ? step.sentAt : Date.now() });
     } else {
-      setStep({ kind: 'code', error: r.message, verifying: false, retryToken: null, sentAt: step.kind === 'code' ? step.sentAt : Date.now() });
+      setStep({ kind: 'code', error: r.message, verifying: false, retryToken: null, sentAt: step.kind === 'code' ? step.sentAt : Date.now(), startOver: r.startOver === true });
     }
   };
 
@@ -180,6 +180,21 @@ function SignInFlow() {
     await runGate();
   };
 
+  /// Self-service Start over of an unfinished sign-up: the server clears it, then the person enters their email again.
+  const startOver = async () => {
+    const gate = auth.current?.gate;
+    if (step.kind !== 'code' || !gate) return;
+    const prev = step;
+    setStep({ ...prev, verifying: true });
+    const r = await requestStartOver(gate);
+    if (r.ok) {
+      setCode('');
+      setStep({ kind: 'email', error: 'Your unfinished sign-up was cleared. Enter your email to start again.', sending: false });
+    } else {
+      setStep({ ...prev, verifying: false, error: r.message, startOver: false });
+    }
+  };
+
   const sendCode = async () => {
     if (busy || !EMAIL.test(email.trim())) return;
     if (!auth.current) {
@@ -249,6 +264,7 @@ function SignInFlow() {
     submit2fa,
     finishEnroll,
     setupWallet,
+    startOver,
     signedIn,
     close,
   };
@@ -277,6 +293,7 @@ type FlowProps = {
   submit2fa: (value: string) => void;
   finishEnroll: () => void;
   setupWallet: () => void;
+  startOver: () => void;
   signedIn: (user: AuthedUser, firstSignIn: boolean) => void;
   close: () => void;
 };
@@ -598,7 +615,7 @@ function CodeBoxes({ value, onChange, bad, variant, label, onEnter }: { value: s
   );
 }
 
-function CodeStep({ step, email, code, setCode, verify, setStep, sendCode, variant }: FlowProps & { variant: 'desktop' | 'mobile' }) {
+function CodeStep({ step, email, code, setCode, verify, setStep, sendCode, startOver, variant }: FlowProps & { variant: 'desktop' | 'mobile' }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -619,9 +636,15 @@ function CodeStep({ step, email, code, setCode, verify, setStep, sendCode, varia
           {step.error}
         </div>
       )}
-      <button onClick={verify} disabled={!ready || step.verifying} className="m3-press m3-scale96" style={bigButton(ready && !step.verifying)}>
-        {step.verifying ? 'Signing in…' : step.retryToken ? 'Try again' : 'Sign in'}
-      </button>
+      {step.startOver ? (
+        <button onClick={startOver} disabled={step.verifying} className="m3-press m3-scale96" style={bigButton(!step.verifying)}>
+          {step.verifying ? 'Starting over…' : 'Start over'}
+        </button>
+      ) : (
+        <button onClick={verify} disabled={!ready || step.verifying} className="m3-press m3-scale96" style={bigButton(ready && !step.verifying)}>
+          {step.verifying ? 'Signing in…' : step.retryToken ? 'Try again' : 'Sign in'}
+        </button>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14, fontSize: 13, color: 'var(--dim)' }}>
         <button onClick={() => setStep({ kind: 'email', error: null, sending: false })} disabled={step.verifying} style={{ color: 'var(--dim)', fontWeight: 600 }}>
           Use a different email

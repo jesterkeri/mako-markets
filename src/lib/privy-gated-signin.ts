@@ -72,7 +72,10 @@ export async function continueGatedSignIn(bridge: GateBridge, site: string): Pro
   const status = step.json?.status;
   if (status === 'mfa_enrollment_required') return { kind: 'enroll' };
   if (status === 'wallet_required') return { kind: 'wallet_setup' };
-  if (status === 'account_locked') return { kind: 'session', result: { kind: 'error', message: GATE_MESSAGES.account_locked } };
+  if (status === 'account_locked') {
+    const offer = step.json?.startOver === true;
+    return { kind: 'session', result: { kind: 'error', message: offer ? START_OVER_MESSAGE : GATE_MESSAGES.account_locked, ...(offer ? { startOver: true as const } : {}) } };
+  }
   const nonce = step.json?.nonce;
   if (status !== 'proof_required' || typeof nonce !== 'string' || !PROOF_NONCE_RE.test(nonce)) {
     // A nonce of any other shape is refused: the wallet signs only the frame this file builds ([B2]).
@@ -106,4 +109,20 @@ export async function confirmWalletFree(bridge: GateBridge): Promise<{ ok: true 
   const step = await postJson('/api/user/auth/proof', { privyAccessToken: token, checkpoint: true });
   if (!step || step.status >= 500) return { ok: false, retry: true };
   return step.json?.status === 'wallet_required' ? { ok: true } : { ok: false, retry: false };
+}
+
+/// What a locked account that never completed its first sign-in is told: it can start over, and why that is safe.
+export const START_OVER_MESSAGE =
+  'This sign-up never finished, so it can’t be unlocked. Start over to set it up again with a new authenticator and a new account. Nothing was deposited to it.';
+
+/// Self-service Start over (src/lib/start-over.ts): asks the server to clear the unfinished sign-up. The server re-checks
+/// every condition and deletes nothing unless all hold.
+export async function startOver(bridge: GateBridge): Promise<{ ok: true } | { ok: false; message: string }> {
+  const token = await bridge.token();
+  if (!token) return { ok: false, message: 'Sign-in returned no token. Please try again.' };
+  const r = await postJson('/api/user/auth/start-over', { privyAccessToken: token });
+  if (r && r.status === 200 && r.json?.ok === true) return { ok: true };
+  if (r?.json?.status === 'finish_elsewhere') return { ok: false, message: 'Finish signing in in the browser where you set up your authenticator.' };
+  if (r?.json?.status === 'admitted') return { ok: false, message: GATE_MESSAGES.account_locked };
+  return { ok: false, message: 'Starting over didn’t work just now. Try again shortly.' };
 }

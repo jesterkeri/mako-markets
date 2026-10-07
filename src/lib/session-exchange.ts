@@ -12,7 +12,8 @@ export type SessionResult =
   | { kind: 'totp'; challengeId: string }
   /// The identity proof is still valid; the same request can be retried.
   | { kind: 'retry'; message: string }
-  | { kind: 'error'; message: string };
+  /// `startOver`: a locked account that never completed its first sign-in, which the server offers to start over.
+  | { kind: 'error'; message: string; startOver?: true };
 
 /// The success envelope, minus the route's `ok` flag, which must never reach the user cache.
 function toUser(body: Record<string, unknown>): AuthedUser {

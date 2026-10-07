@@ -65,6 +65,9 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   recordCheckpoint: async (_tx: unknown, id: string, cp: { totpVerifiedAt: number }, hash: string) => {
     if (!mocks.checkpoints.has(hash)) mocks.checkpoints.set(hash, { privyUserId: id, totpVerifiedAt: cp.totpVerifiedAt } as { totpVerifiedAt: number });
   },
+  // (Ported for Start over: the true state here, never admitted and no live checkpoint elsewhere.)
+  isBoundToAccount: async () => false,
+  hasLiveCheckpoint: async () => false,
   writeAdmission: mocks.writeAdmission,
   findMismatchedAccount: async () => null,
   detectEmailMismatch: mocks.detect,
@@ -175,10 +178,10 @@ describe('enrollment checkpoint: an attacker-recorded checkpoint must not admit 
     // The wallet's key was exported while the account had no authenticator: this account must be locked, never offered
     // a sign-in nonce, never given a session.
     const step = await proofStep(ownerView);
-    expect(step).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(step).toMatchObject({ status: 403, json: { ok: false, status: 'account_locked' } });
 
     const session = await signIn(ownerView);
-    expect(session).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(session).toMatchObject({ status: 403, json: { ok: false, status: 'account_locked' } });
     expect(mocks.createSession).not.toHaveBeenCalled();
     // (Ported: the attacker's own /proof legitimately sets ITS browser's checkpoint cookie; what must never be set is a
     // session cookie.)
@@ -190,7 +193,7 @@ describe('enrollment checkpoint: an attacker-recorded checkpoint must not admit 
     await proofStep(privyRead({ totpAt: null, linkedAt: null }));
     const ownerView = privyRead({ totpAt: OWNER_TOTP_AT, linkedAt: WALLET_AT });
 
-    expect(await signIn(ownerView)).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(await signIn(ownerView)).toMatchObject({ status: 403, json: { ok: false, status: 'account_locked' } });
     expect(mocks.createSession).not.toHaveBeenCalled();
     expect(mocks.cookieSet).not.toHaveBeenCalledWith('mako_user_session', expect.anything(), expect.anything());
   });

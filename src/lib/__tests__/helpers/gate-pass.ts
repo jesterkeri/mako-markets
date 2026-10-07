@@ -33,6 +33,8 @@ export const privyAdmissionNone = () => ({
   readAdmission: async () => null,
   readCheckpoint: async () => ({ totpVerifiedAt: 1 }),
   recordCheckpoint: async () => {},
+  isBoundToAccount: async () => true,
+  hasLiveCheckpoint: async () => false,
   writeAdmission: async () => {},
   findMismatchedAccount: async () => null,
   detectEmailMismatch: async () => null,

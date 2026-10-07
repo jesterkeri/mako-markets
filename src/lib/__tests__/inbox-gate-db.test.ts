@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { DbOrTx } from '@/db/client';
 import * as schema from '@/db/schema';
-import { readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
+import { hasLiveCheckpoint, isBoundToAccount, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatchIn } from '@/lib/privy-mismatch';
 import { checkProofSignature, consumeProofNonce, issueProofNonce } from '@/lib/privy-proof';
 import { buildProofMessage, parseProofMessage, PROOF_TTL_MS } from '@/lib/privy-proof-message';
@@ -77,6 +77,14 @@ describe('migration 0014: the enrollment checkpoint, bound to the browser', () =
   it('one Privy user can hold checkpoints from several browsers (each saw no wallet yet)', async () => {
     await recordCheckpoint(asDb(pdb), 'did:privy:cp1', { totpVerifiedAt: 1_791_367_500 }, H2, LATER);
     expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H2, NOW)).toEqual({ totpVerifiedAt: 1_791_367_500 });
+  });
+  it('Start over lookups: a live checkpoint in any browser, and a bound account', async () => {
+    expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:cp1', NOW)).toBe(true);
+    expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:cp1', LATER.getTime())).toBe(false); // all expired by then
+    expect(await hasLiveCheckpoint(asDb(pdb), 'did:privy:nobody', NOW)).toBe(false);
+    expect(await isBoundToAccount(asDb(pdb), 'did:privy:start-over-bound')).toBe(false);
+    await pg.query(`INSERT INTO users (email, magic_eoa, auth_type, privy_user_id) VALUES ('bound@x.y', '0x${'7'.repeat(40)}', 'magic', 'did:privy:start-over-bound')`);
+    expect(await isBoundToAccount(asDb(pdb), 'did:privy:start-over-bound')).toBe(true);
   });
   it('rejects a malformed hash, an empty Privy user id and a non-positive authenticator time', async () => {
     const exp = new Date(NOW).toISOString();
