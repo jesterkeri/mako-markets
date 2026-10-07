@@ -174,6 +174,9 @@ export interface EmbeddedUpsert {
   /// Set instead of moving when the account has TOTP on: the Privy wallet it will move to once the second
   /// factor passes. Nothing about the account has changed; the caller issues a pending-move challenge.
   pendingMoveTo?: string;
+  /// True only when this call CREATED the account: the one sign-in that shows the first-sign-in welcome. A count of
+  /// prior sessions cannot say this, because signing out deletes the session (live test L2, 2026-10-07).
+  created?: boolean;
 }
 
 /**
@@ -281,7 +284,7 @@ export async function upsertEmbeddedUser(
         .values({ email, magicEoa: d.eoa, privyUserId, authType: 'magic', ref: parseRefTag(opts.ref) })
         .onConflictDoNothing()
         .returning();
-      if (inserted.length === 1) return { user: inserted[0], moved: false };
+      if (inserted.length === 1) return { user: inserted[0], moved: false, created: true };
       // A concurrent sign-in created it first: refuse rather than guess; the retry resolves cleanly.
       throw new IdentityConflictError('email_with_different_eoa');
     }

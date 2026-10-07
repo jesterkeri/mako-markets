@@ -8,7 +8,7 @@ import { tabBarHidden, useTourStep } from '@/lib/tour';
 
 import { TAB_ICON } from './icons';
 
-/// The mobile bottom tab bar (2a): a floating pill with the four destinations; a yellow indicator slides under
+/// The mobile bottom tab bar (2a): a floating pill with the main destinations; a yellow indicator slides under
 /// the active one and fades out on pages that are not a tab.
 export function TabBar() {
   const active = activeNav(usePathname() ?? '/');
@@ -36,7 +36,7 @@ export function TabBar() {
           background: 'var(--tb-bg)',
           boxShadow: 'var(--tb-sh)',
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: `repeat(${NAV.length}, 1fr)`,
         }}
       >
         <span
@@ -47,7 +47,7 @@ export function TabBar() {
             top: 5,
             bottom: 5,
             left: 5,
-            width: 'calc((100% - 10px) / 4)',
+            width: `calc((100% - 10px) / ${NAV.length})`,
             borderRadius: 9999,
             background: 'var(--mako-signal)',
             boxShadow: 'inset 0 0 0 1.5px #000, 0 3px 8px rgba(0,0,0,0.18)',

@@ -16,8 +16,7 @@ import {
   poolState,
   positionLabel,
   positionOf,
-  usdc2,
-} from '../pool-list';
+  usdc2, openPoolGroups } from '../pool-list';
 
 const USDC = 1_000_000n;
 const NOW = 1_800_000_000;
@@ -289,5 +288,23 @@ describe('pool list copy', () => {
     expect(noOpenPoolsTitle('NBA')).toBe('No NBA pools open right now.');
     expect(noOpenPoolsTitle('MAKO')).toBe('No Mako pools open right now.');
     expect(noOpenPoolsTitle('COMMODITIES')).toBe('No commodities pools open right now.');
+  });
+});
+
+describe('openPoolGroups: the Pools page lists open pools only (Joshua, 2026-10-07)', () => {
+  it('drops the Closed group and keeps the open ones in order', () => {
+    const list = {
+      groups: [
+        { title: 'Closing today' as const, rows: [] },
+        { title: 'Later this week' as const, rows: [] },
+        { title: 'Closed' as const, rows: [] },
+      ],
+      counts: {} as never,
+      openCount: 0,
+      openTotal: 0n,
+    };
+    expect(openPoolGroups(list).map((g) => g.title)).toEqual(['Closing today', 'Later this week']);
+    expect(openPoolGroups({ ...list, groups: [{ title: 'Closed' as const, rows: [] }] })).toEqual([]);
+    expect(openPoolGroups(null)).toEqual([]);
   });
 });

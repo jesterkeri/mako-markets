@@ -314,3 +314,9 @@ export function closingSoon(
     .slice(0, Math.max(0, Math.floor(limit)));
   return { rows, openCount: open.length };
 }
+
+/// The groups the Pools page shows: open pools only, on desktop and mobile. Closed pools, and anything to claim from
+/// them, are on Me (Joshua, 2026-10-07).
+export function openPoolGroups(list: PoolList | null): PoolGroup[] {
+  return list ? list.groups.filter((g) => g.title !== 'Closed') : [];
+}

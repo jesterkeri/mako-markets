@@ -393,3 +393,13 @@ describe('the checkpoint is bound to the browser that saw it (adversary on a2a55
     expect(mocks.createSession).not.toHaveBeenCalled();
   });
 });
+
+describe('the first-sign-in welcome (live test L2, 2026-10-07)', () => {
+  it('firstSignIn is true only when this sign-in created the account', async () => {
+    const first = await signIn({ proof: await proof() });
+    expect(first.json).toMatchObject({ authed: true, firstSignIn: false });
+    mocks.upsert.mockResolvedValue({ user: ROW, moved: false, created: true });
+    const created = await signIn({ proof: await proof() });
+    expect(created.json).toMatchObject({ authed: true, firstSignIn: true });
+  });
+});

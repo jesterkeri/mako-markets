@@ -1,8 +1,10 @@
-// The four main destinations of the redesign (desktop nav pills, mobile tab bar), and which one a route lights.
+// The main destinations (desktop nav pills, mobile tab bar), and which one a route lights. Home is the first tab
+// (Joshua, 2026-10-07): the home page is its own page (Rounds, Pools and Market intel together), so it has its own tab.
 
-export type NavKey = 'rounds' | 'pools' | 'leaderboard' | 'me';
+export type NavKey = 'home' | 'rounds' | 'pools' | 'leaderboard' | 'me';
 
 export const NAV: readonly { key: NavKey; label: string; href: string }[] = [
+  { key: 'home', label: 'Home', href: '/' },
   { key: 'rounds', label: 'Rounds', href: '/rounds' },
   { key: 'pools', label: 'Pools', href: '/pools' },
   { key: 'leaderboard', label: 'Leaderboard', href: '/leaderboard' },
@@ -11,10 +13,11 @@ export const NAV: readonly { key: NavKey; label: string; href: string }[] = [
 
 const under = (pathname: string, base: string) => pathname === base || pathname.startsWith(`${base}/`);
 
-/// The destination a route belongs to, or null when none is lit (sign-in, legal, a profile, 404). Home lights
-/// Rounds, as in the design: it opens on the next round.
+/// The destination a route belongs to, or null when none is lit (sign-in, legal, a profile, 404). Home lights Home,
+/// never Rounds (Joshua, 2026-10-07).
 export function activeNav(pathname: string): NavKey | null {
-  if (pathname === '/' || under(pathname, '/rounds')) return 'rounds';
+  if (pathname === '/') return 'home';
+  if (under(pathname, '/rounds')) return 'rounds';
   if (under(pathname, '/pools')) return 'pools';
   if (under(pathname, '/leaderboard')) return 'leaderboard';
   if (under(pathname, '/me') || under(pathname, '/settings') || under(pathname, '/notifications')) return 'me';

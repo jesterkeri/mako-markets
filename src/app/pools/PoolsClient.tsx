@@ -15,6 +15,7 @@ import {
   CLOSED_WINDOW_SEC,
   formatPays,
   noOpenPoolsTitle,
+  openPoolGroups,
   POOL_FILTERS,
   positionLabel,
   STATE_PILL,
@@ -69,12 +70,13 @@ export function PoolsClient() {
   const names = useAddressNames(useMemo(() => onPage.filter((m) => m.mType !== MarketType.MAKO).map((m) => m.creator), [onPage]));
 
   const list = now === null ? null : buildPoolList(markets, now, filter, sort, bets);
+  const openGroups = openPoolGroups(list);
   const byOf = (r: PoolRow) => (r.cat === 'MAKO' ? 'Mako Market' : (names.get(r.creator.toLowerCase()) ?? formatAddress(r.creator)));
 
   const state: 'loading' | 'error' | 'empty' | 'ready' =
-    isError ? 'error' : isLoading || list === null ? 'loading' : list.groups.length === 0 && filter === 'ALL' ? 'empty' : 'ready';
+    isError ? 'error' : isLoading || list === null ? 'loading' : openGroups.length === 0 && filter === 'ALL' ? 'empty' : 'ready';
 
-  const view = { list, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry: refetch };
+  const view = { list, openGroups, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry: refetch };
   return (
     <>
       <div className="mk-desk mk-desk-frame">
@@ -89,6 +91,8 @@ export function PoolsClient() {
 
 type ViewProps = {
   list: ReturnType<typeof buildPoolList> | null;
+  /// The list's open groups only: Pools never shows closed pools (they are on Me).
+  openGroups: ReturnType<typeof buildPoolList>['groups'];
   state: 'loading' | 'error' | 'empty' | 'ready';
   filter: PoolFilter;
   setFilter: (f: PoolFilter) => void;
@@ -106,7 +110,7 @@ const COLS = 'minmax(0,1fr) 170px 212px 120px 92px 20px';
 // ---------------------------------------------------------------------------------------------------------------
 // Desktop
 
-function PoolsDesktop({ list, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry }: ViewProps) {
+function PoolsDesktop({ list, openGroups, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry }: ViewProps) {
   return (
     <div style={{ paddingBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 24, padding: '18px 4px 22px' }}>
@@ -179,13 +183,13 @@ function PoolsDesktop({ list, state, filter, setFilter, sort, setSort, labelsOf,
             <span style={{ textAlign: 'right' }}>CLOSES</span>
             <span />
           </div>
-          {list.groups.length === 0 && (
+          {openGroups.length === 0 && (
             <div style={{ padding: '56px 4px', boxShadow: 'inset 0 1px 0 var(--line)', textAlign: 'center' }}>
               <div style={{ ...display, fontSize: 24 }}>{noOpenPoolsTitle(filter)}</div>
               <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>Pools open when a creator makes one. Try another category, or make one yourself.</div>
             </div>
           )}
-          {list.groups.map((g) => (
+          {openGroups.map((g) => (
             <section key={g.title} aria-label={g.title}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 4px 10px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
                 <h2 style={{ margin: 0, ...display, fontSize: 22, letterSpacing: '-0.02em' }}>{g.title}</h2>
@@ -289,9 +293,7 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
 
 const ARROW_UP_RIGHT = 'M7 17L17 7M9 7h8v8';
 
-function PoolsMobile({ list, state, filter, setFilter, sort, setSort, labelsOf, retry }: ViewProps) {
-  // Mobile lists open pools only; closed ones and their claims are on Me (the design's "Winnings are claimed from Me").
-  const groups = list ? list.groups.filter((g) => g.title !== 'Closed') : [];
+function PoolsMobile({ list, openGroups: groups, state, filter, setFilter, sort, setSort, labelsOf, retry }: ViewProps) {
   const sortLabel = SORTS.find((o) => o.key === sort)!.label;
   return (
     <div style={{ paddingBottom: 24 }}>

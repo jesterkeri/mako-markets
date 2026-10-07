@@ -4,7 +4,7 @@ import { activeNav, NAV } from '../shell-nav';
 
 describe('activeNav', () => {
   it.each([
-    ['/', 'rounds'],
+    ['/', 'home'],
     ['/rounds', 'rounds'],
     ['/rounds/142', 'rounds'],
     ['/rounds/new', 'rounds'],
@@ -28,6 +28,6 @@ describe('activeNav', () => {
   });
 
   it('keeps the design order', () => {
-    expect(NAV.map((n) => n.label)).toEqual(['Rounds', 'Pools', 'Leaderboard', 'Me']);
+    expect(NAV.map((n) => n.label)).toEqual(['Home', 'Rounds', 'Pools', 'Leaderboard', 'Me']);
   });
 });

@@ -71,11 +71,13 @@ body {
   background-image: none;
 }
 
-/* Desktop content sits in the design's 1280px frame; mobile pages leave room for the floating tab bar. */
+/* Desktop content sits in a fluid frame (below); mobile pages leave room for the floating tab bar. */
+/* Fluid on desktop: the full window less a modest side margin, capped only so an ultra-wide screen stays readable
+   (Joshua, 2026-10-07: the 1280px column left wide empty margins on large screens). */
 .mk-desk-frame {
-  max-width: 1280px;
+  max-width: 1920px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 clamp(24px, 2.5vw, 48px);
   box-sizing: border-box;
   width: 100%;
 }

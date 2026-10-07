@@ -42,6 +42,8 @@ function shown(sel: string): HTMLElement | null {
   return null;
 }
 
+/// The desktop frame's max width (.mk-desk-frame in src/app/mako-shell.css): the tour places its cards against it.
+const DESK_FRAME_MAX = 1920;
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
 const navHref = (tab: TourStep['tab']) => NAV.find((n) => n.key === tab)?.href ?? '/';
 
@@ -49,7 +51,7 @@ const navHref = (tab: TourStep['tab']) => NAV.find((n) => n.key === tab)?.href ?
 /// cards; a page without the anchor, e.g. signed out, falls back to the tab).
 function placeDesktop(step: TourStep): DeskPlace {
   const width = document.documentElement.clientWidth;
-  const frame = Math.max(0, (width - 1280) / 2);
+  const frame = Math.max(0, (width - DESK_FRAME_MAX) / 2);
   if (step.style === 'pointer' && step.anchor) {
     const anchor = shown(`.mk-desk [data-tour-anchor="${step.anchor.key}"]`);
     if (anchor) {
@@ -237,7 +239,7 @@ function YellowCaret({ left }: { left: number }) {
 
 function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place: DeskPlace | null; actions: Actions; nextRef: React.RefObject<HTMLElement | null> }) {
   const slide = useSlide();
-  const frameRight = 'max(0px, (100vw - 1280px) / 2)';
+  const frameRight = `max(0px, (100vw - ${DESK_FRAME_MAX}px) / 2)`;
   if (step.style === 'mako') {
     return (
       <>

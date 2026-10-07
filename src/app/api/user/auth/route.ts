@@ -208,6 +208,8 @@ export async function POST(req: Request) {
       totpEnabledAt: Date | null;
     };
     lastSignInAt: string | null;
+    /// This sign-in created the account (the welcome shows once, not after every sign-out).
+    firstSignIn: boolean;
     nextEmailChangeAvailableAt: string | null;
     keyExportedAt: string | null;
     keyExportChanged: boolean;
@@ -226,7 +228,7 @@ export async function POST(req: Request) {
 
       // [J2] The account is looked up by email, wallet AND Privy user, and its admitted email is never rewritten: a
       // Privy email that moved (C4) lands in IdentityConflictError below and becomes email_changed.
-      const { user, moved, pendingMoveTo } = await upsertEmbeddedUser(tx, email, [verdict.wallet], read.privyUserId, {
+      const { user, moved, pendingMoveTo, created } = await upsertEmbeddedUser(tx, email, [verdict.wallet], read.privyUserId, {
         deferMoveIfTotp: true,
         ref: refFromCookieHeader(req.headers.get('cookie')),
       });
@@ -315,6 +317,7 @@ export async function POST(req: Request) {
           totpEnabledAt: user.totpEnabledAt,
         },
         lastSignInAt,
+        firstSignIn: created === true,
         nextEmailChangeAvailableAt,
         keyExportedAt: keyExportedAt ? keyExportedAt.toISOString() : null,
         keyExportChanged: keyExportChanged && keyExportedAt !== null,
@@ -376,6 +379,7 @@ export async function POST(req: Request) {
     authed: true,
     ...magicUserToWire(outcome.user, outcome.safeAddress),
     lastSignInAt: outcome.lastSignInAt,
+    firstSignIn: outcome.firstSignIn,
     nextEmailChangeAvailableAt: outcome.nextEmailChangeAvailableAt,
   });
 }
