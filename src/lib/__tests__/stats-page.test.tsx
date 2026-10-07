@@ -75,7 +75,9 @@ describe('/stats', () => {
   it('shows the Rounds section from the indexed totals', async () => {
     renderWith(wire());
     await waitFor(() => expect(screen.getAllByText('Rounds played').length).toBeGreaterThan(0));
-    expect(screen.getAllByText('26 settled · 3 refunded').length).toBeGreaterThan(0);
+    // 26 settled + 3 refunded = 29 played; 1 of the 30 scheduled is still in progress.
+    expect(screen.getAllByText('29').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('26 settled · 3 refunded · 1 in progress').length).toBeGreaterThan(0);
     expect(screen.getAllByText('14 / 12').length).toBeGreaterThan(0);
     expect(screen.getAllByText('by 21 people').length).toBeGreaterThan(0);
     expect(screen.getAllByText('310.00').length).toBeGreaterThan(0);
@@ -108,6 +110,14 @@ describe('/stats', () => {
     const text = container.textContent ?? '';
     expect(text).not.toMatch(/\b(we|our|us|team)\b/i);
     expect(text).not.toMatch(/Mako Markets/);
+    expect(text).not.toMatch(/—/);
+    expect(text).not.toMatch(/links to its transaction/);
+  });
+
+  it('says "1 claim", not "1 claims"', async () => {
+    const base = wire();
+    renderWith({ ...base, indexed: { ...base.indexed!, rounds: { ...base.indexed!.rounds, claims: 1, claimed: '2000000' } } });
+    await waitFor(() => expect(screen.getAllByText('1 claim paid 2.00 USDC').length).toBeGreaterThan(0));
   });
 });
 

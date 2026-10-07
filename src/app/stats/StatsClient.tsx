@@ -99,22 +99,25 @@ function Categories({ s }: { s: StatsWire }) {
 function Rounds({ s, big }: { s: StatsWire; big: number }) {
   const r = s.indexed?.rounds ?? null;
   const settled = r ? r.up + r.down : 0;
+  // Played = finished (settled or refunded); the rest are scheduled, open or waiting to settle.
+  const played = r ? settled + r.refunded : 0;
+  const pending = r ? r.scheduled - played : 0;
   const refundNote = r
     ? [r.tied && `${int(r.tied)} tied`, r.oneSided && `${int(r.oneSided)} one-sided`, r.noPrice && `${int(r.noPrice)} without a price`].filter(Boolean).join(', ')
     : '';
   const tile = (t: string, value: string | null, note: string) => (
     <div key={t} style={{ padding: '18px 18px 16px', borderRadius: 16, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
       <div style={label}>{t}</div>
-      <div style={{ ...display, fontSize: big, lineHeight: 1, marginTop: 12, fontVariantNumeric: 'tabular-nums' }}>{value ?? '—'}</div>
+      <div style={{ ...display, fontSize: big, lineHeight: 1, marginTop: 12, fontVariantNumeric: 'tabular-nums' }}>{value ?? 'n/a'}</div>
       <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 8 }}>{value === null ? 'unavailable right now' : note}</div>
     </div>
   );
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-      {tile('Rounds played', r ? int(r.scheduled) : null, r ? `${int(settled)} settled · ${int(r.refunded)} refunded` : '')}
+      {tile('Rounds played', r ? int(played) : null, r ? `${int(settled)} settled · ${int(r.refunded)} refunded${pending > 0 ? ` · ${int(pending)} in progress` : ''}` : '')}
       {tile('Results', r ? `${int(r.up)} / ${int(r.down)}` : null, 'UP / DOWN wins')}
       {tile('Entries', r ? int(r.entries) : null, r ? `by ${int(r.entrants)} ${r.entrants === 1 ? 'person' : 'people'}` : '')}
-      {tile('Staked on rounds', r ? usdc(r.volume) : null, r ? `${int(r.claims)} claims paid ${usdc(r.claimed)} USDC` : '')}
+      {tile('Staked on rounds', r ? usdc(r.volume) : null, r ? `${int(r.claims)} ${r.claims === 1 ? 'claim' : 'claims'} paid ${usdc(r.claimed)} USDC` : '')}
       {r && r.refunded > 0 ? tile('Refunded', int(r.refunded), refundNote) : null}
     </div>
   );
@@ -156,7 +159,7 @@ export function StatsClient() {
             </a>
           </>
         ) : null}
-        . Every bet and claim below links to its transaction.
+        . Counts only: no wallet, bet or claim is listed.
       </p>
     </>
   );
@@ -190,7 +193,7 @@ export function StatsClient() {
   const figure = (f: Figure, big: number) => (
     <div key={f.label} style={{ padding: '18px 18px 16px', borderRadius: 16, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
       <div style={label}>{f.label}</div>
-      <div style={{ ...display, fontSize: big, lineHeight: 1, marginTop: 12, fontVariantNumeric: 'tabular-nums' }}>{f.value ?? '—'}</div>
+      <div style={{ ...display, fontSize: big, lineHeight: 1, marginTop: 12, fontVariantNumeric: 'tabular-nums' }}>{f.value ?? 'n/a'}</div>
       <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 8 }}>{f.value === null ? 'unavailable right now' : f.note}</div>
     </div>
   );
