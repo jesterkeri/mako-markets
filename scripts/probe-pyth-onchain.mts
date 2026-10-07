@@ -20,7 +20,13 @@
 
 import { createPublicClient, http, hexToString } from 'viem';
 import abiJson from '../cf-worker/src/mako-abi.json';
-import { PRICE_FEED_BY_SYMBOL } from '../src/lib/price-feed-assets.js';
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as PriceFeedAssetsModule from '../src/lib/price-feed-assets.js';
+const { PRICE_FEED_BY_SYMBOL } = require('../src/lib/price-feed-assets.js') as typeof PriceFeedAssetsModule;
 
 const MAKO_ADDRESS = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
 const monad = {

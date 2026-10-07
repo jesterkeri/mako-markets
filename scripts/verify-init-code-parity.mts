@@ -33,9 +33,17 @@ import {
 } from 'viem';
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
 
-import { deriveSafeAddress } from '../src/lib/safe';
-import { buildSafeProxyInitCode } from '../src/lib/safe-init';
-import { monadTestnet } from '../src/lib/chain';
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as SafeModule from '../src/lib/safe';
+const { deriveSafeAddress } = require('../src/lib/safe') as typeof SafeModule;
+import type * as SafeInitModule from '../src/lib/safe-init';
+const { buildSafeProxyInitCode } = require('../src/lib/safe-init') as typeof SafeInitModule;
+import type * as ChainModule from '../src/lib/chain';
+const { monadTestnet } = require('../src/lib/chain') as typeof ChainModule;
 
 const SAFE_PROXY_FACTORY_ABI = [
   {

@@ -59,9 +59,17 @@ import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
-import { aaPendingUserOps } from '../src/db/schema';
-import { SAFE_CONFIG } from '../src/lib/safe-config';
-import { MONAD_TESTNET_ID } from '../src/lib/chain';
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as SchemaModule from '../src/db/schema';
+const { aaPendingUserOps } = require('../src/db/schema') as typeof SchemaModule;
+import type * as SafeConfigModule from '../src/lib/safe-config';
+const { SAFE_CONFIG } = require('../src/lib/safe-config') as typeof SafeConfigModule;
+import type * as ChainModule from '../src/lib/chain';
+const { MONAD_TESTNET_ID } = require('../src/lib/chain') as typeof ChainModule;
 
 const SCRIPT_VERSION = '1.0.0';
 const AUDIT_LOG_PATH = resolve(process.cwd(), '.local-ops/aa-pending-audit.log');

@@ -23,16 +23,18 @@ import { config as loadEnv } from 'dotenv';
 import postgres from 'postgres';
 import { createPublicClient, erc20Abi, getAddress, http, parseAbi, type Address } from 'viem';
 
-// src/lib is CommonJS under tsx, and an ES module's NAMED imports from it are guessed by Node's export detector, which
-// misses some (the first production run, 2026-10-07: "does not provide an export named 'SAFE_FALLBACK_SLOT'"). The
-// whole module object always arrives, so take the names from it.
-import chainLib from '../src/lib/chain.js';
-import safeLib from '../src/lib/safe.js';
-import auditLib, { type EmailAccountRow } from '../src/lib/safe-authority-audit.js';
-
-const { monadTestnet } = chainLib;
-const { deriveSafeAddress } = safeLib;
-const { judgeFundedAccount, judgeSafeAuthority, planEmailAccountAudit, SAFE_FALLBACK_SLOT, SAFE_GUARD_SLOT } = auditLib;
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as ChainModule from '../src/lib/chain.js';
+const { monadTestnet } = require('../src/lib/chain.js') as typeof ChainModule;
+import type * as SafeModule from '../src/lib/safe.js';
+const { deriveSafeAddress } = require('../src/lib/safe.js') as typeof SafeModule;
+import type { EmailAccountRow } from '../src/lib/safe-authority-audit.js';
+import type * as SafeAuthorityAuditModule from '../src/lib/safe-authority-audit.js';
+const { judgeFundedAccount, judgeSafeAuthority, planEmailAccountAudit, SAFE_FALLBACK_SLOT, SAFE_GUARD_SLOT } = require('../src/lib/safe-authority-audit.js') as typeof SafeAuthorityAuditModule;
 
 loadEnv({ path: '.env.development.local' });
 loadEnv({ path: '.env.local' });

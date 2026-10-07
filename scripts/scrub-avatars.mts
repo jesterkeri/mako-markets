@@ -41,15 +41,16 @@ config({ path: '.env' });
 
 import postgres from 'postgres';
 
-import { getAppBlobPublicHost } from '../src/lib/avatar-url.js';
-import {
-  applyScrub,
-  describeErrorSafely,
-  redactDbUrl,
-  runScrub,
-  type AvatarRow,
-  type ScrubDb,
-} from '../src/lib/avatar-scrub.js';
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as AvatarUrlModule from '../src/lib/avatar-url.js';
+const { getAppBlobPublicHost } = require('../src/lib/avatar-url.js') as typeof AvatarUrlModule;
+import type { AvatarRow, ScrubDb } from '../src/lib/avatar-scrub.js';
+import type * as AvatarScrubModule from '../src/lib/avatar-scrub.js';
+const { applyScrub, describeErrorSafely, redactDbUrl, runScrub } = require('../src/lib/avatar-scrub.js') as typeof AvatarScrubModule;
 
 const APPLY = process.argv.includes('--apply');
 const FORCE_EMPTY_KEPT = process.argv.includes('--force-empty-kept');

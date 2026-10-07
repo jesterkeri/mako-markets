@@ -26,9 +26,17 @@ import { createPublicClient, http } from 'viem';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
-import { monadTestnet, MONAD_TESTNET_ID } from '../src/lib/chain.js';
-import * as schema from '../src/db/schema.js';
-import { runPmMaintenanceCron } from '../src/lib/private-markets/cron.js';
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as ChainModule from '../src/lib/chain.js';
+const { monadTestnet, MONAD_TESTNET_ID } = require('../src/lib/chain.js') as typeof ChainModule;
+import type * as SchemaModule from '../src/db/schema.js';
+const schema = require('../src/db/schema.js') as typeof SchemaModule;
+import type * as CronModule from '../src/lib/private-markets/cron.js';
+const { runPmMaintenanceCron } = require('../src/lib/private-markets/cron.js') as typeof CronModule;
 import { logResolvedTarget, requireDevStage } from './_smoke-guard.mjs';
 
 async function main() {

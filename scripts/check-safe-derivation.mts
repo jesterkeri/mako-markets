@@ -1,7 +1,13 @@
 // One-off smoke test: the pure deriveSafeAddress() must match the Safe
 // address recorded in docs/safe-address-proof.json (which was computed from
 // live-RPC proxyCreationCode calls on Monad testnet + Base Sepolia).
-import { deriveSafeAddress } from '../src/lib/safe';
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as SafeModule from '../src/lib/safe';
+const { deriveSafeAddress } = require('../src/lib/safe') as typeof SafeModule;
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 

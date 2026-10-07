@@ -21,7 +21,13 @@ loadEnv({ path: '.env' });
 import { createPublicClient, http } from 'viem';
 import postgres from 'postgres';
 
-import { monadTestnet, MONAD_TESTNET_ID } from '../src/lib/chain.js';
+// src/ loads as CommonJS under tsx, and Node only GUESSES an ES module's named imports from CommonJS (some are
+// missed: the pre-beta audit, 2026-10-07; Codex SIGNIN_R2 C1). require() always delivers every export; the
+// type-only import keeps it checked. Guarded by src/lib/__tests__/scripts-esm-imports.test.ts.
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import type * as ChainModule from '../src/lib/chain.js';
+const { monadTestnet, MONAD_TESTNET_ID } = require('../src/lib/chain.js') as typeof ChainModule;
 import { logResolvedTarget, requireDevStage } from './_smoke-guard.mjs';
 
 const REWIND_BUFFER = 5_000n;
