@@ -82,7 +82,7 @@ describe('moving through the tour', () => {
   it('step 1 has no Back; Next opens Rounds; the open step is published for the chrome', () => {
     open('/', 'tour=1');
     expect(screen.getAllByText('Everything at a glance').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('STEP 1 OF 7 · HOME').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('STEP 1 OF 7 · WELCOME').length).toBeGreaterThan(0);
     expect(screen.queryAllByRole('button', { name: 'Back' })).toHaveLength(0);
     expect(screen.getByTestId('probe').textContent).toBe('0');
     fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0]);
@@ -133,7 +133,7 @@ describe('moving through the tour', () => {
   });
 
   it('the labels name the step and the tab it lives in', () => {
-    expect(tourLabelDesktop(0)).toBe('STEP 1 OF 7 · HOME');
+    expect(tourLabelDesktop(0)).toBe('STEP 1 OF 7 · WELCOME');
     expect(tourLabelDesktop(1)).toBe('STEP 2 OF 7 · ROUNDS TAB');
     expect(tourLabelDesktop(3)).toBe('STEP 4 OF 7 · CREATE · IN POOLS');
     expect(tourLabelDesktop(6)).toBe('STEP 7 OF 7 · TEST USDC · IN ME');

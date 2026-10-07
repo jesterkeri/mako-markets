@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 
 import { CAT_STYLE } from '@/lib/pool-list';
@@ -27,7 +26,6 @@ const GROUPS: readonly { key: NewsGroup; desk: string; mob: string }[] = [
   { key: 'earlier', desk: 'EARLIER', mob: 'Earlier' },
 ];
 const ARROW = 'M7.5 16.5l9-9M9.5 7.5h7v7';
-const BACK = 'M14.5 17.5L9 12l5.5-5.5';
 
 const catTitle = (c: Cat) => (c === 'ALL' ? 'All' : c === 'NBA' ? 'NBA' : c[0] + c.slice(1).toLowerCase());
 const stories = (n: number) => (n === 1 ? '1 story' : `${n} stories`);
@@ -106,10 +104,7 @@ function NewsDesktop(v: View) {
     <div style={{ paddingBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 20, padding: '16px 4px 20px' }}>
         <div>
-          <Link href="/" style={{ ...mono, fontSize: 12, color: 'var(--dim)', textDecoration: 'none' }}>
-            ← HOME
-          </Link>
-          <h1 style={{ margin: '6px 0 0', ...display, fontSize: 64, lineHeight: 1, letterSpacing: '-0.04em' }}>Market intel</h1>
+          <h1 style={{ margin: 0, ...display, fontSize: 64, lineHeight: 1, letterSpacing: '-0.04em' }}>Market intel</h1>
         </div>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, ...mono, fontSize: 12, color: 'var(--dim)' }}>
           <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--dim)' }} />
@@ -210,18 +205,13 @@ function DeskSkeleton() {
 function NewsMobile(v: View) {
   return (
     <div>
-      <div style={{ height: 68, display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center', gap: 8, padding: '0 16px' }}>
-        <Link href="/" aria-label="Back" className="m3-press" style={{ flex: 'none', width: 44, height: 44, borderRadius: 9999, background: 'var(--raise)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'inherit' }}>
-          <Svg d={BACK} size={18} />
-        </Link>
-        <h1 style={{ margin: 0, textAlign: 'center', fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Market intel</h1>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--dim)' }}>
-            <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--dim)' }} />
-            Latest
-          </span>
-          <span aria-hidden="true" style={{ flex: 'none', width: 44, height: 44 }} />
-        </span>
+      {/* A main tab since 2026-10-07 (News): the shell's own header, and a title like Pools and Rounds. */}
+      <div style={{ padding: '6px 20px 0' }}>
+        <h1 style={{ margin: 0, ...display, fontSize: 40, lineHeight: 1, letterSpacing: '-0.035em' }}>Market intel</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>
+          <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--dim)' }} />
+          Latest
+        </div>
       </div>
       <div style={{ padding: '6px 16px 0' }}>
         <div role="group" aria-label="Category" className="no-scrollbar" style={{ display: 'flex', gap: 8, overflowX: 'auto', scrollbarWidth: 'none', padding: '2px 0' }}>

@@ -12,10 +12,9 @@ vi.mock('next/link', () => ({
 }));
 
 import { HomeDesktop } from '@/app/_home/HomeDesktop';
-import { HomeMobile } from '@/app/_home/HomeMobile';
 import { NewsClient } from '@/app/news/NewsClient';
 import { newsGroup, newsSource } from '@/lib/news-intel';
-import { hasOwnMobileHeader, isMobileDetail } from '@/lib/shell-nav';
+import { activeNav, isMobileDetail } from '@/lib/shell-nav';
 
 const NOW = Date.parse('2026-10-01T12:00:00.000Z');
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -135,20 +134,17 @@ describe('helpers', () => {
     expect(newsGroup(new Date(NOW + 10 * 60_000).toISOString(), NOW)).toBe('earlier');
   });
 
-  it('/news draws its own mobile header and keeps the tab bar', () => {
-    expect(hasOwnMobileHeader('/news')).toBe(true);
-    expect(hasOwnMobileHeader('/news/x')).toBe(false);
+  it('/news is a main tab (News, 2026-10-07): it lights News and keeps the shell header and tab bar', () => {
+    expect(activeNav('/news')).toBe('news');
     expect(isMobileDetail('/news')).toBe(false);
   });
 });
 
 describe('Home', () => {
-  it('Market intel links to /news on both layouts', () => {
+  it('Market intel on the desktop Home page links to /news (mobile has no Home page)', () => {
     act(() => {
       render(<HomeDesktop pools={{ status: 'loading' }} filter="ALL" setFilter={() => {}} labelsOf={() => ({ yes: 'YES', no: 'NO' })} retry={() => {}} news={{ status: 'unavailable' }} nowMs={NOW} />);
-      render(<HomeMobile pools={{ status: 'loading' }} labelsOf={() => ({ yes: 'YES', no: 'NO' })} retry={() => {}} news={{ status: 'unavailable' }} nowMs={NOW} />);
     });
     expect(screen.getByRole('link', { name: 'All news →' }).getAttribute('href')).toBe('/news');
-    expect(screen.getByRole('link', { name: 'All news' }).getAttribute('href')).toBe('/news');
   });
 });

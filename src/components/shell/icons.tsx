@@ -1,8 +1,9 @@
 // Icon paths from the redesign's design file (24x24 viewBox). Stroke icons are drawn with a 1.75 stroke unless
 // noted; the tab bar uses the filled "soft" set.
 
-export const TAB_ICON: Record<'home' | 'rounds' | 'pools' | 'leaderboard' | 'me', string> = {
-  home: 'M12 3.2l8.6 7.1a1 1 0 0 1-.64 1.77H18.6v7.1a1.6 1.6 0 0 1-1.6 1.6h-2.9v-5.2a.9.9 0 0 0-.9-.9h-2.4a.9.9 0 0 0-.9.9v5.2H7a1.6 1.6 0 0 1-1.6-1.6v-7.1H4.04a1 1 0 0 1-.64-1.77z',
+export const TAB_ICON: Record<'pools' | 'rounds' | 'news' | 'leaderboard' | 'me', string> = {
+  // News: a folded newspaper, drawn to match the filled set (cut-outs via evenodd).
+  news: 'M5.2 4h11.1a1.7 1.7 0 0 1 1.7 1.7V18a1.9 1.9 0 0 0 1.9 1.9H6.1A3.2 3.2 0 0 1 2.9 16.7V6.3A2.3 2.3 0 0 1 5.2 4zM18.9 8.2h1.2a1 1 0 0 1 1 1v8.7a1.6 1.6 0 0 1-2.2 1.5zM6.4 7.6v3.6h8.2V7.6zM6.4 13v1.6h8.2V13zM6.4 16.2v1.6h5.6v-1.6z',
   rounds:
     'M9.6 2h4.8a1 1 0 0 1 0 2H9.6a1 1 0 0 1 0-2zM12 5.2a8.3 8.3 0 1 1 0 16.6 8.3 8.3 0 0 1 0-16.6zM11.1 9v5.1l3.6 2.2.95-1.55-2.75-1.65V9z',
   pools:

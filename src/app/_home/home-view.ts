@@ -6,4 +6,3 @@ export type PoolsView = { status: 'loading' } | { status: 'error' } | { status: 
 
 /// Desktop's table shows up to six pools (2a); mobile, which has no filter, the three that close first.
 export const DESK_ROWS = 6;
-export const MOB_ROWS = 3;

@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 
 import { FeedbackSheet } from '@/components/FeedbackSheet';
 import { SignInDialog } from '@/components/signin/SignInDialog';
-import { hasOwnMobileHeader, isMobileDetail } from '@/lib/shell-nav';
+import { isMobileDetail } from '@/lib/shell-nav';
 import { DesktopHeader } from './DesktopHeader';
 import { FeedbackButton } from './FeedbackButton';
 import { HowToPlay } from './HowToPlay';
@@ -21,13 +21,12 @@ import { TabBar } from './TabBar';
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? '';
   const detail = isMobileDetail(pathname);
-  const ownHeader = hasOwnMobileHeader(pathname);
   return (
     <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', fontFamily: 'var(--mako-font-sans)' }}>
       <div className="mk-desk mk-desk-frame">
         <DesktopHeader />
       </div>
-      {!detail && !ownHeader && (
+      {!detail && (
         <div className="mk-mob mk-m">
           <MobileHeader />
         </div>

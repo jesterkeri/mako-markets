@@ -121,35 +121,3 @@ function HomeRoundsColumnLive({ fallback }: { fallback: React.ReactNode }) {
     </section>
   );
 }
-
-/// Mobile: the card at the top of Home.
-/// Rounds not configured: the fallback, with no chain reads at all.
-export function HomeRoundsCardMobile({ fallback }: { fallback: React.ReactNode }) {
-  return roundsContract ? <HomeRoundsCardMobileLive fallback={fallback} /> : <>{fallback}</>;
-}
-
-function HomeRoundsCardMobileLive({ fallback }: { fallback: React.ReactNode }) {
-  const data = useHomeRounds();
-  if (!data) return <>{fallback}</>;
-  const f = featuredOf(data.rounds, data.now);
-  return (
-    <Link
-      href={f ? `/rounds/${f.round.id.toString()}` : '/rounds'}
-      style={{ display: 'block', margin: '0 12px', padding: 20, borderRadius: 30, background: 'var(--raise)', color: 'inherit', textDecoration: 'none' }}
-    >
-      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)' }}>
-        {f ? (f.phase === 'open' ? 'Next round · open' : 'Round live now') : 'Rounds'}
-      </div>
-      <div style={{ ...display, fontSize: 28, lineHeight: 1.05, marginTop: 8 }}>{f ? `${V1_ASSET.symbol} up or down by ${clock(closeTimeOf(f.round))}?` : 'No round is open right now'}</div>
-      {f && (
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 10 }}>
-          <span style={{ ...display, fontSize: 36, fontVariantNumeric: 'tabular-nums' }}>{lineFor(f, data.now).value}</span>
-          <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>{lineFor(f, data.now).label.toUpperCase()}</span>
-        </div>
-      )}
-      <div style={{ fontSize: 14, lineHeight: 1.45, color: 'var(--dim)', marginTop: 8 }}>
-        {f ? commentary(f.round, data.now) : 'Rounds run on a schedule, a few a day. The next one appears as soon as it is scheduled.'}
-      </div>
-    </Link>
-  );
-}

@@ -43,7 +43,9 @@ export type TourStep = {
 
 export const TOUR_STEPS: readonly TourStep[] = [
   {
-    name: 'Home',
+    // Opens / : the desktop Home page; on mobile, / goes to Pools (no mobile Home since 2026-10-07), so the mobile
+    // copy speaks of the Pools page it lands on.
+    name: 'Welcome',
     route: '/',
     tab: null,
     style: 'mako',
@@ -51,7 +53,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     motion: 'sway',
     title: 'Everything at a glance',
     body: 'Pools closing soon and market news, with 15-minute BTC rounds coming soon. Tap the Mako logo to come back here.',
-    bodyMobile: 'Closing pools and market news in one place. BTC rounds are coming soon.',
+    bodyMobile: 'Pools are open now: bet YES or NO on what happens next. BTC rounds are coming soon.',
     mobile: { dir: 'row', width: 120 },
   },
   {

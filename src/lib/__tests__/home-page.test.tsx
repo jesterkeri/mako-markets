@@ -1,8 +1,8 @@
 // Home (2a), rendered with mocked chain reads and a mocked /api/news: rounds are never drawn (the not-open copy
 // stands in for them), the pools are real open pools soonest-closing first and capped, a failed or partial chain
 // read shows the pools error, no open pool shows the pools empty state, and a failed or empty news read says news is
-// unavailable instead of drawing an empty list. Desktop and mobile both render (CSS shows one), so each check is
-// scoped to its layout.
+// unavailable instead of drawing an empty list. Home is desktop only since 2026-10-07 (Joshua): the mobile slot renders
+// nothing and sends a phone to /pools.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -11,6 +11,8 @@ import * as React from 'react';
 
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 
+const replace = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }) }));
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));
@@ -98,6 +100,9 @@ beforeEach(() => {
   newsResponse = () => json({ items: NEWS_ITEMS });
   vi.stubGlobal('fetch', vi.fn((url: string) => (String(url).startsWith('/api/news') ? newsResponse() : json({}, 404))));
   refetch.mockClear();
+  replace.mockClear();
+  // A phone-width window: the mobile slot redirects; the desktop markup still renders (CSS shows one of them).
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} }));
 });
 afterEach(() => {
   cleanup();
@@ -109,15 +114,13 @@ const deskRowLinks = (desk: HTMLElement) =>
   within(within(desk).getByRole('region', { name: 'Pools' })).getAllByRole('link').filter((a) => /^\/pools\/\d+$/.test(a.getAttribute('href') ?? ''));
 
 describe('Home rounds', () => {
-  it('says rounds are not open instead of drawing a round, on both layouts', () => {
-    const { desk, mob } = renderHome();
-    for (const layout of [desk, mob]) {
-      expect(within(layout).getByText('Rounds open soon')).toBeTruthy();
-      expect(within(layout).getByText('Rounds are not live on Mako Market yet. Pools are open now.')).toBeTruthy();
-      expect(within(layout).getByRole('link', { name: 'Browse pools' }).getAttribute('href')).toBe('/pools');
-      const remind = within(layout).getByRole('button', { name: 'Remind me · coming soon' }) as HTMLButtonElement;
-      expect(remind.disabled).toBe(true);
-    }
+  it('says rounds are not open instead of drawing a round, on desktop', () => {
+    const { desk } = renderHome();
+    expect(within(desk).getByText('Rounds open soon')).toBeTruthy();
+    expect(within(desk).getByText('Rounds are not live on Mako Market yet. Pools are open now.')).toBeTruthy();
+    expect(within(desk).getByRole('link', { name: 'Browse pools' }).getAttribute('href')).toBe('/pools');
+    const remind = within(desk).getByRole('button', { name: 'Remind me · coming soon' }) as HTMLButtonElement;
+    expect(remind.disabled).toBe(true);
     expect(within(desk).getByText('No rounds are scheduled yet.')).toBeTruthy();
     // Nothing from 2a's live round survives.
     for (const t of [/ENTRIES CLOSE IN/i, /LIVE ENTRIES/i, /Live bets/i, /SLOTS/i, /NEXT ROUND/i]) expect(screen.queryByText(t)).toBeNull();
@@ -158,22 +161,18 @@ describe('Home pools', () => {
     expect(within(desk).getByRole('button', { name: 'MAKO' })).toBeTruthy();
   });
 
-  it('shows the three pools closing first as mobile cards, with an All pools link', () => {
+  it('has no mobile Home: the mobile slot is empty and a phone is sent to /pools (Joshua, 2026-10-07)', () => {
     const { mob } = renderHome();
-    const section = within(mob).getByRole('region', { name: 'Pools closing soon' });
-    const cards = within(section).getAllByRole('link').filter((a) => /^\/pools\/\d+$/.test(a.getAttribute('href') ?? ''));
-    expect(cards.map((a) => a.getAttribute('href'))).toEqual(['/pools/1', '/pools/5', '/pools/3']);
-    expect(within(section).getByRole('link', { name: 'All pools' }).getAttribute('href')).toBe('/pools');
+    expect(mob.textContent).toBe('');
+    expect(replace).toHaveBeenCalledWith('/pools');
   });
 
   it('shows the pools error on a failed chain read, with a retry', () => {
     marketsState = { markets: [], count: 0, isLoading: false, isError: true };
-    const { desk, mob } = renderHome();
-    for (const layout of [desk, mob]) {
-      expect(within(layout).getByRole('alert').textContent).toContain('Can’t load pools right now');
-      fireEvent.click(within(layout).getByRole('button', { name: 'Try again' }));
-    }
-    expect(refetch).toHaveBeenCalledTimes(2);
+    const { desk } = renderHome();
+    expect(within(desk).getByRole('alert').textContent).toContain('Can’t load pools right now');
+    fireEvent.click(within(desk).getByRole('button', { name: 'Try again' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
     expect(deskRowLinks(desk)).toEqual([]);
   });
 
@@ -186,23 +185,21 @@ describe('Home pools', () => {
 
   it('shows the pools empty state when no pool is open', () => {
     marketsState = { markets: MARKETS.slice(8), count: 2, isLoading: false, isError: false };
-    const { desk, mob } = renderHome();
+    const { desk } = renderHome();
     expect(within(desk).getByText('No pools open right now')).toBeTruthy();
-    expect(within(mob).getByText('No pools open right now')).toBeTruthy();
   });
 
   it('shows skeletons while the chain read is loading', () => {
     marketsState = { markets: [], count: 0, isLoading: true, isError: false };
-    const { desk, mob } = renderHome();
+    const { desk } = renderHome();
     expect(within(desk).getByLabelText('Loading pools').getAttribute('aria-busy')).toBe('true');
-    expect(within(mob).getByLabelText('Loading').getAttribute('aria-busy')).toBe('true');
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });
 
 describe('Home market intel', () => {
   it('shows the newest four, labelled LATEST, linking out safely, aged from publishedAt', async () => {
-    const { desk, mob } = renderHome();
+    const { desk } = renderHome();
     const intel = within(desk).getByRole('region', { name: 'Market intel' });
     await within(intel).findByText('Bitcoin holds above $75K');
     expect(within(intel).getByText('LATEST')).toBeTruthy();
@@ -223,20 +220,17 @@ describe('Home market intel', () => {
     expect(within(intel).queryByRole('link', { name: 'Lakers sign a guard' })).toBeNull();
     expect(within(intel).getByText('Lakers sign a guard')).toBeTruthy();
 
-    const mIntel = within(mob).getByRole('region', { name: 'Market intel' });
-    expect(within(mIntel).getByText(/CRYPTO · 3H$/)).toBeTruthy();
-    expect(within(mIntel).getByRole('link', { name: /ETH leads majors/ }).getAttribute('target')).toBe('_blank');
   });
 
   it('says news is unavailable when the read fails, never an empty list', async () => {
     newsResponse = () => json({ error: 'upstream' }, 500);
     renderHome();
-    await waitFor(() => expect(screen.getAllByText('News is unavailable right now.')).toHaveLength(2), { timeout: 4000 });
+    await waitFor(() => expect(screen.getAllByText('News is unavailable right now.')).toHaveLength(1), { timeout: 4000 });
   });
 
   it('says news is unavailable when the feed comes back with nothing in it', async () => {
     newsResponse = () => json({ items: [] });
     renderHome();
-    await waitFor(() => expect(screen.getAllByText('News is unavailable right now.')).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText('News is unavailable right now.')).toHaveLength(1));
   });
 });
