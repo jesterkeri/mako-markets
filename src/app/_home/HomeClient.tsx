@@ -18,12 +18,19 @@ import { useNews } from './use-news';
 // soonest, read from the Pools contract (V4), and the newest headlines from /api/news.
 
 /// Mobile has no Home page (Joshua, 2026-10-07): / goes to Pools, keeping the query (the tour's ?tour=1 opens on /).
-/// Checked against the window itself after mount, never a server guess, so a desktop is never sent away; the mobile
-/// slot renders nothing meanwhile.
+/// Checked against the window itself after mount, never a server guess, so a desktop is never sent away; and again
+/// whenever the width crosses the breakpoint, so a desktop window narrowed to phone width (or a tablet turned upright)
+/// leaves the empty mobile slot too (adversary on 89b5058). The mobile slot renders nothing meanwhile.
 export function MobileGoesToPools() {
   const router = useRouter();
   useEffect(() => {
-    if (!window.matchMedia(DESKTOP_QUERY).matches) router.replace(`/pools${window.location.search}`);
+    const mql = window.matchMedia(DESKTOP_QUERY);
+    const toPools = () => {
+      if (!mql.matches) router.replace(`/pools${window.location.search}`);
+    };
+    toPools();
+    mql.addEventListener('change', toPools);
+    return () => mql.removeEventListener('change', toPools);
   }, [router]);
   return null;
 }
