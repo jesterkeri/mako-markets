@@ -10,6 +10,7 @@ import {
   TOTP_SIGNIN_MOVE_PURPOSE,
 } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
+import { checkpointHashFrom } from '@/lib/enrollment-checkpoint';
 import { verifyAndConsumeRecoveryCode } from '@/lib/recovery-codes';
 import { deriveSafeAddress } from '@/lib/safe';
 import {
@@ -252,9 +253,9 @@ export async function POST(req: Request) {
       await recordPrivyMismatch(user.id, read.email);
       return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
     }
-    // A first admission needs the enrollment checkpoint (migration 0014). Written once and never changed, so reading it
-    // here, before the transaction, cannot go stale.
-    const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId));
+    // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014). Rows are only inserted,
+    // never changed, so reading it here, before the transaction, cannot go stale.
+    const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId, checkpointHashFrom(req), Date.now()));
     if (!v.ok) {
       const flow = v.status === 'mfa_enrollment_required' || v.status === 'wallet_required';
       return Response.json({ ok: false, status: v.status }, { status: flow ? 200 : 403 });

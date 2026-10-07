@@ -55,18 +55,34 @@ describe('migration 0013', () => {
   });
 });
 
-describe('migration 0014: the enrollment checkpoint', () => {
-  it('is written once per Privy user: the first row wins and a later call cannot move it', async () => {
-    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1')).toBeNull();
-    await recordCheckpoint(asDb(pdb), 'did:privy:cp1', { totpVerifiedAt: 1_791_367_000 });
-    await recordCheckpoint(asDb(pdb), 'did:privy:cp1', { totpVerifiedAt: 1_791_369_999 });
-    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1')).toEqual({ totpVerifiedAt: 1_791_367_000 });
-    // Bound to its own Privy user: another user has none.
-    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp2')).toBeNull();
+describe('migration 0014: the enrollment checkpoint, bound to the browser', () => {
+  const H1 = 'a'.repeat(64);
+  const H2 = 'b'.repeat(64);
+  const LATER = new Date(NOW + 86_400_000);
+  it('is found only by the hash of the browser secret it was recorded with, for its own Privy user, while unexpired', async () => {
+    await recordCheckpoint(asDb(pdb), 'did:privy:cp1', { totpVerifiedAt: 1_791_367_000 }, H1, LATER);
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H1, NOW)).toEqual({ totpVerifiedAt: 1_791_367_000 });
+    // Another browser (another secret), no secret at all, or another Privy user: nothing.
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H2, NOW)).toBeNull();
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', null, NOW)).toBeNull();
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp2', H1, NOW)).toBeNull();
+    // Expired.
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H1, LATER.getTime())).toBeNull();
   });
-  it('rejects a non-positive authenticator time and an empty Privy user id', async () => {
-    await expect(pg.query(`INSERT INTO privy_enrollment_checkpoints (privy_user_id, totp_verified_at) VALUES ('did:privy:x', 0)`)).rejects.toThrow();
-    await expect(pg.query(`INSERT INTO privy_enrollment_checkpoints (privy_user_id, totp_verified_at) VALUES ('', 5)`)).rejects.toThrow();
+  it('is insert-only: the same hash again cannot change the row or move it to another user', async () => {
+    await recordCheckpoint(asDb(pdb), 'did:privy:cp9', { totpVerifiedAt: 1_791_369_999 }, H1, LATER);
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H1, NOW)).toEqual({ totpVerifiedAt: 1_791_367_000 });
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp9', H1, NOW)).toBeNull();
+  });
+  it('one Privy user can hold checkpoints from several browsers (each saw no wallet yet)', async () => {
+    await recordCheckpoint(asDb(pdb), 'did:privy:cp1', { totpVerifiedAt: 1_791_367_500 }, H2, LATER);
+    expect(await readCheckpoint(asDb(pdb), 'did:privy:cp1', H2, NOW)).toEqual({ totpVerifiedAt: 1_791_367_500 });
+  });
+  it('rejects a malformed hash, an empty Privy user id and a non-positive authenticator time', async () => {
+    const exp = new Date(NOW).toISOString();
+    await expect(pg.query(`INSERT INTO privy_enrollment_checkpoints (token_hash, privy_user_id, totp_verified_at, expires_at) VALUES ('raw-secret','u',5,$1)`, [exp])).rejects.toThrow();
+    await expect(pg.query(`INSERT INTO privy_enrollment_checkpoints (token_hash, privy_user_id, totp_verified_at, expires_at) VALUES ($1,'',5,$2)`, ['c'.repeat(64), exp])).rejects.toThrow();
+    await expect(pg.query(`INSERT INTO privy_enrollment_checkpoints (token_hash, privy_user_id, totp_verified_at, expires_at) VALUES ($1,'u',0,$2)`, ['d'.repeat(64), exp])).rejects.toThrow();
   });
 });
 

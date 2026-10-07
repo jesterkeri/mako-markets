@@ -104,8 +104,12 @@ async function proof(signer = OWNER) {
   const message = buildProofMessage('localhost:3000', NONCE, new Date());
   return { message, signature: await signer.signMessage({ message }) };
 }
-const req = (path: string, body: unknown) =>
-  new Request(`http://localhost:3000${path}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' }, body: JSON.stringify(body) });
+const req = (path: string, body: unknown, cookie?: string) =>
+  new Request(`http://localhost:3000${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:3000', ...(cookie ? { cookie } : {}) },
+    body: JSON.stringify(body),
+  });
 async function signIn(body: Record<string, unknown>) {
   const { POST } = await import('../../app/api/user/auth/route');
   const res = await POST(req('/api/user/auth', { privyAccessToken: 'tok', ...body }));
@@ -259,7 +263,9 @@ describe('the enrollment checkpoint (migration 0014; owner decision 2026-10-07)'
   it('enrolled, no wallet on any chain: the server records the checkpoint from its own read BEFORE answering wallet_required', async () => {
     mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
     expect(await proofStep()).toEqual({ status: 200, json: { ok: false, status: 'wallet_required' } });
-    expect(mocks.recordCheckpoint).toHaveBeenCalledWith(expect.anything(), 'did:privy:owner', { totpVerifiedAt: T });
+    expect(mocks.recordCheckpoint).toHaveBeenCalledWith(expect.anything(), 'did:privy:owner', { totpVerifiedAt: T }, expect.stringMatching(/^[0-9a-f]{64}$/), expect.any(Date));
+    // The browser gets the secret (never the hash), httpOnly, on the auth routes only.
+    expect(mocks.cookieSet).toHaveBeenCalledWith('mako_enroll_cp', expect.stringMatching(/^[A-Za-z0-9_-]{43}$/), expect.objectContaining({ httpOnly: true, path: '/api/user/auth' }));
   });
 
   it('fails closed: a checkpoint that cannot be written is a 503, never wallet_required (so no wallet gets created)', async () => {
@@ -310,5 +316,68 @@ describe('the enrollment checkpoint (migration 0014; owner decision 2026-10-07)'
     mocks.read.mockResolvedValue(privyRead());
     await proofStep();
     expect(mocks.recordCheckpoint).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the checkpoint is bound to the browser that saw it (adversary on a2a55b6)', () => {
+  // A store with the real semantics: rows by the hash of a browser secret, for one Privy user; insert only.
+  const store = new Map<string, { privyUserId: string; totpVerifiedAt: number }>();
+  let browserCookie: string | undefined;
+  beforeEach(() => {
+    store.clear();
+    browserCookie = undefined;
+    mocks.recordCheckpoint.mockImplementation(async (_tx: unknown, privyUserId: string, cp: { totpVerifiedAt: number }, hash: string) => {
+      if (!store.has(hash)) store.set(hash, { privyUserId, totpVerifiedAt: cp.totpVerifiedAt });
+    });
+    mocks.readCheckpoint.mockImplementation(async (_tx: unknown, privyUserId: string, hash: string | null) => {
+      const row = hash ? store.get(hash) : undefined;
+      return row && row.privyUserId === privyUserId ? { totpVerifiedAt: row.totpVerifiedAt } : null;
+    });
+    mocks.cookieSet.mockImplementation((name: string, value: string) => {
+      if (name === 'mako_enroll_cp') browserCookie = `mako_enroll_cp=${value}`;
+    });
+  });
+  const proofStepAs = async (cookie?: string) => {
+    const { POST } = await import('../../app/api/user/auth/proof/route');
+    const res = await POST(req('/api/user/auth/proof', { privyAccessToken: 'tok' }, cookie));
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  };
+  const signInAs = async (cookie: string | undefined, body: Record<string, unknown>) => {
+    const { POST } = await import('../../app/api/user/auth/route');
+    const res = await POST(req('/api/user/auth', { privyAccessToken: 'tok', ...body }, cookie));
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  };
+
+  it('the owner: checkpoint in this browser, wallet after it, first sign-in from the same browser is admitted', async () => {
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
+    expect((await proofStepAs()).json).toEqual({ ok: false, status: 'wallet_required' });
+    const ownerBrowser = browserCookie;
+    expect(ownerBrowser).toBeDefined();
+    mocks.read.mockResolvedValue(privyRead({ totpAt: T + 7, linkedAt: T + 6 })); // the live re-stamp shape
+    expect((await proofStepAs(ownerBrowser)).json).toMatchObject({ ok: true, status: 'proof_required' });
+    expect((await signInAs(ownerBrowser, { proof: await proof() })).status).toBe(200);
+  });
+
+  it('the same account from a browser without the checkpoint secret is locked', async () => {
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null }));
+    await proofStepAs();
+    mocks.read.mockResolvedValue(privyRead());
+    expect(await proofStepAs(undefined)).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(await signInAs('mako_enroll_cp=' + 'Z'.repeat(43), { proof: await proof() })).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+  });
+
+  it('the attack: attacker records a checkpoint with their own authenticator, removes it, creates the wallet; the owner is locked, never admitted with it', async () => {
+    // Attacker's browser: their authenticator Ta, no wallet: a checkpoint for THE ATTACKER'S browser.
+    mocks.read.mockResolvedValue(privyRead({ linkedAt: null, totpAt: T }));
+    await proofStepAs();
+    const attackerBrowser = browserCookie;
+    expect(attackerBrowser).toBeDefined();
+    // Ta removed, wallet W created and exported with no factor; then the owner enrolls To (later) in their own browser.
+    browserCookie = undefined;
+    mocks.read.mockResolvedValue(privyRead({ totpAt: T + 3600, linkedAt: T + 60, exportedAt: (T + 120) * 1000 }));
+    expect(await proofStepAs(undefined)).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(browserCookie).toBeUndefined(); // a wallet exists: no browser can be given a new checkpoint
+    expect(await signInAs(undefined, { proof: await proof() })).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(mocks.createSession).not.toHaveBeenCalled();
   });
 });

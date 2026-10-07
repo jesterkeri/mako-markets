@@ -6,7 +6,7 @@ import 'server-only';
 // read and written in one place so the sign-in routes stay readable and their tests can replace it.
 // ----------------------------------------------------------------------------
 
-import { and, eq, isNotNull, ne } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, ne } from 'drizzle-orm';
 
 import { db, type DbOrTx } from '@/db/client';
 import { privyEnrollmentCheckpoints, users } from '@/db/schema';
@@ -29,25 +29,39 @@ export async function readAdmission(privyUserId: string): Promise<GateAdmission 
   return rows[0] ? admissionOf(rows[0]) : null;
 }
 
-/// The enrollment checkpoint recorded for this Privy user, or null. Read with the transaction that admits, so the
-/// admission and the checkpoint it relies on are one consistent view.
-export async function readCheckpoint(tx: DbOrTx, privyUserId: string): Promise<EnrollmentCheckpoint | null> {
+/// The enrollment checkpoint this browser holds for this Privy user: the row whose hash matches the browser's cookie
+/// secret, recorded for this Privy user, unexpired. Null without a secret. Read with the transaction that admits.
+export async function readCheckpoint(tx: DbOrTx, privyUserId: string, tokenHash: string | null, nowMs: number): Promise<EnrollmentCheckpoint | null> {
+  if (!tokenHash) return null;
   const rows = await tx
     .select({ totpVerifiedAt: privyEnrollmentCheckpoints.totpVerifiedAt })
     .from(privyEnrollmentCheckpoints)
-    .where(eq(privyEnrollmentCheckpoints.privyUserId, privyUserId))
+    .where(
+      and(
+        eq(privyEnrollmentCheckpoints.tokenHash, tokenHash),
+        eq(privyEnrollmentCheckpoints.privyUserId, privyUserId),
+        gt(privyEnrollmentCheckpoints.expiresAt, new Date(nowMs)),
+      ),
+    )
     .limit(1);
   return rows[0] ? { totpVerifiedAt: rows[0].totpVerifiedAt } : null;
 }
 
-/// Records the checkpoint once. The first row wins and is never changed, so a repeated call, or one made later when the
-/// state no longer qualifies, cannot move it. The caller passes only what checkpointFrom() derived from its own Privy
-/// read with the app secret; nothing from the browser reaches here. Throws on a database error: the caller fails closed.
-export async function recordCheckpoint(tx: DbOrTx, privyUserId: string, checkpoint: EnrollmentCheckpoint): Promise<void> {
+/// Records a checkpoint for the browser holding the secret whose hash is given. Insert only: a hash already present is
+/// left as it is. The caller passes only what checkpointFrom() derived from its own Privy read with the app secret and a
+/// hash of a secret it just generated; nothing from the browser reaches here. Throws on a database error: the caller
+/// fails closed.
+export async function recordCheckpoint(
+  tx: DbOrTx,
+  privyUserId: string,
+  checkpoint: EnrollmentCheckpoint,
+  tokenHash: string,
+  expiresAt: Date,
+): Promise<void> {
   await tx
     .insert(privyEnrollmentCheckpoints)
-    .values({ privyUserId, totpVerifiedAt: checkpoint.totpVerifiedAt })
-    .onConflictDoNothing({ target: privyEnrollmentCheckpoints.privyUserId });
+    .values({ tokenHash, privyUserId, totpVerifiedAt: checkpoint.totpVerifiedAt, expiresAt })
+    .onConflictDoNothing({ target: privyEnrollmentCheckpoints.tokenHash });
 }
 
 /// Records the first admission ([G1]) and the export time last seen ([F1], [G4]); writes only what changed.

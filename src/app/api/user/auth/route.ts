@@ -5,6 +5,7 @@ import { userSafes } from '@/db/schema';
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
 import { createSigninChallenge, TOTP_SIGNIN_MOVE_PURPOSE } from '@/lib/auth-challenges';
 import { checkSameOrigin } from '@/lib/csrf';
+import { checkpointHashFrom } from '@/lib/enrollment-checkpoint';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import type { GateAdmission } from '@/lib/privy-gate';
@@ -171,7 +172,9 @@ export async function POST(req: Request) {
   // The gate (INBOX_GAP_PLAN r18): an authenticator and nothing weaker, one embedded wallet that came after it. Judged
   // here against the account as last stored, and again inside the transaction against the row it locks.
   const stored = await readAdmission(read.privyUserId);
-  const verdict = judgeAccount(read, stored, stored ? null : await readCheckpoint(db, read.privyUserId));
+  // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014).
+  const checkpointHash = checkpointHashFrom(req);
+  const verdict = judgeAccount(read, stored, stored ? null : await readCheckpoint(db, read.privyUserId, checkpointHash, Date.now()));
   if (!verdict.ok) return refusal(verdict.status);
 
   // The sign-in proof (item 1): a personal_sign by that wallet over the browser-built message, which Privy releases
@@ -234,7 +237,7 @@ export async function POST(req: Request) {
       // A 2FA account due to move to its Privy wallet: nothing changes yet. The challenge records the wallet
       // it moves TO, and /api/user/auth/totp moves it only after the second factor passes.
       if (pendingMoveTo) {
-        const pendingVerdict = judgeAccount(read, null, await readCheckpoint(tx, read.privyUserId));
+        const pendingVerdict = judgeAccount(read, null, await readCheckpoint(tx, read.privyUserId, checkpointHash, nowMs));
         if (!pendingVerdict.ok) throw new GateRefused(pendingVerdict.status);
         const challengeId = await createSigninChallenge({
           tx,
@@ -249,7 +252,7 @@ export async function POST(req: Request) {
       // only for an account bound to this Privy wallet; a pending move is admitted by /api/user/auth/totp after it moves.
       const admitted = admissionOf(user);
       // The checkpoint, read in this transaction, decides a first admission (migration 0014).
-      const inTx = judgeAccount(read, admitted, admitted ? null : await readCheckpoint(tx, read.privyUserId));
+      const inTx = judgeAccount(read, admitted, admitted ? null : await readCheckpoint(tx, read.privyUserId, checkpointHash, nowMs));
       if (!inTx.ok) throw new GateRefused(inTx.status);
       const admission: GateAdmission = admitted ?? { wallet: inTx.wallet, totpVerifiedAt: inTx.totpVerifiedAt };
       const keyExportedAt = inTx.exportedAtMs === null ? null : new Date(inTx.exportedAtMs);

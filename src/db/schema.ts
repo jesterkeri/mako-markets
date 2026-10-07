@@ -667,13 +667,20 @@ export const privyProofNonces = pgTable(
   (t) => ({ expiresIdx: index('privy_proof_nonces_expires_idx').on(t.expiresAt) }),
 );
 
-/// Enrollment checkpoints (migration 0014, owner decision 2026-10-07): the server saw this Privy user with only an
-/// authenticator and no embedded wallet on any chain. Required at a first admission; written once, never changed.
-export const privyEnrollmentCheckpoints = pgTable('privy_enrollment_checkpoints', {
-  privyUserId: text('privy_user_id').primaryKey(),
-  totpVerifiedAt: bigint('totp_verified_at', { mode: 'number' }).notNull(),
-  recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
-});
+/// Enrollment checkpoints (migration 0014, owner decisions 2026-10-07): a browser the server saw holding this Privy user
+/// with only an authenticator and no embedded wallet on any chain, by the SHA-256 of the secret in that browser's
+/// cookie. Required at a first admission; inserted only, never changed.
+export const privyEnrollmentCheckpoints = pgTable(
+  'privy_enrollment_checkpoints',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    privyUserId: text('privy_user_id').notNull(),
+    totpVerifiedAt: bigint('totp_verified_at', { mode: 'number' }).notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => ({ userIdx: index('privy_enrollment_checkpoints_user_idx').on(t.privyUserId) }),
+);
 
 export const authChallenges = pgTable(
   'auth_challenges',

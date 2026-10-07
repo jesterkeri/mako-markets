@@ -57,11 +57,15 @@ async function main() {
   const sql = postgres(dbUrl, { max: 1 });
   const rows = await sql<{ id: string; privy_totp_admitted_at: string | null; magic_eoa: string | null; privy_user_id: string | null }[]>`
     SELECT id, privy_totp_admitted_at, magic_eoa, privy_user_id FROM users WHERE privy_user_id = ${user.id} LIMIT 1`;
-  const cp = await sql<{ totp_verified_at: string; recorded_at: Date }[]>`
-    SELECT totp_verified_at, recorded_at FROM privy_enrollment_checkpoints WHERE privy_user_id = ${user.id} LIMIT 1`;
+  // Checkpoints are bound to the browser that saw them (by the hash of its cookie secret), so this lists them all.
+  const cp = await sql<{ totp_verified_at: string; recorded_at: Date; expires_at: Date }[]>`
+    SELECT totp_verified_at, recorded_at, expires_at FROM privy_enrollment_checkpoints WHERE privy_user_id = ${user.id} ORDER BY recorded_at`;
   await sql.end();
-  const checkpoint: EnrollmentCheckpoint | null = cp[0] ? { totpVerifiedAt: Number(cp[0].totp_verified_at) } : null;
-  console.log(cp[0] ? `enrollment checkpoint: TOTP ${iso(checkpoint!.totpVerifiedAt)}, recorded ${cp[0].recorded_at.toISOString()}` : 'no enrollment checkpoint');
+  if (cp.length === 0) console.log('no enrollment checkpoint (no browser ever saw this user with an authenticator and no wallet)');
+  for (const c of cp) console.log(`enrollment checkpoint: TOTP ${iso(Number(c.totp_verified_at))}, recorded ${c.recorded_at.toISOString()}, expires ${c.expires_at.toISOString()}`);
+  // The verdict below assumes the browser holding the newest unexpired checkpoint is the one signing in.
+  const live = cp.filter((c) => c.expires_at.getTime() > Date.now()).at(-1);
+  const checkpoint: EnrollmentCheckpoint | null = live ? { totpVerifiedAt: Number(live.totp_verified_at) } : null;
   const row = rows[0];
   const admittedAt = row?.privy_totp_admitted_at == null ? null : Number(row.privy_totp_admitted_at);
   const admission: GateAdmission | null = row && admittedAt !== null && row.magic_eoa ? { wallet: row.magic_eoa.toLowerCase(), totpVerifiedAt: admittedAt } : null;

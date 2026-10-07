@@ -9,13 +9,23 @@
 // asks the authenticator first) and sends to POST /api/user/auth. No session, no account data, no Safe address here.
 //
 // The enrollment checkpoint (migration 0014): when this read shows exactly one factor, an authenticator, and no embedded
-// wallet on any chain, the server records that here BEFORE answering `wallet_required`, and the browser creates the
-// wallet only after this answer. A first admission requires the checkpoint. If it cannot be recorded the answer is 503,
-// never `wallet_required`, so no wallet is ever created that the checkpoint does not precede.
+// wallet on any chain, the server records that here for THIS browser (a fresh secret in an httpOnly cookie, stored only
+// as its hash) BEFORE answering `wallet_required`, and the browser creates the wallet only after this answer. A first
+// admission requires a checkpoint held by the browser signing in (src/lib/enrollment-checkpoint.ts). If it cannot be
+// recorded the answer is 503, never `wallet_required`, so no wallet is ever created that the checkpoint does not precede.
 // ----------------------------------------------------------------------------
+
+import { cookies } from 'next/headers';
 
 import { db } from '@/db/client';
 import { checkSameOrigin } from '@/lib/csrf';
+import {
+  checkpointHashFrom,
+  ENROLL_CHECKPOINT_COOKIE,
+  ENROLL_CHECKPOINT_TTL_SEC,
+  hashCheckpointToken,
+  newCheckpointToken,
+} from '@/lib/enrollment-checkpoint';
 import { detectEmailMismatch, readAdmission, readCheckpoint, recordCheckpoint } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { issueProofNonce } from '@/lib/privy-proof';
@@ -53,10 +63,20 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
   }
 
+  const nowMs = Date.now();
   const checkpointNow = checkpointFrom(read.user);
   if (checkpointNow) {
+    const token = newCheckpointToken();
     try {
-      await recordCheckpoint(db, read.privyUserId, checkpointNow);
+      await recordCheckpoint(db, read.privyUserId, checkpointNow, hashCheckpointToken(token), new Date(nowMs + ENROLL_CHECKPOINT_TTL_SEC * 1000));
+      const store = await cookies();
+      store.set(ENROLL_CHECKPOINT_COOKIE, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/api/user/auth',
+        maxAge: ENROLL_CHECKPOINT_TTL_SEC,
+      });
     } catch (err) {
       console.error('[user/auth/proof] checkpoint write failed', err instanceof Error ? err.name : 'unknown');
       return Response.json({ error: 'unavailable' }, { status: 503 });
@@ -64,7 +84,8 @@ export async function POST(req: Request) {
   }
 
   const admission = await readAdmission(read.privyUserId);
-  const verdict = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, read.privyUserId));
+  const checkpoint = admission ? null : await readCheckpoint(db, read.privyUserId, checkpointHashFrom(req), nowMs);
+  const verdict = judgeAccount(read, admission, checkpoint);
   if (!verdict.ok) {
     const flow = verdict.status === 'mfa_enrollment_required' || verdict.status === 'wallet_required';
     return Response.json({ ok: false, status: verdict.status }, { status: flow ? 200 : 403 });
