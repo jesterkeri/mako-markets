@@ -88,7 +88,7 @@ vi.mock('@/lib/privy-server', () => ({
   judgeAccount: () => ({ ok: true, wallet: (mocks.gateWallet.value ?? '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa').toLowerCase(), walletId: 'w', totpVerifiedAt: 1, exportedAtMs: null }),
   checkIdentity: () => ({ ok: true }),
 }));
-vi.mock('@/lib/privy-admission', () => ({ writeAdmission: async () => {} }));
+vi.mock('@/lib/privy-admission', () => ({ lockPrivyUser: async () => {}, writeAdmission: async () => {} }));
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
 vi.mock('@/lib/email', () => ({ normalizeEmail: (e: string) => e.trim().toLowerCase() }));
 vi.mock('@/lib/user-session', () => ({

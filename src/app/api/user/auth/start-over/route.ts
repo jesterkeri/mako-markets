@@ -13,11 +13,22 @@ import { cookies } from 'next/headers';
 import { db } from '@/db/client';
 import { checkSameOrigin } from '@/lib/csrf';
 import { checkpointHashFrom, ENROLL_CHECKPOINT_COOKIE } from '@/lib/enrollment-checkpoint';
-import { detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, readAdmission, readCheckpoint } from '@/lib/privy-admission';
+import { detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, lockPrivyUser, readAdmission, readCheckpoint } from '@/lib/privy-admission';
 import { deletePrivyUser, judgeAccount, PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 import { startOverDecision } from '@/lib/start-over';
 
 export const runtime = 'nodejs';
+
+/// A read or the Privy delete failed inside the locked re-check: nothing was deleted, or Privy's own answer is unknown.
+class StartOverUnavailable extends Error {
+  constructor(
+    readonly step: 'read' | 'delete',
+    readonly inner: unknown,
+  ) {
+    super(`start_over_${step}`);
+    this.name = 'StartOverUnavailable';
+  }
+}
 
 export async function POST(req: Request) {
   if (!checkSameOrigin(req).ok) return Response.json({ error: 'cross_origin' }, { status: 403 });
@@ -40,31 +51,56 @@ export async function POST(req: Request) {
   }
   if (!read.email) return Response.json({ error: 'no_email' }, { status: 422 });
 
-  const nowMs = Date.now();
-  let decision: ReturnType<typeof startOverDecision>;
+  // The re-check and the delete run under the lock a first admission takes for this Privy user (lockPrivyUser), with the
+  // clock read after the wait: a sign-in in progress commits first and is then seen as bound, and one that starts later
+  // finds the identity gone. Nothing is written here, so the transaction only holds the lock.
+  // The email and admission reads come first, on their own: a sign-in that commits after them is caught by the bound
+  // check under the lock, which startOverDecision weighs before the verdict.
+  let moved: Awaited<ReturnType<typeof detectEmailMismatch>>;
+  let admission: Awaited<ReturnType<typeof readAdmission>>;
   try {
-    const moved = await detectEmailMismatch(read.privyUserId, read.email);
-    const admission = await readAdmission(read.privyUserId);
-    const checkpoint = admission ? null : await readCheckpoint(db, read.privyUserId, checkpointHashFrom(req), nowMs);
-    const verdict = judgeAccount(read, admission, checkpoint);
-    decision = startOverDecision({
-      verdictStatus: verdict.ok ? 'ok' : verdict.status,
-      boundToAccount: await isBoundToAccount(db, read.privyUserId),
-      emailMoved: moved !== null,
-      liveCheckpoint: await hasLiveCheckpoint(db, read.privyUserId, nowMs),
-    });
+    moved = await detectEmailMismatch(read.privyUserId, read.email);
+    admission = await readAdmission(read.privyUserId);
   } catch (err) {
     console.error('[user/auth/start-over] read failed', err instanceof Error ? err.name : 'unknown');
     return Response.json({ error: 'unavailable' }, { status: 503 });
   }
-  if (!decision.eligible) return Response.json({ ok: false, status: decision.reason }, { status: 409 });
 
+  type Result = { kind: 'ineligible'; reason: string } | { kind: 'deleted' };
+  let result: Result;
   try {
-    await deletePrivyUser(read.privyUserId);
+    result = await db.transaction(async (tx): Promise<Result> => {
+      await lockPrivyUser(tx, read.privyUserId);
+      const nowMs = Date.now();
+      let decision: ReturnType<typeof startOverDecision>;
+      try {
+        const checkpoint = admission ? null : await readCheckpoint(tx, read.privyUserId, checkpointHashFrom(req), nowMs);
+        const verdict = judgeAccount(read, admission, checkpoint);
+        decision = startOverDecision({
+          verdictStatus: verdict.ok ? 'ok' : verdict.status,
+          boundToAccount: await isBoundToAccount(tx, read.privyUserId),
+          emailMoved: moved !== null,
+          liveCheckpoint: await hasLiveCheckpoint(tx, read.privyUserId, nowMs),
+        });
+      } catch (err) {
+        throw new StartOverUnavailable('read', err);
+      }
+      if (!decision.eligible) return { kind: 'ineligible', reason: decision.reason };
+      try {
+        await deletePrivyUser(read.privyUserId);
+      } catch (err) {
+        throw new StartOverUnavailable('delete', err);
+      }
+      return { kind: 'deleted' };
+    });
   } catch (err) {
-    console.error('[user/auth/start-over] Privy delete failed', err instanceof Error ? err.name : 'unknown');
+    const step = err instanceof StartOverUnavailable ? err.step : 'lock';
+    const cause = err instanceof StartOverUnavailable ? err.inner : err;
+    console.error(`[user/auth/start-over] ${step} failed`, cause instanceof Error ? cause.name : 'unknown');
     return Response.json({ error: 'unavailable' }, { status: 503 });
   }
+  if (result.kind === 'ineligible') return Response.json({ ok: false, status: result.reason }, { status: 409 });
+
   // An audit line: which unfinished Privy identity was cleared (an id, no email).
   console.info('[user/auth/start-over] deleted unfinished Privy user', read.privyUserId);
   const store = await cookies();

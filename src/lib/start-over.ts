@@ -15,8 +15,9 @@
 //   1. the gate's verdict for this read is account_locked;
 //   2. no Mako account is bound to this Privy user (never admitted; an account that ever signed in is never eligible);
 //   3. no email-moved conflict (C4 keeps its own handling);
-//   4. no browser holds an unexpired checkpoint for this Privy user (it could still finish there; this also rules out
-//      a race with a first admission, which needs one).
+//   4. no browser holds an unexpired checkpoint for this Privy user (it could still finish there).
+// Rules 2 and 4 alone do not stop a first admission already in flight (adversary on 5c8d81c): the route re-checks them
+// under lockPrivyUser, the lock that first admission holds until it commits, with the clock read after the wait.
 // ----------------------------------------------------------------------------
 
 export interface StartOverFacts {

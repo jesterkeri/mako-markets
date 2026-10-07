@@ -39,6 +39,8 @@ const mocks = vi.hoisted(() => {
     deriveSafeAddress: vi.fn(),
     createSession: vi.fn(),
     applyEmbeddedMove: vi.fn(),
+    lockPrivyUser: vi.fn<(tx: unknown, id: string) => Promise<void>>(async () => {}),
+    readCheckpoint: vi.fn(async () => ({ totpVerifiedAt: 1 }) as { totpVerifiedAt: number } | null),
     gateWallet: { value: null as string | null },
     revokeAll: vi.fn(),
     cookiesStore: { set: vi.fn() },
@@ -98,7 +100,11 @@ vi.mock('@/lib/privy-server', () => ({
   judgeAccount: () => ({ ok: true, wallet: (mocks.gateWallet.value ?? '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa').toLowerCase(), walletId: 'w', totpVerifiedAt: 1, exportedAtMs: null }),
   checkIdentity: () => ({ ok: true }),
 }));
-vi.mock('@/lib/privy-admission', () => ({ writeAdmission: async () => {} }));
+vi.mock('@/lib/privy-admission', () => ({
+  lockPrivyUser: mocks.lockPrivyUser,
+  readCheckpoint: mocks.readCheckpoint,
+  writeAdmission: async () => {},
+}));
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
 vi.mock('@/lib/email', () => ({ normalizeEmail: (e: string) => e.trim().toLowerCase() }));
 vi.mock('@/lib/user-session', () => ({
@@ -263,6 +269,8 @@ function userRow(overrides: Partial<{
   totpLastUsedStep: bigint | null;
   totpLockedUntil: Date | null;
   lastEmailChangedAt: Date | null;
+  privyUserId: string | null;
+  privyTotpAdmittedAt: number | null;
 }> = {}) {
   return [{
     id: USER_ID,
@@ -809,6 +817,27 @@ describe('POST /api/user/auth/totp', () => {
       const { POST } = await import('../../app/api/user/auth/totp/route');
       const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
       expect(res.status).toBe(401);
+      expect(mocks.applyEmbeddedMove).not.toHaveBeenCalled();
+      expect(mocks.createSession).not.toHaveBeenCalled();
+    });
+
+    it('a first admission whose checkpoint expired while it waited for the Start over lock binds nothing (adversary on 5c8d81c)', async () => {
+      succeedFactor();
+      // An unbound Magic-era account: this move is its first admission, which rests on this browser's checkpoint.
+      mocks.selectUser.mockResolvedValue(userRow({ privyUserId: null, privyTotpAdmittedAt: null }));
+      mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
+      const order: string[] = [];
+      mocks.lockPrivyUser.mockImplementationOnce(async (_tx: unknown, id: string) => {
+        order.push(`lock:${id}`);
+      });
+      // Live for the gate before the transaction; gone when re-read after the lock.
+      mocks.readCheckpoint
+        .mockImplementationOnce(async () => (order.push('checkpoint'), { totpVerifiedAt: 1 }))
+        .mockImplementationOnce(async () => (order.push('checkpoint'), null));
+      const { POST } = await import('../../app/api/user/auth/totp/route');
+      const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
+      expect({ status: res.status, body: await res.json() }).toEqual({ status: 403, body: { ok: false, status: 'account_locked' } });
+      expect(order).toEqual(['checkpoint', 'lock:did:privy:u1', 'checkpoint']);
       expect(mocks.applyEmbeddedMove).not.toHaveBeenCalled();
       expect(mocks.createSession).not.toHaveBeenCalled();
     });

@@ -6,7 +6,7 @@ import 'server-only';
 // read and written in one place so the sign-in routes stay readable and their tests can replace it.
 // ----------------------------------------------------------------------------
 
-import { and, eq, gt, isNotNull, ne } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { db, type DbOrTx } from '@/db/client';
 import { privyEnrollmentCheckpoints, users } from '@/db/schema';
@@ -27,6 +27,14 @@ export async function readAdmission(privyUserId: string): Promise<GateAdmission 
     .where(eq(users.privyUserId, privyUserId))
     .limit(1);
   return rows[0] ? admissionOf(rows[0]) : null;
+}
+
+/// Makes a first admission and Start over for one Privy user take turns: a lock held until the calling transaction
+/// commits or rolls back. /api/user/auth and /api/user/auth/totp take it before they read the checkpoint; Start over takes
+/// it around its re-check and the Privy delete. Whichever runs second waits, then reads what the first committed, with
+/// the clock read after the wait. Pass a transaction: on the bare `db` it would be released at once.
+export async function lockPrivyUser(tx: DbOrTx, privyUserId: string): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'privy-user:' + privyUserId}))`);
 }
 
 /// The enrollment checkpoint this browser holds for this Privy user: the row whose hash matches the browser's cookie

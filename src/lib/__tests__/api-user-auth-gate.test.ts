@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   writeAdmission: vi.fn(),
   readAdmission: vi.fn(),
   readCheckpoint: vi.fn(),
+  lock: vi.fn(),
   recordCheckpoint: vi.fn(),
   bound: vi.fn(),
   live: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock('@/lib/privy-proof', async (orig) => ({
 vi.mock('@/lib/privy-admission', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-admission')>()),
   readAdmission: mocks.readAdmission,
+  lockPrivyUser: mocks.lock,
   readCheckpoint: mocks.readCheckpoint,
   recordCheckpoint: mocks.recordCheckpoint,
   isBoundToAccount: mocks.bound,
@@ -130,6 +132,7 @@ beforeEach(() => {
   // The enrollment checkpoint the server recorded while the user had the authenticator and no wallet (migration 0014).
   mocks.readCheckpoint.mockResolvedValue({ totpVerifiedAt: T });
   mocks.recordCheckpoint.mockResolvedValue(undefined);
+  mocks.lock.mockResolvedValue(undefined);
   // Start over: by default the account is bound (never eligible), so the existing exact answers hold.
   mocks.bound.mockResolvedValue(true);
   mocks.live.mockResolvedValue(false);
@@ -498,5 +501,78 @@ describe('Start over: an unfinished sign-up that is locked (Codex SIGNIN_R1 A1; 
     expect(await startOverCall()).toEqual({ status: 200, json: { ok: true } });
     expect(mocks.deleteUser).toHaveBeenCalledWith('did:privy:owner');
     expect(mocks.createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('Start over and a first admission take turns on the Privy user (adversary on 5c8d81c)', () => {
+  // Each side holds lockPrivyUser for its whole transaction and reads the clock only once it has the lock, so the side
+  // that waited sees the other's commit (start-over-race-adversary.test.ts drives the interleaving on real Postgres).
+  // Here: the lock comes first, and the checkpoint is judged at the time read AFTER it, not at the request's start.
+  const order: string[] = [];
+  let clock = 0;
+  beforeEach(() => {
+    order.length = 0;
+    clock = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    // The wait for the lock: the checkpoint expires while this request queues behind the other.
+    mocks.lock.mockImplementation(async (_tx: unknown, id: string) => {
+      order.push(`lock:${id}`);
+      clock += 60_000;
+    });
+  });
+  afterEach(() => {
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  it('/api/user/auth judges the checkpoint after the lock, at the time after the wait: expired there, nothing binds', async () => {
+    const expiresAt = clock + 30_000; // live when the request starts, gone by the time the lock is granted
+    mocks.readCheckpoint.mockImplementation(async (tx: unknown, _id: string, _hash: string | null, nowMs: number) => {
+      order.push(tx === undefined || (tx as { transaction?: unknown }).transaction ? 'checkpoint:db' : 'checkpoint:tx');
+      return nowMs < expiresAt ? { totpVerifiedAt: T } : null;
+    });
+    const res = await signIn({ proof: await proof() });
+    expect(res).toEqual({ status: 403, json: { ok: false, status: 'account_locked' } });
+    expect(order).toEqual(['checkpoint:db', 'lock:did:privy:owner', 'checkpoint:tx']);
+    expect(mocks.writeAdmission).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+  });
+
+  it('Start over re-checks bound and live checkpoints after the lock, at the time after the wait, before it deletes', async () => {
+    mocks.read.mockResolvedValue(privyRead({ totpAt: T + 3600, linkedAt: T + 60 }));
+    mocks.readCheckpoint.mockResolvedValue(null);
+    mocks.bound.mockImplementation(async () => {
+      order.push('bound');
+      return false;
+    });
+    let liveAt = 0;
+    mocks.live.mockImplementation(async (_tx: unknown, _id: string, nowMs: number) => {
+      order.push('live');
+      liveAt = nowMs;
+      return false;
+    });
+    mocks.deleteUser.mockImplementation(async () => {
+      order.push('delete');
+    });
+    const before = clock;
+    const { POST } = await import('../../app/api/user/auth/start-over/route');
+    const res = await POST(req('/api/user/auth/start-over', { privyAccessToken: 'tok' }));
+    expect(res.status).toBe(200);
+    expect(order).toEqual(['lock:did:privy:owner', 'bound', 'live', 'delete']);
+    expect(liveAt).toBe(before + 60_000);
+  });
+
+  it('Start over that waited for a sign-in sees it bound and deletes nothing', async () => {
+    mocks.read.mockResolvedValue(privyRead({ totpAt: T + 3600, linkedAt: T + 60 }));
+    mocks.readCheckpoint.mockResolvedValue(null);
+    // Unbound when the request starts; the sign-in holding the lock commits its binding while Start over waits.
+    let committed = false;
+    mocks.lock.mockImplementation(async () => {
+      committed = true;
+    });
+    mocks.bound.mockImplementation(async () => committed);
+    const { POST } = await import('../../app/api/user/auth/start-over/route');
+    const res = await POST(req('/api/user/auth/start-over', { privyAccessToken: 'tok' }));
+    expect({ status: res.status, json: await res.json() }).toEqual({ status: 409, json: { ok: false, status: 'admitted' } });
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
   });
 });

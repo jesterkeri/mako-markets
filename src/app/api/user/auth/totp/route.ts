@@ -30,7 +30,7 @@ import {
 } from '@/lib/user-session';
 import { normalizeEmail } from '@/lib/email';
 import type { GateAdmission, GateVerdict } from '@/lib/privy-gate';
-import { readCheckpoint, writeAdmission } from '@/lib/privy-admission';
+import { lockPrivyUser, readCheckpoint, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkIdentity, judgeAccount, readPrivyAccountById } from '@/lib/privy-server';
 import { applyEmbeddedMove } from '@/lib/user-upsert';
@@ -100,6 +100,14 @@ class ChallengeInvalid extends Error {
   constructor() {
     super('challenge_invalid');
     this.name = 'ChallengeInvalid';
+  }
+}
+
+/// The enrollment checkpoint a first admission rests on expired between the gate above and the transaction.
+class CheckpointGone extends Error {
+  constructor() {
+    super('checkpoint_gone');
+    this.name = 'CheckpointGone';
   }
 }
 
@@ -253,8 +261,8 @@ export async function POST(req: Request) {
       await recordPrivyMismatch(user.id, read.email);
       return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
     }
-    // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014). Rows are only inserted,
-    // never changed, so reading it here, before the transaction, cannot go stale.
+    // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014). Read again inside the
+    // transaction, after the Start over lock, since it can expire in between.
     const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId, checkpointHashFrom(req), Date.now()));
     if (!v.ok) {
       const flow = v.status === 'mfa_enrollment_required' || v.status === 'wallet_required';
@@ -283,6 +291,13 @@ export async function POST(req: Request) {
 
   try {
     success = await db.transaction(async (tx): Promise<SuccessPayload> => {
+      // Takes turns with Start over for this Privy user (see /api/user/auth). A first admission re-reads its checkpoint
+      // at the time after the wait, so one that expired since the gate above binds nothing.
+      await lockPrivyUser(tx, privyId);
+      if (admission === null && (await readCheckpoint(tx, privyId, checkpointHashFrom(req), Date.now())) === null) {
+        throw new CheckpointGone();
+      }
+
       if (codeStr !== null) {
         // -- TOTP code path --
         let plaintextSecret: string;
@@ -424,6 +439,8 @@ export async function POST(req: Request) {
       factorFailed = true;
     } else if (err instanceof ChallengeInvalid) {
       return Response.json({ error: 'challenge_invalid' }, { status: 401 });
+    } else if (err instanceof CheckpointGone) {
+      return Response.json({ ok: false, status: 'account_locked' }, { status: 403 });
     } else if (err instanceof TotpAuthTagMismatch) {
       return Response.json({ error: 'internal' }, { status: 500 });
     } else {

@@ -55,6 +55,7 @@ vi.mock('@/lib/privy-proof', async (orig) => ({
 vi.mock('@/lib/privy-admission', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-admission')>()),
   readAdmission: mocks.readAdmission,
+  lockPrivyUser: async () => {},
   // The store's real semantics after the fix (migration 0014 as revised): rows by the hash of the browser secret, for
   // one Privy user, insert only; a read needs the hash of the secret the signing-in browser holds. (Ported from the
   // first-row-by-Privy-user map this test was written against; the attack sequence below is unchanged.)
