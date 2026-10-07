@@ -14,7 +14,7 @@ import { db } from '@/db/client';
 import { checkSameOrigin } from '@/lib/csrf';
 import { checkpointHashFrom, ENROLL_CHECKPOINT_COOKIE } from '@/lib/enrollment-checkpoint';
 import { clearCheckpoints, detectEmailMismatch, hasLiveCheckpoint, isBoundToAccount, lockPrivyUser, readAdmission, readCheckpoint } from '@/lib/privy-admission';
-import { deletePrivyUser, judgeAccount, PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
+import { deletePrivyUser, judgeAccount, PrivyConfigError, privyUserExists, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 import { startOverDecision } from '@/lib/start-over';
 
 export const runtime = 'nodejs';
@@ -97,7 +97,13 @@ export async function POST(req: Request) {
       try {
         await deletePrivyUser(read.privyUserId);
       } catch (err) {
-        throw new StartOverUnavailable('delete', err);
+        // The delete may still have happened at Privy (a timeout after the fact, or a second Start over finding the
+        // user already gone): only Privy's own "not found" counts as deleted; anything else, or no answer, is a 503.
+        const gone = await privyUserExists(read.privyUserId).then(
+          (exists) => !exists,
+          () => false,
+        );
+        if (!gone) throw new StartOverUnavailable('delete', err);
       }
       privyDeleted = true;
       return { kind: 'deleted' };

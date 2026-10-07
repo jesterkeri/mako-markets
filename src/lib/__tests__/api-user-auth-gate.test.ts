@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   bound: vi.fn(),
   live: vi.fn(),
   deleteUser: vi.fn(),
+  exists: vi.fn(),
   findMismatched: vi.fn(),
   detect: vi.fn(),
   recordMismatch: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('@/lib/privy-server', async (orig) => ({
   readPrivyAccount: mocks.read,
   readPrivyAccountById: mocks.readById,
   deletePrivyUser: mocks.deleteUser,
+  privyUserExists: mocks.exists,
 }));
 vi.mock('@/lib/privy-proof', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-proof')>()),
@@ -142,6 +144,7 @@ beforeEach(() => {
   mocks.bound.mockResolvedValue(true);
   mocks.live.mockResolvedValue(false);
   mocks.deleteUser.mockResolvedValue(undefined);
+  mocks.exists.mockResolvedValue(true);
   mocks.consume.mockResolvedValue(true);
   mocks.upsert.mockResolvedValue({ user: ROW, moved: false });
   mocks.createSession.mockResolvedValue('session-token');
@@ -518,6 +521,20 @@ describe('Start over: an unfinished sign-up that is locked (Codex SIGNIN_R1 A1; 
     expect(await startOverCall()).toEqual({ status: 503, json: { error: 'unavailable' } });
     mocks.read.mockRejectedValue(new Error('bad token'));
     expect((await startOverCall()).status).toBe(401);
+  });
+
+  it('a delete that errored but did happen at Privy (timeout after the fact, double click) is a success (adversary on 2aa52ac)', async () => {
+    unfinished();
+    mocks.deleteUser.mockRejectedValue(new Error('timeout'));
+    mocks.exists.mockResolvedValue(false); // Privy: not found
+    expect(await startOverCall()).toEqual({ status: 200, json: { ok: true } });
+    expect(mocks.cookieSet).toHaveBeenCalledWith('mako_enroll_cp', '', expect.objectContaining({ maxAge: 0 }));
+    // Privy cannot say: fail closed, never a success on a guess.
+    mocks.exists.mockRejectedValue(new Error('privy down'));
+    expect(await startOverCall()).toEqual({ status: 503, json: { error: 'unavailable' } });
+    // Privy still has the user: the delete really failed.
+    mocks.exists.mockResolvedValue(true);
+    expect(await startOverCall()).toEqual({ status: 503, json: { error: 'unavailable' } });
   });
 
   it('the inbox attack end to end: the owner, locked by an attacker-made wallet, starts over; the planted identity is deleted', async () => {

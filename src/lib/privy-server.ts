@@ -18,7 +18,7 @@ import 'server-only';
 //        wallet address come from HERE, never from anything the browser sent.
 // ----------------------------------------------------------------------------
 
-import { PrivyClient } from '@privy-io/node';
+import { NotFoundError, PrivyClient } from '@privy-io/node';
 
 import { embeddedWallets, judgeFactors, judgePrivyUser, type EnrollmentCheckpoint, type GateAdmission, type GateUser, type GateVerdict, type GateWallet } from '@/lib/privy-gate';
 import { normalizeEmail } from '@/lib/email';
@@ -159,6 +159,19 @@ export async function readPrivyAccount(accessToken: string): Promise<PrivyAccoun
 /// (src/lib/start-over.ts decides; /api/user/auth/start-over re-checks before calling). Throws on failure.
 export async function deletePrivyUser(privyUserId: string): Promise<void> {
   await privy().users().delete(privyUserId);
+}
+
+/// Whether Privy still has this user: false ONLY on Privy's own "not found" (404). Any other failure throws, so a
+/// caller that cannot tell fails closed. Start over asks after a delete that errored, since the delete may still have
+/// happened (a timeout after the fact, or a second request finding the user already gone; adversary on 2aa52ac).
+export async function privyUserExists(privyUserId: string): Promise<boolean> {
+  try {
+    await privy().users()._get(privyUserId);
+    return true;
+  } catch (err) {
+    if (err instanceof NotFoundError) return false;
+    throw err;
+  }
 }
 
 /// A fresh read by Privy user id, for the re-checks after a session exists ([J3], [K4]). Throws when Privy cannot be
