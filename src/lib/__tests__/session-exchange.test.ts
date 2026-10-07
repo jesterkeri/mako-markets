@@ -130,10 +130,10 @@ describe('the gated sign-in (INBOX_GAP_PLAN r18)', () => {
 
 describe('the first-sign-in welcome (live test L2, 2026-10-07)', () => {
   it('follows the route\'s firstSignIn, not "no earlier session" (signing out deletes the session)', async () => {
-    routes(NONCE_OK, [200, { ok: true, authed: true, ...USER, lastSignInAt: null, firstSignIn: false }]);
+    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: null, firstSignIn: false }]);
     expect(await continueGatedSignIn(bridge(), 'm')).toMatchObject({ kind: 'session', result: { kind: 'signed_in', firstSignIn: false } });
     vi.restoreAllMocks();
-    routes(NONCE_OK, [200, { ok: true, authed: true, ...USER, lastSignInAt: '2026-10-01T00:00:00.000Z', firstSignIn: true }]);
+    routes(NONCE_OK, [200, { ok: true, ...USER, lastSignInAt: '2026-10-01T00:00:00.000Z', firstSignIn: true }]);
     expect(await continueGatedSignIn(bridge(), 'm')).toMatchObject({ kind: 'session', result: { kind: 'signed_in', firstSignIn: true } });
   });
 });
