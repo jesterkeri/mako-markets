@@ -29,7 +29,7 @@ afterEach(() => cleanup());
 
 describe('/stats Rounds section, indexer unavailable', () => {
   it('keeps the copy rules in the Rounds section: no em-dash', async () => {
-    renderWith({ indexed: null, indexedStatus: 'unavailable', gasFree: null, readAt: 1_790_000_200 });
+    renderWith({ indexed: null, indexedStatus: 'unavailable', gasFree: null, makoWallets: null, readAt: 1_790_000_200 });
     await waitFor(() => expect(screen.getAllByText('Rounds played').length).toBeGreaterThan(0));
     const sections = screen
       .getAllByRole('heading', { level: 2, name: 'Rounds' })

@@ -37,6 +37,7 @@ const wire = (over: Partial<StatsWire> = {}): StatsWire => ({
   },
   indexedStatus: 'ok',
   gasFree: { actions: 4865, accounts: 400 },
+  makoWallets: 512,
   readAt: 1_790_000_200,
   ...over,
 });
@@ -58,6 +59,8 @@ describe('/stats', () => {
     renderWith(wire());
     await waitFor(() => expect(screen.getAllByText('1,234').length).toBeGreaterThan(0));
     expect(screen.getAllByText('4,865').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Mako wallets created').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('512').length).toBeGreaterThan(0);
     expect(screen.getAllByText('by 980 people').length).toBeGreaterThan(0);
     expect(screen.getAllByText('25,461.00').length).toBeGreaterThan(0);
     // Public pools only: 80 created, 70 settled, 9 refunded.
@@ -90,6 +93,8 @@ describe('/stats', () => {
     renderWith(wire({ indexed: null, indexedStatus: 'not_configured' }));
     await waitFor(() => expect(screen.getAllByText('The on-chain index is being connected. Its figures appear here once it is live.').length).toBeGreaterThan(0));
     expect(screen.getAllByText('4,865').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Mako wallets created').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('512').length).toBeGreaterThan(0);
     expect(screen.queryAllByText('0')).toHaveLength(0);
     expect(screen.getAllByText('unavailable right now').length).toBeGreaterThan(0);
   });

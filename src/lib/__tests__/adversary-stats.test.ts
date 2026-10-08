@@ -54,7 +54,7 @@ describe('adversary: data plus errors', () => {
   describe('GET /api/stats', () => {
     const realFetch = globalThis.fetch;
     beforeEach(() => {
-      mocks.dbExecute.mockResolvedValue([{ actions: 1, accounts: 1 }]);
+      mocks.dbExecute.mockResolvedValue([{ actions: 1, accounts: 1, wallets: 1 }]);
     });
     afterEach(() => {
       globalThis.fetch = realFetch;

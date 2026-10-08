@@ -27,8 +27,8 @@ function useStats() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return (await res.json()) as StatsWire;
     },
-    refetchInterval: 5 * 60_000,
-    staleTime: 60_000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }
 
@@ -37,8 +37,8 @@ type Figure = { label: string; value: string | null; note: string };
 function figures(s: StatsWire): Figure[] {
   const i = s.indexed;
   return [
+    { label: 'Mako wallets created', value: s.makoWallets === null ? null : int(s.makoWallets), note: 'one for each email sign-up' },
     { label: 'Wallets that used Mako Market', value: i ? int(i.wallets) : null, note: 'placed a bet, created a pool or entered a round' },
-    { label: 'Gas-free actions', value: s.gasFree ? int(s.gasFree.actions) : null, note: s.gasFree ? `sponsored by Mako Market, for ${int(s.gasFree.accounts)} accounts` : 'sponsored by Mako Market' },
     { label: 'Bets placed', value: i ? int(i.bets) : null, note: i ? `by ${int(i.bettors)} ${i.bettors === 1 ? 'person' : 'people'}` : 'on the pools contract' },
     { label: 'Staked', value: i ? `${usdc(i.volume)}` : null, note: 'test USDC placed on the line' },
   ];
@@ -228,7 +228,7 @@ export function StatsClient() {
               {figure({ label: 'Pools created', value: i ? int(i.communityPools) : null, note: 'by people using Mako Market' }, 30)}
               {figure({ label: 'Pools settled', value: i ? int(i.communityPoolsSettled) : null, note: i ? `${int(i.communityPoolsRefunded)} refunded` : '' }, 30)}
               {figure({ label: 'Claims paid', value: i ? int(i.claims) : null, note: i ? `${usdc(i.claimed)} USDC` : '' }, 30)}
-              {figure({ label: 'Gas-free accounts', value: s.gasFree ? int(s.gasFree.accounts) : null, note: 'email accounts that used sponsored gas' }, 30)}
+              {figure({ label: 'Gas-free actions', value: s.gasFree ? int(s.gasFree.actions) : null, note: s.gasFree ? `sponsored by Mako Market, for ${int(s.gasFree.accounts)} accounts` : 'sponsored by Mako Market' }, 30)}
             </div>
             <div>
               <div style={label}>By category</div>
