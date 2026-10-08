@@ -8,6 +8,7 @@ import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
 import { MarketType, type MarketWithId } from '@/lib/contract';
+import { PAUSED_CREATE_MTYPES } from '@/lib/market-availability';
 import { CRYPTO_ASSETS, formatStrikeForDisplay, roundStrike } from '@/lib/crypto-assets';
 import { useCreatorCreatesToday, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { MAX_DURATION_SEC, sportsTimestamps } from '@/lib/market-timing';
@@ -30,14 +31,17 @@ import { formatAddress } from '@/lib/user-display';
 const MIN_SEED = 1_000_000n;
 const MAX_CREATES_PER_DAY = 10;
 
-const KINDS: readonly { key: CreateKind; label: string; cat: PoolCat }[] = [
-  { key: 'crypto', label: 'Crypto', cat: 'CRYPTO' },
-  { key: 'football', label: 'Football', cat: 'FOOTBALL' },
-  { key: 'basketball', label: 'NBA', cat: 'NBA' },
-  { key: 'forex', label: 'Forex', cat: 'FOREX' },
-  { key: 'commodities', label: 'Commodities', cat: 'COMMODITIES' },
-  { key: 'stocks', label: 'Stocks', cat: 'STOCKS' },
+const KINDS: readonly { key: CreateKind; label: string; cat: PoolCat; mType: MarketType }[] = [
+  { key: 'crypto', label: 'Crypto', cat: 'CRYPTO', mType: MarketType.CRYPTO },
+  { key: 'football', label: 'Football', cat: 'FOOTBALL', mType: MarketType.FOOTBALL },
+  { key: 'basketball', label: 'NBA', cat: 'NBA', mType: MarketType.BASKETBALL },
+  { key: 'forex', label: 'Forex', cat: 'FOREX', mType: MarketType.FOREX },
+  { key: 'commodities', label: 'Commodities', cat: 'COMMODITIES', mType: MarketType.COMMODITIES },
+  { key: 'stocks', label: 'Stocks', cat: 'STOCKS', mType: MarketType.STOCKS },
 ];
+
+/// Shown but not choosable until its pools can be settled on a price (market-availability.ts).
+const isPaused = (k: (typeof KINDS)[number]) => PAUSED_CREATE_MTYPES.has(k.mType);
 
 const FOOTBALL_QUESTIONS: readonly { key: FootballQuestion; label: string }[] = [
   { key: 'home_win', label: 'Home win' },
@@ -315,10 +319,10 @@ type ViewProps = {
 // ---------------------------------------------------------------------------------------------------------------
 // Pieces
 
-function Pill({ on, onClick, children, tone, tourPoint }: { on: boolean; onClick: () => void; children: React.ReactNode; tone?: 'yes' | 'no'; tourPoint?: string }) {
+function Pill({ on, onClick, children, tone, tourPoint, disabled }: { on: boolean; onClick: () => void; children: React.ReactNode; tone?: 'yes' | 'no'; tourPoint?: string; disabled?: boolean }) {
   const bg = on ? (tone === 'no' ? 'var(--mako-red)' : tone === 'yes' ? 'var(--mako-signal)' : 'var(--mako-signal)') : 'var(--raise)';
   return (
-    <button type="button" onClick={onClick} aria-pressed={on} data-tour-point={tourPoint} className="mk-press96" style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: bg, color: on ? '#000' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...mono, fontSize: 12, fontWeight: 700 }}>
+    <button type="button" onClick={onClick} disabled={disabled} aria-pressed={on} data-tour-point={tourPoint} className={disabled ? undefined : 'mk-press96'} style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: bg, color: disabled ? 'var(--dim)' : on ? '#000' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', cursor: disabled ? 'not-allowed' : undefined, ...mono, fontSize: 12, fontWeight: 700 }}>
       {children}
     </button>
   );
@@ -364,11 +368,17 @@ function StepMarket(v: ViewProps) {
     <>
       <Field title="CATEGORY" tourAnchor="create-form">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {KINDS.map((k, i) => (
-            <Pill key={k.key} on={v.kind === k.key} onClick={() => v.setKind(k.key)} tourPoint={i === 0 ? 'create-form' : undefined}>
-              {k.label}
-            </Pill>
-          ))}
+          {KINDS.map((k, i) =>
+            isPaused(k) ? (
+              <Pill key={k.key} on={false} onClick={() => {}} disabled>
+                {k.label} · Coming soon
+              </Pill>
+            ) : (
+              <Pill key={k.key} on={v.kind === k.key} onClick={() => v.setKind(k.key)} tourPoint={i === 0 ? 'create-form' : undefined}>
+                {k.label}
+              </Pill>
+            ),
+          )}
         </div>
       </Field>
       {v.priceKind ? <PriceChoice {...v} /> : v.kind === 'football' ? <FootballChoice {...v} /> : <NbaChoice {...v} />}

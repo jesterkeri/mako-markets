@@ -104,3 +104,18 @@ describe('rule 3: the first bet the confirm sheet shows is the one sent', () => 
     expect({ button: shownOnButton, amount: amountIn(shownOnButton) }).toEqual({ button: shownOnButton, amount: sent });
   });
 });
+
+describe('paused categories (market-availability.ts, 2026-10-08)', () => {
+  it('Forex, Commodities and Stocks show as Coming soon and cannot be chosen; the rest can', () => {
+    render(<CreatePoolClient />);
+    for (const name of ['Forex', 'Commodities', 'Stocks']) {
+      const b = screen.getAllByRole('button', { name: `${name} · Coming soon` })[0] as HTMLButtonElement;
+      expect(b.disabled, name).toBe(true);
+      fireEvent.click(b);
+      expect(b.getAttribute('aria-pressed'), name).toBe('false');
+    }
+    for (const name of ['Crypto', 'Football', 'NBA']) {
+      expect((screen.getAllByRole('button', { name })[0] as HTMLButtonElement).disabled, name).toBe(false);
+    }
+  });
+});

@@ -174,11 +174,11 @@ describe('assertCreateMarketCall', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('accepts every valid non-MAKO mType ∈ {0..5} (FOOTBALL/CRYPTO/BASKETBALL/FOREX/COMMODITIES/STOCKS)', async () => {
+  it('accepts every open non-MAKO mType ∈ {0..2} (FOOTBALL/CRYPTO/BASKETBALL)', async () => {
     // MAKO (mType=6) is admin-gated by SAFE === MAKO_ADMIN_SAFE_ADDRESS and
     // requires creatorSeed=0n. It gets its own dedicated tests below for
     // the admin + zero-seed + blocklist-bypass branches.
-    for (const mType of [0, 1, 2, 3, 4, 5]) {
+    for (const mType of [0, 1, 2]) {
       await expect(
         assertCreateMarketCall({
           chainId: MONAD_TESTNET_ID,
@@ -202,6 +202,30 @@ describe('assertCreateMarketCall', () => {
           readCreatorCreatesToday: async () => ({ count: 0n, remaining: 10n }),
         }),
       ).resolves.toBeUndefined();
+    }
+  });
+
+  it('refuses FOREX / COMMODITIES / STOCKS (mType 3/4/5) as paused: no price source can settle them today (2026-10-08)', async () => {
+    for (const mType of [3, 4, 5]) {
+      let reason: string | undefined;
+      try {
+        await assertCreateMarketCall({
+          chainId: MONAD_TESTNET_ID,
+          safeAddress: SAFE,
+          call: {
+            to: MAKO_ADDRESS,
+            value: 0n,
+            // A symbol the #180 gate would accept: the pause, not the symbol, refuses it.
+            data: encodeCreateMarket({ mType, oracleRef: oracleRefForMType(mType), bettingCloseTime: NOW_SEC + 1800n, closeTime: NOW_SEC + 3600n, question: 'q' }),
+          },
+          nowSec: NOW_SEC,
+          readBlocked: async () => false,
+          readCreatorCreatesToday: async () => ({ count: 0n, remaining: 10n }),
+        });
+      } catch (e) {
+        reason = (e as NotAllowedError).reason;
+      }
+      expect(reason, `mType ${mType}`).toBe('bad_create_mtype_paused');
     }
   });
 

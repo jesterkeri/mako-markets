@@ -53,6 +53,7 @@ import {
 } from 'viem';
 
 import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS } from './contract';
+import { PAUSED_CREATE_MTYPES } from './market-availability';
 import { PRICE_FEED_BY_SYMBOL } from './price-feed-assets';
 import { MONAD_TESTNET_ID } from './chain';
 import { SAFE_CONFIG } from './safe-config';
@@ -145,6 +146,8 @@ export type NotAllowedReason =
   | 'bad_create_mako_nonzero_seed'
   | 'bad_create_mako_non_admin'
   | 'bad_create_mtype_out_of_range'
+  // A market type paused in market-availability.ts (no price source can settle it today).
+  | 'bad_create_mtype_paused'
   | 'bad_create_blocked_wallet'
   // v4 redeploy (slice 4f): sponsor-time mirror of the contract's
   // CreatorDailyCapExceeded (MAX_CREATES_PER_DAY=10 per UTC day for
@@ -878,6 +881,11 @@ function decodeCreateMarketArgs(call: {
   // get a vague rejection.
   if (mType < 0 || mType > 6 || !Number.isInteger(mType)) {
     throw new NotAllowedError('bad_create_mtype_out_of_range');
+  }
+  // A type whose pools cannot be settled on a price today is not created at all (market-availability.ts): the page
+  // shows it as Coming soon, and this refuses it for every surface that decodes a create (sponsor, send, batched).
+  if (PAUSED_CREATE_MTYPES.has(mType)) {
+    throw new NotAllowedError('bad_create_mtype_paused');
   }
 
   // #180: price-feed allowlist + class-match gate. Single insertion
