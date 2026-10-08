@@ -35,6 +35,14 @@ describe('ttlMemo', () => {
     expect((await m()).value).toBe('v');
   });
 
+  it('a clock that steps back makes the value expired, never fresh', async () => {
+    let n = 0;
+    const m = ttlMemo(1000, async () => ++n);
+    await m();
+    vi.setSystemTime(999_500);
+    expect((await m()).value).toBe(2);
+  });
+
   it('concurrent callers share one read, and report when it was read', async () => {
     const fn = vi.fn(async () => 7);
     const m = ttlMemo(1000, fn);

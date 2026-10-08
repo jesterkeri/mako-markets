@@ -52,12 +52,14 @@ type DbFigures = { gasFree: NonNullable<StatsWire['gasFree']>; makoWallets: numb
 
 /// Landed sponsored operations and the accounts behind them, and the Mako wallets created, in one query, or a throw.
 async function fetchDbFigures(): Promise<DbFigures> {
-  const rows = await db.execute<{ actions: number; accounts: number; wallets: number }>(sql`
+  // The timeout is on the read itself, so a query that hangs fails the refresh (and the next request tries again)
+  // instead of leaving every later request waiting on it.
+  const rows = await within(db.execute<{ actions: number; accounts: number; wallets: number }>(sql`
     SELECT
       (SELECT count(*)::int FROM aa_pending_user_ops WHERE status = 'sent') AS actions,
       (SELECT count(DISTINCT safe_address)::int FROM aa_pending_user_ops WHERE status = 'sent') AS accounts,
       (SELECT count(*)::int FROM user_safes WHERE chain_id = ${MONAD_TESTNET_ID}) AS wallets
-  `);
+  `), DB_TIMEOUT_MS);
   const row = Array.isArray(rows) ? rows[0] : undefined;
   // A count arrives as a number (or a digit string from some drivers); null, '' or anything else is a malformed row,
   // never a zero (Number(null) and Number('') are both 0).
@@ -71,9 +73,12 @@ async function fetchDbFigures(): Promise<DbFigures> {
   return { gasFree: { actions, accounts }, makoWallets: wallets };
 }
 
-// Hard age limits (src/lib/ttl-memo.ts): never older than these, and a failed read shows as unavailable.
-const cachedIndexer = ttlMemo(INDEXER_MAX_AGE_SEC * 1000, async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed);
-const cachedDb = ttlMemo(DB_MAX_AGE_SEC * 1000, fetchDbFigures);
+// Hard age limits (src/lib/ttl-memo.ts), and a failed read shows as unavailable. The answer goes out only once both
+// sources have settled, so each memo's limit leaves room for the slowest wait on the other source (adversary on
+// e4a5944): an indexer figure reused at 54.9 s still goes out under 60 s after a 5 s database read, and a database
+// figure reused at 289.9 s under 5 minutes after a 10 s indexer read.
+const cachedIndexer = ttlMemo(INDEXER_MAX_AGE_SEC * 1000 - DB_TIMEOUT_MS, async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed);
+const cachedDb = ttlMemo(DB_MAX_AGE_SEC * 1000 - INDEXER_TIMEOUT_MS, fetchDbFigures);
 
 function within<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -84,7 +89,7 @@ function within<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 export async function GET() {
-  const [indexed, dbFigures] = await Promise.allSettled([cachedIndexer(), within(cachedDb(), DB_TIMEOUT_MS)]);
+  const [indexed, dbFigures] = await Promise.allSettled([cachedIndexer(), cachedDb()]);
   // The error's code or class only: a message can carry a connection string or the indexer URL.
   if (dbFigures.status === 'rejected') console.error('[stats] database read failed:', errorCode(dbFigures.reason));
   if (indexed.status === 'rejected' && !(indexed.reason instanceof NotConfigured)) console.error('[stats] indexer read failed:', errorCode(indexed.reason));

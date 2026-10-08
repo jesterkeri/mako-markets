@@ -10,7 +10,9 @@ export function ttlMemo<T>(ttlMs: number, fn: () => Promise<T>): () => Promise<M
   let last: Memoized<T> | null = null;
   let inflight: Promise<Memoized<T>> | null = null;
   return () => {
-    if (last && Date.now() - last.at < ttlMs) return Promise.resolve(last);
+    // A negative age means the clock stepped back (adversary on e4a5944): treat it as expired, never as fresh.
+    const age = last ? Date.now() - last.at : -1;
+    if (last && age >= 0 && age < ttlMs) return Promise.resolve(last);
     // Concurrent callers share one refresh rather than each starting their own.
     if (!inflight) {
       inflight = fn()

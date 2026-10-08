@@ -60,7 +60,7 @@ describe('adversary: /api/stats freshness', () => {
   it('the cache is really in play: a second request inside a minute does not ask the indexer or the database again', async () => {
     expect((await request()).indexed.bets).toBe(40);
     indexerBets = 41;
-    quietFor(59);
+    quietFor(54); // the indexer memo reuses for 55 s (60 s less the 5 s database wait)
     expect((await request()).indexed.bets).toBe(40);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
@@ -79,8 +79,8 @@ describe('adversary: /api/stats freshness', () => {
   it('serves database figures no older than 5 minutes: after a quiet spell, a new Mako wallet is counted', async () => {
     expect((await request()).makoWallets).toBe(64);
     mocks.dbExecute.mockResolvedValue([{ actions: 37, accounts: 11, wallets: 65 }]);
-    quietFor(299);
-    expect((await request()).makoWallets, 'still inside 5 minutes').toBe(64);
+    quietFor(289); // the database memo reuses for 290 s (5 minutes less the 10 s indexer wait)
+    expect((await request()).makoWallets, 'still inside its reuse window').toBe(64);
     quietFor(2);
     expect((await request()).makoWallets, 'database figures older than 5 minutes').toBe(65);
   });
@@ -108,7 +108,7 @@ describe('adversary: a source that goes down after its figures were cached', () 
 
   it('the database stops answering: once its figures are past 5 minutes they are null', async () => {
     expect((await request()).makoWallets).toBe(64);
-    quietFor(301);
+    quietFor(291);
     mocks.dbExecute.mockRejectedValue(new Error('db down'));
     const body = await request();
     expect(body.makoWallets).toBeNull();
