@@ -13,7 +13,7 @@ import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import { unsettleable } from '@/lib/pool-rules';
 
 // The price chart fetches its own data (tested in chart-components.test.tsx); this test is about the page around it.
-vi.mock('@/components/charts/PriceCandles', () => ({ PriceCandles: () => null }));
+vi.mock('@/components/MarketChart', () => ({ MarketChart: () => null }));
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));

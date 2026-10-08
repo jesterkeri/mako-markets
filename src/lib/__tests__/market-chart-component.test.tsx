@@ -110,7 +110,7 @@ describe('<MarketChart>', () => {
       <MarketChart oracleSymbol="BTC" assetClass="CRYPTO" />,
     );
 
-    await findByText('CHART UNAVAILABLE', undefined, { timeout: 3000 });
+    await findByText('PRICE CHART UNAVAILABLE RIGHT NOW', undefined, { timeout: 3000 });
     const retry = await findByRole('button', { name: /RETRY/ }, { timeout: 3000 });
     expect(retry).toBeTruthy();
   });
@@ -201,5 +201,34 @@ describe('<MarketChart>', () => {
       },
       { timeout: 3000 },
     );
+  });
+
+  // Joshua, 2026-10-08: the full chart, in the redesign, on crypto pools and round pages.
+  it('an empty answer says there is no price data yet, not that the chart failed', async () => {
+    mockChartsFetch({ candles: [] }, 200);
+    const { findByText } = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" />);
+    await findByText('NO PRICE DATA YET', undefined, { timeout: 3000 });
+  });
+
+  it('shows the pair, the caption that it is a reference price, and the Rounds timeframes when given', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ candles: SAMPLE_CANDLES }), { status: 200 }) as Response);
+    const { findByText, getByText, getByRole } = renderWithQuery(
+      <MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" timeframes={['1m', '15m', '1h']} initialTimeframe="1m" />,
+    );
+    await findByText('BTC/USD', undefined, { timeout: 3000 });
+    expect(getByText('REFERENCE PRICE FROM COINBASE · NOT THE SETTLEMENT SOURCE')).toBeTruthy();
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('tf=1m');
+    expect(getByRole('tab', { name: '1M' }).getAttribute('aria-selected')).toBe('true');
+    fetchSpy.mockRestore();
+  });
+
+  it('redefines the old colour names to the redesign tokens, so toolbars and menus follow the theme', async () => {
+    mockChartsFetch({ candles: SAMPLE_CANDLES }, 200);
+    const { findByText } = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" />);
+    const label = await findByText('BTC/USD', undefined, { timeout: 3000 });
+    const card = label.closest('div[style*="--color-paper"]') as HTMLElement | null;
+    expect(card, 'the chart card carries the theme mapping').not.toBeNull();
+    expect(card!.style.getPropertyValue('--color-paper')).toBe('var(--mako-canvas)');
+    expect(card!.style.getPropertyValue('--color-ink')).toBe('var(--mako-canvas-fg)');
   });
 });

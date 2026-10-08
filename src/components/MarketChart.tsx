@@ -34,7 +34,39 @@ import { DEFAULT_DRAWING_COLOR } from '@/types/drawing';
 interface Props {
   oracleSymbol: string;
   assetClass: ChartAssetClass;
+  /// The timeframe buttons, when not the asset class's own set (the Rounds chart offers 1m).
+  timeframes?: readonly Timeframe[];
+  initialTimeframe?: Timeframe;
+  /// The pair as written in the header ("BTC/USD"); the oracle symbol when absent.
+  pair?: string;
 }
+
+/// The redesign's palette, applied by redefining the pre-redesign colour names (bg-paper, border-ink, text-muted…)
+/// inside the chart only, so the chart, its toolbars and menus follow the page's light or dark theme without each
+/// sub-component being restyled (Joshua, 2026-10-08: the old chart's capabilities, in the new design).
+const THEME_VARS = {
+  '--color-paper': 'var(--mako-canvas)',
+  '--color-ink': 'var(--mako-canvas-fg)',
+  '--color-surface-elevated': 'var(--raise)',
+  '--color-muted': 'var(--dim)',
+  '--mako-paper': 'var(--mako-canvas)',
+  '--mako-ink': 'var(--mako-canvas-fg)',
+  '--mako-shadow': 'transparent',
+} as React.CSSProperties;
+
+const CARD_STYLE: React.CSSProperties = {
+  ...THEME_VARS,
+  background: 'var(--mako-canvas)',
+  color: 'var(--mako-canvas-fg)',
+  borderRadius: 16,
+  boxShadow: 'inset 0 0 0 1px var(--line)',
+  overflow: 'hidden',
+};
+
+/// How often the candles are re-read: about one candle's worth, so the live candle moves.
+const REFETCH_MS: Record<Timeframe, number> = { '1m': 30_000, '15m': 120_000, '1h': 300_000, '2h': 300_000, '4h': 600_000, '1d': 1_800_000 };
+
+const CAPTION = 'REFERENCE PRICE FROM COINBASE · NOT THE SETTLEMENT SOURCE';
 
 const TIMEFRAMES_BY_CLASS: Record<ChartAssetClass, readonly Timeframe[]> = {
   CRYPTO:      ['15m', '1h', '2h', '4h', '1d'],
@@ -59,9 +91,9 @@ function newDrawingId(): string {
   return `d-${Date.now()}-${drawingIdCounter}`;
 }
 
-export function MarketChart({ oracleSymbol, assetClass }: Props) {
-  const options = TIMEFRAMES_BY_CLASS[assetClass];
-  const [tf, setTf] = useState<Timeframe>(defaultTimeframe(assetClass));
+export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimeframe, pair }: Props) {
+  const options = timeframes ?? TIMEFRAMES_BY_CLASS[assetClass];
+  const [tf, setTf] = useState<Timeframe>(initialTimeframe ?? defaultTimeframe(assetClass));
   const [expanded, setExpanded] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
@@ -229,19 +261,19 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
       if (!res.ok) throw new Error(`charts route ${res.status}`);
       return (await res.json()) as ChartsResponse;
     },
-    staleTime: 120_000,
+    staleTime: REFETCH_MS[tf] / 2,
+    refetchInterval: REFETCH_MS[tf],
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
     retry: 1,
   });
 
-  const cardClass =
-    'bg-paper border-2 border-ink rounded-2xl shadow-brutal-lg overflow-hidden';
 
   if (isLoading) {
     return (
       <div
-        className={`${cardClass} animate-pulse rotate-[-1deg]`}
-        style={{ height: CHART_HEIGHT + 64 }}
+        className="animate-pulse"
+        style={{ ...CARD_STYLE, height: CHART_HEIGHT + 64 }}
         aria-label="Loading chart"
       />
     );
@@ -249,10 +281,8 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
 
   if (error || !data?.candles?.length) {
     return (
-      <div
-        className={`${cardClass} flex flex-col items-center justify-center gap-4 p-8 min-h-[200px] rotate-[-1deg]`}
-      >
-        <div className="mako-label text-sm">CHART UNAVAILABLE</div>
+      <div className="flex flex-col items-center justify-center gap-4 p-8 min-h-[200px]" style={CARD_STYLE}>
+        <div className="mako-label text-sm">{error ? 'PRICE CHART UNAVAILABLE RIGHT NOW' : 'NO PRICE DATA YET'}</div>
         <button
           type="button"
           onClick={() => refetch()}
@@ -289,9 +319,9 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
   );
 
   const header = (
-    <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-3 border-b-2 border-ink relative">
-      <span className="mako-mono text-xs tracking-widest text-muted">
-        {oracleSymbol}
+    <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-3 relative" style={{ boxShadow: 'inset 0 -1px 0 var(--line)' }}>
+      <span className="mako-mono text-xs tracking-widest" style={{ fontWeight: 700 }}>
+        {pair ?? oracleSymbol}
       </span>
       <div className="flex items-center gap-2 flex-wrap">
         <TimeframeSelector value={tf} onChange={setTf} options={options} />
@@ -451,14 +481,11 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
           if (e.target === e.currentTarget) setExpanded(false);
         }}
       >
-        <div
-          className={`${cardClass} w-full max-w-[1600px] flex flex-col`}
-          style={{ height: 'calc(100vh - 4rem)' }}
-        >
+        <div className="w-full max-w-[1600px] flex flex-col" style={{ ...CARD_STYLE, height: 'calc(100vh - 4rem)' }}>
           {header}
           <div
             className="flex-1 relative"
-            style={{ minHeight: 0, height: 'calc(100vh - 4rem - 80px)' }}
+            style={{ minHeight: 0, height: 'calc(100vh - 4rem - 108px)' }}
           >
             <CandlestickChart
               ref={chartRef}
@@ -474,6 +501,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
             />
             {drawingLayer}
           </div>
+          <div className="mako-mono" style={{ fontSize: 10, color: 'var(--dim)', padding: '6px 16px 8px' }}>{CAPTION}</div>
         </div>
       </div>
     );
@@ -481,8 +509,8 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
     return (
       <>
         <div
-          className="bg-paper/30 border-2 border-dashed border-ink/30 rounded-2xl flex items-center justify-center"
-          style={{ height: CHART_HEIGHT + 64 }}
+          className="rounded-2xl flex items-center justify-center"
+          style={{ ...THEME_VARS, height: CHART_HEIGHT + 64, boxShadow: 'inset 0 0 0 1px var(--line)' }}
           aria-hidden
         >
           <span className="mako-label text-muted text-xs">CHART EXPANDED · PRESS ESC TO CLOSE</span>
@@ -493,7 +521,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
   }
 
   return (
-    <div className={`${cardClass} rotate-[-1deg]`}>
+    <div style={CARD_STYLE}>
       {header}
       <div className="relative" style={{ height: CHART_HEIGHT }}>
         <CandlestickChart
@@ -510,6 +538,7 @@ export function MarketChart({ oracleSymbol, assetClass }: Props) {
         />
         {drawingLayer}
       </div>
+      <div className="mako-mono" style={{ fontSize: 10, color: 'var(--dim)', padding: '6px 16px 8px' }}>{CAPTION}</div>
     </div>
   );
 }

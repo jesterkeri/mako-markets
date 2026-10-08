@@ -20,7 +20,7 @@ import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { marketToChartConfig } from '@/lib/market-chart';
-import { PriceCandles } from '@/components/charts/PriceCandles';
+import { MarketChart } from '@/components/MarketChart';
 import { useMakoLabels } from '@/lib/use-mako-labels';
 import { usePoolTx } from '@/lib/use-pool-tx';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
@@ -430,14 +430,15 @@ function PoolDesktop(v: ViewProps) {
   );
 }
 
-/// A crypto pool's price candles (Joshua, 2026-10-08: candlesticks only). Forex, commodities and stocks have no free
-/// candle source, and sports and Mako pools have no price, so they show no chart.
+/// A crypto pool's price chart: candles with fullscreen, zoom, indicators and drawing tools (Joshua, 2026-10-08:
+/// candlesticks only, with the old chart's capabilities). Forex, commodities and stocks have no free candle source, and
+/// sports and Mako pools have no price, so they show no chart.
 function PoolCharts({ market: m, mobile }: ViewProps & { mobile?: boolean }) {
   const chart = marketToChartConfig(m);
   if (chart?.assetClass !== 'CRYPTO') return null;
   return (
-    <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14, marginTop: mobile ? 18 : 0 }}>
-      <PriceCandles symbol={chart.oracleSymbol} pair={`${chart.oracleSymbol}/USD`} timeframes={['15m', '1h', '4h', '1d']} initial="1h" />
+    <div style={{ marginTop: mobile ? 18 : 0 }}>
+      <MarketChart oracleSymbol={chart.oracleSymbol} assetClass="CRYPTO" pair={`${chart.oracleSymbol}/USD`} />
     </div>
   );
 }

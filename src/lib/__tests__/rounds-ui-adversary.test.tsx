@@ -21,7 +21,7 @@ const m = vi.hoisted(() => ({
 }));
 
 // The price chart fetches its own data (tested in chart-components.test.tsx); this test is about the page around it.
-vi.mock('@/components/charts/PriceCandles', () => ({ PriceCandles: () => null }));
+vi.mock('@/components/MarketChart', () => ({ MarketChart: () => null }));
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: m.connected }),
   usePublicClient: () => ({ readContract: m.readContract, simulateContract: m.simulateContract, waitForTransactionReceipt: m.waitForTransactionReceipt }),

@@ -52,41 +52,79 @@ export interface ChartInnerHandle {
   fit: () => void;
 }
 
+/// The chart's palette in the redesign (2a/5a): yellow up and red down candles on the page canvas, text and lines from
+/// the canvas foreground, MA and EMA in teal and cyan so they never read as candles. Read from the chart's own
+/// container, so the theme the surrounding page sets (light or dark) is the one drawn.
 type BrandColors = {
   ink: string;
   paper: string;
+  up: string;
   makoRed: string;
-  signal: string;
+  ma: string;
+  ema: string;
+  /// Candle outline and wicks: black in light mode so yellow stands out on cream (design --edge-c, --wick-up/-dn);
+  /// in dark mode the outline is the candle's own colour and the wicks are yellow and red.
+  upBorder: string;
+  downBorder: string;
+  wickUp: string;
+  wickDown: string;
   divider: string;
   grid: string;
   muted: string;
 };
 
 const FALLBACK: BrandColors = {
-  ink:     '#000000',
-  paper:   '#EBE5D9',
+  ink:     '#EBE5D9',
+  paper:   '#000000',
+  up:      '#FACC15',
   makoRed: '#D94A3D',
-  signal:  '#FACC15',
-  divider: 'rgba(0, 0, 0, 0.10)',
-  grid:    'rgba(0, 0, 0, 0.05)',
-  muted:   '#79797A',
+  ma:      '#14B8A6',
+  ema:     '#06B6D4',
+  upBorder: '#FACC15',
+  downBorder: '#D94A3D',
+  wickUp:  '#FACC15',
+  wickDown: '#D94A3D',
+  divider: 'rgba(235, 229, 217, 0.12)',
+  grid:    'rgba(235, 229, 217, 0.06)',
+  muted:   'rgba(235, 229, 217, 0.45)',
 };
 
-function readBrandColors(): BrandColors {
+/// `#rgb` or `#rrggbb` at `a` opacity, for the chart library (it does not parse color-mix()); null for anything else.
+export function withAlpha(hex: string, a: number): string | null {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function readBrandColors(el?: Element | null): BrandColors {
   if (typeof window === 'undefined') return FALLBACK;
-  const styles = getComputedStyle(document.documentElement);
+  const styles = getComputedStyle(el ?? document.documentElement);
   const pick = (varName: string, fallback: string) => {
     const v = styles.getPropertyValue(varName).trim();
     return v || fallback;
   };
+  const ink = pick('--mako-canvas-fg', FALLBACK.ink);
+  const up = pick('--mako-signal', FALLBACK.up);
+  const makoRed = pick('--mako-red', FALLBACK.makoRed);
+  // --edge-c is 'transparent' in dark mode: the candle is then outlined in its own colour.
+  const edge = pick('--edge-c', 'transparent');
+  const outlined = edge !== 'transparent' && edge !== '';
   return {
-    ink:     pick('--color-ink',               FALLBACK.ink),
-    paper:   pick('--color-paper',             FALLBACK.paper),
-    makoRed: pick('--color-mako-red',          FALLBACK.makoRed),
-    signal:  pick('--color-signal',            FALLBACK.signal),
-    divider: pick('--color-canvas-divider',    FALLBACK.divider),
-    grid:    pick('--mako-grid',               FALLBACK.grid),
-    muted:   pick('--color-muted',             FALLBACK.muted),
+    ink,
+    paper:   pick('--mako-canvas',  FALLBACK.paper),
+    up,
+    makoRed,
+    upBorder: outlined ? edge : up,
+    downBorder: outlined ? edge : makoRed,
+    wickUp:  pick('--wick-up', up),
+    wickDown: pick('--wick-dn', makoRed),
+    ma:      pick('--mako-teal',    FALLBACK.ma),
+    ema:     pick('--mako-cyan',    FALLBACK.ema),
+    divider: withAlpha(ink, 0.12) ?? FALLBACK.divider,
+    grid:    withAlpha(ink, 0.06) ?? FALLBACK.grid,
+    muted:   withAlpha(ink, 0.45) ?? FALLBACK.muted,
   };
 }
 
@@ -223,16 +261,16 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
       rightPriceScale: { borderColor: c.divider },
     });
     series.applyOptions({
-      upColor:         c.ink,
+      upColor:         c.up,
       downColor:       c.makoRed,
-      borderUpColor:   c.ink,
-      borderDownColor: c.makoRed,
-      wickUpColor:     c.ink,
-      wickDownColor:   c.makoRed,
+      borderUpColor:   c.upBorder,
+      borderDownColor: c.downBorder,
+      wickUpColor:     c.wickUp,
+      wickDownColor:   c.wickDown,
     });
     // Re-apply MA/EMA colors so they stay legible on theme flip.
-    ma20Ref.current?.applyOptions({ color: c.signal });
-    ema50Ref.current?.applyOptions({ color: c.makoRed });
+    ma20Ref.current?.applyOptions({ color: c.ma });
+    ema50Ref.current?.applyOptions({ color: c.ema });
     if (volumeRef.current) {
       // Histogram per-bar colors are baked into the data points; the
       // setData below in the candles effect refreshes them. Nothing
@@ -244,7 +282,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const colors = readBrandColors();
+    const colors = readBrandColors(containerRef.current);
     const chart = createChart(containerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: colors.paper },
@@ -271,12 +309,12 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
 
     const { precision, minMove } = derivePrecision(candles, assetClass);
     const series = chart.addCandlestickSeries({
-      upColor:         colors.ink,
+      upColor:         colors.up,
       downColor:       colors.makoRed,
-      borderUpColor:   colors.ink,
-      borderDownColor: colors.makoRed,
-      wickUpColor:     colors.ink,
-      wickDownColor:   colors.makoRed,
+      borderUpColor:   colors.upBorder,
+      borderDownColor: colors.downBorder,
+      wickUpColor:     colors.wickUp,
+      wickDownColor:   colors.wickDown,
       priceFormat: { type: 'price', precision, minMove },
     });
 
@@ -309,7 +347,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
     const series = seriesRef.current;
     if (!chart || !series) return;
 
-    const refresh = () => applyColors(chart, series, readBrandColors());
+    const refresh = () => applyColors(chart, series, readBrandColors(containerRef.current));
     refresh();
 
     const observer = new MutationObserver(refresh);
@@ -338,7 +376,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
 
     if (showVolume) {
       if (!volumeRef.current) {
-        const colors = readBrandColors();
+        const colors = readBrandColors(containerRef.current);
         const vol = chart.addHistogramSeries({
           priceFormat: { type: 'volume' },
           priceScaleId: 'volume',
@@ -361,9 +399,9 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
     if (!chart) return;
     if (showMA20) {
       if (!ma20Ref.current) {
-        const colors = readBrandColors();
+        const colors = readBrandColors(containerRef.current);
         ma20Ref.current = chart.addLineSeries({
-          color: colors.signal,
+          color: colors.ma,
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
           priceLineVisible: false,
@@ -382,9 +420,9 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
     if (!chart) return;
     if (showEMA50) {
       if (!ema50Ref.current) {
-        const colors = readBrandColors();
+        const colors = readBrandColors(containerRef.current);
         ema50Ref.current = chart.addLineSeries({
-          color: colors.makoRed,
+          color: colors.ema,
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           priceLineVisible: false,
@@ -411,10 +449,10 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
     });
     unique.sort((a, b) => a.timestamp - b.timestamp);
 
-    const colors = readBrandColors();
+    const colors = readBrandColors(containerRef.current);
     series.setData(toChartData(unique));
     if (volumeRef.current) {
-      volumeRef.current.setData(toVolumeData(unique, colors.ink, colors.makoRed));
+      volumeRef.current.setData(toVolumeData(unique, withAlpha(colors.up, 0.5) ?? colors.up, withAlpha(colors.makoRed, 0.5) ?? colors.makoRed));
     }
     if (ma20Ref.current) {
       ma20Ref.current.setData(computeMA(unique, 20));
