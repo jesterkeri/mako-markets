@@ -240,7 +240,7 @@ describe('<MarketChart>', () => {
     fireEvent.click(pen);
     const on = await findByRole('button', { name: 'Close drawing tools' });
     expect(on.style.background).toBe('var(--mako-signal)');
-    expect(on.style.color).toBe('rgb(0, 0, 0)');
+    expect(['#000', 'rgb(0, 0, 0)']).toContain(on.style.color);
     expect(on.className).not.toMatch(/bg-ink|text-paper/);
   });
 });
