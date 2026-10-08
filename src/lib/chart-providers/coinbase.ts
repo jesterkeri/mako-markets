@@ -62,24 +62,30 @@ export function parseCoinbaseCandles(raw: unknown, granularity: number, nowSec: 
   return out.reverse();
 }
 
-/// Joins consecutive candles into candles `per` times as long, aligned to UTC multiples of the longer span. The oldest
-/// bucket is dropped when incomplete (it would start mid-span); the newest is kept, because it is the one still forming.
+/// Joins candles into candles `per` times as long, aligned to UTC multiples of the longer span. A longer candle is made
+/// only from base candles that are consecutive (each exactly `spanMs` after the last) and start at the bucket's start:
+/// a bucket with a missing base candle (no trades that hour, or a gap in the answer) is left out, never drawn as one
+/// continuous candle (Codex CHARTS r1 #1). Completed buckets need all `per` candles; the newest bucket, still forming,
+/// may hold a contiguous prefix of them.
 export function aggregateCandles(candles: readonly Candle[], spanMs: number, per: number): Candle[] {
   if (per === 1) return [...candles];
   const big = spanMs * per;
-  const buckets: { start: number; n: number; c: Candle }[] = [];
+  const buckets: { start: number; n: number; contiguous: boolean; last: number; c: Candle }[] = [];
   for (const k of candles) {
     const start = Math.floor(k.timestamp / big) * big;
-    const last = buckets[buckets.length - 1];
-    if (last && last.start === start) {
-      last.n += 1;
-      last.c = { ...last.c, high: Math.max(last.c.high, k.high), low: Math.min(last.c.low, k.low), close: k.close, volume: last.c.volume + k.volume };
+    const b = buckets[buckets.length - 1];
+    if (b && b.start === start) {
+      if (k.timestamp !== b.last + spanMs) b.contiguous = false;
+      b.last = k.timestamp;
+      b.n += 1;
+      b.c = { ...b.c, high: Math.max(b.c.high, k.high), low: Math.min(b.c.low, k.low), close: k.close, volume: b.c.volume + k.volume };
     } else {
-      buckets.push({ start, n: 1, c: { ...k, timestamp: start } });
+      buckets.push({ start, n: 1, contiguous: k.timestamp === start, last: k.timestamp, c: { ...k, timestamp: start } });
     }
   }
-  if (buckets.length > 1 && buckets[0].n < per) buckets.shift();
-  return buckets.map((b) => b.c);
+  return buckets
+    .filter((b, i) => b.contiguous && (b.n === per || (i === buckets.length - 1 && b.n < per)))
+    .map((b) => b.c);
 }
 
 export async function fetchCoinbaseCandles(args: { product: string; timeframe: Timeframe }): Promise<Candle[]> {

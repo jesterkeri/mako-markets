@@ -77,4 +77,19 @@ describe('aggregateCandles', () => {
     expect(out.map((c) => c.timestamp / 1000 / H)).toEqual([8]);
     expect(out[0].volume).toBe(3);
   });
+
+  // Codex CHARTS r1 #1: a missing hour is never bridged into a continuous 2h/4h candle.
+  const at = (hours: number[]) => hours.map((h) => ({ timestamp: h * H * 1000, open: 100 + h, high: 110 + h, low: 90 - h, close: 101 + h, volume: 1 }));
+  it('leaves out a completed 4h bucket with a missing hour (middle or start)', () => {
+    expect(aggregateCandles(at([0, 1, 3, 4, 5, 6, 7]), H * 1000, 4).map((c) => c.timestamp / 1000 / H)).toEqual([4]);
+    expect(aggregateCandles(at([1, 2, 3, 4, 5, 6, 7]), H * 1000, 4).map((c) => c.timestamp / 1000 / H)).toEqual([4]);
+  });
+  it('the live bucket is kept only as a contiguous prefix from its start', () => {
+    expect(aggregateCandles(at([0, 1, 2, 3, 4, 5]), H * 1000, 4).map((c) => [c.timestamp / 1000 / H, c.close])).toEqual([[0, 104], [4, 106]]);
+    expect(aggregateCandles(at([0, 1, 2, 3, 4, 6]), H * 1000, 4).map((c) => c.timestamp / 1000 / H)).toEqual([0]); // 05:00 missing
+    expect(aggregateCandles(at([0, 1, 2, 3, 6, 7]), H * 1000, 4).map((c) => c.timestamp / 1000 / H)).toEqual([0]); // starts at 06:00
+  });
+  it('2h: a candle starting at 03:00 is never labelled 02:00', () => {
+    expect(aggregateCandles(at([0, 1, 3, 4, 5]), H * 1000, 2).map((c) => c.timestamp / 1000 / H)).toEqual([0, 4]);
+  });
 });
