@@ -6,8 +6,9 @@
 //
 // Age is measured on the monotonic clock (`performance.now()`), which never steps: a wall clock stepped back by any
 // amount must not make an old value look fresh (adversary on bfc40c3). The wall-clock time `at` is kept only to tell
-// readers when the value was read. Both are stamped when the read STARTS, so an age is never understated by how long
-// the read took.
+// readers when the value was read, corrected by the monotonic age when it is served. Both are stamped when the read
+// STARTS, so an age is never understated by how long the read took. A value counts as fresh only when both clocks say
+// so.
 
 export type Memoized<T> = { value: T; at: number };
 
@@ -15,7 +16,17 @@ export function ttlMemo<T>(ttlMs: number, fn: () => Promise<T>): () => Promise<M
   let last: (Memoized<T> & { mono: number }) | null = null;
   let inflight: Promise<Memoized<T>> | null = null;
   return () => {
-    if (last && performance.now() - last.mono < ttlMs) return Promise.resolve({ value: last.value, at: last.at });
+    if (last) {
+      const monoAge = performance.now() - last.mono;
+      const wallAge = Date.now() - last.at;
+      // Fresh only if BOTH clocks agree it is (adversary on 0a9ed23): the monotonic clock cannot be fooled by a wall
+      // clock step, and the wall clock still advances if the process is ever frozen while the monotonic clock is not.
+      if (monoAge < ttlMs && wallAge >= 0 && wallAge < ttlMs) {
+        // When it was read, never later than the truth: a wall clock that was fast at the read and has since been
+        // stepped back would otherwise make the figures look newer than they are.
+        return Promise.resolve({ value: last.value, at: Math.min(last.at, Date.now() - monoAge) });
+      }
+    }
     // Concurrent callers share one refresh rather than each starting their own.
     if (!inflight) {
       const mono = performance.now();

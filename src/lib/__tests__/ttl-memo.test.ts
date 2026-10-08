@@ -35,15 +35,15 @@ describe('ttlMemo', () => {
     expect((await m()).value).toBe('v');
   });
 
-  it('age is real elapsed time: a wall clock stepped back never makes an old value fresh, nor a new one old', async () => {
+  it('a value is fresh only when both clocks say so: a wall clock step either way never keeps an old value', async () => {
     let n = 0;
     const m = ttlMemo(1000, async () => ++n);
     await m();
     vi.advanceTimersByTime(1200); // 1.2 s really pass
     vi.setSystemTime(Date.now() - 600); // then the wall clock steps back 0.6 s: 0.6 s by the wall clock, 1.2 s really
     expect((await m()).value).toBe(2);
-    vi.setSystemTime(Date.now() + 3_600_000); // a forward step of an hour, no real time
-    expect((await m()).value).toBe(2);
+    vi.setSystemTime(Date.now() + 3_600_000); // a forward step of an hour, no real time: re-read early (safe side)
+    expect((await m()).value).toBe(3);
   });
 
   it('concurrent callers share one read, and report when it was read', async () => {
@@ -53,5 +53,14 @@ describe('ttlMemo', () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(a).toEqual({ value: 7, at: 1_000_000 });
     expect(b).toBe(a);
+  });
+
+  it('reports when a value was read by elapsed time when the wall clock was fast at the read', async () => {
+    const m = ttlMemo(60_000, async () => 'v');
+    vi.setSystemTime(1_030_000); // the wall clock runs 30 s fast at the read (true time 1_000_000)
+    await m();
+    vi.setSystemTime(1_000_000); // corrected back to the truth
+    vi.advanceTimersByTime(40_000); // 40 s really pass
+    expect((await m()).at).toBe(1_000_000);
   });
 });
