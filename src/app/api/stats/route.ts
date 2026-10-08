@@ -1,8 +1,8 @@
-import { unstable_cache } from 'next/cache';
 import { sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
+import { ttlMemo } from '@/lib/ttl-memo';
 import { parseIndexedStats, STATS_QUERY, toWire, type IndexedStats, type StatsWire } from '@/lib/stats';
 
 // GET /api/stats: the figures for /stats, from the Envio indexer of the pools and rounds contracts (ENVIO_GRAPHQL_URL) and Mako
@@ -13,8 +13,8 @@ import { parseIndexedStats, STATS_QUERY, toWire, type IndexedStats, type StatsWi
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const INDEXER_REVALIDATE_SEC = 60;
-const DB_REVALIDATE_SEC = 5 * 60;
+const INDEXER_MAX_AGE_SEC = 60;
+const DB_MAX_AGE_SEC = 5 * 60;
 const INDEXER_TIMEOUT_MS = 10_000;
 /// A slow or unreachable database leaves the gas-free figure out rather than holding the page.
 const DB_TIMEOUT_MS = 5_000;
@@ -59,20 +59,21 @@ async function fetchDbFigures(): Promise<DbFigures> {
       (SELECT count(*)::int FROM user_safes WHERE chain_id = ${MONAD_TESTNET_ID}) AS wallets
   `);
   const row = Array.isArray(rows) ? rows[0] : undefined;
-  const actions = Number(row?.actions);
-  const accounts = Number(row?.accounts);
-  const wallets = Number(row?.wallets);
+  // A count arrives as a number (or a digit string from some drivers); null, '' or anything else is a malformed row,
+  // never a zero (Number(null) and Number('') are both 0).
+  const count = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : Number.NaN);
+  const actions = count(row?.actions);
+  const accounts = count(row?.accounts);
+  const wallets = count(row?.wallets);
   if (![actions, accounts, wallets].every((n) => Number.isInteger(n) && n >= 0)) {
     throw new UnexpectedShape(`db figures row ${Array.isArray(rows) ? 'array' : typeof rows}`);
   }
   return { gasFree: { actions, accounts }, makoWallets: wallets };
 }
 
-// IndexedStats carries bigints, which the data cache cannot serialise, so the cache holds the wire shape.
-// v2: the wire shape gained `rounds`; a new key so no cached v1 answer (without it) is ever served to the new page.
-const cachedIndexer = unstable_cache(async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed, ['stats-indexer-v2'], { revalidate: INDEXER_REVALIDATE_SEC });
-// v2: the database figures gained the Mako wallet count.
-const cachedDb = unstable_cache(fetchDbFigures, ['stats-db-v2'], { revalidate: DB_REVALIDATE_SEC });
+// Hard age limits (src/lib/ttl-memo.ts): never older than these, and a failed read shows as unavailable.
+const cachedIndexer = ttlMemo(INDEXER_MAX_AGE_SEC * 1000, async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed);
+const cachedDb = ttlMemo(DB_MAX_AGE_SEC * 1000, fetchDbFigures);
 
 function within<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -88,12 +89,13 @@ export async function GET() {
   if (dbFigures.status === 'rejected') console.error('[stats] database read failed:', errorCode(dbFigures.reason));
   if (indexed.status === 'rejected' && !(indexed.reason instanceof NotConfigured)) console.error('[stats] indexer read failed:', errorCode(indexed.reason));
   const body: StatsWire = {
-    indexed: indexed.status === 'fulfilled' ? indexed.value : null,
+    indexed: indexed.status === 'fulfilled' ? indexed.value.value : null,
     // Never log the reason: it can carry the indexer URL, which is configuration.
     indexedStatus: indexed.status === 'fulfilled' ? 'ok' : indexed.reason instanceof NotConfigured ? 'not_configured' : 'unavailable',
-    gasFree: dbFigures.status === 'fulfilled' ? dbFigures.value.gasFree : null,
-    makoWallets: dbFigures.status === 'fulfilled' ? dbFigures.value.makoWallets : null,
-    readAt: Math.floor(Date.now() / 1000),
+    gasFree: dbFigures.status === 'fulfilled' ? dbFigures.value.value.gasFree : null,
+    makoWallets: dbFigures.status === 'fulfilled' ? dbFigures.value.value.makoWallets : null,
+    // When the oldest figure shown was read, so "read Xm ago" is true of everything on the page.
+    readAt: Math.floor(Math.min(Date.now(), ...[indexed, dbFigures].flatMap((r) => (r.status === 'fulfilled' ? [r.value.at] : []))) / 1000),
   };
   // The CDN may serve a copy for a minute, and a minute more while it refreshes: never more than two minutes behind.
   return Response.json(body, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=60' } });

@@ -55,6 +55,8 @@ describe('adversary: data plus errors', () => {
     const realFetch = globalThis.fetch;
     beforeEach(() => {
       mocks.dbExecute.mockResolvedValue([{ actions: 1, accounts: 1, wallets: 1 }]);
+    // The route memoizes its reads per module; each test starts with a fresh one.
+    vi.resetModules();
     });
     afterEach(() => {
       globalThis.fetch = realFetch;

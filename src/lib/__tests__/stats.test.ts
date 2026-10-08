@@ -89,6 +89,8 @@ describe('GET /api/stats', () => {
   const realFetch = globalThis.fetch;
   beforeEach(() => {
     mocks.dbExecute.mockResolvedValue([{ actions: 37, accounts: 11, wallets: 64 }]);
+    // The route memoizes its reads per module; each test starts with a fresh one.
+    vi.resetModules();
   });
   afterEach(() => {
     globalThis.fetch = realFetch;
