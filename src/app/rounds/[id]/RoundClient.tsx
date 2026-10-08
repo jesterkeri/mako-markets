@@ -301,7 +301,7 @@ export function RoundView(v: View & { narrow: boolean }) {
   const details = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22, minWidth: 0 }}>
       <div>
-        <MarketChart oracleSymbol={V1_ASSET.symbol} assetClass="CRYPTO" pair={V1_ASSET.pair} timeframes={['1m', '15m', '1h']} initialTimeframe="1m" compact={narrow} />
+        <MarketChart oracleSymbol={V1_ASSET.symbol} assetClass="CRYPTO" pair={V1_ASSET.pair} timeframes={['1m', '15m', '1h']} initialTimeframe="1m" compact={narrow} fullHref={`/rounds/${r.id.toString()}/chart`} />
         <div style={{ fontSize: 12, color: 'var(--dim)', padding: '4px 4px 0' }}>The anchor and close prices are set by Chainlink, the second the round starts and ends.</div>
       </div>
       <Pots {...v} />

@@ -438,7 +438,7 @@ function PoolCharts({ market: m, mobile }: ViewProps & { mobile?: boolean }) {
   if (chart?.assetClass !== 'CRYPTO') return null;
   return (
     <div style={{ marginTop: mobile ? 18 : 0 }}>
-      <MarketChart oracleSymbol={chart.oracleSymbol} assetClass="CRYPTO" pair={`${chart.oracleSymbol}/USD`} compact={mobile} />
+      <MarketChart oracleSymbol={chart.oracleSymbol} assetClass="CRYPTO" pair={`${chart.oracleSymbol}/USD`} compact={mobile} fullHref={`/pools/${m.id.toString()}/chart`} />
     </div>
   );
 }
@@ -947,12 +947,15 @@ function PoolMobile(v: ViewProps) {
   );
 }
 
-/// A swipe of at least this many pixels on the panel's handle opens or closes it.
-const SWIPE_PX = 40;
+/// A drag down of this many pixels closes the open panel; a drag up of SWIPE_OPEN_PX opens the slim bar.
+const SWIPE_CLOSE_PX = 60;
+const SWIPE_OPEN_PX = 30;
 
 function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) => void }) {
   const { market: m, row, labels, side, setSide, amountText, setAmountText, amount, estimate, why, openBet, claimAmount, openClaim, signedIn, open, setOpen } = v;
   const touchY = useRef<number | null>(null);
+  // How far the open panel is being dragged down, so it follows the finger (0 when not dragging).
+  const [dragY, setDragY] = useState(0);
   const name = side === 'yes' ? labels.yes : labels.no;
   const p = row.position;
   const winner: Side | null = row.state === 'yes_won' ? 'yes' : row.state === 'no_won' ? 'no' : null;
@@ -960,16 +963,29 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
   const big: React.CSSProperties = { height: 56, borderRadius: 9999, fontSize: 17, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' };
   const collapsible = row.state === 'open';
   const expanded = !collapsible || open;
+  // Swipe as well as tap (Joshua, 2026-10-08). The panel claims vertical drags (touch-action: none), otherwise the
+  // browser scrolls the page underneath and cancels the gesture before it ends; taps still reach its buttons.
   const onTouchStart = (e: React.TouchEvent) => {
     touchY.current = e.touches[0]?.clientY ?? null;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const start = touchY.current;
+    const y = e.touches[0]?.clientY;
+    if (!collapsible || !open || start === null || y === undefined) return;
+    setDragY(Math.max(0, y - start));
   };
   const onTouchEnd = (e: React.TouchEvent) => {
     const start = touchY.current;
     touchY.current = null;
+    setDragY(0);
     const end = e.changedTouches[0]?.clientY;
     if (!collapsible || start === null || end === undefined) return;
-    if (end - start > SWIPE_PX) setOpen(false);
-    else if (start - end > SWIPE_PX) setOpen(true);
+    if (open && end - start > SWIPE_CLOSE_PX) setOpen(false);
+    else if (!open && start - end > SWIPE_OPEN_PX) setOpen(true);
+  };
+  const onTouchCancel = () => {
+    touchY.current = null;
+    setDragY(0);
   };
   const oddsChip = (s: Side): React.CSSProperties => ({
     height: 40,
@@ -987,8 +1003,26 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
   return (
     <div
       onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
-      style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 30, borderRadius: '28px 28px 0 0', background: 'var(--raise)', boxShadow: '0 -10px 30px rgba(0,0,0,0.25)', padding: '6px 16px calc(24px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 10 }}
+      onTouchCancel={onTouchCancel}
+      style={{
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 30,
+        borderRadius: '28px 28px 0 0',
+        background: 'var(--raise)',
+        boxShadow: '0 -10px 30px rgba(0,0,0,0.25)',
+        padding: '6px 16px calc(24px + env(safe-area-inset-bottom))',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        touchAction: collapsible ? 'none' : undefined,
+        transform: dragY ? `translateY(${dragY}px)` : undefined,
+        transition: dragY ? 'none' : 'transform 180ms ease',
+      }}
     >
       {collapsible ? (
         <button

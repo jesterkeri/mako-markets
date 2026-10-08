@@ -210,13 +210,13 @@ describe('<MarketChart>', () => {
     await findByText('NO PRICE DATA YET', undefined, { timeout: 3000 });
   });
 
-  it('shows the pair, the caption that it is a reference price, and the Rounds timeframes when given', async () => {
+  it('shows the pair and the Rounds timeframes when given, with no caption', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ candles: SAMPLE_CANDLES }), { status: 200 }) as Response);
-    const { findByText, getByText, getByRole } = renderWithQuery(
+    const { findByText, queryByText, getByRole } = renderWithQuery(
       <MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" timeframes={['1m', '15m', '1h']} initialTimeframe="1m" />,
     );
     await findByText('BTC/USD', undefined, { timeout: 3000 });
-    expect(getByText('REFERENCE PRICE FROM COINBASE · NOT THE SETTLEMENT SOURCE')).toBeTruthy();
+    expect(queryByText(/REFERENCE PRICE FROM COINBASE/), 'caption removed (Joshua, 2026-10-08)').toBeNull();
     expect(String(fetchSpy.mock.calls[0][0])).toContain('tf=1m');
     expect(getByRole('tab', { name: '1M' }).getAttribute('aria-selected')).toBe('true');
     fetchSpy.mockRestore();
@@ -248,13 +248,13 @@ describe('<MarketChart>', () => {
   it('compact: price and 24h change on top, a slim timeframe row, one fullscreen button, no zoom or tools', async () => {
     const day = Array.from({ length: 30 }, (_, i) => ({ timestamp: i * 3600_000, open: 100, high: 112, low: 99, close: i === 29 ? 110 : 100, volume: 1 }));
     mockChartsFetch({ candles: day }, 200);
-    const { findByText, getByRole, queryByRole, getByText } = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" compact />);
+    const { findByText, getByRole, queryByRole, getByText } = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" compact fullHref="/pools/74/chart" />);
     await findByText('110.00', undefined, { timeout: 3000 });
     expect(getByText('+10.00% 24H')).toBeTruthy();
     expect(getByRole('tab', { name: '1H' }).getAttribute('aria-selected')).toBe('true');
-    expect(getByRole('button', { name: 'Expand chart' })).toBeTruthy();
+    expect(getByRole('link', { name: 'Open the full chart' }).getAttribute('href')).toBe('/pools/74/chart');
     for (const name of ['Zoom in', 'Zoom out', 'Open drawing tools', 'Indicators menu']) expect(queryByRole('button', { name }), name).toBeNull();
-    expect(getByText('REFERENCE PRICE FROM COINBASE · NOT THE SETTLEMENT SOURCE')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/REFERENCE PRICE/);
   });
 
   it('change24h: from the newest candle against the last one at least 24h older; null when the data is shorter', () => {
@@ -262,5 +262,20 @@ describe('<MarketChart>', () => {
     expect(change24h([h(0, 100), h(1, 120), h(24, 90), h(25, 99)])).toBeCloseTo(-17.5); // 25h newest vs 1h (24h before)
     expect(change24h([h(0, 100), h(10, 110)])).toBeNull();
     expect(change24h([])).toBeNull();
+  });
+
+  // Joshua, 2026-10-08: opening the chart is a page, not a pop-up.
+  it('the full-chart control is a link to the chart page; without one there is no control; page mode has none', async () => {
+    mockChartsFetch({ candles: SAMPLE_CANDLES }, 200);
+    const a = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" fullHref="/rounds/3/chart" />);
+    const link = await a.findByRole('link', { name: 'Open the full chart' }, { timeout: 3000 });
+    expect(link.getAttribute('href')).toBe('/rounds/3/chart');
+    expect(a.queryByRole('dialog')).toBeNull();
+    cleanup();
+    mockChartsFetch({ candles: SAMPLE_CANDLES }, 200);
+    const b = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" page fullHref="/rounds/3/chart" />);
+    await b.findByText('BTC/USD', undefined, { timeout: 3000 });
+    expect(b.queryByRole('link', { name: 'Open the full chart' })).toBeNull();
+    expect(b.getByRole('button', { name: 'Open drawing tools' })).toBeTruthy();
   });
 });

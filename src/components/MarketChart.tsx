@@ -16,7 +16,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 
@@ -44,6 +44,10 @@ interface Props {
   /// Phone layout (CoinMarketCap-style, Joshua 2026-10-08): price and 24h change on top, a slim timeframe row, a
   /// shorter chart and one fullscreen button; zoom, indicators and drawing tools live in fullscreen only.
   compact?: boolean;
+  /// The chart's own page (Joshua, 2026-10-08: opening the chart is a page, not a pop-up). The fullscreen button
+  /// links there; on that page `page` is set and the chart fills its container.
+  fullHref?: string;
+  page?: boolean;
 }
 
 const COMPACT_HEIGHT = 260;
@@ -91,7 +95,11 @@ const CARD_STYLE: React.CSSProperties = {
 /// How often the candles are re-read: about one candle's worth, so the live candle moves.
 const REFETCH_MS: Record<Timeframe, number> = { '1m': 30_000, '15m': 120_000, '1h': 300_000, '2h': 300_000, '4h': 600_000, '1d': 1_800_000 };
 
-const CAPTION = 'REFERENCE PRICE FROM COINBASE · NOT THE SETTLEMENT SOURCE';
+const EXPAND_ICON = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true">
+    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+  </svg>
+);
 
 const TIMEFRAMES_BY_CLASS: Record<ChartAssetClass, readonly Timeframe[]> = {
   CRYPTO:      ['15m', '1h', '2h', '4h', '1d'],
@@ -116,10 +124,9 @@ function newDrawingId(): string {
   return `d-${Date.now()}-${drawingIdCounter}`;
 }
 
-export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimeframe, pair, compact }: Props) {
+export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimeframe, pair, compact, fullHref, page }: Props) {
   const options = timeframes ?? TIMEFRAMES_BY_CLASS[assetClass];
   const [tf, setTf] = useState<Timeframe>(initialTimeframe ?? defaultTimeframe(assetClass));
-  const [expanded, setExpanded] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
   const [showMA20, setShowMA20] = useState(false);
@@ -243,8 +250,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     setFuture([]);
   }
 
-  // ESC handling: tools dropdown → editor → drawings selection →
-  // pending point → expanded overlay. Each layer consumes its own
+  // ESC handling: tools dropdown → editor → drawings selection → pending point. Each layer consumes its own
   // dismissal so users can back out cleanly.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -252,11 +258,10 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
       if (toolsOpen) setToolsOpen(false);
       else if (selectedId) setSelectedId(null);
       else if (activeTool !== 'cursor') setActiveTool('cursor');
-      else if (expanded) setExpanded(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expanded, toolsOpen, selectedId, activeTool]);
+  }, [toolsOpen, selectedId, activeTool]);
 
   useEffect(() => {
     if (!toolsOpen) return;
@@ -268,15 +273,6 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     window.addEventListener('mousedown', onClick);
     return () => window.removeEventListener('mousedown', onClick);
   }, [toolsOpen]);
-
-  useEffect(() => {
-    if (!expanded) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [expanded]);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<ChartsResponse>({
     queryKey: ['charts', oracleSymbol, tf],
@@ -439,23 +435,11 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          aria-label={expanded ? 'Collapse chart' : 'Expand chart'}
-          className="mk-press96"
-          style={iconBtn(false)}
-        >
-          {expanded ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
-              <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-            </svg>
-          )}
-        </button>
+        {fullHref && !page && (
+          <Link href={fullHref} aria-label="Open the full chart" className="mk-press96" style={iconBtn(false)}>
+            {EXPAND_ICON}
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -512,53 +496,26 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     </>
   );
 
-  if (expanded) {
-    const overlay = (
-      <div
-        className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6 bg-ink/80 backdrop-blur-sm"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Expanded price chart"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) setExpanded(false);
-        }}
-      >
-        <div className={`w-full max-w-[1600px] flex flex-col ${styles.theme}`} style={{ ...CARD_STYLE, height: 'calc(100vh - 4rem)' }}>
-          {header}
-          <div
-            className="flex-1 relative"
-            style={{ minHeight: 0, height: 'calc(100vh - 4rem - 108px)' }}
-          >
-            <CandlestickChart
-              ref={chartRef}
-              candles={data.candles}
-              instrument={oracleSymbol}
-              assetClass={assetClass}
-              timeframe={tf}
-              height={undefined}
-              showVolume={showVolume}
-              showMA20={showMA20}
-              showEMA50={showEMA50}
-              onChartReady={handleChartReady}
-            />
-            {drawingLayer}
-          </div>
-          <div className="mako-mono" style={{ fontSize: 10, color: 'var(--dim)', padding: '6px 16px 8px' }}>{CAPTION}</div>
+  if (page) {
+    return (
+      <div className={`flex flex-col ${styles.theme}`} style={{ ...CARD_STYLE, height: '100%' }}>
+        {header}
+        <div className="flex-1 relative" style={{ minHeight: 0 }}>
+          <CandlestickChart
+            ref={chartRef}
+            candles={data.candles}
+            instrument={oracleSymbol}
+            assetClass={assetClass}
+            timeframe={tf}
+            height={undefined}
+            showVolume={showVolume}
+            showMA20={showMA20}
+            showEMA50={showEMA50}
+            onChartReady={handleChartReady}
+          />
+          {drawingLayer}
         </div>
       </div>
-    );
-
-    return (
-      <>
-        <div
-          className="rounded-2xl flex items-center justify-center"
-          style={{ ...THEME_VARS, height: compact ? COMPACT_HEIGHT + 150 : CHART_HEIGHT + 64, border: '1px dashed var(--line)' }}
-          aria-hidden
-        >
-          <span className="mako-label text-muted text-xs">CHART EXPANDED · PRESS ESC TO CLOSE</span>
-        </div>
-        {typeof document !== 'undefined' ? createPortal(overlay, document.body) : null}
-      </>
     );
   }
 
@@ -581,11 +538,11 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
               )}
             </div>
           </div>
-          <button type="button" onClick={() => setExpanded(true)} aria-label="Expand chart" className="mk-press96" style={iconBtn(false)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
-              <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-            </svg>
-          </button>
+          {fullHref && (
+            <Link href={fullHref} aria-label="Open the full chart" className="mk-press96" style={iconBtn(false)}>
+              {EXPAND_ICON}
+            </Link>
+          )}
         </div>
         <div role="tablist" aria-label="Chart timeframe" style={{ display: 'flex', gap: 4, overflowX: 'auto', padding: '10px 14px 8px' }}>
           {options.map((t) => (
@@ -616,7 +573,6 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             onChartReady={handleChartReady}
           />
         </div>
-        <div className="mako-mono" style={{ fontSize: 10, color: 'var(--dim)', padding: '6px 14px 10px' }}>{CAPTION}</div>
       </div>
     );
   }
@@ -639,7 +595,6 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
         />
         {drawingLayer}
       </div>
-      <div className="mako-mono" style={{ fontSize: 10, color: 'var(--dim)', padding: '6px 16px 8px' }}>{CAPTION}</div>
     </div>
   );
 }

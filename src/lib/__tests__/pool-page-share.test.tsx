@@ -152,6 +152,29 @@ describe('pool page share control', () => {
     expect(screen.getByRole('button', { name: 'Hide the bet panel' }).getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('mobile: the panel follows a drag down, springs back on a short one, and claims the gesture from the page', async () => {
+    state.market = OPEN;
+    renderPage(false);
+    const panel = screen.getByRole('button', { name: 'Hide the bet panel' }).parentElement as HTMLElement;
+    expect(panel.style.touchAction).toBe('none');
+    await act(async () => {
+      fireEvent.touchStart(panel, { touches: [{ clientY: 500 }] });
+      fireEvent.touchMove(panel, { touches: [{ clientY: 530 }] });
+    });
+    expect(panel.style.transform).toBe('translateY(30px)');
+    await act(async () => {
+      fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 530 }] });
+    });
+    expect(panel.style.transform).toBe('');
+    expect(screen.getByRole('button', { name: 'Hide the bet panel' }), 'a 30px drag springs back').toBeTruthy();
+    await act(async () => {
+      fireEvent.touchStart(panel, { touches: [{ clientY: 500 }] });
+      fireEvent.touchMove(panel, { touches: [{ clientY: 520 }] });
+      fireEvent.touchCancel(panel);
+    });
+    expect(panel.style.transform, 'a cancelled gesture resets').toBe('');
+  });
+
   it('mobile: a swipe down on the panel shrinks it, a swipe up opens it', async () => {
     state.market = OPEN;
     renderPage(false);
@@ -159,12 +182,12 @@ describe('pool page share control', () => {
     const panel = handle.parentElement as HTMLElement;
     await act(async () => {
       fireEvent.touchStart(panel, { touches: [{ clientY: 500 }] });
-      fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 560 }] });
+      fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 590 }] });
     });
     expect(screen.getByRole('button', { name: 'Show the bet panel' })).toBeTruthy();
     await act(async () => {
-      fireEvent.touchStart(panel, { touches: [{ clientY: 560 }] });
-      fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 480 }] });
+      fireEvent.touchStart(panel, { touches: [{ clientY: 590 }] });
+      fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 550 }] });
     });
     expect(screen.getByRole('button', { name: 'Hide the bet panel' })).toBeTruthy();
   });
