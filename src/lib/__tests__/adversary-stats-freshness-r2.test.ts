@@ -43,7 +43,7 @@ async function GET() {
 
 beforeEach(() => {
   vi.resetModules();
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout'] });
   vi.setSystemTime(T0);
   indexerBets = 40;
   process.env.ENVIO_GRAPHQL_URL = SENTINEL_URL;
@@ -61,14 +61,14 @@ describe('adversary r2: a figure is checked at the start of the request but serv
   it('indexer figures 59.5 s old at the start are served 64.4 s old while a slow database refresh runs', async () => {
     const get = await GET();
     await (await get()).json(); // t = 0: both sources read
-    vi.setSystemTime(T0 + 241_000);
+    vi.advanceTimersByTime(241_000);
     expect((await (await get()).json()).indexed.bets).toBe(40); // t = 241 s: indexer re-read, bets = 40
     const indexerReadAt = Date.now();
     indexerBets = 41; // a new bet lands right after that read
 
     // t = 300.5 s: the database figures are past 5 minutes, so the database is re-read; it answers in 4.9 s (inside
     // the 5 s timeout). The indexer figures are 59.5 s old, so the memo hands them over without a re-read.
-    vi.setSystemTime(T0 + 300_500);
+    vi.advanceTimersByTime(59_500);
     mocks.dbExecute.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve([ROW]), 4_900)));
     const pending = get();
     await vi.advanceTimersByTimeAsync(4_900);

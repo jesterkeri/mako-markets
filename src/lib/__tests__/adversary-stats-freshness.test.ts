@@ -2,8 +2,8 @@
 //   1. the indexer figures are at most 60 s old; 2. the database figures at most 5 minutes, and a malformed row yields
 //   no database figures (null), never a guess or a zero; 3. a failure of either source shows that part unavailable.
 // The adversary proved Next's unstable_cache breaks 1-3 (past its revalidate it serves the old entry, and keeps doing
-// so when the refresh fails). The route now uses a hard-limit memo (src/lib/ttl-memo.ts); time passes here by moving
-// the clock, and every test starts from a fresh module so no memo carries over.
+// so when the refresh fails). The route now uses a hard-limit memo (src/lib/ttl-memo.ts); time passes here by advancing
+// fake time, and every test starts from a fresh module so no memo carries over.
 // No network and no database: fetch and db.execute are mocks; the indexer URL is a planted sentinel.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -34,15 +34,15 @@ async function request() {
   return (await GET()).json();
 }
 
-/// Time passes with no request.
-const quietFor = (sec: number) => vi.setSystemTime(Date.now() + sec * 1000);
+/// Time passes with no request (both the wall clock and the monotonic clock the memo measures age on).
+const quietFor = (sec: number) => vi.advanceTimersByTime(sec * 1000);
 
 let indexerBets = 40;
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   vi.resetModules();
-  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.useFakeTimers({ toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout'] });
   vi.setSystemTime(new Date('2026-10-08T12:00:00Z'));
   indexerBets = 40;
   process.env.ENVIO_GRAPHQL_URL = SENTINEL_URL;

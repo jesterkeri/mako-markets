@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ttlMemo } from '../ttl-memo';
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.useFakeTimers({ toFake: ['Date', 'performance'] });
   vi.setSystemTime(1_000_000);
 });
 afterEach(() => vi.useRealTimers());
@@ -15,9 +15,9 @@ describe('ttlMemo', () => {
     let n = 0;
     const m = ttlMemo(1000, async () => ++n);
     expect((await m()).value).toBe(1);
-    vi.setSystemTime(1_000_999);
+    vi.advanceTimersByTime(999);
     expect((await m()).value).toBe(1);
-    vi.setSystemTime(1_001_000);
+    vi.advanceTimersByTime(1);
     expect((await m()).value).toBe(2);
   });
 
@@ -28,18 +28,21 @@ describe('ttlMemo', () => {
       return 'v';
     });
     await m();
-    vi.setSystemTime(1_002_000);
+    vi.advanceTimersByTime(2000);
     fail = true;
     await expect(m()).rejects.toThrow('down');
     fail = false;
     expect((await m()).value).toBe('v');
   });
 
-  it('a clock that steps back makes the value expired, never fresh', async () => {
+  it('age is real elapsed time: a wall clock stepped back never makes an old value fresh, nor a new one old', async () => {
     let n = 0;
     const m = ttlMemo(1000, async () => ++n);
     await m();
-    vi.setSystemTime(999_500);
+    vi.advanceTimersByTime(1200); // 1.2 s really pass
+    vi.setSystemTime(Date.now() - 600); // then the wall clock steps back 0.6 s: 0.6 s by the wall clock, 1.2 s really
+    expect((await m()).value).toBe(2);
+    vi.setSystemTime(Date.now() + 3_600_000); // a forward step of an hour, no real time
     expect((await m()).value).toBe(2);
   });
 

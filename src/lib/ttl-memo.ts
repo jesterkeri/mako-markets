@@ -3,20 +3,28 @@
 // either: past its revalidate time it returns the old entry and refreshes in the background, and when that refresh
 // fails it keeps returning the old entry (adversary on d5b3701), so a quiet spell or an outage showed old figures as
 // fresh. Per server instance; the CDN in front shares one answer across viewers.
+//
+// Age is measured on the monotonic clock (`performance.now()`), which never steps: a wall clock stepped back by any
+// amount must not make an old value look fresh (adversary on bfc40c3). The wall-clock time `at` is kept only to tell
+// readers when the value was read. Both are stamped when the read STARTS, so an age is never understated by how long
+// the read took.
 
 export type Memoized<T> = { value: T; at: number };
 
 export function ttlMemo<T>(ttlMs: number, fn: () => Promise<T>): () => Promise<Memoized<T>> {
-  let last: Memoized<T> | null = null;
+  let last: (Memoized<T> & { mono: number }) | null = null;
   let inflight: Promise<Memoized<T>> | null = null;
   return () => {
-    // A negative age means the clock stepped back (adversary on e4a5944): treat it as expired, never as fresh.
-    const age = last ? Date.now() - last.at : -1;
-    if (last && age >= 0 && age < ttlMs) return Promise.resolve(last);
+    if (last && performance.now() - last.mono < ttlMs) return Promise.resolve({ value: last.value, at: last.at });
     // Concurrent callers share one refresh rather than each starting their own.
     if (!inflight) {
+      const mono = performance.now();
+      const at = Date.now();
       inflight = fn()
-        .then((value) => (last = { value, at: Date.now() }))
+        .then((value) => {
+          last = { value, at, mono };
+          return { value, at };
+        })
         .finally(() => {
           inflight = null;
         });
