@@ -35,8 +35,9 @@ const PLAN: Record<Timeframe, { granularity: number; per: number }> = {
 };
 
 /// Coinbase rows (newest first) as candles (oldest first), or a throw on any row that is not a real candle. A bad row
-/// is an upstream fault, never something to draw.
-export function parseCoinbaseCandles(raw: unknown): Candle[] {
+/// is an upstream fault, never something to draw: each candle must start on the `granularity` grid (so rows really are
+/// candles of that size, which the 2h/4h buckets rely on) and no later than `nowSec`.
+export function parseCoinbaseCandles(raw: unknown, granularity: number, nowSec: number): Candle[] {
   if (!Array.isArray(raw)) throw new CoinbaseApiError('answer is not a list');
   const out: Candle[] = [];
   let prevT = Infinity;
@@ -46,6 +47,8 @@ export function parseCoinbaseCandles(raw: unknown): Candle[] {
     }
     const [t, low, high, open, close, volume] = row as number[];
     if (!Number.isInteger(t) || t <= 0 || t >= prevT) throw new CoinbaseApiError('candles out of order');
+    if (t % granularity !== 0) throw new CoinbaseApiError('candle off its grid');
+    if (t > nowSec) throw new CoinbaseApiError('candle in the future');
     if (low <= 0 || low > Math.min(open, close) || high < Math.max(open, close) || volume < 0) {
       throw new CoinbaseApiError('impossible candle');
     }
@@ -86,5 +89,6 @@ export async function fetchCoinbaseCandles(args: { product: string; timeframe: T
     signal: AbortSignal.timeout(8_000),
   });
   if (!res.ok) throw new CoinbaseApiError(`status ${res.status}`, res.status);
-  return aggregateCandles(parseCoinbaseCandles(await res.json()), plan.granularity * 1000, plan.per);
+  const candles = parseCoinbaseCandles(await res.json(), plan.granularity, Math.floor(Date.now() / 1000));
+  return aggregateCandles(candles, plan.granularity * 1000, plan.per);
 }

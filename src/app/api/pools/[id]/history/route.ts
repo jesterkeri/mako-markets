@@ -1,5 +1,5 @@
 // GET /api/pools/[id]/history: the pool's YES share after each bet, from the Envio indexer (ENVIO_GRAPHQL_URL).
-// Cached a minute per pool and shared by every viewer.
+// Cached 15 seconds per pool and shared by every viewer.
 //   200 { points: { t, yesBps }[], bets, indexedYes, indexedNo }   t = unix seconds, oldest first
 //   400 bad_id · 404 unknown_pool · 422 too_many · 503 not_configured · 502 upstream_failed
 
@@ -9,7 +9,8 @@ import { fetchPoolHistory, type PoolHistory } from '@/lib/pool-history';
 
 export const dynamic = 'force-dynamic';
 
-const REVALIDATE_SEC = 60;
+/// Short, so a bet shows within seconds; the chart checks the totals against the contract and waits while they differ.
+const REVALIDATE_SEC = 15;
 const TIMEOUT_MS = 10_000;
 
 const cached = unstable_cache(

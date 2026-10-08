@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { aggregateCandles, CoinbaseApiError, parseCoinbaseCandles } from '../chart-providers/coinbase';
 
 const H = 3600;
+const NOW = 100 * H; // well after every row below
 // Coinbase order: newest first, [time, low, high, open, close, volume].
 const ROWS = [
   [10 * H, 99, 106, 100, 105, 2],
@@ -13,7 +14,7 @@ const ROWS = [
 
 describe('parseCoinbaseCandles', () => {
   it('turns newest-first rows into oldest-first candles in milliseconds', () => {
-    expect(parseCoinbaseCandles(ROWS)).toEqual([
+    expect(parseCoinbaseCandles(ROWS, H, NOW)).toEqual([
       { timestamp: 9 * H * 1000, open: 97, high: 101, low: 95, close: 100, volume: 1 },
       { timestamp: 10 * H * 1000, open: 100, high: 106, low: 99, close: 105, volume: 2 },
     ]);
@@ -32,11 +33,22 @@ describe('parseCoinbaseCandles', () => {
       [[10 * H, 99, 106, 100, 105, 2], [10 * H, 99, 106, 100, 105, 2]], // repeated time
       [[Number.NaN, 99, 106, 100, 105, 2]],
     ];
-    for (const b of bad) expect(() => parseCoinbaseCandles(b), JSON.stringify(b)).toThrow(CoinbaseApiError);
+    for (const b of bad) expect(() => parseCoinbaseCandles(b, H, NOW), JSON.stringify(b)).toThrow(CoinbaseApiError);
   });
 
   it('an empty list is no candles, not an error', () => {
-    expect(parseCoinbaseCandles([])).toEqual([]);
+    expect(parseCoinbaseCandles([], H, NOW)).toEqual([]);
+  });
+
+  it('refuses a row off its granularity grid or dated after now (adversary on 015c0e2)', () => {
+    expect(() => parseCoinbaseCandles([[10 * H + 60, 99, 106, 100, 105, 2]], H, NOW)).toThrow('candle off its grid');
+    expect(() => parseCoinbaseCandles([[101 * H, 99, 106, 100, 105, 2]], H, NOW)).toThrow('candle in the future');
+    // The candle still forming started at or before now: accepted.
+    expect(parseCoinbaseCandles([[100 * H, 99, 106, 100, 105, 2]], H, NOW)).toHaveLength(1);
+    // 1m rows on a 1m grid are fine at 60 s granularity, refused as 1h candles.
+    const minuteRows = [[10 * H + 120, 99, 106, 100, 105, 2], [10 * H + 60, 95, 101, 97, 100, 1]];
+    expect(parseCoinbaseCandles(minuteRows, 60, NOW)).toHaveLength(2);
+    expect(() => parseCoinbaseCandles(minuteRows, H, NOW)).toThrow('candle off its grid');
   });
 });
 

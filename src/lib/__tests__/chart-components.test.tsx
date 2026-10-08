@@ -18,12 +18,25 @@ const answer = (status: number, body: unknown) => vi.fn(async () => ({ ok: statu
 
 describe('YesShareChart', () => {
   it('draws the history and tags the share the contract holds now', async () => {
-    vi.stubGlobal('fetch', answer(200, { points: [{ t: 1000, yesBps: 10000 }, { t: 2000, yesBps: 5000 }], bets: 2 }));
-    // Contract now: 3 YES, 1 NO -> 75%, newer than the indexer's last point.
+    vi.stubGlobal('fetch', answer(200, { points: [{ t: 1000, yesBps: 10000 }, { t: 2000, yesBps: 5000 }, { t: 3000, yesBps: 7500 }], bets: 3, indexedYes: '3000000', indexedNo: '1000000' }));
+    // Contract now: 3 YES, 1 NO -> 75%, the same totals the indexer has.
     wrap(<YesShareChart marketId={93n} openedAt={1000} now={4000} chainYes={3_000_000n} chainNo={1_000_000n} />);
     await waitFor(() => expect(screen.getByRole('img', { name: /now 75%/ })).toBeTruthy());
     expect(screen.getByText(/YES.75%/)).toBeTruthy();
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/pools/93/history');
+  });
+
+  it('while the indexer is behind the contract it says it is catching up, and draws nothing', async () => {
+    vi.stubGlobal('fetch', answer(200, { points: [{ t: 1000, yesBps: 10000 }], bets: 1, indexedYes: '1000000', indexedNo: '0' }));
+    wrap(<YesShareChart marketId={9n} openedAt={1000} now={90_000} chainYes={1_000_000n} chainNo={3_000_000n} />);
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Catching up with the latest bet…'));
+    expect(screen.queryByRole('img')).toBeNull();
+  });
+
+  it('an answer without the indexed totals is an error, never drawn', async () => {
+    vi.stubGlobal('fetch', answer(200, { points: [{ t: 1000, yesBps: 10000 }], bets: 1 }));
+    wrap(<YesShareChart marketId={9n} openedAt={1000} now={2000} chainYes={1n} chainNo={0n} />);
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Share history unavailable right now.'));
   });
 
   it('an empty pool says so without asking for history to draw', () => {

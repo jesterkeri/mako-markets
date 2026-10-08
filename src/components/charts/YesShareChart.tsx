@@ -2,7 +2,14 @@
 
 // 9a "YES share of the pool · SINCE OPENING": the pool's YES share after each bet, from /api/pools/[id]/history (the
 // Envio indexer), ending at the share the contract holds now. The line is drawn in yellow with the design's 75/50/25%
-// guides; the tag on the right is the current share.
+// guides; the tag on the right is the current share. The history is drawn only when the indexer's totals equal the
+// contract's: while the indexer is behind (a bet it has not seen yet) the chart says it is catching up and checks again
+// every 10 seconds, because drawing the older history to "now" would show the share as it was, not as it is.
+
+/// The indexer's totals equal the contract's, so its bets are all the bets there are.
+export function historyMatches(h: { indexedYes: string; indexedNo: string }, chainYes: bigint, chainNo: bigint): boolean {
+  return /^\d+$/.test(h.indexedYes) && /^\d+$/.test(h.indexedNo) && BigInt(h.indexedYes) === chainYes && BigInt(h.indexedNo) === chainNo;
+}
 
 import { useQuery } from '@tanstack/react-query';
 
@@ -11,14 +18,14 @@ import { shareGeometry } from '@/lib/chart-geometry';
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 
-type History = { points: { t: number; yesBps: number }[]; bets: number };
+type History = { points: { t: number; yesBps: number }[]; bets: number; indexedYes: string; indexedNo: string };
 
 async function fetchHistory(id: string): Promise<History> {
   const res = await fetch(`/api/pools/${id}/history`);
   if (!res.ok) throw new Error(`history ${res.status}`);
   const body = (await res.json()) as Partial<History>;
-  if (!Array.isArray(body.points)) throw new Error('history answer');
-  return { points: body.points, bets: Number(body.bets) };
+  if (!Array.isArray(body.points) || typeof body.indexedYes !== 'string' || typeof body.indexedNo !== 'string') throw new Error('history answer');
+  return { points: body.points, bets: Number(body.bets), indexedYes: body.indexedYes, indexedNo: body.indexedNo };
 }
 
 const WEEKDAY = (s: number) => new Date(s * 1000).toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
@@ -41,14 +48,15 @@ export function YesShareChart({ marketId, openedAt, now, chainYes, chainNo, heig
   const q = useQuery({
     queryKey: ['pool-history', marketId.toString()],
     queryFn: () => fetchHistory(marketId.toString()),
-    refetchInterval: 60_000,
+    // Faster while the indexer is behind the contract, so the chart appears as soon as it has caught up.
+    refetchInterval: (query) => (query.state.data && !historyMatches(query.state.data, chainYes, chainNo) ? 10_000 : 60_000),
     refetchIntervalInBackground: false,
-    staleTime: 30_000,
+    staleTime: 10_000,
   });
   const nowShare = chainShareBps(chainYes, chainNo);
-  // The series ends at the contract's share now, so the tag always agrees with the odds beside it even when the
-  // indexer is a moment behind.
-  const points = q.data && nowShare !== null ? [...q.data.points, { t: Math.max(now, q.data.points.at(-1)?.t ?? now), yesBps: nowShare }] : [];
+  const matches = q.data ? historyMatches(q.data, chainYes, chainNo) : false;
+  // Only a history that adds up to the contract's totals is drawn; it then runs on to now at the same share.
+  const points = q.data && matches && nowShare !== null ? [...q.data.points, { t: Math.max(now, q.data.points.at(-1)?.t ?? now), yesBps: nowShare }] : [];
   const g = shareGeometry(points, openedAt, now);
   const pct = (bps: number) => `${Math.floor(bps / 100)}%`;
 
@@ -79,7 +87,13 @@ export function YesShareChart({ marketId, openedAt, now, chainYes, chainNo, heig
           </>
         ) : (
           <div role="status" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 16, borderRadius: 12, background: 'var(--raise)', ...mono, fontSize: 12, color: 'var(--dim)' }}>
-            {nowShare === null ? 'No bets yet. The chart starts with the first bet.' : q.isError ? 'Share history unavailable right now.' : 'Loading share history…'}
+            {nowShare === null
+              ? 'No bets yet. The chart starts with the first bet.'
+              : q.isError
+                ? 'Share history unavailable right now.'
+                : q.data && !matches
+                  ? 'Catching up with the latest bet…'
+                  : 'Loading share history…'}
           </div>
         )}
       </div>
