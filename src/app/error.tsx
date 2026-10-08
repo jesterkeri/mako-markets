@@ -5,13 +5,10 @@
 // still reaches Sentry when it is configured. Copy: no em dashes, no "we/our/us".
 import * as Sentry from '@sentry/nextjs';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 
 import { Mascot } from '@/components/Mascot';
-import { MobileHeader } from '@/components/shell/MobileHeader';
-import { TabBar } from '@/components/shell/TabBar';
-import { isMobileDetail } from '@/lib/shell-nav';
+import { PhoneDetailChrome } from '@/components/shell/PhoneDetailChrome';
 
 import s from './not-found.module.css';
 
@@ -37,9 +34,6 @@ export default function ErrorPage({ error, unstable_retry }: { error: Error & { 
     Sentry.captureException(error);
   }, [error]);
   // A server error carries an identifier that matches its server log; it is safe to show (no details).
-  // Pool, round and chart pages draw their own phone header, so the shell hides its own there; the error replaces
-  // that page, so it brings the shell's phone header and tab bar back (adversary on cb71ae1).
-  const detail = isMobileDetail(usePathname() ?? '');
   const ref = error.digest ? <div style={{ fontFamily: 'var(--mako-font-mono)', fontSize: 12, opacity: 0.6, marginTop: 12 }}>Reference {error.digest}</div> : null;
   return (
     <>
@@ -76,46 +70,47 @@ export default function ErrorPage({ error, unstable_retry }: { error: Error & { 
       </div>
 
       <div className="mk-mob mk-m">
-        {detail && <MobileHeader />}
-        <div style={{ padding: '4px 12px 0' }}>
-          <div className={`${s.card} ${s.mobCard}`}>
-            <span aria-hidden="true" style={{ position: 'absolute', right: 18, top: 12, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, color: '#D94A3D' }}>✕</span>
-            <span style={{ ...pill, gap: 6, height: 28, padding: '0 12px', fontSize: 12 }}>
-              {dot}Something broke
-            </span>
-            <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 96, lineHeight: 0.85, letterSpacing: '-0.06em', marginTop: 14 }}>Oops.</div>
-            <div className={s.mobArt}>
-              <svg className={s.mobTrail} viewBox="0 0 330 250" preserveAspectRatio="none" aria-hidden="true">
-                <path d="M10 60 C 40 140, 120 110, 150 170 S 230 240, 330 200" fill="none" stroke="#D94A3D" strokeWidth="4" strokeDasharray="4 12" strokeLinecap="round" />
-              </svg>
-              <div className={s.mobSun} aria-hidden="true" />
-              <Mascot pose="20-error-cable" motion="glitch" alt="Mako holding an unplugged cable" className={`${s.mobMascot} ${s.mascotEdge}`} />
+        {/* On pool, round and chart pages the shell hides its phone nav; the error brings it back, with room below. */}
+        <PhoneDetailChrome>
+          <div style={{ padding: '4px 12px 0' }}>
+            <div className={`${s.card} ${s.mobCard}`}>
+              <span aria-hidden="true" style={{ position: 'absolute', right: 18, top: 12, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, color: '#D94A3D' }}>✕</span>
+              <span style={{ ...pill, gap: 6, height: 28, padding: '0 12px', fontSize: 12 }}>
+                {dot}Something broke
+              </span>
+              <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 96, lineHeight: 0.85, letterSpacing: '-0.06em', marginTop: 14 }}>Oops.</div>
+              <div className={s.mobArt}>
+                <svg className={s.mobTrail} viewBox="0 0 330 250" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M10 60 C 40 140, 120 110, 150 170 S 230 240, 330 200" fill="none" stroke="#D94A3D" strokeWidth="4" strokeDasharray="4 12" strokeLinecap="round" />
+                </svg>
+                <div className={s.mobSun} aria-hidden="true" />
+                <Mascot pose="20-error-cable" motion="glitch" alt="Mako holding an unplugged cable" className={`${s.mobMascot} ${s.mascotEdge}`} />
+              </div>
             </div>
           </div>
-        </div>
-        <div style={{ padding: '20px 20px 0' }}>
-          <h1 style={{ margin: 0, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.05, letterSpacing: '-0.03em' }}>Something broke on this page.</h1>
-          <p style={{ fontSize: 15, lineHeight: 1.5, color: 'var(--dim)', margin: '8px 0 0' }}>{BODY}</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-            <button
-              type="button"
-              onClick={() => unstable_retry()}
-              className="m3-press"
-              style={{ height: 56, border: 0, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16, fontWeight: 800, cursor: 'pointer' }}
-            >
-              Try again
-            </button>
-            <Link
-              href="/pools"
-              className="m3-press"
-              style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9999, boxShadow: 'inset 0 0 0 2px var(--mako-canvas-fg)', color: 'var(--mako-canvas-fg)', fontSize: 16, fontWeight: 800, textDecoration: 'none' }}
-            >
-              Browse Pools
-            </Link>
+          <div style={{ padding: '20px 20px 0' }}>
+            <h1 style={{ margin: 0, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.05, letterSpacing: '-0.03em' }}>Something broke on this page.</h1>
+            <p style={{ fontSize: 15, lineHeight: 1.5, color: 'var(--dim)', margin: '8px 0 0' }}>{BODY}</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => unstable_retry()}
+                className="m3-press"
+                style={{ height: 56, border: 0, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16, fontWeight: 800, cursor: 'pointer' }}
+              >
+                Try again
+              </button>
+              <Link
+                href="/pools"
+                className="m3-press"
+                style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9999, boxShadow: 'inset 0 0 0 2px var(--mako-canvas-fg)', color: 'var(--mako-canvas-fg)', fontSize: 16, fontWeight: 800, textDecoration: 'none' }}
+              >
+                Browse Pools
+              </Link>
+            </div>
+            {ref}
           </div>
-          {ref}
-        </div>
-        {detail && <TabBar />}
+        </PhoneDetailChrome>
       </div>
     </>
   );

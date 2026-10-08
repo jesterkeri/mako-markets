@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { Mascot } from '@/components/Mascot';
+import { PhoneDetailChrome } from '@/components/shell/PhoneDetailChrome';
 import { StillInTheWaterDesktop, StillInTheWaterMobile } from '@/components/StillInTheWater';
 
 import s from './not-found.module.css';
@@ -70,40 +71,43 @@ export default function NotFound() {
       </div>
 
       <div className="mk-mob mk-m">
-        <div style={{ padding: '4px 12px 0' }}>
-          <div className={`${s.card} ${s.mobCard}`}>
-            <span aria-hidden="true" style={{ position: 'absolute', right: 18, top: 12, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, color: '#D94A3D' }}>✕</span>
-            <span style={{ ...pill, gap: 6, height: 28, padding: '0 12px', fontSize: 12 }}>
-              {dot}Page not found
-            </span>
-            <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 96, lineHeight: 0.85, letterSpacing: '-0.06em', marginTop: 14 }}>404</div>
-            <div className={s.mobArt}>
-              <svg className={s.mobTrail} viewBox="0 0 330 250" preserveAspectRatio="none" aria-hidden="true">
-                <path d="M10 60 C 40 140, 120 110, 150 170 S 230 240, 330 200" fill="none" stroke="#D94A3D" strokeWidth="4" strokeDasharray="4 12" strokeLinecap="round" />
-              </svg>
-              <div className={s.mobSun} aria-hidden="true" />
-              <Mascot pose="07-lost-map" motion="look" alt="Mako, lost, holding a map upside down" className={`${s.mobMascot} ${s.mascotEdge}`} />
+        {/* A missing pool or round (/pools/N) is a route where the shell hides its phone nav; bring it back. */}
+        <PhoneDetailChrome>
+          <div style={{ padding: '4px 12px 0' }}>
+            <div className={`${s.card} ${s.mobCard}`}>
+              <span aria-hidden="true" style={{ position: 'absolute', right: 18, top: 12, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, color: '#D94A3D' }}>✕</span>
+              <span style={{ ...pill, gap: 6, height: 28, padding: '0 12px', fontSize: 12 }}>
+                {dot}Page not found
+              </span>
+              <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 96, lineHeight: 0.85, letterSpacing: '-0.06em', marginTop: 14 }}>404</div>
+              <div className={s.mobArt}>
+                <svg className={s.mobTrail} viewBox="0 0 330 250" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M10 60 C 40 140, 120 110, 150 170 S 230 240, 330 200" fill="none" stroke="#D94A3D" strokeWidth="4" strokeDasharray="4 12" strokeLinecap="round" />
+                </svg>
+                <div className={s.mobSun} aria-hidden="true" />
+                <Mascot pose="07-lost-map" motion="look" alt="Mako, lost, holding a map upside down" className={`${s.mobMascot} ${s.mascotEdge}`} />
+              </div>
             </div>
           </div>
-        </div>
-        <div style={{ padding: '20px 20px 0' }}>
-          <h1 style={{ margin: 0, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.05, letterSpacing: '-0.03em' }}>
-            Even Mako can’t find this page.
-          </h1>
-          <p style={{ fontSize: 15, lineHeight: 1.5, color: 'var(--dim)', margin: '8px 0 0' }}>
-            The link is old or mistyped. Nothing was bet here, so your balance is where you left it.
-          </p>
-          <div style={{ marginTop: 16 }}>
-            <Link
-              href="/rounds"
-              className="m3-press"
-              style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 24px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16, fontWeight: 800, textDecoration: 'none' }}
-            >
-              Go to Rounds
-            </Link>
+          <div style={{ padding: '20px 20px 0' }}>
+            <h1 style={{ margin: 0, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.05, letterSpacing: '-0.03em' }}>
+              Even Mako can’t find this page.
+            </h1>
+            <p style={{ fontSize: 15, lineHeight: 1.5, color: 'var(--dim)', margin: '8px 0 0' }}>
+              The link is old or mistyped. Nothing was bet here, so your balance is where you left it.
+            </p>
+            <div style={{ marginTop: 16 }}>
+              <Link
+                href="/rounds"
+                className="m3-press"
+                style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 24px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 16, fontWeight: 800, textDecoration: 'none' }}
+              >
+                Go to Rounds
+              </Link>
+            </div>
           </div>
-        </div>
-        <StillInTheWaterMobile />
+          <StillInTheWaterMobile />
+        </PhoneDetailChrome>
       </div>
     </>
   );
