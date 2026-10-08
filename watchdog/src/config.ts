@@ -91,7 +91,9 @@ export const DIGEST_HOUR_UTC = 8;
 
 /// Probe target: market 74 exists, has a stable title and an empty comment list.
 export const PROBE_MARKET_ID = 74;
-export const PROBE_MARKET_TITLE = '<title>Will ETH close below $1,827 in 3 days? · Mako Market</title>';
+/// The start of the market's page title. Matched as a prefix so the site's name after it may change ("· Mako Market",
+/// "· Mako Market Beta" since the 2026-10-08 redesign) without a false "title missing" (Joshua, 2026-10-08).
+export const PROBE_MARKET_TITLE = '<title>Will ETH close below $1,827 in 3 days? · Mako Market';
 export const PROBE_CHART_SYMBOL = 'BTC';
 
 /// The command Joshua runs by hand, from the gas-only mako-refunder keystore.

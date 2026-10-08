@@ -361,7 +361,7 @@ describe('probes and checks', () => {
     w.clock.t = Date.UTC(2026, 8, 19, 14, 0, 1);
     const r = await tick(w, state);
     expect(w.log.filter((l) => l.includes('/api/comments')).length).toBe(2);
-    expect(w.log.filter((l) => l.includes('/market/74')).length).toBe(2);
+    expect(w.log.filter((l) => l.includes('/pools/74')).length).toBe(2);
     expect(r.payload!.warnings.map((x) => x.key)).toContain('c:ch');
     expect(r.payload!.criticals).toEqual([]);
     expect(w.telegram.sent.join('\n')).toContain('WARN CHECK ch: charts API: http 502');

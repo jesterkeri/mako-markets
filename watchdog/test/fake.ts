@@ -302,10 +302,10 @@ export function makeFetch(w: World): typeof fetch {
       const path = new URL(url).pathname;
       w.log.push(`${host} ${path}`);
       if (path === '/api/comments') return w.app.comments ? Response.json({ comments: [], nextCursor: null }) : new Response('err', { status: 500 });
-      if (path === '/market/74') {
+      if (path === '/pools/74') {
         return w.app.market
-          ? new Response('<html><title>Will ETH close below $1,827 in 3 days? · Mako Market</title></html>')
-          : new Response('<html><title>Mako Market</title></html>');
+          ? new Response('<html><title>Will ETH close below $1,827 in 3 days? · Mako Market Beta</title></html>')
+          : new Response('<html><title>Pool · Mako Market Beta</title></html>');
       }
       if (path === '/api/charts') return w.app.charts ? Response.json({ candles: [{ t: 1 }] }) : Response.json({ error: 'upstream_failed' }, { status: 502 });
     }
