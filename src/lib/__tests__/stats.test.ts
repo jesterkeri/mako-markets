@@ -88,7 +88,9 @@ describe('parseIndexedStats', () => {
 describe('GET /api/stats', () => {
   const realFetch = globalThis.fetch;
   beforeEach(() => {
-    mocks.dbExecute.mockResolvedValue([{ actions: 37, accounts: 11 }]);
+    mocks.dbExecute.mockResolvedValue([{ actions: 37, accounts: 11, wallets: 64 }]);
+    // The route memoizes its reads per module; each test starts with a fresh one.
+    vi.resetModules();
   });
   afterEach(() => {
     globalThis.fetch = realFetch;
@@ -103,7 +105,29 @@ describe('GET /api/stats', () => {
 
   it('says the indexer is not connected yet when its URL is not set, and still shows gas-free actions', async () => {
     const body = await call();
-    expect(body).toMatchObject({ indexed: null, indexedStatus: 'not_configured', gasFree: { actions: 37, accounts: 11 } });
+    expect(body).toMatchObject({ indexed: null, indexedStatus: 'not_configured', gasFree: { actions: 37, accounts: 11 }, makoWallets: 64 });
+  });
+
+  it('counts Mako wallets on Monad testnet only, in the same single database query', async () => {
+    await call();
+    expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
+    const q = JSON.stringify(mocks.dbExecute.mock.calls[0][0]);
+    expect(q).toContain('user_safes');
+    expect(q).toContain('10143');
+  });
+
+  it('a malformed database row is no figures at all, never a guess', async () => {
+    for (const row of [{ actions: 37, accounts: 11 }, { actions: 37, accounts: 11, wallets: -1 }, { actions: 37, accounts: 11, wallets: 1.5 }]) {
+      mocks.dbExecute.mockResolvedValueOnce([row]);
+      const body = await call();
+      expect(body.gasFree, JSON.stringify(row)).toBeNull();
+      expect(body.makoWallets, JSON.stringify(row)).toBeNull();
+    }
+  });
+
+  it('lets the CDN hold a copy for at most two minutes', async () => {
+    const { GET } = await import('../../app/api/stats/route');
+    expect((await GET()).headers.get('Cache-Control')).toBe('public, s-maxage=60, stale-while-revalidate=60');
   });
 
   it('serves the indexed figures as strings and numbers', async () => {
@@ -138,6 +162,7 @@ describe('GET /api/stats', () => {
     mocks.dbExecute.mockRejectedValue(new Error('db down'));
     const body = await call();
     expect(body.gasFree).toBeNull();
+    expect(body.makoWallets).toBeNull();
     expect(JSON.stringify(body)).not.toContain('secret-key');
   });
 });

@@ -1,17 +1,20 @@
-import { unstable_cache } from 'next/cache';
 import { sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
+import { MONAD_TESTNET_ID } from '@/lib/chain';
+import { ttlMemo } from '@/lib/ttl-memo';
 import { parseIndexedStats, STATS_QUERY, toWire, type IndexedStats, type StatsWire } from '@/lib/stats';
 
 // GET /api/stats: the figures for /stats, from the Envio indexer of the pools and rounds contracts (ENVIO_GRAPHQL_URL) and Mako
-// Market's own record of sponsored transactions. Computed at most every 30 minutes and shared by every viewer, so a
-// busy page never wakes the database or the indexer per view (the database is on Neon's capped free plan).
+// Market's own records (sponsored transactions, Mako wallets created). Shared by every viewer: the indexer figures are
+// at most a minute old, the database figures at most five minutes, so a busy page never wakes the database per view
+// (it is on Neon's capped free plan) and a new bet shows within a minute (Joshua, 2026-10-08: 30 minutes was too slow).
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const REVALIDATE_SEC = 30 * 60;
+const INDEXER_MAX_AGE_SEC = 60;
+const DB_MAX_AGE_SEC = 5 * 60;
 const INDEXER_TIMEOUT_MS = 10_000;
 /// A slow or unreachable database leaves the gas-free figure out rather than holding the page.
 const DB_TIMEOUT_MS = 5_000;
@@ -45,24 +48,37 @@ async function fetchIndexer(): Promise<IndexedStats> {
   return stats;
 }
 
-/// Landed sponsored operations and the accounts behind them, or a throw.
-async function fetchGasFree(): Promise<NonNullable<StatsWire['gasFree']>> {
-  const rows = await db.execute<{ actions: number; accounts: number }>(sql`
-    SELECT count(*)::int AS actions, count(DISTINCT safe_address)::int AS accounts
-    FROM aa_pending_user_ops
-    WHERE status = 'sent'
-  `);
+type DbFigures = { gasFree: NonNullable<StatsWire['gasFree']>; makoWallets: number };
+
+/// Landed sponsored operations and the accounts behind them, and the Mako wallets created, in one query, or a throw.
+async function fetchDbFigures(): Promise<DbFigures> {
+  // The timeout is on the read itself, so a query that hangs fails the refresh (and the next request tries again)
+  // instead of leaving every later request waiting on it.
+  const rows = await within(db.execute<{ actions: number; accounts: number; wallets: number }>(sql`
+    SELECT
+      (SELECT count(*)::int FROM aa_pending_user_ops WHERE status = 'sent') AS actions,
+      (SELECT count(DISTINCT safe_address)::int FROM aa_pending_user_ops WHERE status = 'sent') AS accounts,
+      (SELECT count(*)::int FROM user_safes WHERE chain_id = ${MONAD_TESTNET_ID}) AS wallets
+  `), DB_TIMEOUT_MS);
   const row = Array.isArray(rows) ? rows[0] : undefined;
-  const actions = Number(row?.actions);
-  const accounts = Number(row?.accounts);
-  if (!Number.isInteger(actions) || !Number.isInteger(accounts)) throw new UnexpectedShape(`gas-free row ${Array.isArray(rows) ? 'array' : typeof rows}`);
-  return { actions, accounts };
+  // A count arrives as a number (or a digit string from some drivers); null, '' or anything else is a malformed row,
+  // never a zero (Number(null) and Number('') are both 0).
+  const count = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : Number.NaN);
+  const actions = count(row?.actions);
+  const accounts = count(row?.accounts);
+  const wallets = count(row?.wallets);
+  if (![actions, accounts, wallets].every((n) => Number.isInteger(n) && n >= 0)) {
+    throw new UnexpectedShape(`db figures row ${Array.isArray(rows) ? 'array' : typeof rows}`);
+  }
+  return { gasFree: { actions, accounts }, makoWallets: wallets };
 }
 
-// IndexedStats carries bigints, which the data cache cannot serialise, so the cache holds the wire shape.
-// v2: the wire shape gained `rounds`; a new key so no cached v1 answer (without it) is ever served to the new page.
-const cachedIndexer = unstable_cache(async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed, ['stats-indexer-v2'], { revalidate: REVALIDATE_SEC });
-const cachedGasFree = unstable_cache(fetchGasFree, ['stats-gasfree-v1'], { revalidate: REVALIDATE_SEC });
+// Hard age limits (src/lib/ttl-memo.ts), and a failed read shows as unavailable. The answer goes out only once both
+// sources have settled, so each memo's limit leaves room for the slowest wait on the other source (adversary on
+// e4a5944): an indexer figure reused at 54.9 s still goes out under 60 s after a 5 s database read, and a database
+// figure reused at 289.9 s under 5 minutes after a 10 s indexer read.
+const cachedIndexer = ttlMemo(INDEXER_MAX_AGE_SEC * 1000 - DB_TIMEOUT_MS, async () => toWire(await fetchIndexer(), 'ok', null, 0).indexed);
+const cachedDb = ttlMemo(DB_MAX_AGE_SEC * 1000 - INDEXER_TIMEOUT_MS, fetchDbFigures);
 
 function within<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -73,16 +89,19 @@ function within<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 export async function GET() {
-  const [indexed, gasFree] = await Promise.allSettled([cachedIndexer(), within(cachedGasFree(), DB_TIMEOUT_MS)]);
+  const [indexed, dbFigures] = await Promise.allSettled([cachedIndexer(), cachedDb()]);
   // The error's code or class only: a message can carry a connection string or the indexer URL.
-  if (gasFree.status === 'rejected') console.error('[stats] gas-free read failed:', errorCode(gasFree.reason));
+  if (dbFigures.status === 'rejected') console.error('[stats] database read failed:', errorCode(dbFigures.reason));
   if (indexed.status === 'rejected' && !(indexed.reason instanceof NotConfigured)) console.error('[stats] indexer read failed:', errorCode(indexed.reason));
   const body: StatsWire = {
-    indexed: indexed.status === 'fulfilled' ? indexed.value : null,
+    indexed: indexed.status === 'fulfilled' ? indexed.value.value : null,
     // Never log the reason: it can carry the indexer URL, which is configuration.
     indexedStatus: indexed.status === 'fulfilled' ? 'ok' : indexed.reason instanceof NotConfigured ? 'not_configured' : 'unavailable',
-    gasFree: gasFree.status === 'fulfilled' ? gasFree.value : null,
-    readAt: Math.floor(Date.now() / 1000),
+    gasFree: dbFigures.status === 'fulfilled' ? dbFigures.value.value.gasFree : null,
+    makoWallets: dbFigures.status === 'fulfilled' ? dbFigures.value.value.makoWallets : null,
+    // When the oldest figure shown was read, so "read Xm ago" is true of everything on the page.
+    readAt: Math.floor(Math.min(Date.now(), ...[indexed, dbFigures].flatMap((r) => (r.status === 'fulfilled' ? [r.value.at] : []))) / 1000),
   };
-  return Response.json(body, { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=1800' } });
+  // The CDN may serve a copy for a minute, and a minute more while it refreshes: never more than two minutes behind.
+  return Response.json(body, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=60' } });
 }

@@ -27,8 +27,8 @@ function useStats() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return (await res.json()) as StatsWire;
     },
-    refetchInterval: 5 * 60_000,
-    staleTime: 60_000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }
 
@@ -37,10 +37,19 @@ type Figure = { label: string; value: string | null; note: string };
 function figures(s: StatsWire): Figure[] {
   const i = s.indexed;
   return [
+    { label: 'Mako wallets created', value: s.makoWallets === null ? null : int(s.makoWallets), note: 'one for each email sign-up' },
     { label: 'Wallets that used Mako Market', value: i ? int(i.wallets) : null, note: 'placed a bet, created a pool or entered a round' },
-    { label: 'Gas-free actions', value: s.gasFree ? int(s.gasFree.actions) : null, note: s.gasFree ? `sponsored by Mako Market, for ${int(s.gasFree.accounts)} accounts` : 'sponsored by Mako Market' },
     { label: 'Bets placed', value: i ? int(i.bets) : null, note: i ? `by ${int(i.bettors)} ${i.bettors === 1 ? 'person' : 'people'}` : 'on the pools contract' },
     { label: 'Staked', value: i ? `${usdc(i.volume)}` : null, note: 'test USDC placed on the line' },
+  ];
+}
+
+/// The desktop Adoption grid's gas-free and pool figures, for the mobile layout, which has no such grid.
+function mobileExtra(s: StatsWire): Figure[] {
+  const i = s.indexed;
+  return [
+    { label: 'Gas-free actions', value: s.gasFree ? int(s.gasFree.actions) : null, note: s.gasFree ? `sponsored by Mako Market, for ${int(s.gasFree.accounts)} accounts` : 'sponsored by Mako Market' },
+    { label: 'Pools created', value: i ? int(i.communityPools) : null, note: 'by people using Mako Market' },
   ];
 }
 
@@ -128,7 +137,7 @@ function Footer({ s, now }: { s: StatsWire; now: number | null }) {
   return (
     <p style={{ ...mono, fontSize: 11, color: 'var(--dim)', lineHeight: 1.6, marginTop: 26 }}>
       {i ? `Indexed through block ${int(i.updatedBlock)} with Envio HyperIndex. ` : ''}
-      {now !== null ? `Figures read ${formatAgo(now - s.readAt).toLowerCase()}, refreshed every 30 minutes. ` : ''}
+      {now !== null ? `Figures read ${formatAgo(now - s.readAt).toLowerCase()}, refreshed every minute. ` : ''}
       Mako Market&apos;s own wallets (operator and test accounts) are left out. Gas-free actions come from Mako Market&apos;s
       sponsor records; each is a transaction on Monad testnet.
     </p>
@@ -228,7 +237,7 @@ export function StatsClient() {
               {figure({ label: 'Pools created', value: i ? int(i.communityPools) : null, note: 'by people using Mako Market' }, 30)}
               {figure({ label: 'Pools settled', value: i ? int(i.communityPoolsSettled) : null, note: i ? `${int(i.communityPoolsRefunded)} refunded` : '' }, 30)}
               {figure({ label: 'Claims paid', value: i ? int(i.claims) : null, note: i ? `${usdc(i.claimed)} USDC` : '' }, 30)}
-              {figure({ label: 'Gas-free accounts', value: s.gasFree ? int(s.gasFree.accounts) : null, note: 'email accounts that used sponsored gas' }, 30)}
+              {figure({ label: 'Gas-free actions', value: s.gasFree ? int(s.gasFree.actions) : null, note: s.gasFree ? `sponsored by Mako Market, for ${int(s.gasFree.accounts)} accounts` : 'sponsored by Mako Market' }, 30)}
             </div>
             <div>
               <div style={label}>By category</div>
@@ -243,7 +252,8 @@ export function StatsClient() {
 
       <div className="mk-mob mk-m" style={{ padding: '6px 16px 120px' }}>
         {head(44)}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 20 }}>{figs.map((f) => figure(f, 28))}</div>
+        {/* Mobile has no Adoption grid, so its gas-free and pool figures join the headline ones here. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 20 }}>{[...figs, ...mobileExtra(s)].map((f) => figure(f, 28))}</div>
         <IndexNote s={s} />
         {section('01', 'Growth', 'Wallets', <Growth s={s} w={360} h={140} />)}
         {section('02', 'Adoption', 'By category', <Categories s={s} />)}

@@ -123,6 +123,8 @@ export type StatsWire = {
   indexedStatus: 'ok' | 'not_configured' | 'unavailable';
   /// Sponsored (gas-free) user operations that landed, from Mako Market's own records; each has a transaction hash.
   gasFree: { actions: number; accounts: number } | null;
+  /// Mako wallets created: one per email account, from Mako Market's own records (user_safes on Monad testnet).
+  makoWallets: number | null;
   /// When /api/stats read these figures.
   readAt: number;
 };
@@ -132,8 +134,10 @@ export function toWire(
   indexedStatus: StatsWire['indexedStatus'],
   gasFree: StatsWire['gasFree'],
   readAt: number,
+  makoWallets: StatsWire['makoWallets'] = null,
 ): StatsWire {
   return {
+    makoWallets,
     indexedStatus: stats ? 'ok' : indexedStatus === 'ok' ? 'unavailable' : indexedStatus,
     indexed: stats && {
       wallets: stats.global.wallets,
