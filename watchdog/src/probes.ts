@@ -83,7 +83,8 @@ export async function probeComments(net: Net, appUrl: string): Promise<ProbeResu
 /// mp: the market page renders the market's own title (frontend env, its
 /// server RPC and the contract, as broken on 2026-05-24 and 2026-07-07).
 export async function probeMarketPage(net: Net, appUrl: string): Promise<ProbeResult> {
-  const r = await send(net, `${appUrl}/market/${PROBE_MARKET_ID}`, { method: 'GET' });
+  // /pools/[id] since the 2026-10-08 redesign (/market/[id] now redirects there).
+  const r = await send(net, `${appUrl}/pools/${PROBE_MARKET_ID}`, { method: 'GET' });
   if (!r.ok) return { code: 'mp', obs: 'fail', detail: `market page: ${r.kind}${r.status ? ' ' + r.status : ''}` };
   return r.text.includes(PROBE_MARKET_TITLE)
     ? { code: 'mp', obs: 'ok', detail: '' }
