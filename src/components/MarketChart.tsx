@@ -299,8 +299,22 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     );
   }
 
-  const iconBtnClass =
-    'inline-flex items-center justify-center w-8 h-8 rounded-full border-2 border-ink bg-paper hover:bg-ink hover:text-paper transition-colors';
+  // The round header buttons are styled directly, not through the old colour utilities: with those, an active button's
+  // icon took the button's own colour and vanished in both themes (Joshua, 2026-10-08). Off: a hairline ring and the
+  // text colour; on: the brand yellow with a black icon, legible on cream and on black.
+  const iconBtn = (active: boolean): React.CSSProperties => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 32,
+    height: 32,
+    borderRadius: 9999,
+    border: 0,
+    cursor: 'pointer',
+    background: active ? 'var(--mako-signal)' : 'transparent',
+    color: active ? '#000' : 'var(--mako-canvas-fg)',
+    boxShadow: active ? 'none' : 'inset 0 0 0 1px var(--line)',
+  });
 
   const toggleRow = (label: string, active: boolean, onClick: () => void) => (
     <button
@@ -367,7 +381,8 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
           }}
           aria-label={drawingsOpen ? 'Close drawing tools' : 'Open drawing tools'}
           aria-pressed={drawingsOpen}
-          className={`${iconBtnClass} ${drawingsOpen ? 'bg-ink text-paper' : ''}`}
+          className="mk-press96"
+          style={iconBtn(drawingsOpen)}
           title="Drawing tools"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
@@ -383,7 +398,8 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             onClick={() => setToolsOpen((o) => !o)}
             aria-label="Indicators menu"
             aria-expanded={toolsOpen}
-            className={`${iconBtnClass} ${toolsOpen ? 'bg-ink text-paper' : ''}`}
+            className="mk-press96"
+            style={iconBtn(toolsOpen)}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
               <path d="M4 18h6M14 18h6M4 12h2M10 12h10M4 6h12M20 6h0" />
@@ -406,7 +422,8 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
           type="button"
           onClick={() => setExpanded((e) => !e)}
           aria-label={expanded ? 'Collapse chart' : 'Expand chart'}
-          className={iconBtnClass}
+          className="mk-press96"
+          style={iconBtn(false)}
         >
           {expanded ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">

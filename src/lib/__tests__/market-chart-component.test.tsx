@@ -231,4 +231,16 @@ describe('<MarketChart>', () => {
     expect(card!.style.getPropertyValue('--color-paper')).toBe('var(--mako-canvas)');
     expect(card!.style.getPropertyValue('--color-ink')).toBe('var(--mako-canvas-fg)');
   });
+
+  it('an active header button stays legible: yellow with a black icon, never the old self-coloured fill', async () => {
+    mockChartsFetch({ candles: SAMPLE_CANDLES }, 200);
+    const { findByRole } = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" />);
+    const pen = await findByRole('button', { name: 'Open drawing tools' }, { timeout: 3000 });
+    expect(pen.style.background).toBe('transparent');
+    fireEvent.click(pen);
+    const on = await findByRole('button', { name: 'Close drawing tools' });
+    expect(on.style.background).toBe('var(--mako-signal)');
+    expect(on.style.color).toBe('rgb(0, 0, 0)');
+    expect(on.className).not.toMatch(/bg-ink|text-paper/);
+  });
 });
