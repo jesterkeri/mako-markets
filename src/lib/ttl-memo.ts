@@ -34,7 +34,9 @@ export function ttlMemo<T>(ttlMs: number, fn: () => Promise<T>): () => Promise<M
       inflight = fn()
         .then((value) => {
           last = { value, at, mono };
-          return { value, at };
+          // The same correction as on reuse: a wall clock stepped back while the read ran must not make it look newer
+          // than when it started (adversary on c220000).
+          return { value, at: Math.min(at, Date.now() - (performance.now() - mono)) };
         })
         .finally(() => {
           inflight = null;
