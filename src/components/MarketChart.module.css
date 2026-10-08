@@ -1,0 +1,22 @@
+/* The full chart in the redesign (Joshua, 2026-10-08: "the borders are way too thick and it doesn't blend").
+   The chart's sub-components (timeframes, zoom, toolbars, drawing editor, menus) still use the pre-redesign utility
+   classes; inside the chart those become the app's hairline: 1px in the --line colour, soft shadows instead of the
+   offset "brutal" ones. Scoped to the chart, so nothing else on the site changes. */
+
+.theme :global(.border-2) {
+  border-width: 1px;
+}
+.theme :global(.border-r-2) {
+  border-right-width: 1px;
+}
+.theme :global(.border-b-2) {
+  border-bottom-width: 1px;
+}
+.theme :global(.border-ink) {
+  border-color: var(--line);
+}
+.theme :global(.shadow-brutal),
+.theme :global(.shadow-brutal-sm),
+.theme :global(.shadow-brutal-lg) {
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}

@@ -31,6 +31,8 @@ import type { ChartInnerHandle } from '@/components/chart/ChartInner';
 import type { Drawing, DrawingTool } from '@/types/drawing';
 import { DEFAULT_DRAWING_COLOR } from '@/types/drawing';
 
+import styles from './MarketChart.module.css';
+
 interface Props {
   oracleSymbol: string;
   assetClass: ChartAssetClass;
@@ -59,7 +61,9 @@ const CARD_STYLE: React.CSSProperties = {
   background: 'var(--mako-canvas)',
   color: 'var(--mako-canvas-fg)',
   borderRadius: 16,
-  boxShadow: 'inset 0 0 0 1px var(--line)',
+  // A real border, not an inset shadow: the chart canvas paints over an inset shadow, so the frame broke along the
+  // chart's sides (Joshua, 2026-10-08).
+  border: '1px solid var(--line)',
   overflow: 'hidden',
 };
 
@@ -272,7 +276,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   if (isLoading) {
     return (
       <div
-        className="animate-pulse"
+        className={`animate-pulse ${styles.theme}`}
         style={{ ...CARD_STYLE, height: CHART_HEIGHT + 64 }}
         aria-label="Loading chart"
       />
@@ -281,7 +285,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
 
   if (error || !data?.candles?.length) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 p-8 min-h-[200px]" style={CARD_STYLE}>
+      <div className={`flex flex-col items-center justify-center gap-4 p-8 min-h-[200px] ${styles.theme}`} style={CARD_STYLE}>
         <div className="mako-label text-sm">{error ? 'PRICE CHART UNAVAILABLE RIGHT NOW' : 'NO PRICE DATA YET'}</div>
         <button
           type="button"
@@ -481,7 +485,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
           if (e.target === e.currentTarget) setExpanded(false);
         }}
       >
-        <div className="w-full max-w-[1600px] flex flex-col" style={{ ...CARD_STYLE, height: 'calc(100vh - 4rem)' }}>
+        <div className={`w-full max-w-[1600px] flex flex-col ${styles.theme}`} style={{ ...CARD_STYLE, height: 'calc(100vh - 4rem)' }}>
           {header}
           <div
             className="flex-1 relative"
@@ -510,7 +514,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
       <>
         <div
           className="rounded-2xl flex items-center justify-center"
-          style={{ ...THEME_VARS, height: CHART_HEIGHT + 64, boxShadow: 'inset 0 0 0 1px var(--line)' }}
+          style={{ ...THEME_VARS, height: CHART_HEIGHT + 64, border: '1px dashed var(--line)' }}
           aria-hidden
         >
           <span className="mako-label text-muted text-xs">CHART EXPANDED · PRESS ESC TO CLOSE</span>
@@ -521,7 +525,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   }
 
   return (
-    <div style={CARD_STYLE}>
+    <div className={styles.theme} style={CARD_STYLE}>
       {header}
       <div className="relative" style={{ height: CHART_HEIGHT }}>
         <CandlestickChart
