@@ -24,7 +24,10 @@ async function fetchHistory(id: string): Promise<History> {
   const res = await fetch(`/api/pools/${id}/history`);
   if (!res.ok) throw new Error(`history ${res.status}`);
   const body = (await res.json()) as Partial<History>;
-  if (!Array.isArray(body.points) || typeof body.indexedYes !== 'string' || typeof body.indexedNo !== 'string') throw new Error('history answer');
+  // Totals must be plain decimal strings: a malformed one is a broken answer, not an indexer that is behind (adversary
+  // on 5cb6e9a), so it is an error rather than an endless "catching up".
+  const dec = (v: unknown): v is string => typeof v === 'string' && /^\d+$/.test(v);
+  if (!Array.isArray(body.points) || !dec(body.indexedYes) || !dec(body.indexedNo)) throw new Error('history answer');
   return { points: body.points, bets: Number(body.bets), indexedYes: body.indexedYes, indexedNo: body.indexedNo };
 }
 

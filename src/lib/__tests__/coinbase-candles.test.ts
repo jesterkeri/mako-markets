@@ -43,8 +43,11 @@ describe('parseCoinbaseCandles', () => {
   it('refuses a row off its granularity grid or dated after now (adversary on 015c0e2)', () => {
     expect(() => parseCoinbaseCandles([[10 * H + 60, 99, 106, 100, 105, 2]], H, NOW)).toThrow('candle off its grid');
     expect(() => parseCoinbaseCandles([[101 * H, 99, 106, 100, 105, 2]], H, NOW)).toThrow('candle in the future');
-    // The candle still forming started at or before now: accepted.
+    // The candle still forming started at or before now: accepted, and so is one starting within a minute of this
+    // clock (Coinbase's clock may run ahead), but not one two minutes ahead.
     expect(parseCoinbaseCandles([[100 * H, 99, 106, 100, 105, 2]], H, NOW)).toHaveLength(1);
+    expect(parseCoinbaseCandles([[NOW + 60, 99, 106, 100, 105, 2]], 60, NOW)).toHaveLength(1);
+    expect(() => parseCoinbaseCandles([[NOW + 120, 99, 106, 100, 105, 2]], 60, NOW)).toThrow('candle in the future');
     // 1m rows on a 1m grid are fine at 60 s granularity, refused as 1h candles.
     const minuteRows = [[10 * H + 120, 99, 106, 100, 105, 2], [10 * H + 60, 95, 101, 97, 100, 1]];
     expect(parseCoinbaseCandles(minuteRows, 60, NOW)).toHaveLength(2);

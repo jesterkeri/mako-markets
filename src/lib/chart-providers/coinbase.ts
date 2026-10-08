@@ -24,6 +24,10 @@ export class CoinbaseApiError extends Error {
 
 const ENDPOINT = 'https://api.exchange.coinbase.com/products';
 
+/// Seconds a candle may start after this server's clock and still count as now: the still-forming candle must not be
+/// refused because this clock runs a second behind Coinbase's.
+const CLOCK_SLACK_S = 60;
+
 /// The Coinbase granularity fetched for each timeframe, and how many of those make one candle.
 const PLAN: Record<Timeframe, { granularity: number; per: number }> = {
   '1m': { granularity: 60, per: 1 },
@@ -48,7 +52,7 @@ export function parseCoinbaseCandles(raw: unknown, granularity: number, nowSec: 
     const [t, low, high, open, close, volume] = row as number[];
     if (!Number.isInteger(t) || t <= 0 || t >= prevT) throw new CoinbaseApiError('candles out of order');
     if (t % granularity !== 0) throw new CoinbaseApiError('candle off its grid');
-    if (t > nowSec) throw new CoinbaseApiError('candle in the future');
+    if (t > nowSec + CLOCK_SLACK_S) throw new CoinbaseApiError('candle in the future');
     if (low <= 0 || low > Math.min(open, close) || high < Math.max(open, close) || volume < 0) {
       throw new CoinbaseApiError('impossible candle');
     }
