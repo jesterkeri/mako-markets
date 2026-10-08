@@ -224,7 +224,7 @@ function claimSpec(r: Round, p: Position, creatorFee: bigint | null, total: bigi
   const rows: ConfirmSpec['rows'] = [{ label: 'Round', value: `#${r.id.toString()} · ${V1_ASSET.pair}` }];
   if (p.kind === 'won') rows.push({ label: 'Payout', value: `${usdcExact(p.payout)} USDC` });
   if (refund) rows.push({ label: 'Refund', value: `${usdcExact(p.amount)} USDC` });
-  if (creatorFee) rows.push({ label: 'Creator fee', value: `${usdcExact(creatorFee)} USDC` });
+  if (creatorFee) rows.push({ label: 'House fee', value: `${usdcExact(creatorFee)} USDC` });
   return {
     glyph: '$',
     glyphColor: 'var(--mako-teal)',
@@ -488,7 +488,7 @@ function PositionCard(v: View) {
           {p.claimed ? 'Refund claimed.' : p.marked ? 'Your full stake comes back, no fee.' : 'This round refunds everyone once it is marked refunded.'}
         </div>
       )}
-      {v.creatorFeeDue !== null && <div style={{ ...mono, fontSize: 12, marginTop: 8 }}>Plus your creator fee: {usdcExact(v.creatorFeeDue)} USDC</div>}
+      {v.creatorFeeDue !== null && <div style={{ ...mono, fontSize: 12, marginTop: 8 }}>Plus your house fee: {usdcExact(v.creatorFeeDue)} USDC</div>}
       {claimButton}
     </div>
   );
@@ -497,7 +497,7 @@ function PositionCard(v: View) {
 function CreatorFee(v: View) {
   return (
     <div style={{ borderTop: '1px solid var(--line)', padding: '14px 4px 0' }}>
-      <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>YOUR CREATOR FEE</div>
+      <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>YOUR HOUSE FEE</div>
       <div style={{ ...display, fontSize: 26, marginTop: 8 }}>{usdcExact(v.creatorFeeDue!)} USDC</div>
       <button onClick={v.openClaim} className="mk-press96" style={{ width: '100%', marginTop: 14, height: 56, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', ...display, fontSize: 18, boxShadow: 'var(--edge)' }}>
         Claim {usdcExact(v.creatorFeeDue!)} USDC

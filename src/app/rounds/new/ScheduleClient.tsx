@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { ListStateDesktop } from '@/components/ListState';
 import { SignInLink } from '@/components/signin/SignInLink';
+import { fromLocalInput, localInputProblem, toLocalInput } from '@/lib/datetime-local';
 import { BOUNDARY_STEP_S, DURATION_S, ENTRY_LEAD_S, MIN_LEAD_S, scheduleBlocker, V1_ASSET } from '@/lib/rounds-model';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { useRoundTx } from '@/lib/use-round-tx';
@@ -15,16 +16,6 @@ import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 
-const pad = (n: number) => String(n).padStart(2, '0');
-/// A unix time as the value of a `datetime-local` input, in the browser's time zone.
-function toLocalInput(unixS: number): string {
-  const d = new Date(unixS * 1000);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-function fromLocalInput(v: string): number | null {
-  const t = new Date(v).getTime();
-  return Number.isFinite(t) ? Math.floor(t / 1000) : null;
-}
 const when = (unixS: number) => new Date(unixS * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 
 function walletOf(user: AuthedUser): { kind: 'mako' | 'external'; address: string } {
@@ -41,7 +32,9 @@ export function ScheduleClient() {
   const [text, setText] = useState<string | null>(null);
   const value = text ?? (firstDefault === null ? '' : toLocalInput(firstDefault));
   const start = fromLocalInput(value);
-  const why = start === null || now === null ? 'Pick a start time.' : scheduleBlocker(start, now);
+  /// The shared strict parser refuses a time inside a spring-forward gap rather than moving it an hour (Codex RELEASE_R5 F3).
+  const why =
+    now === null ? 'Pick a start time.' : start === null ? (value ? localInputProblem(value) : 'Pick a start time.') : scheduleBlocker(start, now);
   const [spec, setSpec] = useState<ConfirmSpec | null>(null);
 
   const frame = (child: React.ReactNode) => (

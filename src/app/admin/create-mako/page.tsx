@@ -21,7 +21,7 @@ import {
   utf8ByteLength as utf8ByteLengthShared,
   validateLabelPair,
 } from '@/lib/mako-labels';
-import { describeTime, fromLocalInput, toLocalInput } from '@/lib/datetime-local';
+import { describeTime, fromLocalInput, localInputProblem, toLocalInput } from '@/lib/datetime-local';
 
 /**
  * /admin/create-mako -- admin-curated MAKO market creation.
@@ -146,6 +146,12 @@ export default function AdminCreateMakoPage() {
   // Chosen as dates and times (Joshua, 2026-10-08: minutes-from-now could not set a date), held as Unix seconds.
   const [closeSec, setCloseSec] = useState(() => Math.floor(Date.now() / 1000) + 60 * 60);
   const [bettingCloseSec, setBettingCloseSec] = useState(() => Math.floor(Date.now() / 1000) + 55 * 60);
+  /// A typed time the form refused (a spring-forward gap, or a cleared field). The input snaps back to the last good
+  /// time, so without this the admin would submit a time they did not pick (Codex RELEASE_R5).
+  const [bettingTimeError, setBettingTimeError] = useState<string | null>(null);
+  const [closeTimeError, setCloseTimeError] = useState<string | null>(null);
+  /// Why the last submit was refused, shown under the button (the defaults go stale while the page sits open).
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [label1, setLabel1] = useState('');
   const [label2, setLabel2] = useState('');
 
@@ -232,6 +238,8 @@ export default function AdminCreateMakoPage() {
     || !trimmedQuestion
     || questionOverLimit
     || bettingCloseSec >= closeSec
+    || bettingTimeError !== null
+    || closeTimeError !== null
     || labelsInvalid
     || drifted
     || effectiveNewId !== null;
@@ -359,9 +367,10 @@ export default function AdminCreateMakoPage() {
       strictBettingBeforeClose: true,
     });
     if (validation) {
-      console.error('[admin/create-mako] validation failed:', validation);
+      setSubmitError(validation);
       return;
     }
+    setSubmitError(null);
 
     /// Auto-generated oracleRef: `manual:mako:<timestamp_sec>`. Format
     /// is 22-25 ASCII chars (well under the 32-byte bytes32 cap),
@@ -582,12 +591,21 @@ export default function AdminCreateMakoPage() {
               value={toLocalInput(bettingCloseSec)}
               onChange={(e) => {
                 const sec = fromLocalInput(e.target.value);
-                if (sec !== null) setBettingCloseSec(sec);
+                setSubmitError(null);
+                if (sec === null) {
+                  setBettingTimeError(localInputProblem(e.target.value));
+                  return;
+                }
+                setBettingTimeError(null);
+                setBettingCloseSec(sec);
               }}
               disabled={isBusy}
               className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-paper mako-display text-2xl tabular-nums outline-none disabled:opacity-50"
             />
             <div className="mako-label text-muted mt-2">{describeTime(bettingCloseSec)}</div>
+            {bettingTimeError && (
+              <div role="alert" className="mako-label text-mako-red mt-2">{bettingTimeError}</div>
+            )}
           </div>
 
           <div className="px-6 py-5 border-b-2 border-ink">
@@ -602,12 +620,21 @@ export default function AdminCreateMakoPage() {
               value={toLocalInput(closeSec)}
               onChange={(e) => {
                 const sec = fromLocalInput(e.target.value);
-                if (sec !== null) setCloseSec(sec);
+                setSubmitError(null);
+                if (sec === null) {
+                  setCloseTimeError(localInputProblem(e.target.value));
+                  return;
+                }
+                setCloseTimeError(null);
+                setCloseSec(sec);
               }}
               disabled={isBusy}
               className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-paper mako-display text-2xl tabular-nums outline-none disabled:opacity-50"
             />
             <div className="mako-label text-muted mt-2">{describeTime(closeSec)}</div>
+            {closeTimeError && (
+              <div role="alert" className="mako-label text-mako-red mt-2">{closeTimeError}</div>
+            )}
             {bettingCloseSec >= closeSec && (
               <div className="mako-label text-mako-red mt-2">
                 RESOLVES MUST BE LATER THAN BETTING CLOSES
@@ -634,6 +661,11 @@ export default function AdminCreateMakoPage() {
           >
             {isBusy ? statusText ?? '...' : 'CREATE MAKO MARKET'}
           </button>
+          {submitError && (
+            <div role="alert" className="px-6 py-3 mako-label text-mako-red border-t-2 border-ink">
+              {submitError} Pick new times and try again.
+            </div>
+          )}
         </form>
 
         {labelSaveBanner && (
