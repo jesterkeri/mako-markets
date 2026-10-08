@@ -354,15 +354,15 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   );
 
   const header = (
-    <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-3 relative" style={{ boxShadow: 'inset 0 -1px 0 var(--line)' }}>
-      <span className="mako-mono text-xs tracking-widest" style={{ fontWeight: 700 }}>
+    <div className={`flex items-center justify-between flex-wrap gap-3 px-5 py-3 relative ${styles.header}`} style={{ boxShadow: 'inset 0 -1px 0 var(--line)' }}>
+      <span className={`mako-mono text-xs tracking-widest ${styles.pair}`} style={{ fontWeight: 700 }}>
         {pair ?? oracleSymbol}
       </span>
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className={`flex items-center gap-2 flex-wrap ${styles.controls}`}>
         <TimeframeSelector value={tf} onChange={setTf} options={options} />
 
         {/* Zoom cluster */}
-        <div className="inline-flex items-stretch rounded-full border-2 border-ink overflow-hidden bg-paper">
+        <div className={`inline-flex items-stretch rounded-full border-2 border-ink overflow-hidden bg-paper ${styles.zoom}`}>
           <button
             type="button"
             onClick={() => chartRef.current?.zoomOut()}

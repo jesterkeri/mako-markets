@@ -6,6 +6,8 @@
 import Link from 'next/link';
 
 import { MarketChart } from '@/components/MarketChart';
+
+import styles from './ChartPage.module.css';
 import type { Timeframe } from '@/types/chart';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
@@ -29,13 +31,13 @@ export function ChartPage({
   initialTimeframe?: Timeframe;
 }) {
   return (
-    <div className="mk-desk-frame" style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 12px 16px', height: 'calc(100dvh - 72px)', minHeight: 480 }}>
+    <div className={`mk-desk-frame ${styles.page}`}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, minWidth: 0 }}>
         <Link href={backHref} style={{ ...mono, fontSize: 12, color: 'var(--dim)', textDecoration: 'none', flex: 'none' }}>
           ← {backLabel}
         </Link>
         {title && (
-          <h1 style={{ margin: 0, ...display, fontSize: 22, lineHeight: 1.15, letterSpacing: '-0.02em', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h1>
+          <h1 className={styles.title} style={{ margin: 0, ...display, lineHeight: 1.15, letterSpacing: '-0.02em', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h1>
         )}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>

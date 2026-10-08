@@ -137,6 +137,11 @@ describe('helpers', () => {
   it('/news is a main tab (News, 2026-10-07): it lights News and keeps the shell header and tab bar', () => {
     expect(activeNav('/news')).toBe('news');
     expect(isMobileDetail('/news')).toBe(false);
+    // A full chart page owns the phone screen too (Joshua, 2026-10-08: the nav bar covered it in landscape).
+    expect(isMobileDetail('/pools/74/chart')).toBe(true);
+    expect(isMobileDetail('/rounds/3/chart')).toBe(true);
+    expect(isMobileDetail('/pools/74/chartx')).toBe(false);
+    expect(isMobileDetail('/pools/chart')).toBe(false);
   });
 });
 

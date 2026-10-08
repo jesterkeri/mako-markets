@@ -20,3 +20,32 @@
 .theme :global(.shadow-brutal-lg) {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
 }
+
+/* Phones (Joshua, 2026-10-08: "the instruments in mobile take 2 rows instead of fitting in one"). The full header
+   only appears on the chart page on a phone; it becomes one row: the page title names the pair, pinch and drag zoom
+   the chart (so the zoom buttons go), the timeframe and tool buttons tighten, and the row scrolls sideways rather
+   than wrap if a very narrow screen still cannot fit it. */
+@media (max-width: 1023.98px) {
+  .header {
+    flex-wrap: nowrap;
+    padding: 8px 10px;
+  }
+  .pair,
+  .zoom {
+    display: none !important;
+  }
+  .controls {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 6px;
+    margin-left: auto;
+  }
+  .controls::-webkit-scrollbar {
+    display: none;
+  }
+  .controls :global([role='tab']) {
+    padding: 4px 9px;
+    font-size: 11px;
+  }
+}

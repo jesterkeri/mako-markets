@@ -28,7 +28,8 @@ export function activeNav(pathname: string): NavKey | null {
 /// Detail pages (one pool, one round) bring their own mobile header and bottom bar in place of the shell's
 /// header and tab bar, as the design draws them (9a, 5a).
 export function isMobileDetail(pathname: string): boolean {
-  return /^\/(pools|rounds)\/\d+\/?$/.test(pathname);
+  // A pool or round, and its full chart page (which must own the whole phone screen, portrait or landscape).
+  return /^\/(pools|rounds)\/\d+(\/chart)?\/?$/.test(pathname);
 }
 
 /// The sign-in route (14a). "Sign in" buttons open the dialog in place; this is where they link to.

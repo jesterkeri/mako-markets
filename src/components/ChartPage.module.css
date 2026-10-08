@@ -1,0 +1,26 @@
+/* The chart page owns the screen. Desktop: below the site header. Phone: the whole viewport (the shell hides its
+   header and tab bar on this route), portrait or landscape, clear of the notch and rounded corners. */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: calc(100dvh - 72px);
+  min-height: 480px;
+  padding: 14px 12px 16px;
+}
+.title {
+  font-size: 22px;
+}
+
+@media (max-width: 1023.98px) {
+  .page {
+    height: 100dvh;
+    min-height: 0;
+    gap: 8px;
+    padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
+      max(10px, env(safe-area-inset-left));
+  }
+  .title {
+    font-size: 16px;
+  }
+}
