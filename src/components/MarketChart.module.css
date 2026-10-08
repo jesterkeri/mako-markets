@@ -49,3 +49,19 @@
     font-size: 11px;
   }
 }
+
+/* The indicators menu on a phone: the one-row toolbar scrolls sideways, and a scrolling box clips anything that pops
+   out of it, so the menu opens as a sheet pinned to the bottom of the screen instead (Joshua, 2026-10-08: "the
+   indicator tab stopped working on mobile"). Fixed positioning escapes the clipping. */
+@media (max-width: 1023.98px) {
+  .menu {
+    position: fixed !important;
+    top: auto !important;
+    right: max(12px, env(safe-area-inset-right)) !important;
+    left: max(12px, env(safe-area-inset-left));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: auto !important;
+    margin-top: 0 !important;
+    z-index: 60;
+  }
+}

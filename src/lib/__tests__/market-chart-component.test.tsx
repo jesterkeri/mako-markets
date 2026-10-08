@@ -278,4 +278,18 @@ describe('<MarketChart>', () => {
     expect(b.queryByRole('link', { name: 'Open the full chart' })).toBeNull();
     expect(b.getByRole('button', { name: 'Open drawing tools' })).toBeTruthy();
   });
+
+  // Joshua, 2026-10-08: "the indicator tab stopped working on mobile". The menu opens, lists the indicators, toggles
+  // them, and carries the class that pins it outside the sideways-scrolling toolbar on a phone.
+  it('the indicators menu opens and toggles an indicator', async () => {
+    mockChartsFetch({ candles: SAMPLE_CANDLES }, 200);
+    const { findByRole, getByRole } = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" page />);
+    fireEvent.click(await findByRole('button', { name: 'Indicators menu' }, { timeout: 3000 }));
+    const menu = getByRole('menu', { name: 'Indicators' });
+    expect(menu.className).toMatch(/menu/);
+    const ma = getByRole('button', { name: /MA \(20\)/ });
+    expect(ma.className).not.toMatch(/(^|\s)bg-ink(\s|$)/);
+    fireEvent.click(ma);
+    expect(getByRole('button', { name: /MA \(20\)/ }).className).toMatch(/(^|\s)bg-ink(\s|$)/);
+  });
 });

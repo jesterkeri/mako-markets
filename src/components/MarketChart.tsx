@@ -423,7 +423,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             </svg>
           </button>
           {toolsOpen && (
-            <div className="absolute right-0 top-full mt-2 z-30 w-44 bg-paper border-2 border-ink rounded-xl shadow-brutal-sm overflow-hidden">
+            <div role="menu" aria-label="Indicators" className={`absolute right-0 top-full mt-2 z-30 w-44 bg-paper border-2 border-ink rounded-xl shadow-brutal-sm overflow-hidden ${styles.menu}`}>
               <div className="mako-label text-[9px] text-muted px-4 py-2 border-b-2 border-ink bg-surface-elevated">
                 INDICATORS
               </div>
