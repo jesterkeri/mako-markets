@@ -21,6 +21,7 @@ import {
   utf8ByteLength as utf8ByteLengthShared,
   validateLabelPair,
 } from '@/lib/mako-labels';
+import { describeTime, fromLocalInput, toLocalInput } from '@/lib/datetime-local';
 
 /**
  * /admin/create-mako -- admin-curated MAKO market creation.
@@ -93,6 +94,10 @@ function friendlyWriteError(e: Error): string {
 /// cap. Compute length the same way the validator does.
 const MAKO_QUESTION_MAX_BYTES = 200;
 
+/// The contract settles within 7 days (market-timing.ts MAX_DURATION_SEC); the pickers offer no later time.
+const MAX_AHEAD_SEC = 7 * 24 * 60 * 60;
+
+
 export default function AdminCreateMakoPage() {
   const router = useRouter();
   const isAdmin = useIsAdmin();
@@ -138,8 +143,9 @@ export default function AdminCreateMakoPage() {
   const [labelSaveBanner, setLabelSaveBanner] = useState<string | null>(null);
 
   const [question, setQuestion] = useState('');
-  const [closeMinutes, setCloseMinutes] = useState(60);
-  const [bettingCloseMinutes, setBettingCloseMinutes] = useState(55);
+  // Chosen as dates and times (Joshua, 2026-10-08: minutes-from-now could not set a date), held as Unix seconds.
+  const [closeSec, setCloseSec] = useState(() => Math.floor(Date.now() / 1000) + 60 * 60);
+  const [bettingCloseSec, setBettingCloseSec] = useState(() => Math.floor(Date.now() / 1000) + 55 * 60);
   const [label1, setLabel1] = useState('');
   const [label2, setLabel2] = useState('');
 
@@ -225,7 +231,7 @@ export default function AdminCreateMakoPage() {
     isBusy
     || !trimmedQuestion
     || questionOverLimit
-    || bettingCloseMinutes >= closeMinutes
+    || bettingCloseSec >= closeSec
     || labelsInvalid
     || drifted
     || effectiveNewId !== null;
@@ -343,8 +349,8 @@ export default function AdminCreateMakoPage() {
     }
 
     const submitNowSec = Math.floor(Date.now() / 1000);
-    const closeTime = BigInt(submitNowSec + closeMinutes * 60);
-    const bettingCloseTime = BigInt(submitNowSec + bettingCloseMinutes * 60);
+    const closeTime = BigInt(closeSec);
+    const bettingCloseTime = BigInt(bettingCloseSec);
 
     const validation = validateMarketTimestamps({
       nowSec: submitNowSec,
@@ -565,38 +571,44 @@ export default function AdminCreateMakoPage() {
           </div>
 
           <div className="px-6 py-5 border-b-2 border-ink">
-            <label className="mako-label text-muted mb-3 block">
-              BETTING CLOSES (MINUTES FROM NOW)
+            <label className="mako-label text-muted mb-3 block" htmlFor="betting-close-at">
+              BETTING CLOSES (DATE AND TIME, YOUR TIMEZONE)
             </label>
             <input
-              type="number"
-              min={1}
-              max={10080}
-              value={bettingCloseMinutes}
-              onChange={(e) =>
-                setBettingCloseMinutes(Math.max(1, Number(e.target.value) || 1))
-              }
+              id="betting-close-at"
+              type="datetime-local"
+              min={toLocalInput(Math.floor(Date.now() / 1000) + 60)}
+              max={toLocalInput(Math.floor(Date.now() / 1000) + MAX_AHEAD_SEC)}
+              value={toLocalInput(bettingCloseSec)}
+              onChange={(e) => {
+                const sec = fromLocalInput(e.target.value);
+                if (sec !== null) setBettingCloseSec(sec);
+              }}
               disabled={isBusy}
               className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-paper mako-display text-2xl tabular-nums outline-none disabled:opacity-50"
             />
+            <div className="mako-label text-muted mt-2">{describeTime(bettingCloseSec)}</div>
           </div>
 
           <div className="px-6 py-5 border-b-2 border-ink">
-            <label className="mako-label text-muted mb-3 block">
-              RESOLVES (MINUTES FROM NOW)
+            <label className="mako-label text-muted mb-3 block" htmlFor="resolves-at">
+              RESOLVES (DATE AND TIME, YOUR TIMEZONE)
             </label>
             <input
-              type="number"
-              min={2}
-              max={10080}
-              value={closeMinutes}
-              onChange={(e) =>
-                setCloseMinutes(Math.max(2, Number(e.target.value) || 2))
-              }
+              id="resolves-at"
+              type="datetime-local"
+              min={toLocalInput(Math.floor(Date.now() / 1000) + 5 * 60)}
+              max={toLocalInput(Math.floor(Date.now() / 1000) + MAX_AHEAD_SEC)}
+              value={toLocalInput(closeSec)}
+              onChange={(e) => {
+                const sec = fromLocalInput(e.target.value);
+                if (sec !== null) setCloseSec(sec);
+              }}
               disabled={isBusy}
               className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-paper mako-display text-2xl tabular-nums outline-none disabled:opacity-50"
             />
-            {bettingCloseMinutes >= closeMinutes && (
+            <div className="mako-label text-muted mt-2">{describeTime(closeSec)}</div>
+            {bettingCloseSec >= closeSec && (
               <div className="mako-label text-mako-red mt-2">
                 RESOLVES MUST BE LATER THAN BETTING CLOSES
               </div>
