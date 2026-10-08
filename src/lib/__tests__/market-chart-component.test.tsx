@@ -42,7 +42,7 @@ vi.mock('@/components/chart/CandlestickChart', () => ({
   ),
 }));
 
-import { MarketChart } from '../../components/MarketChart';
+import { change24h, MarketChart } from '../../components/MarketChart';
 import type { ChartAssetClass } from '../chart-symbols';
 
 afterEach(() => {
@@ -242,5 +242,25 @@ describe('<MarketChart>', () => {
     expect(on.style.background).toBe('var(--mako-signal)');
     expect(['#000', 'rgb(0, 0, 0)']).toContain(on.style.color);
     expect(on.className).not.toMatch(/bg-ink|text-paper/);
+  });
+
+  // Joshua, 2026-10-08: the phone layout, CoinMarketCap-style.
+  it('compact: price and 24h change on top, a slim timeframe row, one fullscreen button, no zoom or tools', async () => {
+    const day = Array.from({ length: 30 }, (_, i) => ({ timestamp: i * 3600_000, open: 100, high: 112, low: 99, close: i === 29 ? 110 : 100, volume: 1 }));
+    mockChartsFetch({ candles: day }, 200);
+    const { findByText, getByRole, queryByRole, getByText } = renderWithQuery(<MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" compact />);
+    await findByText('110.00', undefined, { timeout: 3000 });
+    expect(getByText('+10.00% 24H')).toBeTruthy();
+    expect(getByRole('tab', { name: '1H' }).getAttribute('aria-selected')).toBe('true');
+    expect(getByRole('button', { name: 'Expand chart' })).toBeTruthy();
+    for (const name of ['Zoom in', 'Zoom out', 'Open drawing tools', 'Indicators menu']) expect(queryByRole('button', { name }), name).toBeNull();
+    expect(getByText('REFERENCE PRICE FROM COINBASE · NOT THE SETTLEMENT SOURCE')).toBeTruthy();
+  });
+
+  it('change24h: from the newest candle against the last one at least 24h older; null when the data is shorter', () => {
+    const h = (i: number, close: number) => ({ timestamp: i * 3600_000, open: close, high: close, low: close, close, volume: 0 });
+    expect(change24h([h(0, 100), h(1, 120), h(24, 90), h(25, 99)])).toBeCloseTo(-17.5); // 25h newest vs 1h (24h before)
+    expect(change24h([h(0, 100), h(10, 110)])).toBeNull();
+    expect(change24h([])).toBeNull();
   });
 });

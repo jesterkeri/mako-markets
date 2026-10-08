@@ -2,7 +2,7 @@
 // mobile, instead of copying the page's address; Escape closes it and focus goes back to the control that opened it.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import * as React from 'react';
 
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
@@ -129,5 +129,43 @@ describe('pool page share control', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Share pool' }));
     });
     expect(screen.getAllByRole('dialog', { name: 'Share' }).length).toBeGreaterThan(0);
+  });
+
+  // Joshua, 2026-10-08: on a phone the bet panel starts open and can be shrunk, so reading or commenting is not
+  // covered by it.
+  it('mobile: the bet panel collapses to a slim YES/NO bar and opens again from it', async () => {
+    state.market = OPEN;
+    renderPage(false);
+    const signIns = () => screen.queryAllByRole('link', { name: 'Sign in to bet' }).length;
+    const open = signIns();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Hide the bet panel' }));
+    });
+    expect(signIns(), 'the panel form is gone').toBe(open - 1);
+    expect(screen.getByRole('button', { name: 'Show the bet panel' }).getAttribute('aria-expanded')).toBe('false');
+    const panel = screen.getByRole('button', { name: 'Show the bet panel' }).parentElement as HTMLElement;
+    expect(within(panel).getByRole('button', { name: 'Bet' })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole('button', { name: /^NO/ }));
+    });
+    expect(signIns(), 'the panel form is back').toBe(open);
+    expect(screen.getByRole('button', { name: 'Hide the bet panel' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('mobile: a swipe down on the panel shrinks it, a swipe up opens it', async () => {
+    state.market = OPEN;
+    renderPage(false);
+    const handle = screen.getByRole('button', { name: 'Hide the bet panel' });
+    const panel = handle.parentElement as HTMLElement;
+    await act(async () => {
+      fireEvent.touchStart(panel, { touches: [{ clientY: 500 }] });
+      fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 560 }] });
+    });
+    expect(screen.getByRole('button', { name: 'Show the bet panel' })).toBeTruthy();
+    await act(async () => {
+      fireEvent.touchStart(panel, { touches: [{ clientY: 560 }] });
+      fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 480 }] });
+    });
+    expect(screen.getByRole('button', { name: 'Hide the bet panel' })).toBeTruthy();
   });
 });

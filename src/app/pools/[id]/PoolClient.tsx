@@ -438,7 +438,7 @@ function PoolCharts({ market: m, mobile }: ViewProps & { mobile?: boolean }) {
   if (chart?.assetClass !== 'CRYPTO') return null;
   return (
     <div style={{ marginTop: mobile ? 18 : 0 }}>
-      <MarketChart oracleSymbol={chart.oracleSymbol} assetClass="CRYPTO" pair={`${chart.oracleSymbol}/USD`} />
+      <MarketChart oracleSymbol={chart.oracleSymbol} assetClass="CRYPTO" pair={`${chart.oracleSymbol}/USD`} compact={mobile} />
     </div>
   );
 }
@@ -758,6 +758,10 @@ function PoolMobile(v: ViewProps) {
   const steps = poolSteps(m, row.state);
   const settled = row.state === 'yes_won' || row.state === 'no_won';
   const lines = positionLines(v);
+  // The bet panel starts open and can be shrunk to a slim bar, so someone reading or commenting is not covered by it
+  // (Joshua, 2026-10-08). The page keeps room under it to match.
+  const [betOpen, setBetOpen] = useState(true);
+  const panelRoom = row.state === 'open' && !betOpen ? 120 : 300;
   const roundBtn: React.CSSProperties = { flex: 'none', width: 44, height: 44, borderRadius: 9999, background: 'var(--raise)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mako-canvas-fg)' };
   return (
     <div>
@@ -784,7 +788,7 @@ function PoolMobile(v: ViewProps) {
         </span>
       </header>
 
-      <div style={{ padding: '4px 12px 300px' }}>
+      <div style={{ padding: `4px 12px ${panelRoom}px` }}>
         <div style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: STATE_COLOUR[row.state], color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{stateLabel(row.state)}</span>
@@ -938,22 +942,94 @@ function PoolMobile(v: ViewProps) {
         </>
       )}
 
-      <MobileBottom {...v} />
+      <MobileBottom {...v} open={betOpen} setOpen={setBetOpen} />
     </div>
   );
 }
 
-function MobileBottom(v: ViewProps) {
-  const { market: m, row, labels, side, setSide, amountText, setAmountText, amount, estimate, why, openBet, claimAmount, openClaim, signedIn } = v;
+/// A swipe of at least this many pixels on the panel's handle opens or closes it.
+const SWIPE_PX = 40;
+
+function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) => void }) {
+  const { market: m, row, labels, side, setSide, amountText, setAmountText, amount, estimate, why, openBet, claimAmount, openClaim, signedIn, open, setOpen } = v;
+  const touchY = useRef<number | null>(null);
   const name = side === 'yes' ? labels.yes : labels.no;
   const p = row.position;
   const winner: Side | null = row.state === 'yes_won' ? 'yes' : row.state === 'no_won' ? 'no' : null;
   const ready = signedIn && amount !== null && !why;
   const big: React.CSSProperties = { height: 56, borderRadius: 9999, fontSize: 17, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' };
+  const collapsible = row.state === 'open';
+  const expanded = !collapsible || open;
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchY.current = e.touches[0]?.clientY ?? null;
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = touchY.current;
+    touchY.current = null;
+    const end = e.changedTouches[0]?.clientY;
+    if (!collapsible || start === null || end === undefined) return;
+    if (end - start > SWIPE_PX) setOpen(false);
+    else if (start - end > SWIPE_PX) setOpen(true);
+  };
+  const oddsChip = (s: Side): React.CSSProperties => ({
+    height: 40,
+    padding: '0 14px',
+    borderRadius: 9999,
+    border: 0,
+    background: s === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)',
+    color: '#000',
+    boxShadow: 'var(--edge)',
+    fontSize: 13,
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+    fontVariantNumeric: 'tabular-nums',
+  });
   return (
-    <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 30, borderRadius: '28px 28px 0 0', background: 'var(--raise)', boxShadow: '0 -10px 30px rgba(0,0,0,0.25)', padding: '10px 16px calc(24px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--m3-outline)', alignSelf: 'center' }} />
-      {row.state === 'open' && (
+    <div
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+      style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 30, borderRadius: '28px 28px 0 0', background: 'var(--raise)', boxShadow: '0 -10px 30px rgba(0,0,0,0.25)', padding: '6px 16px calc(24px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 10 }}
+    >
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-label={open ? 'Hide the bet panel' : 'Show the bet panel'}
+          style={{ alignSelf: 'stretch', height: 20, border: 0, background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+        >
+          <span aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--m3-outline)' }} />
+        </button>
+      ) : (
+        <div aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 9999, background: 'var(--m3-outline)', alignSelf: 'center', marginTop: 4 }} />
+      )}
+      {collapsible && !open && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {(['yes', 'no'] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className="m3-press"
+              onClick={() => {
+                setSide(s);
+                setOpen(true);
+              }}
+              style={oddsChip(s)}
+            >
+              {s === 'yes' ? labels.yes : labels.no} {perOne(s === 'yes' ? row.yesPays : row.noPays) ?? ''}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="m3-press"
+            onClick={() => setOpen(true)}
+            style={{ marginLeft: 'auto', height: 40, padding: '0 18px', borderRadius: 9999, border: 0, background: 'var(--mako-canvas-fg)', color: 'var(--mako-canvas)', fontSize: 14, fontWeight: 800 }}
+          >
+            Bet
+          </button>
+        </div>
+      )}
+      {row.state === 'open' && expanded && (
         <>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ width: 150, flex: 'none' }}>

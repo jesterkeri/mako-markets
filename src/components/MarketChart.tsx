@@ -41,6 +41,27 @@ interface Props {
   initialTimeframe?: Timeframe;
   /// The pair as written in the header ("BTC/USD"); the oracle symbol when absent.
   pair?: string;
+  /// Phone layout (CoinMarketCap-style, Joshua 2026-10-08): price and 24h change on top, a slim timeframe row, a
+  /// shorter chart and one fullscreen button; zoom, indicators and drawing tools live in fullscreen only.
+  compact?: boolean;
+}
+
+const COMPACT_HEIGHT = 260;
+
+/// The change over the last 24 hours from the newest candle, or null when the candles do not reach back that far.
+export function change24h(candles: readonly Candle[]): number | null {
+  const last = candles[candles.length - 1];
+  if (!last) return null;
+  const cutoff = last.timestamp - 24 * 3600_000;
+  let ref: Candle | undefined;
+  for (const c of candles) if (c.timestamp <= cutoff) ref = c;
+  if (!ref || ref.close <= 0) return null;
+  return ((last.close - ref.close) / ref.close) * 100;
+}
+
+function fmtLast(p: number): string {
+  const d = Math.abs(p) >= 1 ? 2 : 5;
+  return p.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
 /// The redesign's palette, applied by redefining the pre-redesign colour names (bg-paper, border-ink, text-muted…)
@@ -95,7 +116,7 @@ function newDrawingId(): string {
   return `d-${Date.now()}-${drawingIdCounter}`;
 }
 
-export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimeframe, pair }: Props) {
+export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimeframe, pair, compact }: Props) {
   const options = timeframes ?? TIMEFRAMES_BY_CLASS[assetClass];
   const [tf, setTf] = useState<Timeframe>(initialTimeframe ?? defaultTimeframe(assetClass));
   const [expanded, setExpanded] = useState(false);
@@ -277,7 +298,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     return (
       <div
         className={`animate-pulse ${styles.theme}`}
-        style={{ ...CARD_STYLE, height: CHART_HEIGHT + 64 }}
+        style={{ ...CARD_STYLE, height: compact ? COMPACT_HEIGHT + 150 : CHART_HEIGHT + 64 }}
         aria-label="Loading chart"
       />
     );
@@ -531,13 +552,72 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
       <>
         <div
           className="rounded-2xl flex items-center justify-center"
-          style={{ ...THEME_VARS, height: CHART_HEIGHT + 64, border: '1px dashed var(--line)' }}
+          style={{ ...THEME_VARS, height: compact ? COMPACT_HEIGHT + 150 : CHART_HEIGHT + 64, border: '1px dashed var(--line)' }}
           aria-hidden
         >
           <span className="mako-label text-muted text-xs">CHART EXPANDED · PRESS ESC TO CLOSE</span>
         </div>
         {typeof document !== 'undefined' ? createPortal(overlay, document.body) : null}
       </>
+    );
+  }
+
+  if (compact) {
+    const candles = data.candles;
+    const last = candles[candles.length - 1];
+    const chg = change24h(candles);
+    return (
+      <div className={styles.theme} style={CARD_STYLE}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '12px 14px 0' }}>
+          <div style={{ minWidth: 0 }}>
+            <div className="mako-mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--dim)' }}>{pair ?? oracleSymbol}</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 4 }}>
+              <span style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{fmtLast(last.close)}</span>
+              {chg !== null && (
+                <span className="mako-mono" style={{ fontSize: 13, fontWeight: 700, color: chg >= 0 ? 'var(--up-text)' : 'var(--mako-red)' }}>
+                  {chg >= 0 ? '+' : ''}
+                  {chg.toFixed(2)}% 24H
+                </span>
+              )}
+            </div>
+          </div>
+          <button type="button" onClick={() => setExpanded(true)} aria-label="Expand chart" className="mk-press96" style={iconBtn(false)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
+              <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+            </svg>
+          </button>
+        </div>
+        <div role="tablist" aria-label="Chart timeframe" style={{ display: 'flex', gap: 4, overflowX: 'auto', padding: '10px 14px 8px' }}>
+          {options.map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={t === tf}
+              onClick={() => setTf(t)}
+              className="mako-mono"
+              style={{ flex: 'none', height: 28, padding: '0 12px', borderRadius: 9999, border: 0, fontSize: 12, fontWeight: 700, cursor: 'pointer', background: t === tf ? 'var(--mako-canvas-fg)' : 'transparent', color: t === tf ? 'var(--mako-canvas)' : 'var(--dim)' }}
+            >
+              {t.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <div className="relative" style={{ height: COMPACT_HEIGHT }}>
+          <CandlestickChart
+            ref={chartRef}
+            candles={candles}
+            instrument={oracleSymbol}
+            assetClass={assetClass}
+            timeframe={tf}
+            height={COMPACT_HEIGHT}
+            showVolume={false}
+            showMA20={false}
+            showEMA50={false}
+            onChartReady={handleChartReady}
+          />
+        </div>
+        <div className="mako-mono" style={{ fontSize: 10, color: 'var(--dim)', padding: '6px 14px 10px' }}>{CAPTION}</div>
+      </div>
     );
   }
 
