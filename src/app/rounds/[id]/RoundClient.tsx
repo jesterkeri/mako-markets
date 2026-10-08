@@ -406,7 +406,7 @@ function Receipt({ round: r }: { round: Round }) {
     { k: 'Move', v: movePct(r.anchorPrice, r.closePrice) },
     { k: 'Result', v: r.outcome === RoundOutcome.Up ? 'UP won' : 'DOWN won' },
     { k: 'Pot', v: `${usdc2(r.upPool + r.downPool)} USDC` },
-    { k: 'Fees', v: `${usdc2(r.protocolFee || fees.protocolFee)} to Mako Market + ${usdc2(r.creatorFee || fees.creatorFee)} to the creator` },
+    { k: 'Fees', v: `${usdc2(r.protocolFee || fees.protocolFee)} to Mako Market + ${usdc2(r.creatorFee || fees.creatorFee)} to the house` },
     { k: 'To winners', v: `${usdc2(r.distributable)} USDC` },
     { k: 'Verified', v: 'On chain, by the Chainlink Data Streams verifier' },
   ];

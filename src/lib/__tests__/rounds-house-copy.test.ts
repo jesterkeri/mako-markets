@@ -21,5 +21,11 @@ describe('Rounds copy says the house, not a creator', () => {
       expect(read(p)).not.toMatch(/round&apos;s creator|invited creators|A creator can have/);
     }
     expect(read('src/app/rounds/[id]/RoundClient.tsx')).toContain('2% of the smaller side to the house');
+    // Every user-facing string in the Rounds UI, not only the three phrases above (adversary on 2076459 found the
+    // settled-round receipt's fee row): no "creator" as a word in quoted text.
+    for (const p of ['src/app/rounds/[id]/RoundClient.tsx', 'src/app/rounds/new/ScheduleClient.tsx', 'src/app/rounds/RoundsClient.tsx', 'src/lib/use-round-tx.ts']) {
+      const strings = read(p).match(/(['"`])(?:\\.|(?!\1).)*\1/g) ?? [];
+      expect(strings.filter((q) => /\b(?:the|a|round's|round&apos;s) creators?\b/i.test(q)), p).toEqual([]);
+    }
   });
 });
