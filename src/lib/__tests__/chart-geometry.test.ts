@@ -1,8 +1,7 @@
-// The design charts' geometry: candles land inside the 540-wide plot with the right colour per candle, and the YES
-// share line is a step line whose height reads off the design's 75/50/25% guides.
+// The design candle chart's geometry: candles land inside the 540-wide plot with the right colour per candle.
 import { describe, expect, it } from 'vitest';
 
-import { CANDLE_BOX, candleGeometry, fmtPrice, priceDecimals, shareGeometry } from '../chart-geometry';
+import { CANDLE_BOX, candleGeometry, fmtPrice, priceDecimals } from '../chart-geometry';
 
 const c = (i: number, open: number, close: number, high = Math.max(open, close) + 1, low = Math.min(open, close) - 1) => ({
   timestamp: i * 60_000,
@@ -60,34 +59,5 @@ describe('prices', () => {
     expect(fmtPrice(13.08)).toBe('13.080');
     expect(fmtPrice(0.08775)).toBe('0.08775');
     expect(priceDecimals(-150)).toBe(2);
-  });
-});
-
-describe('shareGeometry', () => {
-  it('no points is null', () => {
-    expect(shareGeometry([], 0, 100)).toBeNull();
-  });
-
-  it('a step line on the design scale: 100% at the top, 75% on the y=40 guide, 50% on y=80, ending at the right edge', () => {
-    const g = shareGeometry(
-      [
-        { t: 0, yesBps: 10000 },
-        { t: 50, yesBps: 7500 },
-        { t: 75, yesBps: 5000 },
-      ],
-      0,
-      100,
-    )!;
-    expect(g.line).toBe('M0 0H300V40H450V80H600');
-    expect(g.area).toBe('M0 0H300V40H450V80H600V160H0Z');
-    expect(g.lastBps).toBe(5000);
-    expect(g.lastTopPct).toBe(50);
-  });
-
-  it('starts at opening even when the first bet came later, and clamps out-of-range shares', () => {
-    const g = shareGeometry([{ t: 50, yesBps: 12000 }], 0, 100)!;
-    expect(g.line).toBe('M300 0H600');
-    expect(g.lastBps).toBe(10000);
-    expect(shareGeometry([{ t: 50, yesBps: -5 }], 0, 100)!.lastTopPct).toBe(100);
   });
 });

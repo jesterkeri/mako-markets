@@ -1,6 +1,5 @@
-// Geometry for the two design charts, as pure functions so the drawing is testable without a browser.
-//  - Candles (2a/5a "BTC/USD NOW"): a 600x170 box, candles in the left 540, price labels in the right 60.
-//  - YES share (9a "YES share of the pool · SINCE OPENING"): a 600x160 box, 75/50/25% guides at y 40/80/120.
+// Geometry for the design's candle chart (2a/5a "BTC/USD NOW"), as pure functions so the drawing is testable without a
+// browser: a 600x170 box, candles in the left 540, price labels in the right 60.
 
 import type { Candle } from '@/types/chart';
 
@@ -91,37 +90,5 @@ export function candleGeometry(all: readonly Candle[], maxBars: number, timeLabe
       { k: 'L', v: fmtPrice(lastC.low, dec) },
       { k: 'C', v: fmtPrice(lastC.close, dec) },
     ],
-  };
-}
-
-export const SHARE_BOX = { width: 600, height: 160 } as const;
-
-export type ShareGeometry = {
-  line: string;
-  area: string;
-  lastBps: number;
-  lastTopPct: number;
-};
-
-/// YES share as a step line from `start` to `end` (unix seconds): each bet holds its share until the next one. Values
-/// are basis points (0 to 10000); y is 160 at 0% and 0 at 100%, so the design's guides at 40/80/120 read 75/50/25%.
-/// Null when there are no points.
-export function shareGeometry(points: readonly { t: number; yesBps: number }[], start: number, end: number): ShareGeometry | null {
-  if (points.length === 0) return null;
-  const { width, height } = SHARE_BOX;
-  const t0 = Math.min(start, points[0].t);
-  const t1 = Math.max(end, points[points.length - 1].t, t0 + 1);
-  const x = (t: number) => round(((t - t0) / (t1 - t0)) * width);
-  const clamp = (bps: number) => Math.min(10000, Math.max(0, bps));
-  const y = (bps: number) => round(height - (clamp(bps) / 10000) * height);
-  let line = `M${x(points[0].t)} ${y(points[0].yesBps)}`;
-  for (const p of points.slice(1)) line += `H${x(p.t)}V${y(p.yesBps)}`;
-  line += `H${width}`;
-  const last = clamp(points[points.length - 1].yesBps);
-  return {
-    line,
-    area: `${line}V${height}H${x(points[0].t)}Z`,
-    lastBps: last,
-    lastTopPct: round((y(last) / height) * 100),
   };
 }

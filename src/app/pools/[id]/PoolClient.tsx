@@ -21,7 +21,6 @@ import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { marketToChartConfig } from '@/lib/market-chart';
 import { PriceCandles } from '@/components/charts/PriceCandles';
-import { YesShareChart } from '@/components/charts/YesShareChart';
 import { useMakoLabels } from '@/lib/use-mako-labels';
 import { usePoolTx } from '@/lib/use-pool-tx';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
@@ -431,18 +430,14 @@ function PoolDesktop(v: ViewProps) {
   );
 }
 
-/// 9a's "YES share of the pool" for every pool, and for a crypto pool its price (forex, commodities and stocks have no
-/// free candle source; sports and Mako pools have no price).
-function PoolCharts({ market: m, now }: ViewProps) {
+/// A crypto pool's price candles (Joshua, 2026-10-08: candlesticks only). Forex, commodities and stocks have no free
+/// candle source, and sports and Mako pools have no price, so they show no chart.
+function PoolCharts({ market: m, mobile }: ViewProps & { mobile?: boolean }) {
   const chart = marketToChartConfig(m);
+  if (chart?.assetClass !== 'CRYPTO') return null;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      <YesShareChart marketId={m.id} openedAt={Number(m.createdAt)} now={now} chainYes={m.totalYes} chainNo={m.totalNo} />
-      {chart?.assetClass === 'CRYPTO' && (
-        <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
-          <PriceCandles symbol={chart.oracleSymbol} pair={`${chart.oracleSymbol}/USD`} timeframes={['15m', '1h', '4h', '1d']} initial="1h" />
-        </div>
-      )}
+    <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14, marginTop: mobile ? 18 : 0 }}>
+      <PriceCandles symbol={chart.oracleSymbol} pair={`${chart.oracleSymbol}/USD`} timeframes={['15m', '1h', '4h', '1d']} initial="1h" />
     </div>
   );
 }
@@ -896,9 +891,7 @@ function PoolMobile(v: ViewProps) {
           </div>
         </div>
 
-        <div style={{ marginTop: 18 }}>
-          <PoolCharts {...v} />
-        </div>
+        <PoolCharts {...v} mobile />
 
         <PoolCommentsMobile marketId={m.id.toString()} onSignIn={openSignIn} />
       </div>
