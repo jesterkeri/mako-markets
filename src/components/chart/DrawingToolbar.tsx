@@ -67,11 +67,11 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
   }, [open]);
 
   return (
@@ -89,7 +89,7 @@ function ColorPicker({ activeColor, onChange }: { activeColor: string; onChange:
              default to content width, but grid-cols-4 with no width
              reads 4×0 and collapses to a stack of 1-col cells. */
           className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-40 bg-ink border-2 border-paper rounded-xl shadow-brutal-sm p-3 w-[152px]"
-          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           <div className="mako-label text-[9px] text-paper/60 tracking-widest mb-2 text-center">
             COLOR
@@ -136,23 +136,26 @@ function useDraggable(initialPos: { x: number; y: number }) {
   const dragging = useRef(false);
   const offset = useRef({ x: 0, y: 0 });
 
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
+  // Pointer events cover mouse, finger and stylus alike (Joshua, 2026-10-08: touch support).
+  const onMouseDown = useCallback((e: React.PointerEvent) => {
     dragging.current = true;
     offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
     e.preventDefault();
   }, [pos]);
 
   useEffect(() => {
-    const move = (e: MouseEvent) => {
+    const move = (e: PointerEvent) => {
       if (!dragging.current) return;
       setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y });
     };
     const up = () => { dragging.current = false; };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
     return () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
     };
   }, []);
 
@@ -172,13 +175,14 @@ export function DrawingToolbar({
     <div
       ref={ref}
       data-drawing-toolbar
-      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
       className="absolute z-30 flex items-center gap-1 px-2 py-1.5 bg-ink border-2 border-ink rounded-xl shadow-brutal text-paper"
       style={{ top: pos.y, left: pos.x }}
     >
       <div
-        onMouseDown={onMouseDown}
+        onPointerDown={onMouseDown}
         className="cursor-grab px-1 flex items-center shrink-0 text-paper"
+        style={{ touchAction: 'none', minHeight: 32 }}
         title="Drag to move"
       >
         <IconGrip />

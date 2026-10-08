@@ -523,6 +523,25 @@ export function DrawingCanvas({
     setIsDragging(false);
   }, []);
 
+  // Pointer events cover mouse, finger and stylus (Joshua, 2026-10-08: "the drawing doesn't allow dragging with
+  // fingers"). A finger has no hover, so a two-point tool also completes on press-drag-release: the press sets the
+  // first point, and lifting the finger at least DRAG_COMMIT_PX away sets the second.
+  const gesture = useRef<{ x: number; y: number; startedPending: boolean } | null>(null);
+  const DRAG_COMMIT_PX = 12;
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    gesture.current = { x: e.clientX, y: e.clientY, startedPending: pendingPoint === null };
+    handleMouseDown(e);
+  }, [handleMouseDown, pendingPoint]);
+  const handlePointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    const g = gesture.current;
+    gesture.current = null;
+    if (g && g.startedPending && pendingPoint !== null && e.pointerType !== 'mouse' && Math.hypot(e.clientX - g.x, e.clientY - g.y) >= DRAG_COMMIT_PX) {
+      handleMouseDown(e); // the second point, where the finger lifted
+    }
+    handleMouseUp();
+  }, [handleMouseDown, handleMouseUp, pendingPoint]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -571,12 +590,15 @@ export function DrawingCanvas({
   return (
     <canvas
       ref={canvasRef}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handleMouseMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handleMouseUp}
       style={{
         position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
         pointerEvents: needsPointer ? 'auto' : 'none',
+        // While drawing or editing, a finger draws instead of scrolling or zooming the chart under it.
+        touchAction: needsPointer ? 'none' : undefined,
         zIndex: isDrawingTool ? 5 : 2,
         cursor: isDragging
           ? 'grabbing'

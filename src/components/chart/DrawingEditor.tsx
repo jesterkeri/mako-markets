@@ -41,7 +41,7 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
   const startClient = useRef({ x: 0, y: 0 });
   const startPos = useRef({ x: 0, y: 0 });
 
-  const onDragStart = useCallback((e: React.MouseEvent) => {
+  const onDragStart = useCallback((e: React.PointerEvent) => {
     dragging.current = true;
     startClient.current = { x: e.clientX, y: e.clientY };
     startPos.current = { x: pos.x, y: pos.y };
@@ -49,29 +49,31 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
   }, [pos]);
 
   useEffect(() => {
-    const move = (e: MouseEvent) => {
+    const move = (e: PointerEvent) => {
       if (!dragging.current) return;
       const dx = e.clientX - startClient.current.x;
       const dy = e.clientY - startClient.current.y;
       setPos({ x: startPos.current.x + dx, y: startPos.current.y + dy });
     };
     const up = () => { dragging.current = false; };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
     return () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
     };
   }, []);
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
-    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 50);
+    const timer = setTimeout(() => document.addEventListener('pointerdown', handler), 50);
     return () => {
       clearTimeout(timer);
-      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('pointerdown', handler);
     };
   }, [onClose]);
 
@@ -79,14 +81,15 @@ export function DrawingEditor({ drawing, position, onUpdate, onDelete, onClose }
     <div
       ref={ref}
       data-drawing-editor
-      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
       className="absolute z-40 flex flex-col gap-2.5 p-3 bg-ink border-2 border-ink rounded-xl shadow-brutal w-[224px] text-paper"
       style={{ top: pos.y, left: pos.x }}
     >
       {/* Drag header */}
       <div
-        onMouseDown={onDragStart}
+        onPointerDown={onDragStart}
         className="flex justify-between items-center cursor-grab select-none"
+        style={{ touchAction: 'none' }}
       >
         <div className="flex items-center gap-1.5 text-paper">
           <IconGrip />
