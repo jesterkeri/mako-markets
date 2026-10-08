@@ -19,6 +19,9 @@ import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultS
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
 import { useLiveNowSec } from '@/lib/use-live-clock';
+import { marketToChartConfig } from '@/lib/market-chart';
+import { PriceCandles } from '@/components/charts/PriceCandles';
+import { YesShareChart } from '@/components/charts/YesShareChart';
 import { useMakoLabels } from '@/lib/use-mako-labels';
 import { usePoolTx } from '@/lib/use-pool-tx';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
@@ -391,6 +394,7 @@ function PoolDesktop(v: ViewProps) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 380px', gap: 28, marginTop: 26 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 22, minWidth: 0 }}>
+          <PoolCharts {...v} />
           <Odds {...v} />
           {settled && <Receipt {...v} />}
           {row.state === 'refunded' && (
@@ -423,6 +427,22 @@ function PoolDesktop(v: ViewProps) {
           <CreatorCard {...v} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/// 9a's "YES share of the pool" for every pool, and for a crypto pool its price (forex, commodities and stocks have no
+/// free candle source; sports and Mako pools have no price).
+function PoolCharts({ market: m, now }: ViewProps) {
+  const chart = marketToChartConfig(m);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <YesShareChart marketId={m.id} openedAt={Number(m.createdAt)} now={now} chainYes={m.totalYes} chainNo={m.totalNo} />
+      {chart?.assetClass === 'CRYPTO' && (
+        <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+          <PriceCandles symbol={chart.oracleSymbol} pair={`${chart.oracleSymbol}/USD`} timeframes={['15m', '1h', '4h', '1d']} initial="1h" />
+        </div>
+      )}
     </div>
   );
 }
@@ -874,6 +894,10 @@ function PoolMobile(v: ViewProps) {
               {m.mType === MarketType.MAKO ? 'House pool' : v.creatorStats ? `${v.creatorStats.pools} ${v.creatorStats.pools === 1 ? 'pool' : 'pools'} · ${v.creatorStats.bothSides}% got bets on both sides` : 'Creator'}
             </div>
           </div>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <PoolCharts {...v} />
         </div>
 
         <PoolCommentsMobile marketId={m.id.toString()} onSignIn={openSignIn} />

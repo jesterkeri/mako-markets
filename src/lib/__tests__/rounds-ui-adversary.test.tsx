@@ -20,6 +20,9 @@ const m = vi.hoisted(() => ({
   writeContractAsync: vi.fn(),
 }));
 
+// The charts fetch their own data (tested in chart-components.test.tsx); this test is about the page around them.
+vi.mock('@/components/charts/PriceCandles', () => ({ PriceCandles: () => null }));
+vi.mock('@/components/charts/YesShareChart', () => ({ YesShareChart: () => null }));
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: m.connected }),
   usePublicClient: () => ({ readContract: m.readContract, simulateContract: m.simulateContract, waitForTransactionReceipt: m.waitForTransactionReceipt }),

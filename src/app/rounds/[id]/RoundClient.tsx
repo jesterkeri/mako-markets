@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { useState } from 'react';
 
+import { PriceCandles } from '@/components/charts/PriceCandles';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { ListStateDesktop } from '@/components/ListState';
 import { SignInLink } from '@/components/signin/SignInLink';
@@ -299,6 +300,10 @@ export function RoundView(v: View & { narrow: boolean }) {
   );
   const details = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22, minWidth: 0 }}>
+      <div>
+        <PriceCandles symbol={V1_ASSET.symbol} pair={V1_ASSET.pair} timeframes={['1m', '15m', '1h']} initial="1m" />
+        <div style={{ fontSize: 12, color: 'var(--dim)', padding: '4px 4px 0' }}>The anchor and close prices are set by Chainlink, the second the round starts and ends.</div>
+      </div>
       <Pots {...v} />
       {phase === 'settled' && <Receipt round={r} />}
       <HowItWorks />

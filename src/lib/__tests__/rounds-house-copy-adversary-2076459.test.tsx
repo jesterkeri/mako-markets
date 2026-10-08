@@ -9,6 +9,9 @@ import { render } from '@testing-library/react';
 const BETTOR = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
 const HOUSE = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const;
 
+// The charts fetch their own data (tested in chart-components.test.tsx); this test is about the page around them.
+vi.mock('@/components/charts/PriceCandles', () => ({ PriceCandles: () => null }));
+vi.mock('@/components/charts/YesShareChart', () => ({ YesShareChart: () => null }));
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: undefined }),
   usePublicClient: () => ({}),

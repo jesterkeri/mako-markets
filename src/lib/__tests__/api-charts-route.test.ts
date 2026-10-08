@@ -1,156 +1,75 @@
-import {
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
+// GET /api/charts: crypto candles from Coinbase; forex, commodities and stocks have no free source and answer 404.
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Bypass Next's `unstable_cache` so we test route dispatch directly.
+// Bypass Next's `unstable_cache` so route dispatch is tested directly.
 vi.mock('next/cache', () => ({
   unstable_cache: <T extends (...a: never[]) => unknown>(fn: T) => fn,
 }));
 
-// Single provider after #166 polish r15 — Pyth Benchmarks handles
-// every asset class.
-vi.mock('@/lib/chart-providers/pyth', async () => {
-  const actual = await vi.importActual<typeof import('../chart-providers/pyth')>(
-    '../chart-providers/pyth',
-  );
-  return {
-    ...actual,
-    fetchPythCandles: vi.fn(),
-  };
+vi.mock('@/lib/chart-providers/coinbase', async () => {
+  const actual = await vi.importActual<typeof import('../chart-providers/coinbase')>('../chart-providers/coinbase');
+  return { ...actual, fetchCoinbaseCandles: vi.fn() };
 });
 
 import { GET } from '@/app/api/charts/route';
-import {
-  fetchPythCandles,
-  PythApiError,
-} from '@/lib/chart-providers/pyth';
+import { CoinbaseApiError, fetchCoinbaseCandles } from '@/lib/chart-providers/coinbase';
 
 beforeEach(() => {
-  vi.mocked(fetchPythCandles).mockReset();
+  vi.mocked(fetchCoinbaseCandles).mockReset();
 });
 
 function mkReq(qs: string) {
   return { url: `http://localhost/api/charts?${qs}` } as unknown as import('next/server').NextRequest;
 }
 
-const SAMPLE_CANDLES = [
-  { timestamp: 1747948800000, open: 1, high: 2, low: 1, close: 2, volume: 0 },
-];
+const SAMPLE = [{ timestamp: 1747948800000, open: 1, high: 2, low: 1, close: 2, volume: 3 }];
 
 describe('GET /api/charts', () => {
-  it('400 when `s` is missing', async () => {
-    const res = await GET(mkReq('tf=1h'));
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'bad_params' });
+  it('400 when `s` is missing or `tf` is invalid', async () => {
+    expect((await GET(mkReq('tf=1h'))).status).toBe(400);
+    expect((await GET(mkReq('s=BTC&tf=3h'))).status).toBe(400);
   });
 
-  it('400 when `tf` is invalid', async () => {
-    const res = await GET(mkReq('s=BTC&tf=99x'));
-    expect(res.status).toBe(400);
-  });
-
-  it('404 when symbol is unknown', async () => {
-    const res = await GET(mkReq('s=NOTREAL&tf=1h'));
+  it('404 unknown_symbol for a symbol not on the chart list', async () => {
+    const res = await GET(mkReq('s=NOPE'));
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'unknown_symbol' });
   });
 
-  it('200 CRYPTO routes through Pyth Crypto.<sym>/USD', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    const res = await GET(mkReq('s=BTC&tf=1h'));
+  it('404 no_chart_source for forex, commodities and stocks, without calling Coinbase', async () => {
+    for (const s of ['EURUSD', 'XAUUSD', 'AAPL']) {
+      const res = await GET(mkReq(`s=${s}`));
+      expect(res.status, s).toBe(404);
+      expect(await res.json()).toEqual({ error: 'no_chart_source' });
+    }
+    expect(fetchCoinbaseCandles).not.toHaveBeenCalled();
+  });
+
+  it('200 crypto routes to the Coinbase <SYM>-USD product, symbol case-insensitive, default 1h', async () => {
+    vi.mocked(fetchCoinbaseCandles).mockResolvedValue(SAMPLE);
+    const res = await GET(mkReq('s=btc'));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ candles: SAMPLE_CANDLES });
-    expect(fetchPythCandles).toHaveBeenCalledWith({
-      providerSymbol: 'Crypto.BTC/USD',
-      timeframe: '1h',
-    });
+    expect(await res.json()).toEqual({ candles: SAMPLE });
+    expect(fetchCoinbaseCandles).toHaveBeenCalledWith({ product: 'BTC-USD', timeframe: '1h' });
+    expect(res.headers.get('cache-control')).toBe('public, max-age=300');
   });
 
-  it('200 FOREX routes through Pyth FX.<base>/<quote>', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    const res = await GET(mkReq('s=EURUSD&tf=15m'));
+  it('1m is accepted for the Rounds chart, with a short cache', async () => {
+    vi.mocked(fetchCoinbaseCandles).mockResolvedValue(SAMPLE);
+    const res = await GET(mkReq('s=BTC&tf=1m'));
     expect(res.status).toBe(200);
-    expect(fetchPythCandles).toHaveBeenCalledWith({
-      providerSymbol: 'FX.EUR/USD',
-      timeframe: '15m',
-    });
+    expect(fetchCoinbaseCandles).toHaveBeenCalledWith({ product: 'BTC-USD', timeframe: '1m' });
+    expect(res.headers.get('cache-control')).toBe('public, max-age=30');
   });
 
-  it('200 STOCKS routes through Pyth Equity.US.<ticker>/USD', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    const res = await GET(mkReq('s=AAPL&tf=4h'));
-    expect(res.status).toBe(200);
-    expect(fetchPythCandles).toHaveBeenCalledWith({
-      providerSymbol: 'Equity.US.AAPL/USD',
-      timeframe: '4h',
-    });
-  });
-
-  it('200 COMMODITIES routes through Pyth Metal.<sym>/USD (any tf)', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    const res = await GET(mkReq('s=XAUUSD&tf=1d'));
-    expect(res.status).toBe(200);
-    expect(fetchPythCandles).toHaveBeenCalledWith({
-      providerSymbol: 'Metal.XAU/USD',
-      timeframe: '1d',
-    });
-  });
-
-  it('200 COMMODITIES on 2h (Pyth supports commodity intraday)', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    const res = await GET(mkReq('s=XAGUSD&tf=2h'));
-    expect(res.status).toBe(200);
-    expect(fetchPythCandles).toHaveBeenCalledWith({
-      providerSymbol: 'Metal.XAG/USD',
-      timeframe: '2h',
-    });
-  });
-
-  it('default tf=1h when omitted', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    await GET(mkReq('s=BTC'));
-    expect(fetchPythCandles).toHaveBeenCalledWith(expect.objectContaining({ timeframe: '1h' }));
-  });
-
-  it('symbol uppercased before lookup (btc → BTC)', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    const res = await GET(mkReq('s=btc&tf=1h'));
-    expect(res.status).toBe(200);
-    expect(fetchPythCandles).toHaveBeenCalledWith({
-      providerSymbol: 'Crypto.BTC/USD',
-      timeframe: '1h',
-    });
-  });
-
-  it('502 on PythApiError', async () => {
-    vi.mocked(fetchPythCandles).mockRejectedValue(new PythApiError('boom'));
-    const res = await GET(mkReq('s=BTC&tf=1h'));
-    expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({ error: 'upstream_failed', provider: 'pyth' });
-  });
-
-  it('503 rate_limited when Pyth returns 429', async () => {
-    vi.mocked(fetchPythCandles).mockRejectedValue(new PythApiError('status 429', 429));
-    const res = await GET(mkReq('s=BTC&tf=1h'));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'rate_limited', provider: 'pyth' });
-    expect(res.headers.get('retry-after')).toBe('30');
-  });
-
-  it('502 on unknown error', async () => {
-    vi.mocked(fetchPythCandles).mockRejectedValue(new Error('boom'));
-    const res = await GET(mkReq('s=BTC&tf=1h'));
-    expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({ error: 'upstream_failed' });
-  });
-
-  it('cache-control header set on success', async () => {
-    vi.mocked(fetchPythCandles).mockResolvedValue(SAMPLE_CANDLES);
-    const res = await GET(mkReq('s=BTC&tf=4h'));
-    expect(res.headers.get('cache-control')).toBe('public, max-age=600');
+  it('503 rate_limited on a Coinbase 429, 502 on any other failure', async () => {
+    vi.mocked(fetchCoinbaseCandles).mockRejectedValue(new CoinbaseApiError('status 429', 429));
+    const limited = await GET(mkReq('s=ETH'));
+    expect(limited.status).toBe(503);
+    expect(limited.headers.get('retry-after')).toBe('30');
+    vi.mocked(fetchCoinbaseCandles).mockRejectedValue(new CoinbaseApiError('malformed candle'));
+    expect((await GET(mkReq('s=ETH'))).status).toBe(502);
+    vi.mocked(fetchCoinbaseCandles).mockRejectedValue(new Error('boom'));
+    expect((await GET(mkReq('s=ETH'))).status).toBe(502);
   });
 });

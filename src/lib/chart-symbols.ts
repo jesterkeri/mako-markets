@@ -101,3 +101,10 @@ export function getChartSymbolByOracle(
 ): ChartSymbol | undefined {
   return BY_ORACLE.get(oracleSymbol);
 }
+
+/** The Coinbase product a chart is drawn from ("BTC-USD"), or null when no free candle source exists for the symbol.
+ *  Only crypto has one: Pyth Benchmarks, the source `providerSymbol` names, has answered 404 since 2026-09-29, so the
+ *  FOREX, COMMODITIES and STOCKS rows draw no price chart (they stay listed for when a source returns). */
+export function coinbaseProductOf(entry: ChartSymbol): string | null {
+  return entry.assetClass === 'CRYPTO' ? `${entry.oracleSymbol}-USD` : null;
+}
