@@ -511,6 +511,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             showVolume={showVolume}
             showMA20={showMA20}
             showEMA50={showEMA50}
+            scrollWithPage={!page}
             onChartReady={handleChartReady}
           />
           {drawingLayer}
@@ -570,6 +571,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             showVolume={false}
             showMA20={false}
             showEMA50={false}
+            scrollWithPage={!page}
             onChartReady={handleChartReady}
           />
         </div>
@@ -591,7 +593,8 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
           showVolume={showVolume}
           showMA20={showMA20}
           showEMA50={showEMA50}
-          onChartReady={handleChartReady}
+          scrollWithPage={!page}
+            onChartReady={handleChartReady}
         />
         {drawingLayer}
       </div>

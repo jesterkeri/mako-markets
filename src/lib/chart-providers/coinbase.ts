@@ -65,9 +65,10 @@ export function parseCoinbaseCandles(raw: unknown, granularity: number, nowSec: 
 /// Joins candles into candles `per` times as long, aligned to UTC multiples of the longer span. A longer candle is made
 /// only from base candles that are consecutive (each exactly `spanMs` after the last) and start at the bucket's start:
 /// a bucket with a missing base candle (no trades that hour, or a gap in the answer) is left out, never drawn as one
-/// continuous candle (Codex CHARTS r1 #1). Completed buckets need all `per` candles; the newest bucket, still forming,
-/// may hold a contiguous prefix of them.
-export function aggregateCandles(candles: readonly Candle[], spanMs: number, per: number): Candle[] {
+/// continuous candle (Codex CHARTS r1 #1). Completed buckets need all `per` candles; the newest bucket may hold a
+/// contiguous prefix of them only while it is really still forming at `nowMs` (a finished bucket missing its last
+/// hour, as in a stale answer, is left out: adversary on cb71ae1).
+export function aggregateCandles(candles: readonly Candle[], spanMs: number, per: number, nowMs: number): Candle[] {
   if (per === 1) return [...candles];
   const big = spanMs * per;
   const buckets: { start: number; n: number; contiguous: boolean; last: number; c: Candle }[] = [];
@@ -84,7 +85,7 @@ export function aggregateCandles(candles: readonly Candle[], spanMs: number, per
     }
   }
   return buckets
-    .filter((b, i) => b.contiguous && (b.n === per || (i === buckets.length - 1 && b.n < per)))
+    .filter((b, i) => b.contiguous && (b.n === per || (i === buckets.length - 1 && b.n < per && nowMs < b.start + big)))
     .map((b) => b.c);
 }
 
@@ -99,6 +100,7 @@ export async function fetchCoinbaseCandles(args: { product: string; timeframe: T
     signal: AbortSignal.timeout(8_000),
   });
   if (!res.ok) throw new CoinbaseApiError(`status ${res.status}`, res.status);
-  const candles = parseCoinbaseCandles(await res.json(), plan.granularity, Math.floor(Date.now() / 1000));
-  return aggregateCandles(candles, plan.granularity * 1000, plan.per);
+  const nowMs = Date.now();
+  const candles = parseCoinbaseCandles(await res.json(), plan.granularity, Math.floor(nowMs / 1000));
+  return aggregateCandles(candles, plan.granularity * 1000, plan.per, nowMs);
 }

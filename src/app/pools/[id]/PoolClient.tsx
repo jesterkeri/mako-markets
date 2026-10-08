@@ -788,7 +788,7 @@ function PoolMobile(v: ViewProps) {
         </span>
       </header>
 
-      <div style={{ padding: `4px 12px ${panelRoom}px` }}>
+      <div style={{ padding: `4px 12px calc(${panelRoom}px + env(safe-area-inset-bottom))` }}>
         <div style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: STATE_COLOUR[row.state], color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{stateLabel(row.state)}</span>

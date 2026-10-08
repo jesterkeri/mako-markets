@@ -29,6 +29,9 @@ interface Props {
   showVolume?: boolean;
   showMA20?: boolean;
   showEMA50?: boolean;
+  /// On a pool or round page the chart sits in a scrolling page: vertical swipes and the mouse wheel scroll the page,
+  /// pinch and horizontal drag still move the chart (adversary on cb71ae1). The chart page leaves it off.
+  scrollWithPage?: boolean;
   onChartReady?: (chart: IChartApi | null, series: ISeriesApi<'Candlestick'> | null) => void;
 }
 

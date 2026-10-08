@@ -38,6 +38,7 @@ interface Props {
   timeframe: Timeframe;
   height?: number;
   showVolume?: boolean;
+  scrollWithPage?: boolean;
   showMA20?: boolean;
   showEMA50?: boolean;
   /** Fires once the chart + candle series are constructed, so a
@@ -210,7 +211,7 @@ function computeEMA(candles: Candle[], period: number): LineData<Time>[] {
 }
 
 const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
-  { candles, instrument: _instrument, assetClass, timeframe: _timeframe, height, showVolume, showMA20, showEMA50, onChartReady },
+  { candles, instrument: _instrument, assetClass, timeframe: _timeframe, height, showVolume, showMA20, showEMA50, scrollWithPage, onChartReady },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -293,6 +294,14 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
         horzLines: { color: colors.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
+      // In a scrolling page the library's defaults would claim every vertical finger drag (vertTouchDrag) and the
+      // wheel, so a thumb on the chart could not scroll the page. Pinch and horizontal drag still move the chart.
+      ...(scrollWithPage
+        ? {
+            handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+            handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
+          }
+        : {}),
       timeScale: {
         timeVisible: true,
         borderColor: colors.divider,

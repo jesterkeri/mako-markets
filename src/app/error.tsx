@@ -5,9 +5,13 @@
 // still reaches Sentry when it is configured. Copy: no em dashes, no "we/our/us".
 import * as Sentry from '@sentry/nextjs';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 
 import { Mascot } from '@/components/Mascot';
+import { MobileHeader } from '@/components/shell/MobileHeader';
+import { TabBar } from '@/components/shell/TabBar';
+import { isMobileDetail } from '@/lib/shell-nav';
 
 import s from './not-found.module.css';
 
@@ -33,6 +37,9 @@ export default function ErrorPage({ error, unstable_retry }: { error: Error & { 
     Sentry.captureException(error);
   }, [error]);
   // A server error carries an identifier that matches its server log; it is safe to show (no details).
+  // Pool, round and chart pages draw their own phone header, so the shell hides its own there; the error replaces
+  // that page, so it brings the shell's phone header and tab bar back (adversary on cb71ae1).
+  const detail = isMobileDetail(usePathname() ?? '');
   const ref = error.digest ? <div style={{ fontFamily: 'var(--mako-font-mono)', fontSize: 12, opacity: 0.6, marginTop: 12 }}>Reference {error.digest}</div> : null;
   return (
     <>
@@ -69,6 +76,7 @@ export default function ErrorPage({ error, unstable_retry }: { error: Error & { 
       </div>
 
       <div className="mk-mob mk-m">
+        {detail && <MobileHeader />}
         <div style={{ padding: '4px 12px 0' }}>
           <div className={`${s.card} ${s.mobCard}`}>
             <span aria-hidden="true" style={{ position: 'absolute', right: 18, top: 12, fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, color: '#D94A3D' }}>✕</span>
@@ -107,6 +115,7 @@ export default function ErrorPage({ error, unstable_retry }: { error: Error & { 
           </div>
           {ref}
         </div>
+        {detail && <TabBar />}
       </div>
     </>
   );
