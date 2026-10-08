@@ -392,7 +392,7 @@ function Pots({ round: r, phase }: View) {
         </span>
       </div>
       <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', padding: '10px 4px 0', lineHeight: 1.5 }}>
-        {final ? 'Final pots, set when predictions closed.' : 'Odds change until predictions close.'}{' '}Winners split the pot in proportion to their stake, after 1% to Mako Market and 2% of the smaller side to the round&apos;s creator.
+        {final ? 'Final pots, set when predictions closed.' : 'Odds change until predictions close.'}{' '}Winners split the pot in proportion to their stake, after 1% to Mako Market and 2% of the smaller side to the house.
       </div>
     </div>
   );

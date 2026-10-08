@@ -66,7 +66,7 @@ export function ScheduleClient() {
   if (!isCreator) {
     return frame(
       <div style={{ fontSize: 16, lineHeight: 1.55, color: 'var(--dim)' }}>
-        Rounds are hosted by Mako Market&apos;s invited creators, so this account can&apos;t schedule one. Every round is open to everyone to predict on.
+        Rounds are hosted by the Mako Market house, so this account can&apos;t schedule one. Every round is open to everyone to predict on.
       </div>,
     );
   }
@@ -84,7 +84,7 @@ export function ScheduleClient() {
         { label: 'Predictions', value: `open now, close ${when(start - ENTRY_LEAD_S)}` },
         { label: 'Runs', value: `${when(start)} to ${when(start + DURATION_S)}` },
       ],
-      note: 'Anyone can predict as soon as it is scheduled. A creator can have one unfinished round at a time.',
+      note: 'Anyone can predict as soon as it is scheduled. Each house account can have one unfinished round at a time.',
       doneTitle: 'Round scheduled',
       doneBody: `It starts ${when(start)}. It is on the Rounds tab now.`,
       doneSecondary: { label: 'Go to Rounds', href: '/rounds' },

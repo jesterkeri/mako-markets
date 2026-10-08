@@ -28,7 +28,7 @@ export const CIRCLE_FAUCET_URL = 'https://faucet.circle.com/';
 const EMPTY: Record<ListKind, ListStateCopy> = {
   rounds: {
     title: 'No rounds scheduled right now',
-    body: 'A round opens for entries the moment a creator schedules it, 10 minutes to 7 days ahead.',
+    body: 'A round opens for entries the moment the house schedules it, 10 minutes to 7 days ahead.',
     pose: 'mako-sleeping',
     motion: 'breathe',
     primary: { label: 'Browse pools', href: '/pools' },
