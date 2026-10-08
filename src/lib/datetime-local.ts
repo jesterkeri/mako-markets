@@ -10,23 +10,44 @@ export function toLocalInput(sec: number): string {
 
 /// A `datetime-local` value (this browser's timezone) as Unix seconds, or null when it is malformed or names a local
 /// time that does not exist. `new Date("…T02:30")` silently moves a time inside a spring-forward gap to the next hour
-/// (Codex RELEASE_R5 F2), so the fields are rebuilt and must read back unchanged. A repeated fall-back hour exists
-/// twice and resolves to its first occurrence.
+/// (Codex RELEASE_R5 F2), so the fields are rebuilt and must read back unchanged; 30 February fails the same way. A
+/// repeated fall-back hour exists twice and resolves to its first occurrence. setFullYear, not `new Date(y, …)`, so a
+/// year below 100 is that year rather than 19xx.
 export function fromLocalInput(value: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
-  if (!m) return null;
-  const [y, mo, d, h, mi] = m.slice(1).map(Number);
-  const dt = new Date(y, mo - 1, d, h, mi);
+  const f = fieldsOf(value);
+  if (!f) return null;
+  const [y, mo, d, h, mi] = f;
+  const dt = new Date(2000, 0, 1);
+  dt.setFullYear(y, mo - 1, d);
+  dt.setHours(h, mi, 0, 0);
   const same =
     dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d && dt.getHours() === h && dt.getMinutes() === mi;
   return same ? Math.floor(dt.getTime() / 1000) : null;
 }
 
-/// What to tell someone whose typed value fromLocalInput refused.
+function fieldsOf(value: string): number[] | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  return m ? m.slice(1).map(Number) : null;
+}
+
+/// Whether the fields name a real calendar date and clock time, ignoring timezones (UTC has no gaps).
+function isCalendarTime([y, mo, d, h, mi]: number[]): boolean {
+  const dt = new Date(0);
+  dt.setUTCFullYear(y, mo - 1, d);
+  dt.setUTCHours(h, mi, 0, 0);
+  return (
+    dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d && dt.getUTCHours() === h && dt.getUTCMinutes() === mi
+  );
+}
+
+/// What to tell someone whose typed value fromLocalInput refused: a missing or malformed value, a date that does not
+/// exist (30 February), or a time the clocks skip in this timezone (adversary on 9ce69c5: never blame the clocks for
+/// an impossible date).
 export function localInputProblem(value: string): string {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)
-    ? 'That time does not exist in your timezone (the clocks jump forward then). Pick another time.'
-    : 'Pick a date and time.';
+  const f = fieldsOf(value);
+  if (!f) return 'Pick a date and time.';
+  if (!isCalendarTime(f)) return 'That date or time does not exist. Pick another.';
+  return 'That time does not exist in your timezone (the clocks jump forward then). Pick another time.';
 }
 
 /// "2026-10-09 13:30 UTC · in 1 d 6 h" (or "in the past"), so the timezone is never in doubt.

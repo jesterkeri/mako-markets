@@ -31,7 +31,9 @@ export function ScheduleClient() {
   const firstDefault = now === null ? null : Math.ceil((now + MIN_LEAD_S + 300) / BOUNDARY_STEP_S) * BOUNDARY_STEP_S;
   const [text, setText] = useState<string | null>(null);
   const value = text ?? (firstDefault === null ? '' : toLocalInput(firstDefault));
-  const start = fromLocalInput(value);
+  /// The default is used as seconds, not printed and parsed back: in a repeated fall-back hour the text names two
+  /// instants and parses to the first, an hour early (adversary on 9ce69c5).
+  const start = text === null ? firstDefault : fromLocalInput(text);
   /// The shared strict parser refuses a time inside a spring-forward gap rather than moving it an hour (Codex RELEASE_R5 F3).
   const why =
     now === null ? 'Pick a start time.' : start === null ? (value ? localInputProblem(value) : 'Pick a start time.') : scheduleBlocker(start, now);

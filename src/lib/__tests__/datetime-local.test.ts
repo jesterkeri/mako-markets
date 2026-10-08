@@ -57,6 +57,13 @@ describe('a time inside a daylight-saving gap', () => {
     expect(fromLocalInput('2027-03-14T03:00')).toBe(Date.UTC(2027, 2, 14, 7, 0) / 1000); // EDT, UTC-4
   });
 
+  it('a repeated fall-back hour parses to its first occurrence (why the schedule form keeps its default as seconds)', () => {
+    // 2027-11-07 01:20 EST, the second 01:20 that night, prints as 01:20 and reads back as 01:20 EDT, an hour earlier.
+    const second = Date.UTC(2027, 10, 7, 6, 20) / 1000;
+    expect(toLocalInput(second)).toBe('2027-11-07T01:20');
+    expect(fromLocalInput('2027-11-07T01:20')).toBe(second - 3600);
+  });
+
   it('an empty or malformed value asks for a date and time', () => {
     expect(localInputProblem('')).toBe('Pick a date and time.');
     expect(localInputProblem('2027-03-14')).toBe('Pick a date and time.');

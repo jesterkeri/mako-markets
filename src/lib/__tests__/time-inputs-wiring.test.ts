@@ -25,5 +25,6 @@ describe('date-time inputs', () => {
     expect(src).toContain("import { fromLocalInput, localInputProblem, toLocalInput } from '@/lib/datetime-local';");
     expect(src).not.toMatch(/function fromLocalInput|new Date\(v\)/);
     expect(src).toContain('localInputProblem(value)');
+    expect(src).toContain('const start = text === null ? firstDefault : fromLocalInput(text);');
   });
 });
