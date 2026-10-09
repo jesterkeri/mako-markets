@@ -153,9 +153,11 @@ try {
     const [owns] = await admin`select count(*)::int as n from pg_shdepend where refobjid = ${existing[0].oid} and deptype = 'o'`;
     if (owns.n !== 0) die(`existing ${ROLE} owns ${owns.n} object(s)`);
   }
-  const attrs = `login nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls connection limit ${LIMIT} password '${password}'`;
+  // NOSUPERUSER can only be written by a superuser, even unchanged, so the re-key leaves it out; the attribute check
+  // below still requires rolsuper false, and a non-superuser owner could never have granted it.
+  const attrs = `login nocreatedb nocreaterole noinherit noreplication nobypassrls connection limit ${LIMIT} password '${password}'`;
   await admin.begin(async (tx) => {
-    await tx.unsafe(existing.length ? `alter role ${ident(ROLE)} with ${attrs}` : `create role ${ident(ROLE)} with ${attrs}`);
+    await tx.unsafe(existing.length ? `alter role ${ident(ROLE)} with ${attrs}` : `create role ${ident(ROLE)} with nosuperuser ${attrs}`);
     await tx.unsafe(`alter role ${ident(ROLE)} set statement_timeout = '${TIMEOUT}'`);
     // Drop anything the role was given before, then grant exactly the three things it needs.
     for (const g of await tx`select roleid::regrole::text as r from pg_auth_members where member = (select oid from pg_roles where rolname = ${ROLE})`) {
