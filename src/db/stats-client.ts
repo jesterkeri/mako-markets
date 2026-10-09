@@ -32,18 +32,54 @@ export const STATS_CONNECT_TIMEOUT_S = 5;
 
 const globalForStats = globalThis as unknown as { __makoStatsDb?: StatsDb };
 
-function client(): StatsDb {
-  const url = process.env.STATS_DATABASE_URL?.trim();
-  if (!url) throw new StatsDbNotConfigured('STATS_DATABASE_URL is not set');
-  let host: string;
+/// The only role this login may use: a value naming any other (the app's owner, say) is refused.
+export const STATS_ROLE = 'mako_stats_reader';
+const ALLOWED_PARAMS = new Set(['sslmode', 'channel_binding']);
+
+/// The connection's parts, checked here and handed to the driver one by one. The URL string itself never reaches
+/// postgres-js, whose own parsing reads a host list, query options, and PGHOST / PGUSER / PGPASSWORD for anything
+/// missing (adversary on 622dc21: an upper-case pooler, a second pooler host and an empty host each got past the
+/// first check, the last one onto the app's own login). A refusal never repeats the value.
+export function parseStatsUrl(raw: string): { host: string; port: number; database: string; username: string; password: string } {
+  const bad = (why: string) => new StatsDbNotConfigured(`STATS_DATABASE_URL ${why}`);
+  if (/[\s,]/.test(raw)) throw bad('must be one URL with one host');
+  let url: URL;
   try {
-    host = new URL(url).hostname;
+    url = new URL(raw);
   } catch {
-    throw new StatsDbNotConfigured('STATS_DATABASE_URL is not a URL');
+    throw bad('is not a URL');
   }
-  if (host.split('.')[0].endsWith('-pooler')) throw new StatsDbNotConfigured('STATS_DATABASE_URL must be the direct endpoint, not the pooler');
+  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') throw bad('is not a postgres URL');
+  const host = url.hostname;
+  if (!host || host !== host.toLowerCase() || !/^[a-z0-9.-]+$/.test(host)) throw bad('needs one lower-case host name');
+  if (host.split('.').some((label) => label.includes('pooler'))) throw bad('must be the direct endpoint, not the pooler');
+  if (decodeURIComponent(url.username) !== STATS_ROLE) throw bad(`must use the ${STATS_ROLE} login`);
+  const password = decodeURIComponent(url.password);
+  if (!password) throw bad('has no password');
+  const database = decodeURIComponent(url.pathname.slice(1));
+  if (!/^[A-Za-z0-9_-]+$/.test(database)) throw bad('needs one database name');
+  for (const key of url.searchParams.keys()) if (!ALLOWED_PARAMS.has(key)) throw bad('has an option that is not allowed');
+  const port = url.port ? Number(url.port) : 5432;
+  return { host, port, database, username: STATS_ROLE, password };
+}
+
+function client(): StatsDb {
+  const raw = process.env.STATS_DATABASE_URL?.trim();
+  if (!raw) throw new StatsDbNotConfigured('STATS_DATABASE_URL is not set');
+  const c = parseStatsUrl(raw);
   if (!globalForStats.__makoStatsDb) {
-    const pg = postgres(url, { max: 1, prepare: false, idle_timeout: STATS_IDLE_TIMEOUT_S, connect_timeout: STATS_CONNECT_TIMEOUT_S });
+    const pg = postgres({
+      host: c.host,
+      port: c.port,
+      database: c.database,
+      username: c.username,
+      password: c.password,
+      ssl: 'require',
+      max: 1,
+      prepare: false,
+      idle_timeout: STATS_IDLE_TIMEOUT_S,
+      connect_timeout: STATS_CONNECT_TIMEOUT_S,
+    });
     globalForStats.__makoStatsDb = drizzle(pg);
   }
   return globalForStats.__makoStatsDb;

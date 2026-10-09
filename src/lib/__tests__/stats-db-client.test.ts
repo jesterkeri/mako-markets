@@ -2,10 +2,10 @@
 // Neon's direct endpoint only (a pooler would hide the role's connection limit), and no fallback to the app's database.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const pg = vi.hoisted(() => ({ calls: [] as { url: string; opts: Record<string, unknown> }[] }));
+const pg = vi.hoisted(() => ({ calls: [] as { first: unknown; opts: Record<string, unknown> }[] }));
 vi.mock('postgres', () => ({
-  default: (url: string, opts: Record<string, unknown>) => {
-    pg.calls.push({ url, opts });
+  default: (first: unknown, second?: Record<string, unknown>) => {
+    pg.calls.push({ first, opts: (second ?? first) as Record<string, unknown> });
     return {};
   },
 }));
@@ -32,8 +32,19 @@ describe('stats database login', () => {
     const { statsDb, STATS_IDLE_TIMEOUT_S, STATS_CONNECT_TIMEOUT_S } = await fresh();
     expect(statsDb.transaction).toBe('stats-transaction');
     expect(pg.calls).toHaveLength(1);
-    expect(pg.calls[0].url).toBe(DIRECT);
-    expect(pg.calls[0].opts).toMatchObject({ max: 1, idle_timeout: STATS_IDLE_TIMEOUT_S, connect_timeout: STATS_CONNECT_TIMEOUT_S });
+    // Every part is passed explicitly, never the URL string, so the driver cannot fill anything from PG* variables.
+    expect(typeof pg.calls[0].first).toBe('object');
+    expect(pg.calls[0].opts).toMatchObject({
+      host: 'ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech',
+      port: 5432,
+      database: 'neondb',
+      username: 'mako_stats_reader',
+      password: 'pw',
+      ssl: 'require',
+      max: 1,
+      idle_timeout: STATS_IDLE_TIMEOUT_S,
+      connect_timeout: STATS_CONNECT_TIMEOUT_S,
+    });
     expect(STATS_IDLE_TIMEOUT_S).toBeGreaterThan(0);
     // A second use reuses the instance's client.
     void statsDb.transaction;
@@ -47,6 +58,19 @@ describe('stats database login', () => {
     expect(pg.calls).toHaveLength(0);
   });
 
+  it.each([
+    ['another role (the app owner)', 'postgresql://neondb_owner:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/neondb?sslmode=require'],
+    ['no password', 'postgresql://mako_stats_reader@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/neondb?sslmode=require'],
+    ['a host option', 'postgresql://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/neondb?host=ep-x-pooler.neon.tech'],
+    ['no database', 'postgresql://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/'],
+    ['another scheme', 'https://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/neondb'],
+  ])('refuses %s', async (_name, url) => {
+    vi.stubEnv('STATS_DATABASE_URL', url);
+    const { statsDb, StatsDbNotConfigured } = await fresh();
+    expect(() => statsDb.transaction).toThrow(StatsDbNotConfigured);
+    expect(pg.calls).toHaveLength(0);
+  });
+
   it('never falls back to DATABASE_URL', async () => {
     vi.stubEnv('STATS_DATABASE_URL', '');
     const { statsDb, StatsDbNotConfigured } = await fresh();
@@ -55,7 +79,7 @@ describe('stats database login', () => {
   });
 
   it('refuses a value that is not a URL, without echoing it', async () => {
-    vi.stubEnv('STATS_DATABASE_URL', 'not a url secret-ish');
+    vi.stubEnv('STATS_DATABASE_URL', 'notaurl-secret-ish');
     const { statsDb } = await fresh();
     let message = '';
     try {
