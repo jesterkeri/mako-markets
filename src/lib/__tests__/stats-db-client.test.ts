@@ -94,21 +94,17 @@ describe('stats database login', () => {
   });
 });
 
-describe('/api/stats without the stats login', () => {
-  it('answers 200 with the database figures unavailable and logs only the class name', async () => {
+describe('the scheduled read without the stats login', () => {
+  it('fails as StatsDbNotConfigured, logged by that class only, and never opens a connection', async () => {
     vi.stubEnv('STATS_DATABASE_URL', '');
-    vi.stubEnv('ENVIO_GRAPHQL_URL', '');
     vi.resetModules();
     delete (globalThis as { __makoStatsDb?: unknown }).__makoStatsDb;
-    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { GET } = await import('@/app/api/stats/route');
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.gasFree).toBeNull();
-    expect(body.makoWallets).toBeNull();
-    expect(err).toHaveBeenCalledWith('[stats] database read failed:', 'StatsDbNotConfigured');
+    const { readDbFigures, statsErrorCode } = await import('@/lib/stats-db-read');
+    const err = await readDbFigures().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(statsErrorCode(err)).toBe('StatsDbNotConfigured');
     expect(pg.calls).toHaveLength(0);
-    err.mockRestore();
   });
 });

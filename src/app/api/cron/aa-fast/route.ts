@@ -10,6 +10,8 @@ import {
   selectStaleSendingRows,
   transitionFromSendingViaResolver,
 } from '@/lib/aa-pending-user-ops';
+import { statsErrorCode } from '@/lib/stats-db-read';
+import { refreshDbSnapshot } from '@/lib/stats-snapshot';
 import { resolveSubmittedOp } from '@/lib/user-op';
 
 // ----------------------------------------------------------------------------
@@ -37,6 +39,15 @@ export async function GET(req: Request) {
     return Response.json({ error: 'unauthorized' }, { status: 403 });
   }
   const diagnostics = cronDiagnostics(req);
+
+  // 0. The /stats account figures ride this run's database wake-up (Joshua, 2026-10-09: every 15 minutes, no extra
+  // wake-ups); this is the only place they are read (src/lib/stats-snapshot.ts). First, and on its own: a failure is
+  // logged by class and never stops the cleanup below.
+  const statsSnapshot = await refreshDbSnapshot().then(
+    () => 'ok',
+    (e: unknown) => statsErrorCode(e),
+  );
+  if (statsSnapshot !== 'ok') console.error('[cron.aa-fast.stats_snapshot_failed]', statsSnapshot);
 
   // 1. Expire `pending` rows.
   const expiredCount = await expirePastDueRows();
@@ -90,6 +101,7 @@ export async function GET(req: Request) {
   console.log(
     JSON.stringify({
       event: 'cron.aa-fast.run',
+      statsSnapshot,
       expiredCount,
       recoveredCount,
       ambiguousCount,

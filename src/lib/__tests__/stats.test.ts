@@ -3,7 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), snapshot: vi.fn() }));
+// The route reads only the saved account figures (src/lib/stats-snapshot.ts), never the database.
+vi.mock('@/lib/stats-snapshot', () => ({ fetchDbSnapshot: mocks.snapshot }));
 vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
 vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
@@ -94,10 +96,50 @@ describe('parseIndexedStats', () => {
   });
 });
 
+describe('the account figures read (scheduled job only, src/lib/stats-db-read.ts)', () => {
+  beforeEach(() => {
+    mocks.dbExecute.mockResolvedValue([{ actions: 37, accounts: 11, wallets: 64 }]);
+    vi.resetModules();
+  });
+  afterEach(() => vi.clearAllMocks());
+  const read = async () => (await import('../stats-db-read')).readDbFigures();
+
+  it('counts Mako wallets on Monad testnet only, in the same single database query', async () => {
+    expect(await read()).toEqual({ gasFree: { actions: 37, accounts: 11 }, makoWallets: 64 });
+    expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
+    const q = JSON.stringify(mocks.dbExecute.mock.calls[0][0]);
+    expect(q).toContain('user_safes');
+    expect(q).toContain('10143');
+  });
+
+  it('a malformed database row is no figures at all, never a guess', async () => {
+    for (const row of [{ actions: 37, accounts: 11 }, { actions: 37, accounts: 11, wallets: -1 }, { actions: 37, accounts: 11, wallets: 1.5 }]) {
+      mocks.dbExecute.mockResolvedValueOnce([row]);
+      await expect(read(), JSON.stringify(row)).rejects.toThrow(/db figures row/);
+    }
+  });
+
+  it('sets its own statement_timeout inside its transaction (the query stops, not just the wait)', async () => {
+    const seen: string[] = [];
+    const { PgDialect } = await import('drizzle-orm/pg-core');
+    const dialect = new PgDialect();
+    const render = (q: unknown) => dialect.sqlToQuery(q as Parameters<typeof dialect.sqlToQuery>[0]).sql;
+    const { db } = await import('@/db/client');
+    const tx = vi.spyOn(db as unknown as { transaction: (fn: (t: unknown) => unknown) => unknown }, 'transaction').mockImplementation((fn) =>
+      fn({ execute: (q: unknown) => (seen.push(render(q)), render(q).includes('statement_timeout') ? Promise.resolve([]) : mocks.dbExecute(q)) }),
+    );
+    await read();
+    expect(tx).toHaveBeenCalledTimes(1);
+    expect(seen[0]).toMatch(/SET LOCAL statement_timeout = 5000/);
+    expect(seen[1]).toMatch(/user_safes/);
+    tx.mockRestore();
+  });
+});
+
 describe('GET /api/stats', () => {
   const realFetch = globalThis.fetch;
   beforeEach(() => {
-    mocks.dbExecute.mockResolvedValue([{ actions: 37, accounts: 11, wallets: 64 }]);
+    mocks.snapshot.mockImplementation(async () => ({ gasFree: { actions: 37, accounts: 11 }, makoWallets: 64, readAt: Date.now() - 60_000 }));
     // The route memoizes its reads per module; each test starts with a fresh one.
     vi.resetModules();
   });
@@ -112,26 +154,17 @@ describe('GET /api/stats', () => {
     return (await GET()).json();
   };
 
-  it('says the indexer is not connected yet when its URL is not set, and still shows gas-free actions', async () => {
+  it('says the indexer is not connected yet when its URL is not set, and still shows the account figures', async () => {
     const body = await call();
     expect(body).toMatchObject({ indexed: null, indexedStatus: 'not_configured', gasFree: { actions: 37, accounts: 11 }, makoWallets: 64 });
   });
 
-  it('counts Mako wallets on Monad testnet only, in the same single database query', async () => {
+  it('never touches the database: the account figures come only from the saved file', async () => {
     await call();
-    expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
-    const q = JSON.stringify(mocks.dbExecute.mock.calls[0][0]);
-    expect(q).toContain('user_safes');
-    expect(q).toContain('10143');
-  });
-
-  it('a malformed database row is no figures at all, never a guess', async () => {
-    for (const row of [{ actions: 37, accounts: 11 }, { actions: 37, accounts: 11, wallets: -1 }, { actions: 37, accounts: 11, wallets: 1.5 }]) {
-      mocks.dbExecute.mockResolvedValueOnce([row]);
-      const body = await call();
-      expect(body.gasFree, JSON.stringify(row)).toBeNull();
-      expect(body.makoWallets, JSON.stringify(row)).toBeNull();
-    }
+    expect(mocks.dbExecute).not.toHaveBeenCalled();
+    expect(mocks.snapshot).toHaveBeenCalledTimes(1);
+    const src = (await import('node:fs')).readFileSync(new URL('../../app/api/stats/route.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/@\/db\/|stats-db-read|drizzle/);
   });
 
   it('is never cached by a CDN, so no copy adds its own age or hides an outage (Codex RELEASE_R7 #1)', async () => {
@@ -165,29 +198,34 @@ describe('GET /api/stats', () => {
     }
   });
 
-  it('leaves gas-free actions out when the database read fails, and nothing reveals the indexer URL', async () => {
+  it('leaves the account figures out when the saved file cannot be read, and nothing reveals the indexer URL', async () => {
     process.env.ENVIO_GRAPHQL_URL = 'https://secret-key.indexer.example/v1/graphql';
     globalThis.fetch = vi.fn(async () => new Response('down', { status: 500 })) as typeof fetch;
-    mocks.dbExecute.mockRejectedValue(new Error('db down'));
+    mocks.snapshot.mockRejectedValue(new Error('blob down'));
     const body = await call();
     expect(body.gasFree).toBeNull();
     expect(body.makoWallets).toBeNull();
     expect(JSON.stringify(body)).not.toContain('secret-key');
   });
 
-  it('the database read sets its own statement_timeout inside its transaction (the query stops, not just the wait)', async () => {
-    const seen: string[] = [];
-    const { PgDialect } = await import('drizzle-orm/pg-core');
-    const dialect = new PgDialect();
-    const render = (q: unknown) => dialect.sqlToQuery(q as Parameters<typeof dialect.sqlToQuery>[0]).sql;
-    const { db } = await import('@/db/client');
-    const tx = vi.spyOn(db as unknown as { transaction: (fn: (t: unknown) => unknown) => unknown }, 'transaction').mockImplementation((fn) =>
-      fn({ execute: (q: unknown) => (seen.push(render(q)), render(q).includes('statement_timeout') ? Promise.resolve([]) : mocks.dbExecute(q)) }),
-    );
-    await call();
-    expect(tx).toHaveBeenCalledTimes(1);
-    expect(seen[0]).toMatch(/SET LOCAL statement_timeout = 5000/);
-    expect(seen[1]).toMatch(/user_safes/);
-    tx.mockRestore();
+  it('shows the saved figures while under 20 minutes old, and none from 20 minutes or from the future', async () => {
+    for (const [ageMs, shown] of [
+      [19 * 60_000 + 59_000, true],
+      [20 * 60_000, false],
+      [-30_000, true],
+      [-61_000, false],
+    ] as const) {
+      vi.resetModules();
+      mocks.snapshot.mockImplementation(async () => ({ gasFree: { actions: 1, accounts: 1 }, makoWallets: 2, readAt: Date.now() - ageMs }));
+      const body = await call();
+      expect(body.makoWallets === 2, `age ${ageMs}`).toBe(shown);
+    }
+  });
+
+  it('readAt is the saved figures’ read time when they are the oldest shown', async () => {
+    const readAt = Date.now() - 14 * 60_000;
+    mocks.snapshot.mockImplementation(async () => ({ gasFree: { actions: 1, accounts: 1 }, makoWallets: 2, readAt }));
+    const body = await call();
+    expect(body.readAt).toBe(Math.floor(readAt / 1000));
   });
 });

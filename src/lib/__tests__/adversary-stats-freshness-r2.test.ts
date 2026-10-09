@@ -11,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ttlMemo } from '../ttl-memo';
 
-const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), snapshot: vi.fn() }));
+// Since RELEASE_R9 the route reads only the saved account figures (src/lib/stats-snapshot.ts); the database read is
+// the 15-minute job's (src/lib/stats-db-read.ts) and is tested directly below.
+vi.mock('@/lib/stats-snapshot', () => ({ fetchDbSnapshot: mocks.snapshot }));
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
 vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
 vi.mock('@/db/client', () => ({
@@ -58,6 +61,7 @@ beforeEach(() => {
   process.env.ENVIO_GRAPHQL_URL = SENTINEL_URL;
   globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(answer(indexerBets)), { status: 200 })) as typeof fetch;
   mocks.dbExecute.mockResolvedValue([ROW]);
+  mocks.snapshot.mockImplementation(async () => ({ gasFree: { actions: 37, accounts: 11 }, makoWallets: 64, readAt: T0 }));
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -67,29 +71,24 @@ afterEach(() => {
 });
 
 describe('adversary r2: a figure is checked at the start of the request but served at its end', () => {
-  it('indexer figures 59.5 s old at the start are served 64.4 s old while a slow database refresh runs', async () => {
+  // Now the slow other source is the saved-figures fetch (5 s timeout): the indexer memo reuses for 55 s, so an
+  // indexer figure handed over at 54.9 s still goes out inside 60 s after a 4.9 s fetch.
+  it('indexer figures 54.9 s old at the start go out under 60 s while a slow saved-figures fetch runs', async () => {
     const get = await GET();
-    await (await get()).json(); // t = 0: both sources read
-    vi.advanceTimersByTime(241_000);
-    expect((await (await get()).json()).indexed.bets).toBe(40); // t = 241 s: indexer re-read, bets = 40
+    await (await get()).json(); // t = 0: both read
+    vi.advanceTimersByTime(55_100);
+    await (await get()).json(); // t = 55.1 s: indexer re-read; the saved figures are reused (60 s memo)
     const indexerReadAt = Date.now();
-    indexerBets = 41; // a new bet lands right after that read
-
-    // t = 300.5 s: the database figures are past 5 minutes, so the database is re-read; it answers in 4.9 s (inside
-    // the 5 s timeout). The indexer figures are 59.5 s old, so the memo hands them over without a re-read.
-    vi.advanceTimersByTime(59_500);
-    mocks.dbExecute.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve([ROW]), 4_900)));
+    vi.advanceTimersByTime(54_900); // t = 110 s: indexer figures 54.9 s old, saved figures past their memo
+    mocks.snapshot.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ gasFree: { actions: 37, accounts: 11 }, makoWallets: 64, readAt: Date.now() }), 4_900)),
+    );
     const pending = get();
     await vi.advanceTimersByTimeAsync(4_900);
-    const res = await pending;
+    const body = await (await pending).json();
     const servedAgeSec = (Date.now() - indexerReadAt) / 1000;
-    const body = await res.json();
-
-    expect(servedAgeSec).toBeCloseTo(64.4, 1);
-    expect(
-      body.indexed?.bets,
-      `indexer figures read at t = 241 s served at t = ${(Date.now() - T0) / 1000} s (${servedAgeSec} s old, limit 60 s)`,
-    ).not.toBe(40);
+    expect(body.indexedStatus).toBe('ok');
+    expect(servedAgeSec, 'indexer figures served past 60 s').toBeLessThan(60);
   });
 });
 
@@ -107,27 +106,32 @@ describe('adversary r2: a clock that steps backwards', () => {
   });
 });
 
-// Its unproven suspicion, closed: the database read itself times out, so a query that hangs fails that refresh and the
-// next request reads again, instead of every later request waiting on the hung one.
+// Its unproven suspicion, closed: the database read itself times out, so a query that hangs fails that run and the next
+// run reads again. Since RELEASE_R9 only the 15-minute job reads the database (src/lib/stats-db-read.ts), so this is
+// tested on that read directly; the page shows the saved figures until they are 20 minutes old.
 describe('a database read that hangs', () => {
-  it('times out at 5 s (figures null), starts no second query while it hangs, and reads again once it ends', async () => {
-    const get = await GET();
+  it('times out at 5 s, starts no second query while it hangs, and reads again once it ends', async () => {
+    const { readDbFigures } = await import('../stats-db-read');
     let endHung: (e: unknown) => void = () => {};
     mocks.dbExecute.mockImplementation(() => new Promise((_resolve, reject) => (endHung = reject))); // hangs
-    const pending = get();
+    const pending = readDbFigures();
+    const settled = pending.then(
+      () => 'ok',
+      (e: { code?: string }) => e.code,
+    );
     await vi.advanceTimersByTimeAsync(5_000);
-    expect((await (await pending).json()).makoWallets).toBeNull();
-    // Codex RELEASE_R7 #2: while the hung query is still running, later requests start no other one.
+    expect(await settled).toBe('TIMEOUT');
+    // Codex RELEASE_R7 #2: while the hung query is still running, later runs start no other one.
     for (let i = 0; i < 3; i++) {
-      vi.advanceTimersByTime(300_000);
-      expect((await (await get()).json()).makoWallets).toBeNull();
+      vi.advanceTimersByTime(15 * 60_000);
+      await expect(readDbFigures()).rejects.toThrow('still running');
     }
     expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
-    // The database ends it (its statement_timeout); the next request reads again and recovers.
+    // The database ends it (its statement_timeout); the next run reads again and recovers.
     endHung(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
     await vi.advanceTimersByTimeAsync(0);
     mocks.dbExecute.mockResolvedValue([ROW]);
-    expect((await (await get()).json()).makoWallets).toBe(64);
+    expect((await readDbFigures()).makoWallets).toBe(64);
     expect(mocks.dbExecute).toHaveBeenCalledTimes(2);
   });
 });

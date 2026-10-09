@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 type Script = (stmt: string) => Promise<unknown> | unknown;
 
 const h = vi.hoisted(() => ({
+  snapshot: (() => Promise.reject(new Error('no saved file'))) as () => Promise<unknown>,
   log: [] as string[],
   begins: 0,
   open: 0,
@@ -26,6 +27,9 @@ const h = vi.hoisted(() => ({
 
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
 vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
+// Since RELEASE_R9 the route reads only the 15-minute job's saved file (src/lib/stats-snapshot.ts), mocked here as
+// h.snapshot; the database attacks below drive the job's own read (src/lib/stats-db-read.ts) through GET() below.
+vi.mock('@/lib/stats-snapshot', () => ({ fetchDbSnapshot: () => h.snapshot() }));
 vi.mock('@/db/client', async () => {
   const { drizzle } = await import('drizzle-orm/postgres-js');
   // A pending query in postgres-js is a thenable with .values(); drizzle's execute awaits it.
@@ -98,7 +102,22 @@ const begins = () => h.log.filter((l) => l === 'tx: BEGIN').length;
 /// Answers the stats SELECT with `select`, and SET LOCAL with an empty result.
 const scriptWith = (select: Script) => (stmt: string) => (isSelect(stmt) ? select(stmt) : []);
 
+/// The scheduled job's database read, answered in the old route's shape so each attack reads as it did: the figures,
+/// or nulls and one logged code (as /api/cron/aa-fast logs it) when the read fails.
 async function GET() {
+  const { readDbFigures, statsErrorCode } = await import('../stats-db-read');
+  return async () => {
+    try {
+      const f = await readDbFigures();
+      return Response.json({ makoWallets: f.makoWallets, gasFree: f.gasFree });
+    } catch (e) {
+      console.error('[cron.aa-fast.stats_snapshot_failed]', statsErrorCode(e));
+      return Response.json({ makoWallets: null, gasFree: null });
+    }
+  };
+}
+
+async function ROUTE() {
   return (await import('../../app/api/stats/route')).GET;
 }
 
@@ -166,8 +185,7 @@ describe('adversary r7: at most one database read per instance', () => {
     for (const p of burst) expect((await (await p).json()).makoWallets).toBeNull();
     for (let i = 0; i < 40; i++) {
       await vi.advanceTimersByTimeAsync(30_000);
-      const res = await get();
-      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      const res = await get(); // no-store is the route's, tested on the route below
       expect((await res.json()).makoWallets).toBeNull();
     }
     expect(begins()).toBe(1);
@@ -255,35 +273,43 @@ describe('adversary r7: malformed rows are null, never 0', () => {
   }
 });
 
-describe('adversary r7: freshness and caching at the boundaries', () => {
-  it('an indexer figure reused at 54.999 s goes out no later than 60 s even while the database read hangs', async () => {
-    const get = await GET();
-    await (await get()).json(); // t = 0: both read; the database figures lapse at 290 s
-    vi.advanceTimersByTime(235_001);
-    await (await get()).json(); // t = 235.001 s: indexer re-read, database figures reused
+describe('adversary r7: freshness and caching at the boundaries (the route, which reads only the saved file)', () => {
+  const saved = () => Promise.resolve({ gasFree: { actions: 37, accounts: 11 }, makoWallets: 64, readAt: Date.now() });
+
+  it('an indexer figure reused at 54.999 s goes out no later than 60 s even while the saved-file read hangs', async () => {
+    h.snapshot = saved;
+    const get = await ROUTE();
+    await (await get()).json(); // t = 0: both read
+    vi.advanceTimersByTime(55_001);
+    await (await get()).json(); // t = 55.001 s: indexer re-read, saved figures reused (60 s memo)
     const indexerReadAt = Date.now();
-    vi.advanceTimersByTime(54_999); // t = 290 s: indexer reused at 54.999 s, database re-read, and it hangs
-    h.script = scriptWith(() => new Promise(() => {}));
+    vi.advanceTimersByTime(54_999); // t = 110 s: indexer reused at 54.999 s, saved file re-read, and it hangs
+    h.snapshot = () => new Promise(() => {});
     const p = get();
     await vi.advanceTimersByTimeAsync(5_000);
     const body = await (await p).json();
     expect(body.indexed).not.toBeNull();
     expect(Date.now() - indexerReadAt).toBeLessThanOrEqual(60_000);
     expect(body.makoWallets).toBeNull();
+    expect(begins(), 'the route never opens the database').toBe(0);
   });
 
-  it('every answer is no-store, including when both sources fail and when the guard refuses', async () => {
-    const get = await GET();
+  it('every answer is no-store, including when both sources fail', async () => {
+    const get = await ROUTE();
     globalThis.fetch = vi.fn(async () => new Response('', { status: 500 })) as typeof fetch;
-    h.script = scriptWith(() => new Promise(() => {}));
+    h.snapshot = () => new Promise(() => {});
     const p = get();
     await vi.advanceTimersByTimeAsync(5_000);
     const r1 = await p;
     expect(r1.headers.get('Cache-Control')).toBe('no-store');
     const b1 = await r1.json();
     expect(b1.indexedStatus).toBe('unavailable');
-    const r2 = await get();
+    expect(b1.makoWallets).toBeNull();
+    const p2 = get();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const r2 = await p2;
     expect(r2.headers.get('Cache-Control')).toBe('no-store');
     expect(JSON.stringify(b1)).not.toContain('sentinel');
+    expect(begins()).toBe(0);
   });
 });

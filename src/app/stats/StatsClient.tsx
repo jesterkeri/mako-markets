@@ -137,7 +137,7 @@ function Footer({ s, now }: { s: StatsWire; now: number | null }) {
   return (
     <p style={{ ...mono, fontSize: 11, color: 'var(--dim)', lineHeight: 1.6, marginTop: 26 }}>
       {i ? `Indexed through block ${int(i.updatedBlock)} with Envio HyperIndex. ` : ''}
-      {now !== null ? `Figures read ${formatAgo(now - s.readAt).toLowerCase()}, refreshed every minute. ` : ''}
+      {now !== null ? `Figures read ${formatAgo(now - s.readAt).toLowerCase()}. On-chain figures refresh every minute; Mako wallets and gas-free actions every 15 minutes. ` : ''}
       Mako Market&apos;s own wallets (operator and test accounts) are left out. Gas-free actions come from Mako Market&apos;s
       sponsor records; each is a transaction on Monad testnet.
     </p>

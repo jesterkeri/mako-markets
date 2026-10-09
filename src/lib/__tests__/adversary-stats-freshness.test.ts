@@ -8,7 +8,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), saved: null as null | Record<string, unknown>, snapshotReads: 0 }));
+// Since RELEASE_R9 the route reads only the file the 15-minute job saves (src/lib/stats-snapshot.ts). Here the "file" is
+// mocks.saved, and job() below plays the scheduled run: it reads the mocked database and stamps the start of its read.
+vi.mock('@/lib/stats-snapshot', () => ({
+  fetchDbSnapshot: async () => {
+    mocks.snapshotReads += 1;
+    if (!mocks.saved) throw Object.assign(new Error('missing'), { name: 'SnapshotMissing' });
+    return mocks.saved;
+  },
+}));
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
 vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
 vi.mock('@/db/client', () => ({
@@ -65,14 +74,27 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+async function job() {
+  const readAt = Date.now();
+  const figures = await (await import('../stats-db-read')).readDbFigures();
+  mocks.saved = { ...figures, readAt };
+}
+
 describe('adversary: /api/stats freshness', () => {
-  it('the cache is really in play: a second request inside a minute does not ask the indexer or the database again', async () => {
+  beforeEach(async () => {
+    mocks.saved = null;
+    mocks.snapshotReads = 0;
+    await job();
+  });
+
+  it('the cache is really in play: a second request inside a minute asks neither the indexer nor the saved file again', async () => {
     expect((await request()).indexed.bets).toBe(40);
     indexerBets = 41;
-    quietFor(54); // the indexer memo reuses for 55 s (60 s less the 5 s database wait)
+    quietFor(54); // the indexer memo reuses for 55 s (60 s less the 5 s wait for the saved file)
     expect((await request()).indexed.bets).toBe(40);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
+    expect(mocks.snapshotReads).toBe(1);
+    expect(mocks.dbExecute, 'only the job read the database').toHaveBeenCalledTimes(1);
   });
 
   it('serves indexer figures no older than 60 s: after a quiet spell, a new bet is in the next answer', async () => {
@@ -85,19 +107,18 @@ describe('adversary: /api/stats freshness', () => {
     expect((await request()).indexed.bets, 'just past 60 s').toBe(42);
   });
 
-  it('serves database figures no older than 5 minutes: after a quiet spell, a new Mako wallet is counted', async () => {
+  it('serves account figures from the latest job run once the file is re-read (within a minute)', async () => {
     expect((await request()).makoWallets).toBe(64);
     mocks.dbExecute.mockResolvedValue([{ actions: 37, accounts: 11, wallets: 65 }]);
-    quietFor(289); // the database memo reuses for 290 s (5 minutes less the 10 s indexer wait)
-    expect((await request()).makoWallets, 'still inside its reuse window').toBe(64);
-    quietFor(2);
-    expect((await request()).makoWallets, 'database figures older than 5 minutes').toBe(65);
+    quietFor(15 * 60);
+    await job();
+    expect((await request()).makoWallets, 'the file is re-read after a minute').toBe(65);
   });
 
   it('readAt is when the oldest figure shown was read, never "now" over older figures', async () => {
     const t0 = Math.floor(Date.now() / 1000);
     await request();
-    quietFor(120); // indexer re-read, database figures still the ones from t0
+    quietFor(120); // indexer re-read, account figures still the job's from t0
     const body = await request();
     expect(body.readAt).toBe(t0);
   });
@@ -105,6 +126,11 @@ describe('adversary: /api/stats freshness', () => {
 
 // Spec item 3: "A failure of either source shows that part as unavailable without hiding the other."
 describe('adversary: a source that goes down after its figures were cached', () => {
+  beforeEach(async () => {
+    mocks.saved = null;
+    await job();
+  });
+
   it('the indexer stops answering: once its figures are past 60 s the page says the index is unavailable', async () => {
     expect((await request()).indexedStatus).toBe('ok');
     quietFor(61);
@@ -112,13 +138,17 @@ describe('adversary: a source that goes down after its figures were cached', () 
     const body = await request();
     expect(body.indexedStatus).toBe('unavailable');
     expect(body.indexed).toBeNull();
-    expect(body.makoWallets, 'the database figures stay').toBe(64);
+    expect(body.makoWallets, 'the account figures stay').toBe(64);
   });
 
-  it('the database stops answering: once its figures are past 5 minutes they are null', async () => {
+  it('the job stops (database down): once the saved figures are 20 minutes old they are null', async () => {
     expect((await request()).makoWallets).toBe(64);
-    quietFor(291);
     mocks.dbExecute.mockRejectedValue(new Error('db down'));
+    quietFor(15 * 60);
+    await expect(job()).rejects.toThrow('db down');
+    quietFor(4 * 60 + 59);
+    expect((await request()).makoWallets, '19:59 old').toBe(64);
+    quietFor(1);
     const body = await request();
     expect(body.makoWallets).toBeNull();
     expect(body.gasFree).toBeNull();
@@ -133,6 +163,8 @@ describe('adversary: a malformed database row is no figures, never a zero', () =
     ['actions null', { actions: null, accounts: 11, wallets: 64 }],
   ])('%s', async (_name, row) => {
     mocks.dbExecute.mockResolvedValue([row]);
+    mocks.saved = null;
+    await expect(job(), JSON.stringify(row)).rejects.toThrow(/db figures row/);
     const body = await request();
     expect(body.makoWallets, JSON.stringify(row)).toBeNull();
     expect(body.gasFree, JSON.stringify(row)).toBeNull();

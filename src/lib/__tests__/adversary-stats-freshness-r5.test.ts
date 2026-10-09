@@ -14,7 +14,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), snapshot: vi.fn() }));
+// Since RELEASE_R9 the account figures come from the 15-minute job's saved file (src/lib/stats-snapshot.ts). The file
+// here was read 5 s after the true start of the indexer read, so readAt is decided by the indexer's stamp, which is what
+// this pass attacks.
+vi.mock('@/lib/stats-snapshot', () => ({ fetchDbSnapshot: mocks.snapshot }));
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
 vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
 vi.mock('@/db/client', () => ({
@@ -58,6 +62,7 @@ beforeEach(() => {
     () => new Promise<Response>((resolve) => setTimeout(() => resolve(new Response(JSON.stringify(answer), { status: 200 })), READ_MS)),
   ) as typeof fetch;
   mocks.dbExecute.mockResolvedValue([ROW]);
+  mocks.snapshot.mockImplementation(async () => ({ gasFree: { actions: 37, accounts: 11 }, makoWallets: 64, readAt: TRUE_T0 + 5_000 }));
 });
 afterEach(() => {
   vi.useRealTimers();
