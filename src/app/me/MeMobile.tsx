@@ -140,7 +140,7 @@ function Tiles(v: MeView) {
           href={CIRCLE_FAUCET_URL}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="Get test USDC from Circle’s faucet"
+          aria-label={`Get test USDC from Circle’s faucet (choose ${FAUCET_NETWORK})`}
           className="m3-press"
           style={{ position: 'absolute', top: 14, right: 14, width: 36, height: 36, borderRadius: 9999, background: '#000', color: 'var(--mako-signal)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
