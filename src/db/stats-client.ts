@@ -59,7 +59,10 @@ export function parseStatsUrl(raw: string): { host: string; port: number; databa
   const database = decodeURIComponent(url.pathname.slice(1));
   if (!/^[A-Za-z0-9_-]+$/.test(database)) throw bad('needs one database name');
   for (const key of url.searchParams.keys()) if (!ALLOWED_PARAMS.has(key)) throw bad('has an option that is not allowed');
-  const port = url.port ? Number(url.port) : 5432;
+  // Neon's direct endpoint listens on 5432. Any other value, 0 included, is refused: postgres-js treats a port of 0 as
+  // missing and would take PGPORT instead (adversary on 7a19ec4).
+  if (url.port !== '' && url.port !== '5432') throw bad('must use port 5432');
+  const port = 5432;
   return { host, port, database, username: STATS_ROLE, password };
 }
 
@@ -74,7 +77,8 @@ function client(): StatsDb {
       database: c.database,
       username: c.username,
       password: c.password,
-      ssl: 'require',
+      // Certificate and host name checked ('require' would encrypt without checking who answers).
+      ssl: 'verify-full',
       max: 1,
       prepare: false,
       idle_timeout: STATS_IDLE_TIMEOUT_S,

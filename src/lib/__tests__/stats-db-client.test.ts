@@ -40,7 +40,7 @@ describe('stats database login', () => {
       database: 'neondb',
       username: 'mako_stats_reader',
       password: 'pw',
-      ssl: 'require',
+      ssl: 'verify-full',
       max: 1,
       idle_timeout: STATS_IDLE_TIMEOUT_S,
       connect_timeout: STATS_CONNECT_TIMEOUT_S,
@@ -63,6 +63,8 @@ describe('stats database login', () => {
     ['no password', 'postgresql://mako_stats_reader@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/neondb?sslmode=require'],
     ['a host option', 'postgresql://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/neondb?host=ep-x-pooler.neon.tech'],
     ['no database', 'postgresql://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/'],
+    ['port 0, which the driver would replace with PGPORT', 'postgresql://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech:0/neondb'],
+    ['another port', 'postgresql://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech:6543/neondb'],
     ['another scheme', 'https://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d.us-east-1.aws.neon.tech/neondb'],
   ])('refuses %s', async (_name, url) => {
     vi.stubEnv('STATS_DATABASE_URL', url);
