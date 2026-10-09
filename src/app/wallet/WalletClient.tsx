@@ -8,7 +8,7 @@ import { CopyButton, display, mono, BAR } from '@/app/me/MeParts';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { useUsdcBalance } from '@/lib/hooks';
-import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
+import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { usdc2 } from '@/lib/pool-list';
 import { formatAddress } from '@/lib/user-display';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
@@ -189,6 +189,7 @@ function WalletSignedIn({ user, initialTab }: { user: AuthedUser; initialTab: Wa
             Get test USDC ↗
           </a>
         </div>
+        <span style={note}>In Circle’s faucet, choose {FAUCET_NETWORK}, then paste this address.</span>
         <span style={note}>Send only USDC on Monad testnet to this address. Anything else, or USDC on another network, may be lost.</span>
         {email && <span style={note}>This is your Mako wallet. It can receive USDC before its first transaction.</span>}
       </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { QRCodeSVG } from 'qrcode.react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -13,13 +14,14 @@ import { PRIVY_APP_ID } from '@/components/PrivyAuth';
 import { formatLockoutRemaining, type TotpRequiredState } from '@/components/signup/TotpStep';
 import { ROUNDS_ADDRESS } from '@/lib/contract';
 import { useMarkets } from '@/lib/hooks';
-import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
+import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { openPools } from '@/lib/pool-display';
 import { confirmWalletFree, continueGatedSignIn, startOver as requestStartOver } from '@/lib/privy-gated-signin';
 import { submitTotp, type SessionResult } from '@/lib/session-exchange';
 import { closeSignIn, useSignInOpen } from '@/lib/sign-in-store';
 import { accountAddress, USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
+import { tourHref } from '@/lib/tour';
 import { signInWithWallet } from '@/lib/wallet-auth-client';
 
 import { PrivyEmailBridge, type EmailAuth } from './PrivyEmailBridge';
@@ -66,9 +68,15 @@ function SignInFlow() {
     (step.kind === 'wallet_setup' && step.busy) ||
     (step.kind === 'wallet' && step.busy);
 
+  const router = useRouter();
+  const welcome = step.kind === 'done';
+  // A new account's welcome hands over to How to play however it is closed (button, Escape, backdrop): testers who
+  // never found the tour got stuck (Joshua, 2026-10-09). Only the beta-terms link leaves without it.
   const close = useCallback(() => {
-    if (!busy) closeSignIn();
-  }, [busy]);
+    if (busy) return;
+    closeSignIn();
+    if (welcome) router.push(tourHref(0));
+  }, [busy, welcome, router]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
     window.addEventListener('keydown', onKey);
@@ -804,7 +812,7 @@ function DoneStep({ step, close, variant }: FlowProps & { variant: 'desktop' | '
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, padding: '12px 16px', borderRadius: variant === 'desktop' ? 14 : 22, background: 'var(--raise)' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Get free test USDC</div>
-          <div style={{ fontSize: 12, color: 'var(--dim)' }}>Circle’s faucet asks for your address.</div>
+          <div style={{ fontSize: 12, color: 'var(--dim)' }}>In Circle’s faucet, choose {FAUCET_NETWORK}, then paste your address.</div>
         </div>
         <button onClick={copy} className="m3-press" style={{ flex: 'none', height: 36, padding: '0 12px', borderRadius: 9999, background: 'var(--raise2)', fontSize: 13, fontWeight: 700 }}>
           {copied ? 'Copied' : 'Copy address'}
@@ -814,7 +822,7 @@ function DoneStep({ step, close, variant }: FlowProps & { variant: 'desktop' | '
         </a>
       </div>
       <button onClick={close} className="m3-press m3-scale96" style={bigButton(true)}>
-        Start betting
+        Show me around
       </button>
     </div>
   );

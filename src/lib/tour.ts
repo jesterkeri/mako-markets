@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react';
 
 import type { MascotMotion, MascotPose } from '@/components/Mascot';
-import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
+import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import type { NavKey } from '@/lib/shell-nav';
 
 // How to play (20a): the seven-step tour. Each step opens the page it explains (`?tour=<n>` on that page, so the
@@ -141,8 +141,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     pose: '12-faucet',
     motion: 'bob',
     title: 'Grab test USDC',
-    body: 'Copy your address on Me and paste it into Circle’s faucet. Test USDC is free, and email accounts pay no gas, up to 10 transactions a day.',
-    bodyMobile: 'Copy your address, then get free test USDC from Circle’s faucet. Email accounts pay no gas, up to 10 a day.',
+    body: `Copy your address on Me, open Circle’s faucet, choose ${FAUCET_NETWORK} and paste it. Test USDC is free, and email accounts pay no gas, up to 10 transactions a day.`,
+    bodyMobile: `Copy your address, open Circle’s faucet, choose ${FAUCET_NETWORK} and paste it. Email accounts pay no gas, up to 10 a day.`,
     anchor: { key: 'test-usdc', gap: 20, gapMobile: 12, caret: 310 },
     mobile: { dir: 'row-reverse', width: 120 },
   },

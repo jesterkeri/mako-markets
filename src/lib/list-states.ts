@@ -24,6 +24,9 @@ export type ListStateCopy = {
 };
 
 export const CIRCLE_FAUCET_URL = 'https://faucet.circle.com/';
+/// The network to choose in Circle's faucet, spelled as its menu spells it. The faucet opens on another network (testers
+/// kept its default, Arc, 2026-10-09) and its link cannot preselect one, so every line that sends someone there names it.
+export const FAUCET_NETWORK = 'Monad Testnet';
 
 const EMPTY: Record<ListKind, ListStateCopy> = {
   rounds: {
@@ -44,7 +47,7 @@ const EMPTY: Record<ListKind, ListStateCopy> = {
   },
   me: {
     title: 'No bets yet',
-    body: 'Your rounds and pools show up here, with anything you can claim. Start with test USDC from Circle’s faucet.',
+    body: `Your rounds and pools show up here, with anything you can claim. Start with test USDC from Circle’s faucet: choose ${FAUCET_NETWORK}.`,
     pose: '12-faucet',
     motion: 'bob',
     primary: { label: 'Get test USDC', href: CIRCLE_FAUCET_URL, external: true },

@@ -7,7 +7,7 @@ import { ListStateMobile } from '@/components/ListState';
 import { ICON } from '@/components/shell/icons';
 import { openFeedback } from '@/lib/feedback-store';
 import { tourHref } from '@/lib/tour';
-import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
+import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { CAT_STYLE, usdc2 } from '@/lib/pool-list';
 import { formatAddress } from '@/lib/user-display';
@@ -175,6 +175,7 @@ function TestUsdc({ account }: { account: `0x${string}` }) {
       <div data-tour-anchor="test-usdc" style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 28, background: 'var(--mako-violet)', color: '#000', boxShadow: 'var(--edge)', padding: '14px 14px 14px 18px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 800 }}>Get test USDC</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(0,0,0,0.75)', marginTop: 2 }}>In the faucet, choose {FAUCET_NETWORK}</div>
           <CopyButton text={account} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, fontSize: 13, fontWeight: 600, color: 'rgba(0,0,0,0.75)', fontVariantNumeric: 'tabular-nums' }}>
             {(copied) => (
               <>

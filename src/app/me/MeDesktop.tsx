@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRef } from 'react';
 
 import { ListStateDesktop } from '@/components/ListState';
-import { CIRCLE_FAUCET_URL } from '@/lib/list-states';
+import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, positionMeta, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { usdc2 } from '@/lib/pool-list';
 import { tourHref } from '@/lib/tour';
@@ -156,7 +156,7 @@ function TestUsdc({ account }: { account: `0x${string}` }) {
         <span style={{ ...display, fontSize: 20 }}>Test USDC</span>
         <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>MONAD TESTNET</span>
       </div>
-      <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 4 }}>Free test USDC to try Mako Market comes from Circle’s faucet. It asks for your address.</div>
+      <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 4 }}>Free test USDC to try Mako Market comes from Circle’s faucet. Choose {FAUCET_NETWORK} there, then paste your address.</div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <a
           href={CIRCLE_FAUCET_URL}
