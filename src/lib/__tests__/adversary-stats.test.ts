@@ -7,7 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
-vi.mock('@/db/client', () => ({ db: { execute: mocks.dbExecute } }));
+vi.mock('@/db/client', () => ({
+  db: {
+    execute: mocks.dbExecute,
+    // The stats read runs in a transaction that first sets its statement_timeout; only the stats query counts.
+    transaction: (fn: (tx: { execute: (q: unknown) => unknown }) => unknown) =>
+      fn({ execute: (q: unknown) => (JSON.stringify(q).includes('statement_timeout') ? Promise.resolve([]) : mocks.dbExecute(q)) }),
+  },
+}));
 
 import { parseIndexedStats } from '../stats';
 

@@ -12,7 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ttlMemo } from '../ttl-memo';
 
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
-vi.mock('@/db/client', () => ({ db: { execute: mocks.dbExecute } }));
+vi.mock('@/db/client', () => ({
+  db: {
+    execute: mocks.dbExecute,
+    // The stats read runs in a transaction that first sets its statement_timeout; only the stats query counts.
+    transaction: (fn: (tx: { execute: (q: unknown) => unknown }) => unknown) =>
+      fn({ execute: (q: unknown) => (JSON.stringify(q).includes('statement_timeout') ? Promise.resolve([]) : mocks.dbExecute(q)) }),
+  },
+}));
 
 const SENTINEL_URL = 'https://indexer.invalid/sentinel-graphql';
 
@@ -101,12 +108,22 @@ describe('adversary r2: a clock that steps backwards', () => {
 // Its unproven suspicion, closed: the database read itself times out, so a query that hangs fails that refresh and the
 // next request reads again, instead of every later request waiting on the hung one.
 describe('a database read that hangs', () => {
-  it('times out at 5 s (figures null), and the next request reads again', async () => {
+  it('times out at 5 s (figures null), starts no second query while it hangs, and reads again once it ends', async () => {
     const get = await GET();
-    mocks.dbExecute.mockImplementation(() => new Promise(() => {})); // never settles
+    let endHung: (e: unknown) => void = () => {};
+    mocks.dbExecute.mockImplementation(() => new Promise((_resolve, reject) => (endHung = reject))); // hangs
     const pending = get();
     await vi.advanceTimersByTimeAsync(5_000);
     expect((await (await pending).json()).makoWallets).toBeNull();
+    // Codex RELEASE_R7 #2: while the hung query is still running, later requests start no other one.
+    for (let i = 0; i < 3; i++) {
+      vi.advanceTimersByTime(300_000);
+      expect((await (await get()).json()).makoWallets).toBeNull();
+    }
+    expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
+    // The database ends it (its statement_timeout); the next request reads again and recovers.
+    endHung(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+    await vi.advanceTimersByTimeAsync(0);
     mocks.dbExecute.mockResolvedValue([ROW]);
     expect((await (await get()).json()).makoWallets).toBe(64);
     expect(mocks.dbExecute).toHaveBeenCalledTimes(2);

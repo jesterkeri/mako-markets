@@ -5,7 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
-vi.mock('@/db/client', () => ({ db: { execute: mocks.dbExecute } }));
+vi.mock('@/db/client', () => ({
+  db: {
+    execute: mocks.dbExecute,
+    // The stats read runs in a transaction that first sets its statement_timeout; only the stats query counts.
+    transaction: (fn: (tx: { execute: (q: unknown) => unknown }) => unknown) =>
+      fn({ execute: (q: unknown) => (JSON.stringify(q).includes('statement_timeout') ? Promise.resolve([]) : mocks.dbExecute(q)) }),
+  },
+}));
 
 import { parseIndexedStats, STATS_QUERY, toWire } from '../stats';
 
@@ -125,9 +132,9 @@ describe('GET /api/stats', () => {
     }
   });
 
-  it('lets the CDN hold a copy for at most two minutes', async () => {
+  it('is never cached by a CDN, so no copy adds its own age or hides an outage (Codex RELEASE_R7 #1)', async () => {
     const { GET } = await import('../../app/api/stats/route');
-    expect((await GET()).headers.get('Cache-Control')).toBe('public, s-maxage=60, stale-while-revalidate=60');
+    expect((await GET()).headers.get('Cache-Control')).toBe('no-store');
   });
 
   it('serves the indexed figures as strings and numbers', async () => {
@@ -164,5 +171,21 @@ describe('GET /api/stats', () => {
     expect(body.gasFree).toBeNull();
     expect(body.makoWallets).toBeNull();
     expect(JSON.stringify(body)).not.toContain('secret-key');
+  });
+
+  it('the database read sets its own statement_timeout inside its transaction (the query stops, not just the wait)', async () => {
+    const seen: string[] = [];
+    const { PgDialect } = await import('drizzle-orm/pg-core');
+    const dialect = new PgDialect();
+    const render = (q: unknown) => dialect.sqlToQuery(q as Parameters<typeof dialect.sqlToQuery>[0]).sql;
+    const { db } = await import('@/db/client');
+    const tx = vi.spyOn(db as unknown as { transaction: (fn: (t: unknown) => unknown) => unknown }, 'transaction').mockImplementation((fn) =>
+      fn({ execute: (q: unknown) => (seen.push(render(q)), render(q).includes('statement_timeout') ? Promise.resolve([]) : mocks.dbExecute(q)) }),
+    );
+    await call();
+    expect(tx).toHaveBeenCalledTimes(1);
+    expect(seen[0]).toMatch(/SET LOCAL statement_timeout = 5000/);
+    expect(seen[1]).toMatch(/user_safes/);
+    tx.mockRestore();
   });
 });

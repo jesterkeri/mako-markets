@@ -50,16 +50,39 @@ async function fetchIndexer(): Promise<IndexedStats> {
 
 type DbFigures = { gasFree: NonNullable<StatsWire['gasFree']>; makoWallets: number };
 
+class ReadStillRunning extends Error {
+  override name = 'ReadStillRunning';
+}
+
+/// The database read in flight on this server instance, or null. A read that outlives the page's wait keeps running
+/// on the database; while it does, no other read starts (Codex RELEASE_R7 #2: each timed-out request used to start
+/// another, which a hung Neon would let pile up). At most one stats query per instance, even during an outage.
+let dbRead: Promise<unknown> | null = null;
+
 /// Landed sponsored operations and the accounts behind them, and the Mako wallets created, in one query, or a throw.
 async function fetchDbFigures(): Promise<DbFigures> {
-  // The timeout is on the read itself, so a query that hangs fails the refresh (and the next request tries again)
-  // instead of leaving every later request waiting on it.
-  const rows = await within(db.execute<{ actions: number; accounts: number; wallets: number }>(sql`
-    SELECT
-      (SELECT count(*)::int FROM aa_pending_user_ops WHERE status = 'sent') AS actions,
-      (SELECT count(DISTINCT safe_address)::int FROM aa_pending_user_ops WHERE status = 'sent') AS accounts,
-      (SELECT count(*)::int FROM user_safes WHERE chain_id = ${MONAD_TESTNET_ID}) AS wallets
-  `), DB_TIMEOUT_MS);
+  if (dbRead) throw new ReadStillRunning('a previous stats read is still running');
+  // The database stops the query itself after DB_TIMEOUT_MS (statement_timeout, scoped to this transaction), and the
+  // page stops waiting at the same time; a read the database never answers still holds the guard above until it ends.
+  const read = db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(DB_TIMEOUT_MS))}`);
+    return tx.execute<{ actions: number; accounts: number; wallets: number }>(sql`
+      SELECT
+        (SELECT count(*)::int FROM aa_pending_user_ops WHERE status = 'sent') AS actions,
+        (SELECT count(DISTINCT safe_address)::int FROM aa_pending_user_ops WHERE status = 'sent') AS accounts,
+        (SELECT count(*)::int FROM user_safes WHERE chain_id = ${MONAD_TESTNET_ID}) AS wallets
+    `);
+  });
+  dbRead = read;
+  read.then(
+    () => {
+      if (dbRead === read) dbRead = null;
+    },
+    () => {
+      if (dbRead === read) dbRead = null;
+    },
+  );
+  const rows = await within(read, DB_TIMEOUT_MS);
   const row = Array.isArray(rows) ? rows[0] : undefined;
   // A count arrives as a number (or a digit string from some drivers); null, '' or anything else is a malformed row,
   // never a zero (Number(null) and Number('') are both 0).
@@ -102,6 +125,8 @@ export async function GET() {
     // When the oldest figure shown was read, so "read Xm ago" is true of everything on the page.
     readAt: Math.floor(Math.min(Date.now(), ...[indexed, dbFigures].flatMap((r) => (r.status === 'fulfilled' ? [r.value.at] : []))) / 1000),
   };
-  // The CDN may serve a copy for a minute, and a minute more while it refreshes: never more than two minutes behind.
-  return Response.json(body, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=60' } });
+  // No shared caching (Codex RELEASE_R7 #1): a CDN copy would add its own age on top of the figures' and could keep
+  // showing "ok" after a source went down. The memos above already bound the work to one indexer read a minute and one
+  // database read every five minutes per server instance, so each viewer is answered fresh.
+  return Response.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }
