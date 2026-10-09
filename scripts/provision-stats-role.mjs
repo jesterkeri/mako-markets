@@ -163,9 +163,10 @@ const columnPrivileges = (db) => db`
     and has_any_column_privilege(${ROLE}, c.oid, p.priv)`;
 const password = randomBytes(24).toString('hex');
 
-const results = {};
+/// Every check, in order; a list, so two checks with the same label can never overwrite a FAIL with a PASS.
+const results = [];
 const expect = (name, ok) => {
-  results[name] = ok;
+  results.push([name, ok]);
   log(ok ? 'PASS' : 'FAIL', name);
 };
 
@@ -330,10 +331,10 @@ for (const dbn of providerDbs) {
   expect(`${dbn}: pg_stat_statements shows no other role's query text (${pgss.lines[0]?.ok ? pgss.lines[0].n : pgss.lines[0]?.code})`, pgss.lines[0]?.ok === true ? pgss.lines[0].n === 0 : pgss.lines[0]?.code === '42P01');
 }
 
-const failed = Object.entries(results).filter(([, ok]) => !ok);
+const failed = results.filter(([, ok]) => !ok);
 if (failed.length) die(`${failed.length} check(s) failed; nothing stored`);
 if (target === 'none') {
-  log(`all ${Object.keys(results).length} checks passed; --target none, nothing stored`);
+  log(`all ${results.length} checks passed; --target none, nothing stored`);
   process.exit(0);
 }
 
@@ -344,4 +345,4 @@ const v = spawn('vercel', args, { cwd: ROOT, env: { ...process.env, VERCEL_PROJE
 v.stdin.end(url);
 const code = await new Promise((res) => v.on('exit', res));
 if (code !== 0) die(`vercel env add failed (exit ${code})`);
-log(`all ${Object.keys(results).length} checks passed; stored STATS_DATABASE_URL (${target}${gitBranch ? ' ' + gitBranch : ''}) in ${VERCEL_PROJECT_ID}`);
+log(`all ${results.length} checks passed; stored STATS_DATABASE_URL (${target}${gitBranch ? ' ' + gitBranch : ''}) in ${VERCEL_PROJECT_ID}`);

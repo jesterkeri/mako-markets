@@ -49,10 +49,18 @@ export function statsErrorCode(e: unknown): string {
 
 /// The figures in one query, or a throw. A malformed row is a throw, never a zero.
 export async function readDbFigures(): Promise<DbFigures> {
-  if (dbRead && Date.now() - dbReadSince < STUCK_READ_MS) throw new ReadStillRunning('a previous stats read is still running');
+  // Ages are elapsed time (performance.now), so a wall-clock step neither holds a stuck read nor drops a healthy one
+  // (adversary on 72be4fa).
+  if (dbRead && performance.now() - dbReadSince < STUCK_READ_MS) throw new ReadStillRunning('a previous stats read is still running');
   if (dbRead) {
-    dbRead = null;
-    await resetStatsDb().catch(() => {});
+    // The close itself holds the guard: a run arriving while the old connection closes finds a read in flight and
+    // starts nothing, so two live reads can never coexist (adversary on 72be4fa).
+    const closing = resetStatsDb().catch(() => {});
+    dbRead = closing;
+    dbReadSince = performance.now();
+    await closing;
+    if (dbRead === closing) dbRead = null;
+    else throw new ReadStillRunning('another stats read started while the stuck one closed');
   }
   const read = statsDb.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(DB_TIMEOUT_MS))}`);
@@ -64,7 +72,7 @@ export async function readDbFigures(): Promise<DbFigures> {
     `);
   });
   dbRead = read;
-  dbReadSince = Date.now();
+  dbReadSince = performance.now();
   read.then(
     () => {
       if (dbRead === read) dbRead = null;
