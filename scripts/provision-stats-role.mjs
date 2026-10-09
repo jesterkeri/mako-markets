@@ -43,6 +43,10 @@ const LIMIT = 2;
 const TIMEOUT = '5s';
 const TABLES = ['aa_pending_user_ops', 'user_safes'];
 const SYSTEM_SCHEMAS = ['pg_catalog', 'information_schema', 'pg_toast'];
+/// What a provider-owned database (Neon: cloud_admin's `postgres`) grants to PUBLIC and this owner cannot revoke:
+/// pg_stat_statements' views, read-only. Postgres hides other roles' query text from a role outside
+/// pg_read_all_stats, which the behaviour check `pgss` proves. Anything else in such a database fails.
+const PROVIDER_ALLOWED = new Set(['public.pg_stat_statements:SELECT', 'public.pg_stat_statements_info:SELECT']);
 
 const log = (...a) => console.error('[stats-role]', ...a);
 const codeOf = (e) => e?.code ?? e?.cause?.code ?? e?.name ?? 'unknown';
@@ -55,7 +59,7 @@ const die = (why) => {
 if (process.argv[2] === 'child') {
   const [, , , action, holdMs] = process.argv;
   const u = new URL(process.env.ROLE_URL);
-  const opts = { host: u.hostname, port: 5432, database: u.pathname.slice(1), username: decodeURIComponent(u.username), password: decodeURIComponent(u.password), max: 1, prepare: false, connect_timeout: 10, idle_timeout: 0 };
+  const opts = { host: u.hostname, port: 5432, database: action === 'pgss' ? 'postgres' : u.pathname.slice(1), username: decodeURIComponent(u.username), password: decodeURIComponent(u.password), max: 1, prepare: false, connect_timeout: 10, idle_timeout: 0 };
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
   const sql = postgres({ ...opts, ssl: action === 'tls-wrong-name' ? { rejectUnauthorized: true, servername: 'wrong-name.invalid' } : 'verify-full' });
   try {
@@ -77,6 +81,9 @@ if (process.argv[2] === 'child') {
     } else if (action === 'slow') {
       await sql`select pg_sleep(6)`;
       out({ ok: true });
+    } else if (action === 'pgss') {
+      const [r] = await sql`select count(*)::int as n from pg_stat_statements where userid <> (select oid from pg_roles where rolname = current_user) and query <> '<insufficient privilege>'`;
+      out({ ok: true, n: r.n });
     } else if (action === 'temp') {
       await sql`create temp table t (x int)`;
       out({ ok: true });
@@ -231,8 +238,9 @@ try {
     // bound; what must hold is that the login can read or change nothing in them.
     const other = postgres({ ...adminOpts, database: d.datname });
     try {
-      const n = (await relationPrivileges(other)).length + (await columnPrivileges(other)).length;
-      expect(`${d.datname} (provider-owned: CONNECT${d.tmp ? ', TEMP' : ''} accepted): no table or column privileges (${n})`, n === 0);
+      const held = [...(await relationPrivileges(other)), ...(await columnPrivileges(other))].map((x) => `${x.s}.${x.t}:${x.priv}`);
+      const extra = held.filter((k) => !PROVIDER_ALLOWED.has(k));
+      expect(`${d.datname} (provider-owned: CONNECT${d.tmp ? ', TEMP' : ''} accepted): only pg_stat_statements read (${extra.length} other privileges)`, extra.length === 0);
     } catch (e) {
       expect(`${d.datname} inspected (${codeOf(e)})`, false);
     } finally {
@@ -301,6 +309,10 @@ for (const [action, name, want] of [
   await p.done;
   expect(`${name} (${p.lines[0]?.code ?? 'no error'})`, p.lines[0]?.ok === false && p.lines[0]?.code === want);
 }
+
+const pgss = child('pgss');
+await pgss.done;
+expect(`provider pg_stat_statements shows no other role's query text (${pgss.lines[0]?.ok ? pgss.lines[0].n : pgss.lines[0]?.code})`, pgss.lines[0]?.ok === true ? pgss.lines[0].n === 0 : pgss.lines[0]?.code === '42P01');
 
 const failed = Object.entries(results).filter(([, ok]) => !ok);
 if (failed.length) die(`${failed.length} check(s) failed; nothing stored`);
