@@ -15,8 +15,8 @@
 //   * checkout: HEAD is --expect-commit and the tree is clean, checked before the password exists and again before the
 //     Vercel write; Postgres and Vercel run from this checkout; the Vercel project and team are pinned to the IDs below.
 //   * role: every restrictive attribute set on create AND re-key; a role that owns anything is refused before re-key;
-//     effective privileges (has_*_privilege, so grants to PUBLIC count) checked over every table, view, sequence,
-//     schema, SECURITY DEFINER function and the database, not only the role's own grant rows.
+//     effective privileges (has_*_privilege, so grants to PUBLIC count) checked over every table, view, column,
+//     sequence, schema, SECURITY DEFINER function and every database in the cluster, not only the role's grant rows.
 //   * behaviour, from separate processes: two connect, a third is refused (53300), a read works after one closes;
 //     other tables and writes refused; a 6 s query cut at 5 s.
 //   * TLS: verify-full succeeds against the endpoint and a wrong server name is refused (ERR_TLS_CERT_ALTNAME_INVALID).
@@ -132,7 +132,23 @@ const ownerUrl = new URL(owner);
 if (ownerUrl.hostname.split('.')[0].includes('pooler')) die('owner URL is the pooler; a direct endpoint is required');
 const dbName = ownerUrl.pathname.slice(1);
 const ident = (s) => `"${s.replace(/"/g, '""')}"`;
-const admin = postgres({ host: ownerUrl.hostname, port: 5432, database: dbName, username: decodeURIComponent(ownerUrl.username), password: decodeURIComponent(ownerUrl.password), ssl: 'verify-full', max: 1, prepare: false });
+const adminOpts = { host: ownerUrl.hostname, port: 5432, database: dbName, username: decodeURIComponent(ownerUrl.username), password: decodeURIComponent(ownerUrl.password), ssl: 'verify-full', max: 1, prepare: false, onnotice: () => {} };
+const admin = postgres(adminOpts);
+
+/// Every table, view and foreign table privilege the login effectively holds in the connected database (PUBLIC included).
+const relationPrivileges = (db) => db`
+  select n.nspname as s, c.relname as t, p.priv
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as p(priv)
+  where c.relkind in ('r','v','m','f','p') and n.nspname <> all(${SYSTEM_SCHEMAS}) and n.nspname not like 'pg_temp%'
+    and has_table_privilege(${ROLE}, c.oid, p.priv)`;
+/// The same for column-level grants, which has_table_privilege does not see.
+const columnPrivileges = (db) => db`
+  select n.nspname as s, c.relname as t, p.priv
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  cross join unnest(array['SELECT','INSERT','UPDATE','REFERENCES']) as p(priv)
+  where c.relkind in ('r','v','m','f','p') and n.nspname <> all(${SYSTEM_SCHEMAS}) and n.nspname not like 'pg_temp%'
+    and has_any_column_privilege(${ROLE}, c.oid, p.priv)`;
 const password = randomBytes(24).toString('hex');
 
 const results = {};
@@ -184,14 +200,13 @@ try {
   expect('member of no role', mem.n === 0);
   const [owns] = await admin`select count(*)::int as n from pg_shdepend where refobjid = ${r.oid} and deptype = 'o'`;
   expect('owns nothing', owns.n === 0);
-  const rel = await admin`
-    select n.nspname as s, c.relname as t, p.priv
-    from pg_class c join pg_namespace n on n.oid = c.relnamespace
-    cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) as p(priv)
-    where c.relkind in ('r','v','m','f','p') and n.nspname <> all(${SYSTEM_SCHEMAS}) and n.nspname not like 'pg_temp%'
-      and has_table_privilege(${ROLE}, c.oid, p.priv)`;
+  const rel = await relationPrivileges(admin);
   const allowed = rel.filter((x) => x.s === 'public' && TABLES.includes(x.t) && x.priv === 'SELECT');
   expect(`tables and views: SELECT on the two stats tables only (${rel.length} effective privileges)`, rel.length === TABLES.length && allowed.length === TABLES.length);
+  // Column grants are invisible to has_table_privilege (adversary on 5a64557): any column privilege counts.
+  const cols = await columnPrivileges(admin);
+  const colAllowed = cols.filter((x) => x.s === 'public' && TABLES.includes(x.t) && x.priv === 'SELECT');
+  expect(`columns: SELECT on the two stats tables only (${cols.length} effective column privileges)`, cols.length === TABLES.length && colAllowed.length === TABLES.length);
   const [seq] = await admin`
     select count(*)::int as n from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'S' and n.nspname <> all(${SYSTEM_SCHEMAS})
@@ -203,6 +218,27 @@ try {
   expect('schemas: USAGE on public only, CREATE nowhere', sch.every((x) => !x.c && x.u === (x.s === 'public')));
   const [dbp] = await admin`select has_database_privilege(${ROLE}, current_database(), 'CONNECT') as conn, has_database_privilege(${ROLE}, current_database(), 'CREATE') as cr, has_database_privilege(${ROLE}, current_database(), 'TEMP') as tmp`;
   expect('database: CONNECT only (no CREATE, no TEMP)', dbp.conn && !dbp.cr && !dbp.tmp);
+  // Every other database in the cluster (PUBLIC holds CONNECT and TEMP on new ones by default).
+  const others = await admin`select datname, pg_get_userbyid(datdba) as owner, datallowconn,
+      has_database_privilege(${ROLE}, datname, 'CONNECT') as conn, has_database_privilege(${ROLE}, datname, 'TEMP') as tmp,
+      has_database_privilege(${ROLE}, datname, 'CREATE') as cr
+    from pg_database where datname <> current_database()`;
+  expect('no CREATE on any database', others.every((d) => !d.cr));
+  expect('no other database of ours accepts the login', others.filter((d) => d.owner === OWNER_ROLE).every((d) => !d.conn && !d.tmp));
+  for (const d of others.filter((x) => x.owner !== OWNER_ROLE && x.datallowconn && x.conn)) {
+    // The provider's own databases (Neon: cloud_admin's postgres, template1) cannot be revoked by this owner. The
+    // role cap is per login across the cluster and statement_timeout is set on the role, so they do not widen the
+    // bound; what must hold is that the login can read or change nothing in them.
+    const other = postgres({ ...adminOpts, database: d.datname });
+    try {
+      const n = (await relationPrivileges(other)).length + (await columnPrivileges(other)).length;
+      expect(`${d.datname} (provider-owned: CONNECT${d.tmp ? ', TEMP' : ''} accepted): no table or column privileges (${n})`, n === 0);
+    } catch (e) {
+      expect(`${d.datname} inspected (${codeOf(e)})`, false);
+    } finally {
+      await other.end({ timeout: 1 }).catch(() => {});
+    }
+  }
   const [definer] = await admin`
     select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where p.prosecdef and n.nspname <> all(${SYSTEM_SCHEMAS}) and has_function_privilege(${ROLE}, p.oid, 'EXECUTE')`;

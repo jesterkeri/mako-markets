@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({ order: [] as string[], refresh: vi.fn() }));
-vi.mock('@/lib/stats-snapshot', () => ({ refreshDbSnapshot: m.refresh }));
+vi.mock('@/lib/stats-snapshot-refresh', () => ({ refreshDbSnapshot: m.refresh }));
 vi.mock('@/lib/aa-pending-user-ops', () => ({
   AlreadyClaimedError: class extends Error {},
   expirePastDueRows: vi.fn(async () => (m.order.push('expire'), 0)),
@@ -47,6 +47,23 @@ describe('aa-fast and the stats figures', () => {
     expect(m.order).toEqual(['expire', 'select']);
     expect(errors.join('\n')).toContain('ECONNREFUSED');
     expect(errors.join('\n')).not.toContain('SENTINEL');
+  });
+
+  it('a refresh that never finishes holds the cleanup for its 14 s budget at most', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      m.refresh.mockImplementation(() => new Promise(() => {}));
+      const { GET } = await import('@/app/api/cron/aa-fast/route');
+      const pending = GET(req());
+      await vi.advanceTimersByTimeAsync(13_999);
+      expect(m.order, 'still inside the budget').toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await pending).status).toBe(200);
+      expect(m.order).toEqual(['expire', 'select']);
+      expect(errors.join('\n')).toContain('TIMEOUT');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('an unauthenticated call refreshes nothing', async () => {

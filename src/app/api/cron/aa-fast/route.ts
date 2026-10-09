@@ -11,7 +11,8 @@ import {
   transitionFromSendingViaResolver,
 } from '@/lib/aa-pending-user-ops';
 import { statsErrorCode } from '@/lib/stats-db-read';
-import { refreshDbSnapshot } from '@/lib/stats-snapshot';
+import { refreshDbSnapshot } from '@/lib/stats-snapshot-refresh';
+import { within } from '@/lib/within';
 import { resolveSubmittedOp } from '@/lib/user-op';
 
 // ----------------------------------------------------------------------------
@@ -34,6 +35,9 @@ import { resolveSubmittedOp } from '@/lib/user-op';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/// The stats refresh's whole budget (5 s database read, 8 s Blob write): past it, cleanup goes ahead regardless.
+const STATS_REFRESH_BUDGET_MS = 14_000;
+
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return Response.json({ error: 'unauthorized' }, { status: 403 });
@@ -42,8 +46,8 @@ export async function GET(req: Request) {
 
   // 0. The /stats account figures ride this run's database wake-up (Joshua, 2026-10-09: every 15 minutes, no extra
   // wake-ups); this is the only place they are read (src/lib/stats-snapshot.ts). First, and on its own: a failure is
-  // logged by class and never stops the cleanup below.
-  const statsSnapshot = await refreshDbSnapshot().then(
+  // logged by code and never stops the cleanup below, which waits for it at most STATS_REFRESH_BUDGET_MS.
+  const statsSnapshot = await within(refreshDbSnapshot(), STATS_REFRESH_BUDGET_MS).then(
     () => 'ok',
     (e: unknown) => statsErrorCode(e),
   );

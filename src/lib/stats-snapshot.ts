@@ -14,12 +14,9 @@ import 'server-only';
 // The figures are public counts; the file holds nothing else.
 // ----------------------------------------------------------------------------
 
-import { put } from '@vercel/blob';
-
 import { getAppBlobPublicHost } from '@/lib/avatar-url';
-import { readDbFigures, type DbFigures } from '@/lib/stats-db-read';
 
-export type DbSnapshot = DbFigures & { readAt: number };
+export type DbSnapshot = { gasFree: { actions: number; accounts: number }; makoWallets: number; readAt: number };
 
 /// Each deployment environment writes its own file: production, beta (preview) and development share one Blob store,
 /// and beta's figures (from the development database) must never replace production's.
@@ -28,8 +25,6 @@ export function snapshotPathname(env: string | undefined = process.env.VERCEL_EN
   return `stats/${scope}/db-figures.json`;
 }
 
-/// The shortest cache the Blob CDN allows; the read time inside the file is what bounds the figures' age.
-const CDN_MAX_AGE_S = 60;
 const FETCH_TIMEOUT_MS = 5_000;
 
 export class SnapshotNotConfigured extends Error {
@@ -54,22 +49,6 @@ export function parseSnapshot(raw: unknown): DbSnapshot | null {
   if (!isCount(g.actions) || !isCount(g.accounts) || !isCount(r.makoWallets)) return null;
   if (!isCount(r.readAt) || r.readAt < Date.UTC(2026, 0, 1)) return null;
   return { gasFree: { actions: g.actions, accounts: g.accounts }, makoWallets: r.makoWallets, readAt: r.readAt };
-}
-
-/// Called by the scheduled job: read the database, then replace this environment's file. The read time is stamped
-/// before the read starts, so the age the page computes is never less than the figures' real age.
-export async function refreshDbSnapshot(): Promise<{ readAt: number }> {
-  const readAt = Date.now();
-  const figures = await readDbFigures();
-  const body = JSON.stringify({ v: 1, ...figures, readAt });
-  await put(snapshotPathname(), body, {
-    access: 'public',
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: 'application/json',
-    cacheControlMaxAge: CDN_MAX_AGE_S,
-  });
-  return { readAt };
 }
 
 /// Called by /api/stats: this environment's file from the public Blob host, with no token and no database.

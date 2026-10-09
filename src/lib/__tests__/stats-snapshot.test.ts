@@ -7,7 +7,8 @@ const m = vi.hoisted(() => ({ put: vi.fn(), read: vi.fn() }));
 vi.mock('@vercel/blob', () => ({ put: m.put }));
 vi.mock('@/lib/stats-db-read', () => ({ readDbFigures: m.read }));
 
-import { fetchDbSnapshot, parseSnapshot, refreshDbSnapshot, snapshotPathname } from '../stats-snapshot';
+import { fetchDbSnapshot, parseSnapshot, snapshotPathname } from '../stats-snapshot';
+import { PUT_TIMEOUT_MS, refreshDbSnapshot } from '../stats-snapshot-refresh';
 
 const FIGURES = { gasFree: { actions: 74, accounts: 11 }, makoWallets: 19 };
 const T0 = new Date('2026-10-09T12:00:00Z').getTime();
@@ -46,6 +47,8 @@ describe('refreshDbSnapshot (the scheduled job)', () => {
     expect(path).toBe('stats/preview/db-figures.json');
     expect(JSON.parse(body)).toEqual({ v: 1, ...FIGURES, readAt: T0 });
     expect(opts).toMatchObject({ access: 'public', addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 60 });
+    expect(opts.abortSignal, 'the write is bounded in time').toBeInstanceOf(AbortSignal);
+    expect(PUT_TIMEOUT_MS).toBeLessThanOrEqual(8_000);
   });
 
   it('stamps the time the read STARTED, so the age the page computes is never too young', async () => {

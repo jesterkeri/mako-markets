@@ -163,8 +163,12 @@ describe('GET /api/stats', () => {
     await call();
     expect(mocks.dbExecute).not.toHaveBeenCalled();
     expect(mocks.snapshot).toHaveBeenCalledTimes(1);
-    const src = (await import('node:fs')).readFileSync(new URL('../../app/api/stats/route.ts', import.meta.url), 'utf8');
-    expect(src).not.toMatch(/@\/db\/|stats-db-read|drizzle/);
+    // Neither the route nor the reader it imports names any database code (the writer is stats-snapshot-refresh.ts).
+    const fs = await import('node:fs');
+    for (const f of ['../../app/api/stats/route.ts', '../stats-snapshot.ts', '../within.ts', '../ttl-memo.ts', '../stats.ts']) {
+      const src = fs.readFileSync(new URL(f, import.meta.url), 'utf8');
+      expect(src, f).not.toMatch(/from '@\/db\/|from '@\/lib\/stats-db-read'|stats-snapshot-refresh|from 'drizzle|from 'postgres'/);
+    }
   });
 
   it('is never cached by a CDN, so no copy adds its own age or hides an outage (Codex RELEASE_R7 #1)', async () => {
