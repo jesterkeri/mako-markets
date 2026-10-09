@@ -13,6 +13,7 @@ import { put } from '@vercel/blob';
 
 import { readDbFigures } from '@/lib/stats-db-read';
 import { snapshotPathname } from '@/lib/stats-snapshot';
+import { within } from '@/lib/within';
 
 /// The shortest cache the Blob CDN allows; the read time inside the file is what bounds the figures' age.
 const CDN_MAX_AGE_S = 60;
@@ -25,13 +26,26 @@ export async function refreshDbSnapshot(): Promise<{ readAt: number }> {
   const readAt = Date.now();
   const figures = await readDbFigures();
   const body = JSON.stringify({ v: 1, ...figures, readAt });
-  await put(snapshotPathname(), body, {
-    access: 'public',
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: 'application/json',
-    cacheControlMaxAge: CDN_MAX_AGE_S,
-    abortSignal: AbortSignal.timeout(PUT_TIMEOUT_MS),
-  });
+  // An AbortController's plain abort, not AbortSignal.timeout: the Blob client stops retrying only on an AbortError and
+  // treats a TimeoutError as retryable (adversary on e93214a), so a timeout signal kept it going for minutes. within()
+  // also caps the promise itself, whatever the client does.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), PUT_TIMEOUT_MS);
+  try {
+    await within(
+      put(snapshotPathname(), body, {
+        access: 'public',
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: 'application/json',
+        cacheControlMaxAge: CDN_MAX_AGE_S,
+        abortSignal: abort.signal,
+      }),
+      PUT_TIMEOUT_MS,
+    );
+  } finally {
+    clearTimeout(timer);
+    abort.abort();
+  }
   return { readAt };
 }

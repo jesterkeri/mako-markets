@@ -30,7 +30,7 @@ export const STATS_IDLE_TIMEOUT_S = 2;
 /// Seconds to establish a connection, after which the read fails (the role's slots may be taken).
 export const STATS_CONNECT_TIMEOUT_S = 5;
 
-const globalForStats = globalThis as unknown as { __makoStatsDb?: StatsDb };
+const globalForStats = globalThis as unknown as { __makoStatsDb?: StatsDb; __makoStatsPg?: ReturnType<typeof postgres> };
 
 /// The only role this login may use: a value naming any other (the app's owner, say) is refused.
 export const STATS_ROLE = 'mako_stats_reader';
@@ -84,9 +84,19 @@ function client(): StatsDb {
       idle_timeout: STATS_IDLE_TIMEOUT_S,
       connect_timeout: STATS_CONNECT_TIMEOUT_S,
     });
+    globalForStats.__makoStatsPg = pg;
     globalForStats.__makoStatsDb = drizzle(pg);
   }
   return globalForStats.__makoStatsDb;
+}
+
+/// Closes this instance's stats connection at once, ending any read stuck on it (a network stall after connect, which
+/// neither statement_timeout nor connect_timeout ends), so the next read opens a fresh one.
+export async function resetStatsDb(): Promise<void> {
+  const pg = globalForStats.__makoStatsPg;
+  globalForStats.__makoStatsPg = undefined;
+  globalForStats.__makoStatsDb = undefined;
+  await pg?.end({ timeout: 0 });
 }
 
 export const statsDb = new Proxy({} as StatsDb, {

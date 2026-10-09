@@ -12,7 +12,7 @@ import 'server-only';
 
 import { sql } from 'drizzle-orm';
 
-import { statsDb } from '@/db/stats-client';
+import { resetStatsDb, statsDb } from '@/db/stats-client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { within } from '@/lib/within';
 
@@ -32,6 +32,11 @@ export class ReadStillRunning extends Error {
 /// The read in flight on this server instance, or null. A read that outlives the wait keeps running on the database;
 /// while it does, no other read starts (Codex RELEASE_R7 #2), so a hung database never collects a pile of reads.
 let dbRead: Promise<unknown> | null = null;
+let dbReadSince = 0;
+
+/// A read still open after this long is stuck (its own limits are 5 s to connect and 5 s to run): it is abandoned and
+/// its connection closed, so one stalled socket cannot stop every later run on this instance (adversary on e93214a).
+export const STUCK_READ_MS = 60_000;
 
 /// A failed read as a code or class for the logs, never the message: a driver error's message can carry the
 /// connection string.
@@ -44,7 +49,11 @@ export function statsErrorCode(e: unknown): string {
 
 /// The figures in one query, or a throw. A malformed row is a throw, never a zero.
 export async function readDbFigures(): Promise<DbFigures> {
-  if (dbRead) throw new ReadStillRunning('a previous stats read is still running');
+  if (dbRead && Date.now() - dbReadSince < STUCK_READ_MS) throw new ReadStillRunning('a previous stats read is still running');
+  if (dbRead) {
+    dbRead = null;
+    await resetStatsDb().catch(() => {});
+  }
   const read = statsDb.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(DB_TIMEOUT_MS))}`);
     return tx.execute<{ actions: number; accounts: number; wallets: number }>(sql`
@@ -55,6 +64,7 @@ export async function readDbFigures(): Promise<DbFigures> {
     `);
   });
   dbRead = read;
+  dbReadSince = Date.now();
   read.then(
     () => {
       if (dbRead === read) dbRead = null;

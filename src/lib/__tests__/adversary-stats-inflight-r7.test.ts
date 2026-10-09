@@ -23,10 +23,11 @@ const h = vi.hoisted(() => ({
   maxOpen: 0,
   script: null as null | ((stmt: string) => unknown),
   clientThrows: null as null | Error,
+  reset: (async () => {}) as () => Promise<void>,
 }));
 
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
-vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
+vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db, resetStatsDb: () => h.reset() }));
 // Since RELEASE_R9 the route reads only the 15-minute job's saved file (src/lib/stats-snapshot.ts), mocked here as
 // h.snapshot; the database attacks below drive the job's own read (src/lib/stats-db-read.ts) through GET() below.
 vi.mock('@/lib/stats-snapshot', () => ({ fetchDbSnapshot: () => h.snapshot() }));
@@ -176,25 +177,32 @@ describe('adversary r7: statement_timeout is scoped to the stats transaction', (
 });
 
 describe('adversary r7: at most one database read per instance', () => {
-  it('50 concurrent requests and 20 minutes of later ones start no second read while one hangs; it ends, reads resume', async () => {
+  // Since e93214a's adversary pass: a read stuck past STUCK_READ_MS (60 s; its own limits are 5 s to connect and 5 s to
+  // run) is abandoned and its connection closed, so a stalled socket cannot block every later run on the instance.
+  it('50 concurrent requests and a minute of later ones start no second read while one hangs; past 60 s its connection is closed and one new read starts', async () => {
     const get = await GET();
     let end: (e: unknown) => void = () => {};
     h.script = scriptWith(() => new Promise((_r, reject) => (end = reject)));
+    // Closing the connection ends the stuck query, as postgres-js's end({ timeout: 0 }) does.
+    h.reset = vi.fn(async () => {
+      end(Object.assign(new Error('write CONNECTION_ENDED'), { code: 'CONNECTION_ENDED' }));
+      await new Promise((r) => setImmediate(r));
+    });
     const burst = Array.from({ length: 50 }, () => get());
     await vi.advanceTimersByTimeAsync(5_000);
     for (const p of burst) expect((await (await p).json()).makoWallets).toBeNull();
-    for (let i = 0; i < 40; i++) {
-      await vi.advanceTimersByTimeAsync(30_000);
-      const res = await get(); // no-store is the route's, tested on the route below
-      expect((await res.json()).makoWallets).toBeNull();
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(10_000); // up to 55 s
+      expect((await (await get()).json()).makoWallets).toBeNull();
     }
     expect(begins()).toBe(1);
-    expect(h.maxOpen).toBe(1);
-    end(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
-    await vi.advanceTimersByTimeAsync(0);
+    expect(h.reset).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000); // 60 s
     h.script = scriptWith(() => [ROW]);
     expect((await (await get()).json()).makoWallets).toBe(64);
+    expect(h.reset).toHaveBeenCalledTimes(1);
     expect(begins()).toBe(2);
+    expect(h.maxOpen).toBe(1);
     expect(unhandled).toEqual([]);
   });
 

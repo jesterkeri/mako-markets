@@ -47,6 +47,11 @@ const SYSTEM_SCHEMAS = ['pg_catalog', 'information_schema', 'pg_toast'];
 /// pg_stat_statements' views, read-only. Postgres hides other roles' query text from a role outside
 /// pg_read_all_stats, which the behaviour check `pgss` proves. Anything else in such a database fails.
 const PROVIDER_ALLOWED = new Set(['public.pg_stat_statements:SELECT', 'public.pg_stat_statements_info:SELECT']);
+/// The database-level rights PUBLIC holds on a provider-owned database that this owner cannot revoke. CREATE is never
+/// accepted, anywhere.
+const PROVIDER_DB_ACCEPTED = 'CONNECT and TEMP';
+/// Provider-owned databases the login can connect to; each gets the behaviour check `pgss`.
+const providerDbs = [];
 
 const log = (...a) => console.error('[stats-role]', ...a);
 const codeOf = (e) => e?.code ?? e?.cause?.code ?? e?.name ?? 'unknown';
@@ -59,7 +64,7 @@ const die = (why) => {
 if (process.argv[2] === 'child') {
   const [, , , action, holdMs] = process.argv;
   const u = new URL(process.env.ROLE_URL);
-  const opts = { host: u.hostname, port: 5432, database: action === 'pgss' ? 'postgres' : u.pathname.slice(1), username: decodeURIComponent(u.username), password: decodeURIComponent(u.password), max: 1, prepare: false, connect_timeout: 10, idle_timeout: 0 };
+  const opts = { host: u.hostname, port: 5432, database: process.env.CHILD_DB || u.pathname.slice(1), username: decodeURIComponent(u.username), password: decodeURIComponent(u.password), max: 1, prepare: false, connect_timeout: 10, idle_timeout: 0 };
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
   const sql = postgres({ ...opts, ssl: action === 'tls-wrong-name' ? { rejectUnauthorized: true, servername: 'wrong-name.invalid' } : 'verify-full' });
   try {
@@ -238,9 +243,17 @@ try {
     // bound; what must hold is that the login can read or change nothing in them.
     const other = postgres({ ...adminOpts, database: d.datname });
     try {
+      providerDbs.push(d.datname);
       const held = [...(await relationPrivileges(other)), ...(await columnPrivileges(other))].map((x) => `${x.s}.${x.t}:${x.priv}`);
       const extra = held.filter((k) => !PROVIDER_ALLOWED.has(k));
-      expect(`${d.datname} (provider-owned: CONNECT${d.tmp ? ', TEMP' : ''} accepted): only pg_stat_statements read (${extra.length} other privileges)`, extra.length === 0);
+      expect(`${d.datname} (provider-owned, ${PROVIDER_DB_ACCEPTED} accepted): only pg_stat_statements read (${extra.length} other privileges)`, extra.length === 0);
+      const [pr] = await other`select
+          (select count(*)::int from pg_namespace where nspname <> all(${SYSTEM_SCHEMAS}) and has_schema_privilege(${ROLE}, oid, 'CREATE')) as schema_create,
+          (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind = 'S' and n.nspname <> all(${SYSTEM_SCHEMAS})
+             and (has_sequence_privilege(${ROLE}, c.oid, 'USAGE') or has_sequence_privilege(${ROLE}, c.oid, 'SELECT') or has_sequence_privilege(${ROLE}, c.oid, 'UPDATE'))) as seqs,
+          (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace where p.prosecdef and n.nspname <> all(${SYSTEM_SCHEMAS})
+             and has_function_privilege(${ROLE}, p.oid, 'EXECUTE')) as definers`;
+      expect(`${d.datname}: no schema CREATE, sequence or SECURITY DEFINER function (${pr.schema_create}/${pr.seqs}/${pr.definers})`, pr.schema_create === 0 && pr.seqs === 0 && pr.definers === 0);
     } catch (e) {
       expect(`${d.datname} inspected (${codeOf(e)})`, false);
     } finally {
@@ -265,8 +278,8 @@ roleUrl.password = password;
 roleUrl.search = '?sslmode=verify-full';
 const url = roleUrl.toString();
 
-function child(action, holdMs = 0) {
-  const p = spawn(process.execPath, [fileURLToPath(import.meta.url), 'child', action, String(holdMs)], { env: { ...process.env, ROLE_URL: url }, stdio: ['ignore', 'pipe', 'inherit'] });
+function child(action, holdMs = 0, database = '') {
+  const p = spawn(process.execPath, [fileURLToPath(import.meta.url), 'child', action, String(holdMs)], { env: { ...process.env, ROLE_URL: url, CHILD_DB: database }, stdio: ['ignore', 'pipe', 'inherit'] });
   const lines = [];
   const waiters = [];
   p.stdout.on('data', (d) => {
@@ -310,9 +323,12 @@ for (const [action, name, want] of [
   expect(`${name} (${p.lines[0]?.code ?? 'no error'})`, p.lines[0]?.ok === false && p.lines[0]?.code === want);
 }
 
-const pgss = child('pgss');
-await pgss.done;
-expect(`provider pg_stat_statements shows no other role's query text (${pgss.lines[0]?.ok ? pgss.lines[0].n : pgss.lines[0]?.code})`, pgss.lines[0]?.ok === true ? pgss.lines[0].n === 0 : pgss.lines[0]?.code === '42P01');
+// In every provider-owned database the login can enter: no other role's query text (42P01: the view is not there).
+for (const dbn of providerDbs) {
+  const pgss = child('pgss', 0, dbn);
+  await pgss.done;
+  expect(`${dbn}: pg_stat_statements shows no other role's query text (${pgss.lines[0]?.ok ? pgss.lines[0].n : pgss.lines[0]?.code})`, pgss.lines[0]?.ok === true ? pgss.lines[0].n === 0 : pgss.lines[0]?.code === '42P01');
+}
 
 const failed = Object.entries(results).filter(([, ok]) => !ok);
 if (failed.length) die(`${failed.length} check(s) failed; nothing stored`);

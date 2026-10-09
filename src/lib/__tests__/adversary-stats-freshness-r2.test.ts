@@ -11,12 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ttlMemo } from '../ttl-memo';
 
-const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), snapshot: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), snapshot: vi.fn(), reset: vi.fn(async () => {}) }));
 // Since RELEASE_R9 the route reads only the saved account figures (src/lib/stats-snapshot.ts); the database read is
 // the 15-minute job's (src/lib/stats-db-read.ts) and is tested directly below.
 vi.mock('@/lib/stats-snapshot', () => ({ fetchDbSnapshot: mocks.snapshot }));
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
-vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
+vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db, resetStatsDb: () => mocks.reset() }));
 vi.mock('@/db/client', () => ({
   db: {
     execute: mocks.dbExecute,
@@ -123,7 +123,7 @@ describe('a database read that hangs', () => {
     expect(await settled).toBe('TIMEOUT');
     // Codex RELEASE_R7 #2: while the hung query is still running, later runs start no other one.
     for (let i = 0; i < 3; i++) {
-      vi.advanceTimersByTime(15 * 60_000);
+      vi.advanceTimersByTime(15_000); // up to 50 s
       await expect(readDbFigures()).rejects.toThrow('still running');
     }
     expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
@@ -132,6 +132,22 @@ describe('a database read that hangs', () => {
     await vi.advanceTimersByTimeAsync(0);
     mocks.dbExecute.mockResolvedValue([ROW]);
     expect((await readDbFigures()).makoWallets).toBe(64);
+    expect(mocks.dbExecute).toHaveBeenCalledTimes(2);
+    expect(mocks.reset, 'a read that ended by itself needs no reset').not.toHaveBeenCalled();
+  });
+
+  it('a read that never ends is abandoned after 60 s: its connection is closed and the next run reads afresh', async () => {
+    const { readDbFigures, STUCK_READ_MS } = await import('../stats-db-read');
+    mocks.dbExecute.mockImplementation(() => new Promise(() => {})); // a stalled socket: never settles
+    const first = readDbFigures().catch(() => 'timed out');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await first).toBe('timed out');
+    vi.advanceTimersByTime(STUCK_READ_MS - 5_001);
+    await expect(readDbFigures(), 'still inside 60 s').rejects.toThrow('still running');
+    vi.advanceTimersByTime(1);
+    mocks.dbExecute.mockResolvedValue([ROW]);
+    expect((await readDbFigures()).makoWallets).toBe(64);
+    expect(mocks.reset).toHaveBeenCalledTimes(1);
     expect(mocks.dbExecute).toHaveBeenCalledTimes(2);
   });
 });
