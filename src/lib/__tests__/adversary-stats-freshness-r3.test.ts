@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ttlMemo } from '../ttl-memo';
 
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
+// The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
+vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
 vi.mock('@/db/client', () => ({
   db: {
     execute: mocks.dbExecute,

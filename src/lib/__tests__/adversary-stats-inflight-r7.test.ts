@@ -24,6 +24,8 @@ const h = vi.hoisted(() => ({
   clientThrows: null as null | Error,
 }));
 
+// The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
+vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
 vi.mock('@/db/client', async () => {
   const { drizzle } = await import('drizzle-orm/postgres-js');
   // A pending query in postgres-js is a thenable with .values(); drizzle's execute awaits it.

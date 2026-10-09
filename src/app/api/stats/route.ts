@@ -1,14 +1,15 @@
 import { sql } from 'drizzle-orm';
 
-import { db } from '@/db/client';
+import { statsDb } from '@/db/stats-client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { ttlMemo } from '@/lib/ttl-memo';
 import { parseIndexedStats, STATS_QUERY, toWire, type IndexedStats, type StatsWire } from '@/lib/stats';
 
 // GET /api/stats: the figures for /stats, from the Envio indexer of the pools and rounds contracts (ENVIO_GRAPHQL_URL) and Mako
-// Market's own records (sponsored transactions, Mako wallets created). Shared by every viewer: the indexer figures are
-// at most a minute old, the database figures at most five minutes, so a busy page never wakes the database per view
-// (it is on Neon's capped free plan) and a new bet shows within a minute (Joshua, 2026-10-08: 30 minutes was too slow).
+// Market's own records (sponsored transactions, Mako wallets created). The indexer figures are at most a minute old and
+// the database figures at most five minutes, so a new bet shows within a minute (Joshua, 2026-10-08: 30 minutes was too
+// slow). Database work is bounded twice: per server instance, by the memo and the in-flight guard below; across the
+// whole deployment, by the stats login's connection limit (src/db/stats-client.ts, Codex RELEASE_R8 #1).
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,7 +57,8 @@ class ReadStillRunning extends Error {
 
 /// The database read in flight on this server instance, or null. A read that outlives the page's wait keeps running
 /// on the database; while it does, no other read starts (Codex RELEASE_R7 #2: each timed-out request used to start
-/// another, which a hung Neon would let pile up). At most one stats query per instance, even during an outage.
+/// another, which a hung Neon would let pile up). At most one stats query per instance, even during an outage; the
+/// stats login caps them at two across all instances.
 let dbRead: Promise<unknown> | null = null;
 
 /// Landed sponsored operations and the accounts behind them, and the Mako wallets created, in one query, or a throw.
@@ -64,7 +66,7 @@ async function fetchDbFigures(): Promise<DbFigures> {
   if (dbRead) throw new ReadStillRunning('a previous stats read is still running');
   // The database stops the query itself after DB_TIMEOUT_MS (statement_timeout, scoped to this transaction), and the
   // page stops waiting at the same time; a read the database never answers still holds the guard above until it ends.
-  const read = db.transaction(async (tx) => {
+  const read = statsDb.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(DB_TIMEOUT_MS))}`);
     return tx.execute<{ actions: number; accounts: number; wallets: number }>(sql`
       SELECT
@@ -126,7 +128,7 @@ export async function GET() {
     readAt: Math.floor(Math.min(Date.now(), ...[indexed, dbFigures].flatMap((r) => (r.status === 'fulfilled' ? [r.value.at] : []))) / 1000),
   };
   // No shared caching (Codex RELEASE_R7 #1): a CDN copy would add its own age on top of the figures' and could keep
-  // showing "ok" after a source went down. The memos above already bound the work to one indexer read a minute and one
-  // database read every five minutes per server instance, so each viewer is answered fresh.
+  // showing "ok" after a source went down. The memos bound each server instance to one indexer read a minute and one
+  // database read every five minutes, and the stats login bounds live database reads across all instances.
   return Response.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }
