@@ -330,8 +330,12 @@ export function readReport(status: number, body: string, requestIdHeader: string
 
 /// The fixed answer for a report fetch that threw instead of returning (transport, capability or consensus
 /// failure). It carries nothing from the error: a thrown diagnostic can include the attempted request, and with it
-/// the API key and signature (Codex CRE R1).
-export const TRANSPORT_FAILURE: ReportResult = { ok: false, status: 0, reason: 'transport', requestId: null };
+/// the API key and signature (Codex CRE R1). Frozen, so no caller can change the shared value.
+///
+/// The cost, accepted: every throw at these two boundaries ends the run as `transport 0`, including a missing HTTP
+/// capability, a bug in readReport, or nodes disagreeing (one sees 404, another 200), so a run that could have
+/// waited fails instead and the cause is not in the message. The next run retries; the keeper is the backstop.
+export const TRANSPORT_FAILURE: ReportResult = Object.freeze({ ok: false, status: 0, reason: 'transport', requestId: null });
 
 /// Runs `f`; if it throws, returns `fallback` and drops the error unread, so nothing from it can reach a log, an
 /// error message or the workflow result.

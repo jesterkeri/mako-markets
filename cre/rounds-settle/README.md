@@ -96,6 +96,8 @@ paths accept and refuse exactly the same reports. There are two differences, and
   Starvation inside the 24 h window is also possible in a constructed world (arrivals timed to minute residues;
   pinned by a test). The keeper, which first tries at close + 300 s with least-recently-tried order,
   is the latency backstop and the capacity release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
+- A report fetch that **throws** (transport, capability or consensus failure) ends the run as `report error transport 0`
+  and carries nothing from the error, so a credential can never reach the result; the cause is not shown either.
 - The workflow raises no alert of its own: a failed run shows as a failed CRE execution. N20's alerts come from
   the keeper and the watchdog.
 
@@ -217,7 +219,7 @@ and the root `eslint.config.mjs` ignores `"cre/**"`, so the Next typecheck, lint
 CRE workflow or the adapter (they have their own Bun and Foundry checks above). To confirm from the repo root:
 
 ```bash
-npx tsc --noEmit -p tsconfig.json --listFilesOnly | grep -c '/cre/'   # 0
+npx --no-install tsc --noEmit -p tsconfig.json --listFilesOnly | grep -c '/cre/'   # 0 (after the root install)
 ```
 
 ## Deploying the workflow (not done)
