@@ -90,10 +90,11 @@ paths accept and refuse exactly the same reports. There are two differences, and
   m mod 10 (one per visit), and otherwise rotates over all due rounds. With no stuck round each run settles one
   round, so ten rounds closing together all get a turn by close + 555 s. A round alone in its slot gets a turn
   at least every 10 minutes. Rounds can share a slot through ordinary scheduling (rounds are booked up to 7 days
-  ahead), and with a stuck round there is **no hard bound**: the measured worst first turn of a healthy round is
-  17 runs in the adversary's targeted cases (pinned by a test) and 24 over 100,000 random cases. The keeper,
-  which first tries at close + 300 s with least-recently-tried order, is the latency backstop and the capacity
-  release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
+  ahead), and a bad boundary report makes every round closing at that minute stuck. With a stuck round there is
+  **no bound to state**: adversarial search found healthy rounds waiting 17 runs (shared slot), 38 runs (one bad
+  boundary, 3 stuck, staggered closes; pinned by a test) and up to 95 runs (several scattered bad boundaries).
+  No healthy round waits forever. The keeper, which first tries at close + 300 s with least-recently-tried order,
+  is the latency backstop and the capacity release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
 - The workflow raises no alert of its own: a failed run shows as a failed CRE execution. N20's alerts come from
   the keeper and the watchdog.
 

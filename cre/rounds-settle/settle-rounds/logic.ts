@@ -231,9 +231,12 @@ export const ROTATION_SLOTS = 10;
 ///     closing together all get a turn by close + 555 s at the second-15 schedule (TASKS T0.1c (a));
 ///   - a due round alone in its slot gets a turn at least every ROTATION_SLOTS minutes;
 ///   - rounds share a slot through ordinary scheduling (MAX_LEAD is 7 days, so round 10 can be booked far ahead
-///     and round 20 later for the same close), and with a stuck round there is NO hard bound. Measured: worst first
-///     turn of a healthy round 17 runs in the adversary's targeted cases (stuck round 9 beside rounds 10..90, all in
-///     slot 0) and 24 runs over 100,000 random worlds (up to 10 pending, up to 3 stuck).
+///     and round 20 later for the same close), and a stuck round makes every round closing at its minute stuck
+///     too (stuckness belongs to a boundary report). With a stuck round there is NO bound to state. Examples found
+///     by adversarial search, not worst cases: 17 runs (stuck round 9 beside 10..90, all slot 0), 38 runs (one bad
+///     boundary, 3 stuck, 9 rounds on staggered closes), up to 95 runs with several scattered bad boundaries.
+///   - no healthy round waits forever: while the due set is unchanged, the minute-slot visits cycle through every
+///     member of each slot, and arrivals are finite (MAX_ACTIVE_ROUNDS, MIN_LEAD).
 /// The keeper (least recently tried, first attempt at close + 300 s) is the latency backstop and the capacity
 /// release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
 export function pickRound(due: readonly Due[], nowS: number, periodS = 60, slots = ROTATION_SLOTS): Due | null {
