@@ -11,7 +11,8 @@ import {
 } from 'viem';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { MAX_SCAN_PAGES, ROUNDS_ABI, runScheduler, WORST_CASE_SUBREQUESTS, type Env, type Lease } from '../src/index';
+import { MAX_SCAN_PAGES, ROUNDS_ABI, WORST_CASE_SUBREQUESTS } from '../src/constants';
+import { runScheduler, type Env, type Lease } from '../src/index';
 import { MAX_LEAD_S } from '../src/plan';
 import { memLease } from './lease-fake';
 import wranglerToml from '../wrangler.toml?raw';

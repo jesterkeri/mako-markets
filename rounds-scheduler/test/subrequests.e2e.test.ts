@@ -9,7 +9,8 @@
 import { createPublicClient, http } from 'viem';
 import { describe, expect, it, vi } from 'vitest';
 
-import { runScheduler, WORST_CASE_SUBREQUESTS, type Env, type Lease } from '../src/index';
+import { WORST_CASE_SUBREQUESTS } from '../src/constants';
+import { runScheduler, type Env, type Lease } from '../src/index';
 import { LEASE_MS } from '../src/state';
 import { memLease } from './lease-fake';
 import wranglerToml from '../wrangler.toml?raw';

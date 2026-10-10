@@ -3,9 +3,10 @@
 // call `schedule`. It holds the two house creator keys and nothing else; it never enters, settles, refunds or moves
 // USDC. Every rule it applies the contract enforces again, so a mistake here can at worst waste gas on a refusal.
 
-import { createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, parseAbi, type Hex } from 'viem';
+import { createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
+import { MAX_SCAN_PAGES, READ_TIMEOUT_MS, ROUNDS_ABI, SEND_TIMEOUT_MS } from './constants';
 import { MAX_LEAD_S, planSchedule, type ChainView, type HouseView } from './plan';
 import { type Acquired, type SchedulerState, type SendIntent } from './state';
 
@@ -25,20 +26,9 @@ export interface Env {
   HOUSE_2_PRIVATE_KEY: string;
 }
 
-export const ROUNDS_ABI = parseAbi([
-  'function creatorActiveRound(address) view returns (uint256)',
-  'function activeRoundCount() view returns (uint256)',
-  'function MAX_ACTIVE_ROUNDS() view returns (uint256)',
-  'function isCreator(address) view returns (bool)',
-  'function roundCount() view returns (uint256)',
-  'function phaseOf(uint256) view returns (uint8)',
-  'function roundOf(uint256) view returns ((address creator, uint64 openTime, uint64 startTime, uint8 status, uint8 outcome, uint8 refundReason, int192 anchorPrice, int192 closePrice, uint32 anchorObservedAt, uint32 closeObservedAt, bytes32 anchorReportHash, bytes32 closeReportHash, uint256 upPool, uint256 downPool, uint32 upEntrants, uint32 downEntrants, uint256 protocolFee, uint256 creatorFee, uint256 distributable, uint32 winnersClaimed, uint256 paidOut))',
-  'function schedule(uint64 startTime) returns (uint256)',
-]);
 
-/// Rounds read per Multicall3 call while looking back for unfinished rounds, and the most such calls in one run.
+/// Rounds read per Multicall3 call while looking back for unfinished rounds (at most MAX_SCAN_PAGES calls a run).
 const SCAN_PAGE = 40;
-export const MAX_SCAN_PAGES = 10;
 /// MakoRoundsV1's fixed durations (SPEC §4).
 const DURATION_S = 900;
 const SUBMIT_WINDOW_S = 86_400;
@@ -77,24 +67,7 @@ export interface RunDeps {
   afterRecord?: () => Promise<void>;
 }
 
-/// The one send request is abandoned after this long (no retries); the intent keeps it for the next run.
-export const SEND_TIMEOUT_MS = 20_000;
-/// Each read request is abandoned after this long, with no retry.
-export const READ_TIMEOUT_MS = 10_000;
 
-/// The most subrequests one run can make. Cloudflare counts every fetch and every Durable Object call
-/// (developers.cloudflare.com/workers/platform/limits/#subrequests); both RPC clients make no retries, so each read
-/// below is exactly one fetch (test/budget.test.ts drives the worst path offline). wrangler.toml's [limits] subrequests must
-/// stay at or above this (test/subrequests.e2e.test.ts reads both). The paths, each ending the run:
-///   - lease refused: 1 (acquire);
-///   - open intent: acquire, intent, latest nonce, then either a rebroadcast, or a receipt and clearIntent, then
-///     release: at most 7;
-///   - plan and send: acquire, intent, the state multicall, up to MAX_SCAN_PAGES scan pages, the simulation, the
-///     pending and latest nonces, estimateGas, the fee reads (the block and eth_maxPriorityFeePerGas, plus
-///     eth_gasPrice when viem falls back because the priority-fee read failed; Codex Rounds r5), recordIntent, the
-///     send, release: 13 + MAX_SCAN_PAGES with the fallback, one fewer without (both counted exactly by
-///     test/budget.test.ts).
-export const WORST_CASE_SUBREQUESTS = 13 + MAX_SCAN_PAGES;
 
 export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promise<RunResult> {
   const startMs = deps.clockMs();
