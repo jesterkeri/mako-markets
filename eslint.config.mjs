@@ -20,6 +20,8 @@ const eslintConfig = defineConfig([
     // The Envio indexer's generated types (codegen output, not committed).
     "indexer/.envio/**",
     "indexer/envio-env.d.ts",
+    // The CRE workflow and its adapter: their own Bun and Foundry projects, checked there.
+    "cre/**",
   ]),
 ]);
 
