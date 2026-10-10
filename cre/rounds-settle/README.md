@@ -144,7 +144,9 @@ read -rs -p "Data Streams API key: " DATASTREAMS_API_KEY_VAR; echo; export DATAS
 read -rs -p "Data Streams API secret: " DATASTREAMS_API_SECRET_VAR; echo; export DATASTREAMS_API_SECRET_VAR
 ```
 
-These are the same Data Streams testnet credentials the keeper uses. They are only read when a round is due.
+These are the same Data Streams testnet credentials the keeper uses. The workflow reads them only when a round is due,
+but **the CLI loads every secret at start-up**, so both must be exported even when nothing is due; otherwise the
+run stops with `failed to replace secret names with environment variables` (seen 2026-10-10).
 
 **3. Simulate.** Run this from `cre/rounds-settle`:
 
@@ -154,9 +156,10 @@ cre workflow simulate settle-rounds --target staging-settings --non-interactive 
 
 ### What output proves success
 
-- **No round due.** This was the state on 2026-10-10, when `pendingSettlement()` returned `[]`. The log shows
-  `[USER LOG] nothing due: pendingSettlement() is empty` and the result is `"nothing-due"`. That proves the
-  cron trigger fired and that the EVM read of the deployed contract on Monad testnet worked through CRE.
+- **No round due.** This was the state on 2026-10-10, when `pendingSettlement()` returned `[]`. The run ends with
+  `✓ Workflow Simulation Result: "nothing-due"` (CLI 1.34.0 printed no `[USER LOG]` line for it). That proves the
+  cron trigger fired and that the EVM read of the deployed contract on Monad testnet worked through CRE. Recorded
+  run: `mako-design/bench/cre-simulate/2026-10-10T20-54-59Z-simulate.txt`.
 - **A round is due.** A round shows up in `pendingSettlement()` once it has closed with stakes on both sides,
   and stays there for up to 24 h. The log shows `round N due: anchor B=…, close B=…`, then
   `both reports fetched and checked`. This proves the external data source. Then:
@@ -216,3 +219,8 @@ CRE workflow or the adapter (they have their own Bun and Foundry checks above). 
 ```bash
 npx tsc --noEmit -p tsconfig.json --listFilesOnly | grep -c '/cre/'   # 0
 ```
+
+## Deploying the workflow (not done)
+
+Simulation needs only `cre login`. Deploying the workflow to the DON (`cre workflow deploy`) also needs deployment
+access, which the CLI says to request with `cre account access`. It has not been requested.
