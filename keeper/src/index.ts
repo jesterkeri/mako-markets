@@ -105,7 +105,7 @@ const worker = {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const { cfg, key } = readEnv(env);
     const account = privateKeyToAccount(key);
-    const net = makeNet(fetch, () => Date.now(), (ms) => new Promise((r) => setTimeout(r, ms)), Date.now() + RUN_BUDGET_MS, MAX_REQUESTS);
+    const net = makeNet((i, x) => fetch(i, x), () => Date.now(), (ms) => new Promise((r) => setTimeout(r, ms)), Date.now() + RUN_BUDGET_MS, MAX_REQUESTS);
     const stub = env.KEEPER_STATE.get(env.KEEPER_STATE.idFromName('keeper'));
     const ping = async (kind: 'ok' | 'fail', body: string) => {
       const base = env.HEALTHCHECKS_PING_URL.trim().replace(/\/$/, '');
