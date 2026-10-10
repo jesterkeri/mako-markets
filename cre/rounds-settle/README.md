@@ -9,8 +9,9 @@ a blockchain (Monad testnet) to an external data source (Data Streams), and CRE 
 Every minute:
 
 1. **Cron trigger** (CRE `CronCapability`, schedule `0 * * * * *`).
-2. **EVM read** (Monad testnet, at the last finalized block) of `MakoRoundsV1` at
-   `0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921`: `pendingSettlement()`, `DURATION()` and `closeTimeOf(id)`.
+2. **EVM reads**, two in all (Monad testnet, at the last finalized block), within SPEC §5.5a's "at most 3":
+   `pendingSettlement()` on `MakoRoundsV1` at `0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921`, then `DURATION()`
+   and every `closeTimeOf(id)` in one Multicall3 `aggregate3` (`0xcA11bde05977b3631167028862bE2a173976CA11`).
    It picks one round at least `settleDelaySeconds` (10) past its close. If none is due, the run ends with
    `nothing-due`.
 3. **HTTP fetch** (CRE `HTTPClient`, results checked by DON consensus) of the two BTC/USD Data Streams full
@@ -52,7 +53,7 @@ cre/
       rounds-abi.ts              MakoRoundsV1 ABI subset (selectors checked against the deployed bytecode)
       config.staging.json        Monad testnet config
       workflow.yaml              target "staging-settings"
-      test/                      bun tests (31) + a real Data Streams fixture
+      test/                      bun tests (34) + a real Data Streams fixture
   contracts/                     Foundry project for the adapter
     src/MakoRoundsCreAdapter.sol
     test/MakoRoundsCreAdapter.t.sol   12 unit tests + 1 fork test against the deployed contracts
@@ -88,7 +89,7 @@ From `cre/rounds-settle/settle-rounds`:
 
 ```bash
 bun install
-bun test                 # 31 pass
+bun test                 # 34 pass
 bunx tsc --noEmit        # clean
 ```
 

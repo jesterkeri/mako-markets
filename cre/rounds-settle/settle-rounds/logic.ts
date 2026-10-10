@@ -109,10 +109,74 @@ export interface Due {
   closeAt: number;
 }
 
-/// CRE allows 15 EVM reads per execution (`cre workflow limits export`: ChainRead.CallLimit 15). A run spends
-/// one on pendingSettlement() and one on DURATION(), so at most this many closeTimeOf() reads remain, with
-/// one spare. MakoRoundsV1 caps active rounds at MAX_ACTIVE_ROUNDS = 10, so today every pending round fits.
-export const MAX_CLOSE_READS = 12;
+/// Multicall3, the canonical deployment (same address on every EVM chain; runtime code present on Monad testnet,
+/// checked 2026-10-10). The deployed MakoRoundsV1 returns only ids from pendingSettlement(), so the close times
+/// come from one aggregate3 call: a run makes 2 EVM reads in all, within SPEC §5.5a / N24's "at most 3".
+export const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11' as const;
+
+export const MULTICALL3_ABI = [
+  {
+    type: 'function',
+    name: 'aggregate3',
+    // payable on chain; declared view here because it is only ever eth_call-ed (the selector is unchanged).
+    stateMutability: 'view',
+    inputs: [
+      {
+        name: 'calls',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', type: 'address' },
+          { name: 'allowFailure', type: 'bool' },
+          { name: 'callData', type: 'bytes' },
+        ],
+      },
+    ],
+    outputs: [
+      {
+        name: 'returnData',
+        type: 'tuple[]',
+        components: [
+          { name: 'success', type: 'bool' },
+          { name: 'returnData', type: 'bytes' },
+        ],
+      },
+    ],
+  },
+] as const;
+
+/// Close times read per run. MakoRoundsV1 caps active rounds at MAX_ACTIVE_ROUNDS = 10, so today every pending
+/// round fits; past this, a rotating window (candidateIds) still reaches every id.
+export const MAX_CLOSE_READS = 50;
+
+/// One aggregate3 call: DURATION() first (may not fail), then closeTimeOf(id) per id (may fail: a round can
+/// leave pendingSettlement between the two reads, and that id is then skipped for this run).
+export function roundTimesData(rounds: Address, ids: readonly bigint[]): Hex {
+  const calls = [
+    { target: rounds, allowFailure: false, callData: durationData() },
+    ...ids.map((id) => ({ target: rounds, allowFailure: true, callData: closeTimeData(id) })),
+  ];
+  return encodeFunctionData({ abi: MULTICALL3_ABI, functionName: 'aggregate3', args: [calls] });
+}
+
+/// Decodes roundTimesData's answer. Throws if the shape is wrong or DURATION failed; a failed or undecodable
+/// closeTimeOf leaves that id out of `closeTimes`, so dueRounds skips it.
+export function decodeRoundTimes(data: Hex, ids: readonly bigint[]): { duration: bigint; closeTimes: Map<bigint, bigint> } {
+  const results = decodeFunctionResult({ abi: MULTICALL3_ABI, functionName: 'aggregate3', data });
+  if (results.length !== ids.length + 1) throw new Error(`aggregate3 returned ${results.length} results for ${ids.length + 1} calls`);
+  if (!results[0].success) throw new Error('DURATION() failed inside aggregate3');
+  const duration = decodeDuration(results[0].returnData);
+  const closeTimes = new Map<bigint, bigint>();
+  ids.forEach((id, i) => {
+    const r = results[i + 1];
+    if (!r.success) return;
+    try {
+      closeTimes.set(id, decodeCloseTime(r.returnData));
+    } catch {
+      // A malformed answer is treated like a failed call: the round waits for a later run.
+    }
+  });
+  return { duration, closeTimes };
+}
 
 /// The pending ids whose close time this run reads. All of them when they fit; otherwise a window of
 /// `max` ids that rotates with the minute, so no pending round is left unread for good.

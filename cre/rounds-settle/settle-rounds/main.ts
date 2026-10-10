@@ -2,7 +2,8 @@
 // with Chainlink Data Streams reports.
 //
 //   cron (every minute)
-//     -> EVM read, MakoRoundsV1 at the last finalized block: pendingSettlement(), DURATION(), closeTimeOf(id)
+//     -> 2 EVM reads at the last finalized block: MakoRoundsV1.pendingSettlement(), then DURATION() and every
+//        closeTimeOf(id) in one Multicall3 aggregate3
 //     -> pick one round that is due (logic.ts: dueRounds + pickRound)
 //     -> HTTP GET, Data Streams REST: the BTC/USD full reports observed at exactly startTime and closeTime
 //     -> runtime.report(abi.encode(roundId, anchorReport, closeReport)), signed by the DON
@@ -30,24 +31,22 @@ import {
   type Runtime,
 } from '@chainlink/cre-sdk';
 import { EVM_PB } from '@chainlink/cre-sdk/pb';
-import { zeroAddress, type Hex } from 'viem';
+import { zeroAddress, type Address, type Hex } from 'viem';
 import {
   candidateIds,
   checkConfig,
-  closeTimeData,
-  decodeCloseTime,
-  decodeDuration,
   decodePending,
+  decodeRoundTimes,
   dueRounds,
-  durationData,
   encodeSettleReport,
   MAX_CLOSE_READS,
+  MULTICALL3,
   pendingSettlementData,
   pickRound,
   readReport,
   reportHeaders,
   reportPath,
-  type CheckedConfig,
+  roundTimesData,
   type Config,
   type ReportResult,
 } from './logic';
@@ -58,10 +57,10 @@ export type { Config };
 export const SECRET_API_KEY = 'DATASTREAMS_API_KEY';
 export const SECRET_API_SECRET = 'DATASTREAMS_API_SECRET';
 
-const readRounds = (runtime: Runtime<Config>, evm: EVMClient, cfg: CheckedConfig, data: Hex): Hex => {
+const readAt = (runtime: Runtime<Config>, evm: EVMClient, to: Address, data: Hex): Hex => {
   const reply = evm
     .callContract(runtime, {
-      call: encodeCallMsg({ from: zeroAddress, to: cfg.roundsAddress, data }),
+      call: encodeCallMsg({ from: zeroAddress, to, data }),
       blockNumber: LAST_FINALIZED_BLOCK_NUMBER,
     })
     .result();
@@ -89,17 +88,15 @@ export const onCronTrigger = (runtime: Runtime<Config>): string => {
   const evm = new EVMClient(network.chainSelector.selector);
 
   // 1. Which rounds await settlement, read at the last finalized block.
-  const pending = decodePending(readRounds(runtime, evm, cfg, pendingSettlementData()));
+  const pending = decodePending(readAt(runtime, evm, cfg.roundsAddress, pendingSettlementData()));
   if (pending.length === 0) {
     runtime.log('nothing due: pendingSettlement() is empty');
     return 'nothing-due';
   }
-  const duration = decodeDuration(readRounds(runtime, evm, cfg, durationData()));
   const nowS = Math.floor(runtime.now().getTime() / 1000);
-  const closeTimes = new Map<bigint, bigint>();
-  for (const id of candidateIds(pending, nowS, MAX_CLOSE_READS)) {
-    closeTimes.set(id, decodeCloseTime(readRounds(runtime, evm, cfg, closeTimeData(id))));
-  }
+  // 2nd and last EVM read: DURATION() and every close time, in one Multicall3 aggregate3 at the same block tag.
+  const ids = candidateIds(pending, nowS, MAX_CLOSE_READS);
+  const { duration, closeTimes } = decodeRoundTimes(readAt(runtime, evm, MULTICALL3, roundTimesData(cfg.roundsAddress, ids)), ids);
   const due = pickRound(dueRounds(pending, closeTimes, duration, nowS, cfg.settleDelaySeconds), nowS);
   if (due === null) {
     runtime.log(`nothing due: ${pending.length} pending, none ${cfg.settleDelaySeconds}s past close yet`);

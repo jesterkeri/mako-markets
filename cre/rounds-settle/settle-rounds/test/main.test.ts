@@ -4,9 +4,9 @@
 import { describe, expect } from 'bun:test';
 import { EvmMock, HttpActionsMock, newTestRuntime, REPORT_METADATA_HEADER_LENGTH, test, addContractMock } from '@chainlink/cre-sdk/test';
 import type { HTTP_CLIENT_PB } from '@chainlink/cre-sdk/pb';
-import { bytesToHex, parseAbi, type Hex } from 'viem';
+import { bytesToHex, decodeFunctionData, encodeFunctionResult, parseAbi, type Hex } from 'viem';
 import { initWorkflow, onCronTrigger, SECRET_API_KEY, SECRET_API_SECRET } from '../main';
-import { decodeSettleReport, FEED_ID, hmacSha256Hex, reportPath, ROUNDS_ABI, signingString, type Config } from '../logic';
+import { decodeSettleReport, FEED_ID, hmacSha256Hex, MULTICALL3, MULTICALL3_ABI, reportPath, ROUNDS_ABI, signingString, type Config } from '../logic';
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 
 type Request = HTTP_CLIENT_PB.Request;
@@ -49,6 +49,7 @@ type Setup = {
   write?: 'success' | 'receiver-reverted' | 'tx-reverted';
   adapter?: string;
   withSecrets?: boolean;
+  failIds?: bigint[];
 };
 
 function setup(s: Setup = {}) {
@@ -56,7 +57,20 @@ function setup(s: Setup = {}) {
   const rounds = addContractMock(evm, { address: ROUNDS, abi: ROUNDS_ABI });
   rounds.pendingSettlement = () => s.pending ?? [];
   rounds.DURATION = () => 900n;
-  rounds.closeTimeOf = (id: unknown) => (id === 7n ? CLOSE : CLOSE + 100_000n);
+  const closeTimeOf = (id: bigint) => (id === 7n ? CLOSE : CLOSE + 100_000n);
+  rounds.closeTimeOf = (id: unknown) => closeTimeOf(id as bigint);
+  // Multicall3 answers each inner call the way the deployed contract would; `failIds` revert (unknown round).
+  const multicall = addContractMock(evm, { address: MULTICALL3, abi: MULTICALL3_ABI });
+  const inner3: { target: string; fn: string }[] = [];
+  multicall.aggregate3 = (calls: unknown) =>
+    (calls as { target: string; allowFailure: boolean; callData: Hex }[]).map((c) => {
+      const d = decodeFunctionData({ abi: ROUNDS_ABI, data: c.callData });
+      inner3.push({ target: c.target, fn: d.functionName });
+      if (d.functionName === 'DURATION') return { success: true, returnData: encodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'DURATION', result: 900n }) };
+      const id = (d.args as readonly bigint[])[0];
+      if (s.failIds?.includes(id)) return { success: false, returnData: '0x' as Hex };
+      return { success: true, returnData: encodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'closeTimeOf', result: closeTimeOf(id) }) };
+    });
   const reads: { fn: string; block: string }[] = [];
   const inner = evm.callContract!;
   evm.callContract = (req) => {
@@ -94,7 +108,7 @@ function setup(s: Setup = {}) {
     ...config,
     adapterAddress: s.adapter ?? ADAPTER,
   });
-  return { runtime, reads, writes, requests };
+  return { runtime, reads, writes, requests, inner3 };
 }
 
 describe('initWorkflow', () => {
@@ -123,12 +137,18 @@ describe('onCronTrigger', () => {
   });
 
   test('a due round: reads at the finalized block, fetches both boundaries signed, writes (id, anchor, close) to the adapter', () => {
-    const { runtime, reads, writes, requests } = setup({ pending: [8n, 7n] });
+    const { runtime, reads, writes, requests, inner3 } = setup({ pending: [8n, 7n] });
     const out = onCronTrigger(runtime);
     expect(out).toBe(`settled round 7 tx 0x${'11'.repeat(32)}`);
 
-    // pendingSettlement, DURATION, then one closeTimeOf per pending id, all at the same (finalized) block tag.
-    expect(reads.map((r) => r.fn)).toEqual(['0x36ceb433', '0x1be05289', '0x0c0c8719', '0x0c0c8719']);
+    // Two EVM reads in all (SPEC §5.5a, N24: at most 3): pendingSettlement, then one Multicall3 aggregate3
+    // (0x82ad56cb) carrying DURATION and one closeTimeOf per pending id, all at the same (finalized) block tag.
+    expect(reads.map((r) => r.fn)).toEqual(['0x36ceb433', '0x82ad56cb']);
+    expect(inner3).toEqual([
+      { target: ROUNDS, fn: 'DURATION' },
+      { target: ROUNDS, fn: 'closeTimeOf' },
+      { target: ROUNDS, fn: 'closeTimeOf' },
+    ]);
     // LAST_FINALIZED_BLOCK_NUMBER is the proto BigInt -3 (sign -1, magnitude 3); LATEST would be -2.
     expect(new Set(reads.map((r) => r.block))).toEqual(new Set(['-1:3']));
 
@@ -150,6 +170,25 @@ describe('onCronTrigger', () => {
     const logs = runtime.getLogs().join('\n');
     expect(logs).not.toContain(KEY);
     expect(logs).not.toContain(SECRET);
+  });
+
+  test('ten pending rounds (MAX_ACTIVE_ROUNDS) still take exactly 2 EVM reads', () => {
+    const { runtime, reads } = setup({ pending: Array.from({ length: 10 }, (_, i) => BigInt(i + 7)) });
+    onCronTrigger(runtime);
+    expect(reads).toHaveLength(2);
+  });
+
+  test('a closeTimeOf that fails inside the batch skips only that round', () => {
+    const { runtime, writes } = setup({ pending: [7n, 8n], failIds: [8n] });
+    expect(onCronTrigger(runtime)).toBe(`settled round 7 tx 0x${'11'.repeat(32)}`);
+    expect(writes).toHaveLength(1);
+  });
+
+  test('the due round itself failing inside the batch: nothing due, no fetch', () => {
+    const { runtime, writes, requests } = setup({ pending: [7n], failIds: [7n], withSecrets: false });
+    expect(onCronTrigger(runtime)).toBe('nothing-due');
+    expect(requests).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 
   test('close report not published yet: waits, no write', () => {
