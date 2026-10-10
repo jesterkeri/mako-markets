@@ -220,34 +220,28 @@ export const ROTATION_SLOTS = 10;
 
 /// The one round this run settles, or null when nothing is due.
 ///
-/// The keeper takes turns using a per-round "last tried" memory, so a round that cannot settle (report
-/// missing, spread too wide) spends only its own turn and never blocks the rounds behind it (adversary pass on
-/// the keeper, 2026-09-28). A CRE workflow keeps no memory between runs, so the guarantee comes from fixed
-/// slots instead: minute m belongs to slot s = m mod ROTATION_SLOTS, and slot s to the due rounds whose
-/// id mod ROTATION_SLOTS is s. If slot s has no due round, the turn passes to the next slot that has one, so
-/// no minute is wasted. A round's own slot comes round every ROTATION_SLOTS minutes whatever the other rounds
-/// do or settle, so a due round whose id shares its slot with no other due round gets a turn at least once
-/// every ROTATION_SLOTS minutes (10 rounds closing together, one stuck: all healthy ones settle within 10
-/// runs). The rotation shrinking with the due list, as a `due[m mod n]` pick does, cannot happen: the slot of
-/// a round never changes. Rounds sharing a slot take it in turns, one per visit (minute / ROTATION_SLOTS).
-/// Requires one run a minute (checkConfig pins the schedule).
+/// The keeper takes turns using a per-round "last tried" memory, so a round that cannot settle spends only its
+/// own turn. A CRE workflow keeps no memory between runs, and no stateless rule can match that once a round is
+/// stuck. This rule: minute m belongs to slot m mod ROTATION_SLOTS; if due rounds have that slot (id mod
+/// ROTATION_SLOTS), one of them takes the turn, moving through them one per visit; otherwise the turn rotates
+/// over every due round (minute mod count).
 ///
-/// Known limit, measured: rounds share a slot only when one stays pending while ten later round ids are created
-/// (ids are sequential). Then the bound no longer holds; over 200,000 random cases of up to 10 pending ids with
-/// random stuck subsets, the worst first turn of a healthy round came on run 49 (three ids in one slot, two of
-/// them stuck). The keeper's least-recently-tried rule, not this one, is the capacity release gate (TASKS T0.1c).
+/// What holds, and what does not:
+///   - every run picks a due round when one exists; with no stuck round each run settles one, so ten rounds
+///     closing together all get a turn by close + 555 s at the second-15 schedule (TASKS T0.1c (a));
+///   - a due round alone in its slot gets a turn at least every ROTATION_SLOTS minutes;
+///   - rounds share a slot through ordinary scheduling (MAX_LEAD is 7 days, so round 10 can be booked far ahead
+///     and round 20 later for the same close), and with a stuck round there is NO hard bound. Measured: worst first
+///     turn of a healthy round 17 runs in the adversary's targeted cases (stuck round 9 beside rounds 10..90, all in
+///     slot 0) and 24 runs over 100,000 random worlds (up to 10 pending, up to 3 stuck).
+/// The keeper (least recently tried, first attempt at close + 300 s) is the latency backstop and the capacity
+/// release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
 export function pickRound(due: readonly Due[], nowS: number, periodS = 60, slots = ROTATION_SLOTS): Due | null {
   if (due.length === 0) return null;
   const minute = Math.floor(nowS / periodS);
-  const slotOf = (d: Due) => Number(d.roundId % BigInt(slots));
-  for (let k = 0; k < slots; k++) {
-    const slot = (minute + k) % slots;
-    const here = due.filter((d) => slotOf(d) === slot);
-    // Within a shared slot the pick moves with the visit (minute / slots) and with how far the turn travelled to
-    // reach it (k), so fallback visits from empty slots do not keep landing on the same member.
-    if (here.length > 0) return here[(Math.floor(minute / slots) + k) % here.length];
-  }
-  return null; // unreachable: every due round has a slot
+  const own = due.filter((d) => Number(d.roundId % BigInt(slots)) === minute % slots);
+  if (own.length > 0) return own[Math.floor(minute / slots) % own.length];
+  return due[minute % due.length];
 }
 
 // ---------------------------------------------------------------------------------------------------------

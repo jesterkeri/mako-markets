@@ -160,6 +160,23 @@ describe('dueRounds and pickRound', () => {
     expect(last - close).toBeLessThan(600);
   });
 
+  test('the documented limit: stuck round 9 beside healthy rounds 10..90 (all slot 0), every start minute, worst first turn 17 runs', () => {
+    const ids = [9n, ...Array.from({ length: 9 }, (_, i) => BigInt(10 * (i + 1)))];
+    let worst = 0;
+    for (let start = 0; start < 2520; start++) {
+      let pending = [...ids];
+      const first = new Map<bigint, number>();
+      for (let run = 1; run <= 200 && pending.some((id) => id !== 9n); run++) {
+        const due = pending.map((roundId) => ({ roundId, anchorAt: 0, closeAt: 900 }));
+        const p = pickRound(due, (start + run) * 60)!;
+        if (!first.has(p.roundId)) first.set(p.roundId, run);
+        if (p.roundId !== 9n) pending = pending.filter((id) => id !== p.roundId);
+      }
+      for (const id of ids.slice(1)) worst = Math.max(worst, first.get(id) ?? 999);
+    }
+    expect(worst).toBe(17);
+  });
+
   test('a minute whose slot is empty passes the turn on, so no run is wasted while a round is due', () => {
     const due = dueRounds([3n], closes, 900n, 50_000, 10);
     for (let k = 0; k < 20; k++) expect(pickRound(due, 60 * k)!.roundId).toBe(3n);

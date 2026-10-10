@@ -85,12 +85,17 @@ paths accept and refuse exactly the same reports. There are two differences, and
 `logic.ts`:
 
 - HMAC uses `@noble/hashes`, because CRE's WASM runtime has no WebCrypto.
-- CRE keeps no state between runs, so the keeper's "least recently tried" order is replaced by fixed slots:
-  minute m serves the due rounds whose id mod 10 is m mod 10, and passes an empty slot's turn on. A due round
-  alone in its slot gets a turn at least once every 10 minutes, whatever the other rounds do. **Known limit:**
-  rounds share a slot only if one stays pending while ten later rounds are created; then the bound does not hold
-  (worst case measured over 200,000 random cases: first turn on run 49). The keeper, not CRE, is the capacity
-  release gate (TASKS T0.1c).
+- CRE keeps no state between runs, so the keeper's "least recently tried" order cannot be copied, and no
+  stateless rule matches it once a round is stuck. The rule: minute m serves the due rounds whose id mod 10 is
+  m mod 10 (one per visit), and otherwise rotates over all due rounds. With no stuck round each run settles one
+  round, so ten rounds closing together all get a turn by close + 555 s. A round alone in its slot gets a turn
+  at least every 10 minutes. Rounds can share a slot through ordinary scheduling (rounds are booked up to 7 days
+  ahead), and with a stuck round there is **no hard bound**: the measured worst first turn of a healthy round is
+  17 runs in the adversary's targeted cases (pinned by a test) and 24 over 100,000 random cases. The keeper,
+  which first tries at close + 300 s with least-recently-tried order, is the latency backstop and the capacity
+  release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
+- The workflow raises no alert of its own: a failed run shows as a failed CRE execution. N20's alerts come from
+  the keeper and the watchdog.
 
 The keeper waits 300 s after close, so CRE settles first whenever it is healthy.
 
