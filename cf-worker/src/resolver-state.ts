@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // cf-worker/src/resolver-state.ts
 //
-// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r52 §4.9), as a pure state
+// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r53 §4.9), as a pure state
 // machine with no Cloudflare dependency, so every rule is unit-tested in Node. The Durable Object that hosts it
 // wraps each method below in ONE storage transaction; nothing here awaits, so each method is all-or-nothing.
 //
@@ -101,6 +101,13 @@ export const emptyState = (): State => ({
   nextEntryId: 1,
 });
 
+/// What the run's one release after a store timeout knows about its journal entry (r53).
+export interface ReleaseOutcome {
+  outcome: 'not-sent' | 'sent';
+  entryId?: number;
+  entry?: { kind: TurnKind; marketId: number; nonce: number; calldataHash: string };
+}
+
 export type TakeResult = 'granted' | 'held' | 'older' | 'token-released';
 
 /// A prefixed key, so no token text ('__proto__', 'constructor') can collide with an object's own machinery.
@@ -142,13 +149,35 @@ export class ResolverStateCore {
   }
 
   /// Fenced release (compare, then delete). Every release records its token, whether or not it deleted (r46).
-  release(token: string, now: number): boolean {
+  /// After a store timeout the run's one release also carries what it knows about its journal entry (r53), applied
+  /// whether or not the lease is still the run's, since it concerns only the run's own send:
+  /// - `not-sent`: no raw send started, so the entry (armed by a late re-check, or not) is `not_sent` and holds nothing;
+  /// - `sent`: a no-data refund went out production's way, so its entry is armed from now, after Monad's insert, or
+  ///   written armed from `entry` when the entry write itself timed out (no `entryId`).
+  release(token: string, now: number, after?: ReleaseOutcome): boolean {
+    if (after) this.applyOutcome(now, after);
     this.s.released[releasedKey(token)] = now;
     if (this.s.lease && this.s.lease.token === token) {
       this.s.lease = null;
       return true;
     }
     return false;
+  }
+
+  private applyOutcome(now: number, o: ReleaseOutcome): void {
+    const e = o.entryId === undefined ? undefined : this.s.journal.find((x) => x.id === o.entryId);
+    if (e && e.result !== null) return; // reconciled already: nothing to change
+    if (o.outcome === 'not-sent') {
+      if (e) e.result = 'not_sent';
+      return;
+    }
+    if (e) {
+      e.armedAt = now;
+      return;
+    }
+    if (!o.entry) throw new Error('a sent refund with no entry needs its nonce and calldata hash');
+    const id = this.s.nextEntryId++;
+    this.s.journal.push({ id, ...o.entry, enteredAt: now, armedAt: now, txHash: null, result: null, presumedDropped: false });
   }
 
   private forgetOldReleases(now: number): void {

@@ -1,4 +1,4 @@
-// ResolverState's rules (RESOLVER_PRICE_PLAN r52 §4.9), spec-first: each case is written from the plan's text and run
+// ResolverState's rules (RESOLVER_PRICE_PLAN r53 §4.9), spec-first: each case is written from the plan's text and run
 // against the pure core in src/resolver-state.ts. Times are the store's clock in ms.
 import { describe, expect, it } from 'vitest';
 
@@ -160,6 +160,51 @@ describe('the re-check before the raw send (r41, r49, r51, r52)', () => {
     c.recheck('a', T + 1, 4, id);
     expect(() => c.recheck('a', T + 2, 4, id)).toThrow();
     expect(() => c.recheck('a', T + 2, 4, 999)).toThrow();
+  });
+});
+
+describe('the one release after a store timeout (r53)', () => {
+  const entry = (c: ResolverStateCore, token: string, now: number, nonce: number, kind: 'settlement' | 'no-data' = 'settlement') =>
+    c.journalEntry(token, now, { kind, marketId: 7, nonce, calldataHash: '0xab' });
+
+  it('a re-check that passed in the store but timed out for the run: the release marks the entry not_sent', () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4);
+    expect(c.recheck('a', T + 1000, 4, id)).toEqual({ ok: true }); // landed, but the run saw a timeout and sent nothing
+    c.release('a', T + 3000, { outcome: 'not-sent', entryId: id });
+    expect(c.s.journal[0]).toMatchObject({ result: 'not_sent' });
+    c.take('b', 1, T + 60_000);
+    expect(c.recheck('b', T + 60_000, 4, entry(c, 'b', T + 60_000, 4, 'no-data'))).toEqual({ ok: true }); // the refund sends
+  });
+  it("a refund sent production's way after a re-check timeout: the release arms its entry, so the next turn is held", () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4, 'no-data'); // its re-check timed out before reaching the store; the refund was sent
+    c.release('a', T + 12_000, { outcome: 'sent', entryId: id });
+    expect(c.s.journal[0].armedAt).toBe(T + 12_000);
+    c.take('b', 1, T + 60_000);
+    expect(c.recheck('b', T + 60_000, 4, entry(c, 'b', T + 60_000, 4))).toEqual({ ok: false, reason: 'nonce-held' });
+  });
+  it('a refund sent after its entry write timed out: the release writes the entry armed', () => {
+    const c = core();
+    c.take('a', 1, T);
+    c.release('a', T + 12_000, { outcome: 'sent', entry: { kind: 'no-data', marketId: 9, nonce: 4, calldataHash: '0xcd' } });
+    expect(c.s.journal[0]).toMatchObject({ marketId: 9, nonce: 4, armedAt: T + 12_000, result: null });
+    expect(() => c.release('a', T + 13_000, { outcome: 'sent' })).toThrow(); // nothing to write it from
+  });
+  it("the release's outcome applies even when the lease has expired, and never touches a reconciled entry", () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4);
+    c.take('b', 1, T + LEASE_MS); // a's lease expired and b holds it
+    c.release('a', T + LEASE_MS + 1, { outcome: 'not-sent', entryId: id });
+    expect(c.s.journal[0].result).toBe('not_sent');
+    expect(c.fenced('b', T + LEASE_MS + 2)).toBe(true); // b's lease is untouched
+    const id2 = entry(c, 'b', T + LEASE_MS + 3, 5);
+    c.reconcile('b', T + LEASE_MS + 4, id2, 'confirmed');
+    c.release('x', T + LEASE_MS + 5, { outcome: 'not-sent', entryId: id2 });
+    expect(c.s.journal[1].result).toBe('confirmed');
   });
 });
 
