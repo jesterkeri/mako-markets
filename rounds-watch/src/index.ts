@@ -67,7 +67,7 @@ export async function hmacSha256Hex(secret: string, message: string): Promise<st
 const worker = {
   async scheduled(event: ScheduledController, env: Env): Promise<void> {
     const cfg = readEnv(env);
-    const net = makeNet(fetch, () => Date.now(), (ms) => new Promise((r) => setTimeout(r, ms)), Date.now() + RUN_BUDGET_MS, MAX_REQUESTS);
+    const net = makeNet((i, x) => fetch(i, x), () => Date.now(), (ms) => new Promise((r) => setTimeout(r, ms)), Date.now() + RUN_BUDGET_MS, MAX_REQUESTS);
     const stub = env.WATCH_STATE.get(env.WATCH_STATE.idFromName('rounds-watch'));
     const outcome = await runWatch(cfg, {
       net,
