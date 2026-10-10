@@ -1,0 +1,15 @@
+# Foundry project for the CRE receiver adapter. Self-contained: no libraries, no submodules
+# (the tests talk to Foundry's cheatcode address through the small Vm interface in test/Vm.sol).
+# Compiler settings match mako-contracts, where MakoRoundsV1 is built.
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = []
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+
+[rpc_endpoints]
+monad_testnet = "https://testnet-rpc.monad.xyz/"

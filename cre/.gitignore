@@ -1,0 +1,14 @@
+# CRE workflow projects and the adapter's Foundry project.
+# Secrets: the CRE CLI reads them from a .env file in the project root, which never enters git.
+.env
+.env.*
+*.env
+# Dependencies and build output.
+node_modules/
+dist/
+*.wasm
+.cre_build_tmp.js
+# Foundry.
+contracts/out/
+contracts/cache/
+contracts/broadcast/
