@@ -165,7 +165,7 @@ cre workflow simulate settle-rounds --target staging-settings --non-interactive 
 - **A round is due.** A round shows up in `pendingSettlement()` once it has closed with stakes on both sides,
   and stays there for up to 24 h. The log shows `round N due: anchor B=…, close B=…`, then
   `both reports fetched and checked`. This proves the external data source. Then:
-  - if `adapterAddress` is still empty (as committed), the run stops with
+  - if `adapterAddress` were empty, the run would stop with
     `config.adapterAddress is empty: deploy MakoRoundsCreAdapter and set it`. That message is deliberate.
   - once the adapter is deployed and configured, add `--broadcast`. You need a funded key for this
     (`CRE_ETH_PRIVATE_KEY`, exported the same way). The run ends with
@@ -174,7 +174,16 @@ cre workflow simulate settle-rounds --target staging-settings --non-interactive 
   Any other report problem fails the run with its reason, for example
   `report error unauthorized 401`. No request id is included (it can differ per node and would break consensus). Neither the key nor the provider's text is ever included.
 
-## Deploying the adapter (needs Joshua's go; nothing has been deployed)
+## Deploying the adapter
+
+**Deployed 2026-10-10 (simulation instance):** `0xbeBf250d2cCbF6159d69F9ce03919e75d2B056CF` on Monad testnet, tx
+`0x3774c7ecdc59de583a53009dd8e12314245898d0e80a3a4a7142fa43cfd86e81` (block 69947930, status success, 344,685 gas),
+from the deployer wallet `0x2A5a066aedC57131df1C2B87d8004A8335219ca0`. Checked on chain: `FORWARDER()` is the
+MockKeystoneForwarder, `ROUNDS()` is MakoRoundsV1, `EXPECTED_AUTHOR()` is zero, and `supportsInterface(0x805f2132)`
+is true. `config.staging.json` points at it. The KeystoneForwarder instance (for `cre workflow deploy`) is not
+deployed. The deploy was made with `mako-design/scripts/cre-adapter-deploy.sh`, which uses a Foundry keystore and checks
+the result on chain.
+
 
 The forwarder address is fixed at construction, so each use needs its own instance:
 
