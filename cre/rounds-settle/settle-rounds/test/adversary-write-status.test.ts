@@ -23,7 +23,7 @@ const CLOSE_REPORT = fixture.fullReport.toLowerCase() as Hex;
 const ANCHOR_REPORT = `0x${'ab'.repeat(64)}` as Hex;
 
 const config: Config = {
-  schedule: '0 * * * * *',
+  schedule: '15 * * * * *',
   chainSelectorName: 'monad-testnet',
   roundsAddress: ROUNDS,
   adapterAddress: ADAPTER,

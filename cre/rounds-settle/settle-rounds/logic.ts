@@ -37,7 +37,7 @@ export const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b93
 // Config
 // ---------------------------------------------------------------------------------------------------------
 
-export const EVERY_MINUTE = '0 * * * * *';
+export const EVERY_MINUTE = '15 * * * * *';
 
 export type Config = {
   /// Six-field CRE cron (seconds first).
@@ -73,7 +73,8 @@ export function checkConfig(c: Config): CheckedConfig {
       throw new Error(`config.${name} is not a valid address`);
     }
   };
-  // pickRound's per-slot bound assumes one run a minute, at second 0.
+  // pickRound's per-slot bound assumes one run a minute; second 15 puts the first run 15 s after a minute-mark
+  // close, past settleDelaySeconds (10), so ten rounds closing together all get a turn within 10 minutes.
   if (c.schedule !== EVERY_MINUTE) throw new Error(`config.schedule must be "${EVERY_MINUTE}" (one run a minute)`);
   if (typeof c.chainSelectorName !== 'string' || c.chainSelectorName === '') throw new Error('config.chainSelectorName is not set');
   if (typeof c.dataStreamsUrl !== 'string' || !/^https:\/\/[^/\s]+$/.test(c.dataStreamsUrl))
@@ -230,6 +231,11 @@ export const ROTATION_SLOTS = 10;
 /// runs). The rotation shrinking with the due list, as a `due[m mod n]` pick does, cannot happen: the slot of
 /// a round never changes. Rounds sharing a slot take it in turns, one per visit (minute / ROTATION_SLOTS).
 /// Requires one run a minute (checkConfig pins the schedule).
+///
+/// Known limit, measured: rounds share a slot only when one stays pending while ten later round ids are created
+/// (ids are sequential). Then the bound no longer holds; over 200,000 random cases of up to 10 pending ids with
+/// random stuck subsets, the worst first turn of a healthy round came on run 49 (three ids in one slot, two of
+/// them stuck). The keeper's least-recently-tried rule, not this one, is the capacity release gate (TASKS T0.1c).
 export function pickRound(due: readonly Due[], nowS: number, periodS = 60, slots = ROTATION_SLOTS): Due | null {
   if (due.length === 0) return null;
   const minute = Math.floor(nowS / periodS);
@@ -237,7 +243,9 @@ export function pickRound(due: readonly Due[], nowS: number, periodS = 60, slots
   for (let k = 0; k < slots; k++) {
     const slot = (minute + k) % slots;
     const here = due.filter((d) => slotOf(d) === slot);
-    if (here.length > 0) return here[Math.floor(minute / slots) % here.length];
+    // Within a shared slot the pick moves with the visit (minute / slots) and with how far the turn travelled to
+    // reach it (k), so fallback visits from empty slots do not keep landing on the same member.
+    if (here.length > 0) return here[(Math.floor(minute / slots) + k) % here.length];
   }
   return null; // unreachable: every due round has a slot
 }

@@ -20,7 +20,7 @@ const KEY = 'test-key';
 const SECRET = 'test-secret';
 
 const config: Config = {
-  schedule: '0 * * * * *',
+  schedule: '15 * * * * *',
   chainSelectorName: 'monad-testnet',
   roundsAddress: ROUNDS,
   adapterAddress: ADAPTER,
@@ -50,6 +50,7 @@ type Setup = {
   adapter?: string;
   withSecrets?: boolean;
   failIds?: bigint[];
+  simulateRevert?: boolean;
 };
 
 function setup(s: Setup = {}) {
@@ -57,6 +58,8 @@ function setup(s: Setup = {}) {
   const rounds = addContractMock(evm, { address: ROUNDS, abi: ROUNDS_ABI });
   rounds.pendingSettlement = () => s.pending ?? [];
   rounds.DURATION = () => 900n;
+  // settle is not a view, so the typed mock does not list it; the runtime mock routes any ABI function.
+  (rounds as unknown as Record<string, () => void>).settle = () => (s.simulateRevert ? (() => { throw new Error('execution reverted'); })() : undefined);
   const closeTimeOf = (id: bigint) => (id === 7n ? CLOSE : CLOSE + 100_000n);
   rounds.closeTimeOf = (id: unknown) => closeTimeOf(id as bigint);
   // Multicall3 answers each inner call the way the deployed contract would; `failIds` revert (unknown round).
@@ -115,7 +118,7 @@ describe('initWorkflow', () => {
   test('one cron handler on the configured schedule', () => {
     const handlers = initWorkflow(config);
     expect(handlers).toHaveLength(1);
-    expect((handlers[0].trigger as unknown as { config: { schedule: string } }).config.schedule).toBe('0 * * * * *');
+    expect((handlers[0].trigger as unknown as { config: { schedule: string } }).config.schedule).toBe('15 * * * * *');
   });
 });
 
@@ -141,16 +144,17 @@ describe('onCronTrigger', () => {
     const out = onCronTrigger(runtime);
     expect(out).toBe(`settled round 7 tx 0x${'11'.repeat(32)}`);
 
-    // Two EVM reads in all (SPEC §5.5a, N24: at most 3): pendingSettlement, then one Multicall3 aggregate3
-    // (0x82ad56cb) carrying DURATION and one closeTimeOf per pending id, all at the same (finalized) block tag.
-    expect(reads.map((r) => r.fn)).toEqual(['0x36ceb433', '0x82ad56cb']);
+    // Three EVM reads in all (SPEC §5.5a, N24: at most 3): pendingSettlement and one Multicall3 aggregate3
+    // (0x82ad56cb, DURATION and one closeTimeOf per pending id) at the finalized block, then the settle
+    // simulation (0x577b64a0) at the latest block.
+    expect(reads.map((r) => r.fn)).toEqual(['0x36ceb433', '0x82ad56cb', '0x577b64a0']);
     expect(inner3).toEqual([
       { target: ROUNDS, fn: 'DURATION' },
       { target: ROUNDS, fn: 'closeTimeOf' },
       { target: ROUNDS, fn: 'closeTimeOf' },
     ]);
     // LAST_FINALIZED_BLOCK_NUMBER is the proto BigInt -3 (sign -1, magnitude 3); LATEST would be -2.
-    expect(new Set(reads.map((r) => r.block))).toEqual(new Set(['-1:3']));
+    expect(reads.map((r) => r.block)).toEqual(['-1:3', '-1:3', '-1:2']);
 
     expect(requests.map((r) => r.url)).toEqual([ORIGIN + reportPath(ANCHOR), ORIGIN + reportPath(Number(CLOSE))]);
     for (const r of requests) {
@@ -172,10 +176,16 @@ describe('onCronTrigger', () => {
     expect(logs).not.toContain(SECRET);
   });
 
-  test('ten pending rounds (MAX_ACTIVE_ROUNDS) still take exactly 2 EVM reads', () => {
+  test('ten pending rounds (MAX_ACTIVE_ROUNDS) still take exactly 3 EVM reads', () => {
     const { runtime, reads } = setup({ pending: Array.from({ length: 10 }, (_, i) => BigInt(i + 7)) });
     onCronTrigger(runtime);
-    expect(reads).toHaveLength(2);
+    expect(reads).toHaveLength(3);
+  });
+
+  test('a settle simulation that reverts stops the run before any write', () => {
+    const { runtime, writes } = setup({ pending: [7n], simulateRevert: true });
+    expect(() => onCronTrigger(runtime)).toThrow('round 7 settle simulation reverted: nothing submitted');
+    expect(writes).toHaveLength(0);
   });
 
   test('a closeTimeOf that fails inside the batch skips only that round', () => {

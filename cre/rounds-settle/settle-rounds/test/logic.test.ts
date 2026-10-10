@@ -142,6 +142,24 @@ describe('dueRounds and pickRound', () => {
     }
   });
 
+  test('T0.1c (a): ten healthy rounds closing together all get a turn within 10 minutes of close', () => {
+    const close = 1_789_529_160; // a minute mark, as every round close is
+    const ten = Array.from({ length: 10 }, (_, i) => BigInt(i + 1));
+    const closeTimes = new Map(ten.map((id) => [id, BigInt(close)] as const));
+    let pending = [...ten];
+    let last = 0;
+    for (let k = 0; pending.length > 0 && k < 20; k++) {
+      const nowS = close + 15 + 60 * k; // the pinned schedule: second 15 of every minute
+      const pick = pickRound(dueRounds(pending, closeTimes, 900n, nowS, 10), nowS);
+      if (pick) {
+        pending = pending.filter((id) => id !== pick.roundId);
+        last = nowS;
+      }
+    }
+    expect(pending).toEqual([]);
+    expect(last - close).toBeLessThan(600);
+  });
+
   test('a minute whose slot is empty passes the turn on, so no run is wasted while a round is due', () => {
     const due = dueRounds([3n], closes, 900n, 50_000, 10);
     for (let k = 0; k < 20; k++) expect(pickRound(due, 60 * k)!.roundId).toBe(3n);
@@ -196,7 +214,7 @@ describe('the report the DON signs and the adapter forwards', () => {
 
 describe('checkConfig', () => {
   const good: Config = {
-    schedule: '0 * * * * *',
+    schedule: '15 * * * * *',
     chainSelectorName: 'monad-testnet',
     roundsAddress: '0x9dc0e0b9e8f1905740d8b98e90fe07288dcc2921',
     adapterAddress: '',

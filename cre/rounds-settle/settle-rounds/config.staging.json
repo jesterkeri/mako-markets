@@ -1,5 +1,5 @@
 {
-  "schedule": "0 * * * * *",
+  "schedule": "15 * * * * *",
   "chainSelectorName": "monad-testnet",
   "roundsAddress": "0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921",
   "adapterAddress": "",

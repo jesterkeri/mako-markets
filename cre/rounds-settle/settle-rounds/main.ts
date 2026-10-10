@@ -6,6 +6,7 @@
 //        closeTimeOf(id) in one Multicall3 aggregate3
 //     -> pick one round that is due (logic.ts: dueRounds + pickRound)
 //     -> HTTP GET, Data Streams REST: the BTC/USD full reports observed at exactly startTime and closeTime
+//     -> EVM read: eth_call of settle(roundId, anchor, close) at the latest block; stop if it reverts
 //     -> runtime.report(abi.encode(roundId, anchorReport, closeReport)), signed by the DON
 //     -> EVM write to MakoRoundsCreAdapter.onReport, which calls MakoRoundsV1.settle(...)
 //
@@ -22,6 +23,7 @@ import {
   handler,
   HTTPClient,
   LAST_FINALIZED_BLOCK_NUMBER,
+  LATEST_BLOCK_NUMBER,
   prepareReportRequest,
   Runner,
   text,
@@ -46,6 +48,7 @@ import {
   reportHeaders,
   reportPath,
   roundTimesData,
+  settleData,
   type Config,
   type ReportResult,
 } from './logic';
@@ -128,7 +131,22 @@ export const onCronTrigger = (runtime: Runtime<Config>): string => {
   }
   runtime.log(`${round} both reports fetched and checked (feed, exact boundary)`);
 
-  // 3. DON-signed report -> forwarder -> adapter.onReport -> MakoRoundsV1.settle.
+  // 3. Simulate settle with these exact reports at the latest block (SPEC §5.5 step 3, N20; the keeper does the
+  // same): a round that would revert (fee manager on, spread too wide, already settled) costs no gas. 3rd and
+  // last EVM read (§5.5a). settle is permissionless, so the zero sender simulates what the adapter will do.
+  try {
+    evm
+      .callContract(runtime, {
+        call: encodeCallMsg({ from: zeroAddress, to: cfg.roundsAddress, data: settleData(due.roundId, reports[0], reports[1]) }),
+        blockNumber: LATEST_BLOCK_NUMBER,
+      })
+      .result();
+  } catch {
+    throw new Error(`${round} settle simulation reverted: nothing submitted`);
+  }
+  runtime.log(`${round} settle simulation passed`);
+
+  // 4. DON-signed report -> forwarder -> adapter.onReport -> MakoRoundsV1.settle.
   if (cfg.adapterAddress === null) {
     throw new Error(`${round} ready to settle, but config.adapterAddress is empty: deploy MakoRoundsCreAdapter and set it`);
   }

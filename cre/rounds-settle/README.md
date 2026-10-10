@@ -8,8 +8,11 @@ a blockchain (Monad testnet) to an external data source (Data Streams), and CRE 
 
 Every minute:
 
-1. **Cron trigger** (CRE `CronCapability`, schedule `0 * * * * *`).
-2. **EVM reads**, two in all (Monad testnet, at the last finalized block), within SPEC §5.5a's "at most 3":
+1. **Cron trigger** (CRE `CronCapability`, schedule `15 * * * * *`: second 15 of every minute. Rounds close on
+   minute marks, so the first run after a close comes 15 s later, past the 10 s settle delay; ten rounds closing
+   together then all get a turn by close + 555 s).
+2. **EVM reads**, two here (Monad testnet, at the last finalized block) and a third in step 4, within SPEC §5.5a's
+   "at most 3":
    `pendingSettlement()` on `MakoRoundsV1` at `0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921`, then `DURATION()`
    and every `closeTimeOf(id)` in one Multicall3 `aggregate3` (`0xcA11bde05977b3631167028862bE2a173976CA11`).
    It picks one round at least `settleDelaySeconds` (10) past its close. If none is due, the run ends with
@@ -17,7 +20,10 @@ Every minute:
 3. **HTTP fetch** (CRE `HTTPClient`, results checked by DON consensus) of the two BTC/USD Data Streams full
    reports the round needs: one observed at exactly `startTime`, one at exactly `closeTime`. Requests are signed
    with Chainlink's HMAC scheme. A report for the wrong feed or the wrong second is refused before anything is sent.
-4. **EVM write**: the DON signs `abi.encode(roundId, anchorReport, closeReport)` and CRE delivers it through
+4. **Settle simulation** (SPEC §5.5 step 3, N20; the keeper does the same): an `eth_call` of
+   `settle(roundId, anchor, close)` at the latest block. If it reverts (fee manager on, spread too wide, already
+   settled), the run stops with `settle simulation reverted: nothing submitted` and no gas is spent.
+5. **EVM write**: the DON signs `abi.encode(roundId, anchorReport, closeReport)` and CRE delivers it through
    Chainlink's KeystoneForwarder to `MakoRoundsCreAdapter.onReport`. The adapter calls `MakoRoundsV1.settle`.
 
 The workflow never computes a price or an outcome. `MakoRoundsV1` checks both reports on-chain through
@@ -79,8 +85,12 @@ paths accept and refuse exactly the same reports. There are two differences, and
 `logic.ts`:
 
 - HMAC uses `@noble/hashes`, because CRE's WASM runtime has no WebCrypto.
-- CRE keeps no state between runs, so the keeper's "least recently tried" order is replaced by a rotation
-  keyed on the minute. Each due round still gets a turn at least once every *n* minutes.
+- CRE keeps no state between runs, so the keeper's "least recently tried" order is replaced by fixed slots:
+  minute m serves the due rounds whose id mod 10 is m mod 10, and passes an empty slot's turn on. A due round
+  alone in its slot gets a turn at least once every 10 minutes, whatever the other rounds do. **Known limit:**
+  rounds share a slot only if one stays pending while ten later rounds are created; then the bound does not hold
+  (worst case measured over 200,000 random cases: first turn on run 49). The keeper, not CRE, is the capacity
+  release gate (TASKS T0.1c).
 
 The keeper waits 300 s after close, so CRE settles first whenever it is healthy.
 
