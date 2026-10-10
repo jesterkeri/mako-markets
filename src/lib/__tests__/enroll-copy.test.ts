@@ -26,7 +26,7 @@ describe('authenticator setup copy', () => {
   it('names apps that work and how to keep codes', () => {
     for (const app of ['Google Authenticator', 'Authy', '1Password']) expect(copy).toContain(app);
     expect(copy).toContain('Turn on the app’s backup');
-    // Each app named once (adversary on 1b06a62: they were listed twice).
+    // At most twice each: the list, then that app's own backup instruction (adversary on 1b06a62 found a repeated list).
     for (const app of ['Authy', '1Password']) expect(copy.split(app).length - 1).toBeLessThanOrEqual(2);
   });
   it('stays mandatory: no skip on this step', () => {
