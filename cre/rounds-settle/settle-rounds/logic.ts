@@ -41,7 +41,8 @@ export const EVERY_MINUTE = '15 * * * * *';
 /// The only Data Streams REST origin this testnet workflow may send credentials to.
 export const DATA_STREAMS_ORIGINS = ['https://api.testnet-dataengine.chain.link'] as const;
 export const MAX_SETTLE_DELAY_S = 15;
-export const MIN_GAS_LIMIT = 100_000;
+/// settle's own budget (SPEC §5.5a, T0.1c): the forwarder and adapter need gas on top of it.
+export const MIN_GAS_LIMIT = 1_000_000;
 /// SPEC §5.5a: CRE transaction gas quota.
 export const MAX_GAS_LIMIT = 5_000_000;
 
@@ -91,7 +92,9 @@ export function checkConfig(c: Config): CheckedConfig {
   // rounds closing together relies on; a longer delay also risks leaving rounds never due (adversary r6).
   if (!Number.isSafeInteger(c.settleDelaySeconds) || c.settleDelaySeconds < 0 || c.settleDelaySeconds > MAX_SETTLE_DELAY_S)
     throw new Error(`config.settleDelaySeconds must be an integer in [0, ${MAX_SETTLE_DELAY_S}]`);
-  // SPEC §5.5a: CRE's transaction gas quota is 5,000,000; settle is held to 1,000,000, so 100,000 is a floor.
+  // SPEC §5.5a: CRE's transaction gas quota is 5,000,000 (ceiling). settle is budgeted at up to 1,000,000 (two
+  // verifies alone are about 210,000), so a lower limit would run every write out of gas inside the forwarder (floor;
+  // adversary r7).
   const gas = typeof c.gasLimit === 'string' && /^[1-9][0-9]{0,6}$/.test(c.gasLimit) ? Number(c.gasLimit) : NaN;
   if (!(gas >= MIN_GAS_LIMIT && gas <= MAX_GAS_LIMIT))
     throw new Error(`config.gasLimit must be a decimal string between ${MIN_GAS_LIMIT} and ${MAX_GAS_LIMIT}`);

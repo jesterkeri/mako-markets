@@ -90,3 +90,18 @@ describe('adversary: config validation', () => {
     expect(() => checkConfig({ ...good, settleDelaySeconds: delay })).toThrow(/settleDelaySeconds/);
   });
 });
+
+// Adversary pass r7 on checkConfig (logic.ts, commit b09260b), 2026-10-10.
+//
+// SPEC §5.5a, "Transaction gas" row: the write carries "two verifies (about 210,000) plus settlement", and
+// TASKS T0.1c: "settle at most 1,000,000 gas (two verifies measured at about 210,000)". README "Write gas":
+// the forwarder and the adapter cost extra on top of settle. So no gasLimit under about 210,000 can carry a
+// settle, yet checkConfig's floor is MIN_GAS_LIMIT = 100,000. The pre-write settle simulation (main.ts,
+// callContract with no gas field) does not see the configured limit, so such a config passes every check,
+// and every write then runs out of gas inside the forwarder's call to the adapter: the forwarder records
+// REVERTED, the round stays pending, and on Monad (charged on the limit) each minute pays for a failed tx.
+describe('adversary r7: gas floor', () => {
+  test('adversary-gas-below-two-verifies: a gasLimit below the two-verify cost (SPEC §5.5a, about 210,000) is refused', () => {
+    expect(() => checkConfig({ ...good, gasLimit: '200000' })).toThrow(/gasLimit/);
+  });
+});
