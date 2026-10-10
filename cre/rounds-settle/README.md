@@ -60,10 +60,10 @@ cre/
       rounds-abi.ts              MakoRoundsV1 ABI subset (selectors checked against the deployed bytecode)
       config.staging.json        Monad testnet config
       workflow.yaml              target "staging-settings"
-      test/                      bun tests (48) + a real Data Streams fixture
+      test/                      bun tests + a real Data Streams fixture
   contracts/                     Foundry project for the adapter
     src/MakoRoundsCreAdapter.sol
-    test/MakoRoundsCreAdapter.t.sol   15 unit tests + 1 fork test (the fork test returns early and counts as passing when MONAD_RPC_URL is unset) against the deployed contracts
+    test/MakoRoundsCreAdapter.t.sol   unit tests + 1 fork test against the deployed contracts (the fork test returns early and counts as passing when MONAD_RPC_URL is unset)
 ```
 
 ## Facts this relies on, with sources
@@ -107,7 +107,7 @@ From `cre/rounds-settle/settle-rounds`:
 
 ```bash
 bun install
-bun test                 # 48 pass
+bun test                 # every test passes
 bunx tsc --noEmit        # clean
 ```
 
@@ -120,7 +120,7 @@ cre workflow build settle-rounds --target staging-settings --non-interactive   #
 From `cre/contracts`:
 
 ```bash
-forge test                                                                       # 16 pass (15 without MONAD_RPC_URL plus the fork test, which then returns early)
+forge test                                                                       # every test passes (without MONAD_RPC_URL the fork test returns early and counts as passing)
 # With MONAD_RPC_URL exported, plain `forge test` fails the fork test ("cannot create a monad fork with an EVM
 # instantiated for ethereum"): unset it, or run the fork command below with `--network monad`.
 MONAD_RPC_URL=https://testnet-rpc.monad.xyz forge test --network monad --match-contract Fork -vv
@@ -207,10 +207,12 @@ because the adapter only reaches a permissionless call.
 - **Write gas.** `gasLimit` is `1500000` (config accepts 1,000,000, settle's own budget, to 5,000,000, the CRE transaction gas quota). The SPEC holds `settle` to at most 1,000,000 gas, and the extra
   covers the forwarder and the adapter. On Monad the limit is what gets charged.
 
-## Before this branch can merge
+## Merging into the app repo
 
-The repo's root `tsconfig.json` includes `**/*.ts` and does not exclude `cre`. So the Next typecheck and
-the Vercel build would try to compile these files, and `bun:test` and `@chainlink/cre-sdk` are not root
-dependencies. Merging needs `"cre"` added to the root `exclude` list, the same way `cf-worker`, `keeper` and
-`rounds-delivery` are excluded. Root ESLint may also need a `cre/**` ignore. Both are edits outside `cre/`,
-so this branch leaves them out.
+This branch already keeps `cre/` out of the app's own checks: the root `tsconfig.json` lists `"cre"` in `exclude`
+and the root `eslint.config.mjs` ignores `"cre/**"`, so the Next typecheck, lint and Vercel build never compile the
+CRE workflow or the adapter (they have their own Bun and Foundry checks above). To confirm from the repo root:
+
+```bash
+npx tsc --noEmit -p tsconfig.json --listFilesOnly | grep -c '/cre/'   # 0
+```

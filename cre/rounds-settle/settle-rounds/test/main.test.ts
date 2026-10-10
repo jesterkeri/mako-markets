@@ -230,6 +230,32 @@ describe('onCronTrigger', () => {
     expect(writes).toHaveLength(0);
   });
 
+  test('a fetch that THROWS with the request in its message leaks nothing: fixed transport error, no key, secret or signature (Codex CRE R1)', () => {
+    let signature = '';
+    const { runtime, writes } = setup({
+      pending: [7n],
+      http: (req) => {
+        signature = req.headers['X-Authorization-Signature-SHA256'];
+        // What a transport or capability diagnostic could carry: the attempted request with its headers.
+        throw new Error(`fetch failed: GET ${req.url} Authorization: ${req.headers.Authorization} sig=${signature} secret=${SECRET}`);
+      },
+    });
+    let msg = '';
+    try {
+      onCronTrigger(runtime);
+    } catch (e) {
+      msg = String((e as Error).message) + String((e as Error).stack ?? '') + String((e as { cause?: unknown }).cause ?? '');
+    }
+    expect(msg).toContain(`round 7 report error transport 0 for B=${ANCHOR}`);
+    const logs = runtime.getLogs().join('\n');
+    for (const leak of [KEY, SECRET, signature]) {
+      expect(signature.length).toBeGreaterThan(10);
+      expect(msg).not.toContain(leak);
+      expect(logs).not.toContain(leak);
+    }
+    expect(writes).toHaveLength(0);
+  });
+
   test('settle reverting inside the adapter fails the run (the forwarder transaction itself succeeds)', () => {
     const { runtime } = setup({ pending: [7n], write: 'receiver-reverted' });
     expect(() => onCronTrigger(runtime)).toThrow('round 7 adapter or settle reverted');

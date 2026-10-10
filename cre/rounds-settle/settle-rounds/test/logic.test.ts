@@ -11,12 +11,15 @@ import {
   pickRound,
   readReport,
   ROTATION_SLOTS,
+  TRANSPORT_FAILURE,
+  withoutThrow,
   reportHeaders,
   reportPath,
   ROUNDS_ABI,
   settleData,
   signingString,
   type Config,
+  type ReportResult,
 } from '../logic';
 // A real Data Streams answer for BTC/USD at B = 1789529160, captured from the testnet API on 2026-09-23 by the
 // keeper's datastreams-retention probe (provenance inside the file). Copied from origin/feat/rounds-keeper.
@@ -200,6 +203,19 @@ describe('dueRounds and pickRound', () => {
       for (const id of w) seen.add(id);
     }
     expect(seen.size).toBe(15);
+  });
+});
+
+describe('withoutThrow: the boundary around every report fetch (Codex CRE R1)', () => {
+  test('a throw carrying a sentinel credential becomes the fixed fallback, and the error is never surfaced', () => {
+    const out = withoutThrow((): ReportResult => {
+      throw new Error('consensus failed for request Authorization: SENTINEL-KEY');
+    }, TRANSPORT_FAILURE);
+    expect(out).toEqual({ ok: false, status: 0, reason: 'transport', requestId: null });
+    expect(JSON.stringify(out)).not.toContain('SENTINEL');
+  });
+  test('a value is passed through unchanged', () => {
+    expect(withoutThrow(() => 7, 0)).toBe(7);
   });
 });
 

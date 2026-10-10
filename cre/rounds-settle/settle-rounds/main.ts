@@ -47,6 +47,8 @@ import {
   readReport,
   reportHeaders,
   reportPath,
+  TRANSPORT_FAILURE,
+  withoutThrow,
   roundTimesData,
   settleData,
   type Config,
@@ -77,11 +79,14 @@ const fetchReport = (
   url: string,
   headers: Record<string, string>,
   boundary: number,
-): string => {
-  const response = sendRequester.sendRequest({ url, method: 'GET', headers }).result();
-  // No request id: it can differ per node, and identical consensus over the failure would then never agree.
-  return JSON.stringify(readReport(response.statusCode, text(response), null, boundary));
-};
+): string =>
+  // A throw here (transport or capability failure) may carry the attempted request and its headers; it becomes
+  // the fixed TRANSPORT_FAILURE instead (Codex CRE R1). No request id: it can differ per node, and identical
+  // consensus over the failure would then never agree.
+  withoutThrow(() => {
+    const response = sendRequester.sendRequest({ url, method: 'GET', headers }).result();
+    return JSON.stringify(readReport(response.statusCode, text(response), null, boundary));
+  }, JSON.stringify(TRANSPORT_FAILURE));
 
 export const onCronTrigger = (runtime: Runtime<Config>): string => {
   const cfg = checkConfig(runtime.config);
@@ -116,10 +121,16 @@ export const onCronTrigger = (runtime: Runtime<Config>): string => {
     const path = reportPath(boundary);
     // DON time, identical on every node, so every node signs the same request.
     const headers = reportHeaders(path, apiKey, apiSecret, String(runtime.now().getTime()));
-    const answer = http
-      .sendRequest(runtime, fetchReport, consensusIdenticalAggregation<string>())(cfg.dataStreamsUrl + path, headers, boundary)
-      .result();
-    const r = JSON.parse(answer) as ReportResult;
+    // The consensus result can throw too (a node or consensus failure); the same fixed answer replaces it.
+    const r = withoutThrow(
+      () =>
+        JSON.parse(
+          http
+            .sendRequest(runtime, fetchReport, consensusIdenticalAggregation<string>())(cfg.dataStreamsUrl + path, headers, boundary)
+            .result(),
+        ) as ReportResult,
+      TRANSPORT_FAILURE,
+    );
     if (!r.ok) {
       if (r.reason === 'not_found') {
         runtime.log(`${round} waiting: no report yet for B=${boundary}`);

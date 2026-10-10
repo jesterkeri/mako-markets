@@ -295,7 +295,7 @@ export function reportHeaders(path: string, apiKey: string, secret: string, time
 
 /// The only things a report error may carry: never the request, the headers, the key or the provider's text,
 /// so nothing sensitive can reach a log or the workflow result.
-export type ReportReason = 'not_found' | 'unauthorized' | 'rate_limited' | 'server_error' | 'bad_status' | 'bad_body' | 'mismatch';
+export type ReportReason = 'not_found' | 'unauthorized' | 'rate_limited' | 'server_error' | 'bad_status' | 'bad_body' | 'mismatch' | 'transport';
 export type ReportResult =
   | { ok: true; fullReport: Hex }
   | { ok: false; status: number; reason: ReportReason; requestId: string | null };
@@ -326,6 +326,21 @@ export function readReport(status: number, body: string, requestIdHeader: string
   if (typeof r.feedID !== 'string' || r.feedID.toLowerCase() !== FEED_ID) return fail('mismatch');
   if (Number(r.observationsTimestamp) !== boundary) return fail('mismatch');
   return { ok: true, fullReport: full.toLowerCase() as Hex };
+}
+
+/// The fixed answer for a report fetch that threw instead of returning (transport, capability or consensus
+/// failure). It carries nothing from the error: a thrown diagnostic can include the attempted request, and with it
+/// the API key and signature (Codex CRE R1).
+export const TRANSPORT_FAILURE: ReportResult = { ok: false, status: 0, reason: 'transport', requestId: null };
+
+/// Runs `f`; if it throws, returns `fallback` and drops the error unread, so nothing from it can reach a log, an
+/// error message or the workflow result.
+export function withoutThrow<T>(f: () => T, fallback: T): T {
+  try {
+    return f();
+  } catch {
+    return fallback;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------
