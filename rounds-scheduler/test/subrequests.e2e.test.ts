@@ -1,5 +1,5 @@
 // Spec 4 (adversary on 3f08d05): the Worker's subrequest count per run stays bounded, under wrangler.toml's
-// `[limits] subrequests` and under WORST_CASE_SUBREQUESTS (src/index.ts). Every fetch to the RPC and every call to the SchedulerState Durable Object is a subrequest. This counts both
+// `[limits] subrequests` and under WORST_CASE_SUBREQUESTS (src/constants.ts). Every fetch to the RPC and every call to the SchedulerState Durable Object is a subrequest. This counts both
 // over ONE run, on a local anvil fork that mines on a 0.4 s timer the way Monad does (a transaction is not in a block
 // the instant it is acknowledged), never the live chain. Skipped unless both are set:
 //   anvil --fork-url https://testnet-rpc.monad.xyz/ --network monad --port <p> --block-time 0.4
