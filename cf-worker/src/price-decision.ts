@@ -17,6 +17,8 @@ import type { V3Report } from './datastreams';
 
 export const PRICE_DECIMALS = 18;
 export const MAX_SPREAD_BPS = 50n;
+/// MarketType.CRYPTO in MakoMarketsV4.sol (market #105, "SUI:gt:1.2", reads mType 1 on chain).
+export const MARKET_TYPE_CRYPTO = 1;
 /// Outcome.YES / Outcome.NO in MakoMarketsV4.sol.
 export const OUTCOME_YES = 1;
 export const OUTCOME_NO = 2;
@@ -56,8 +58,11 @@ export type Decision =
   | { kind: 'final'; reason: FinalReason }
   | { kind: 'wait'; reason: RetryReason };
 
-/// The pool's feed, or why it has none.
-export function feedFor(ref: CryptoRef | null): { ok: true; feed: CryptoFeed } | { ok: false; reason: 'parse_fail' | 'symbol_paused' } {
+/// The pool's feed, or why it has none. Eligible only as a CRYPTO-type market whose symbol has a pinned v3 feed: V4 does
+/// not check an oracle ref against the market type, so a direct-created STOCKS market reading `BTC:gt:60000` must not
+/// settle on BTC (adversary on plan r17, finding 3).
+export function feedFor(mType: number, ref: CryptoRef | null): { ok: true; feed: CryptoFeed } | { ok: false; reason: 'parse_fail' | 'symbol_paused' | 'class_paused' } {
+  if (mType !== MARKET_TYPE_CRYPTO) return { ok: false, reason: 'class_paused' };
   if (!ref) return { ok: false, reason: 'parse_fail' };
   const feed = CRYPTO_FEEDS.get(ref.symbol);
   return feed ? { ok: true, feed } : { ok: false, reason: 'symbol_paused' };

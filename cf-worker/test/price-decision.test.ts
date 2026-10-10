@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import { decodeVerified, type V3Report } from '../src/datastreams';
-import { CRYPTO_FEEDS, decideCrypto, feedFor, OUTCOME_NO, OUTCOME_YES, parseCryptoRef } from '../src/price-decision';
+import { CRYPTO_FEEDS, decideCrypto, feedFor, MARKET_TYPE_CRYPTO, OUTCOME_NO, OUTCOME_YES, parseCryptoRef } from '../src/price-decision';
 
 const payload = decodeAbiParameters(
   [{ type: 'bytes32[3]' }, { type: 'bytes' }, { type: 'bytes32[]' }, { type: 'bytes32[]' }, { type: 'bytes32' }],
@@ -25,8 +25,12 @@ describe('the feed table', () => {
     expect(BTC.feedId).toBe(fixture.feedID);
   });
   it('a symbol with no pinned feed is symbol_paused; an unreadable ref is parse_fail', () => {
-    expect(feedFor(parseCryptoRef(ref('XRP:gt:1')))).toEqual({ ok: false, reason: 'symbol_paused' });
-    expect(feedFor(parseCryptoRef(ref('nonsense')))).toEqual({ ok: false, reason: 'parse_fail' });
+    expect(feedFor(MARKET_TYPE_CRYPTO, parseCryptoRef(ref('XRP:gt:1')))).toEqual({ ok: false, reason: 'symbol_paused' });
+    expect(feedFor(MARKET_TYPE_CRYPTO, parseCryptoRef(ref('nonsense')))).toEqual({ ok: false, reason: 'parse_fail' });
+    expect(feedFor(MARKET_TYPE_CRYPTO, parseCryptoRef(ref('BTC:gt:1')))).toMatchObject({ ok: true, feed: { symbol: 'BTC' } });
+  });
+  it.each([0, 2, 3, 4, 5, 6, 7])('a market of type %i is never eligible, even with a crypto ref (V4 does not check the ref against the type)', (mType) => {
+    expect(feedFor(mType, parseCryptoRef(ref('BTC:gt:60000')))).toEqual({ ok: false, reason: 'class_paused' });
   });
 });
 
