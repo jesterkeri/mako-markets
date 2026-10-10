@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // cf-worker/src/resolver-state.ts
 //
-// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r51 §4.9), as a pure state
+// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r52 §4.9), as a pure state
 // machine with no Cloudflare dependency, so every rule is unit-tested in Node. The Durable Object that hosts it
 // wraps each method below in ONE storage transaction; nothing here awaits, so each method is all-or-nothing.
 //
@@ -15,8 +15,8 @@ export const LEASE_MS = 180_000;
 export const RECHECK_MIN_LEFT_MS = 20_000;
 /// §4.9 Lease: released tokens are remembered this long, so a late take for one is refused (r46).
 export const RELEASED_TOKEN_TTL_MS = 24 * 3600_000;
-/// §4.9 Turns: a journal entry holds its nonce this long from its write (r51: Monad's 300 s pool expiry, cited in
-/// the plan, plus the 14 s before Monad's insert and margin for a forwarded copy).
+/// §4.9 Turns: an armed journal entry holds its nonce this long from its passing re-check (r52: Monad's 300 s pool
+/// expiry, cited in the plan, plus the 8 s raw send before Monad's insert and margin for a forwarded copy).
 export const NONCE_HOLD_MS = 345_000;
 /// §4.9 Demotion: a candidate whose count reaches this is demoted at the start of the next run.
 export const DEMOTE_AT = 2;
@@ -51,8 +51,11 @@ export interface JournalEntry {
   marketId: number;
   nonce: number;
   calldataHash: string;
-  /// The store's stamp on the entry write (r51: the hold is timed from it, hash or not).
+  /// The store's stamp on the entry write.
   enteredAt: number;
+  /// The store's stamp from this entry's own passing re-check (r52). Only an armed entry holds its nonce, timed from
+  /// here, hash or not; an entry whose re-check was refused, or that never reached one, holds nothing.
+  armedAt: number | null;
   txHash: string | null;
   result: JournalResult | null;
   /// Set once the hold expired with no result (r49; not final: reconciliation may still resolve it).
@@ -112,13 +115,15 @@ export class ResolverStateCore {
 
   /// The run's take, a conditional write (r44): an older version writes nothing and gets no lease; a token already
   /// released is refused however late the take lands (r45, r46); a live lease is not taken over.
+  /// The version is recorded whatever else the take answers, so a newer run that finds the lease held still shuts
+  /// out every later run of an older version (r43).
   take(token: string, version: number, now: number): TakeResult {
+    if (version < this.s.newestVersion) return 'older'; // writes nothing at all
+    this.s.newestVersion = version;
     this.forgetOldReleases(now);
-    if (version < this.s.newestVersion) return 'older';
-    if (token in this.s.released) return 'token-released';
+    if (Object.hasOwn(this.s.released, token)) return 'token-released';
     if (this.s.lease && this.s.lease.expiresAt > now) return 'held';
     this.s.lease = { token, expiresAt: now + LEASE_MS };
-    this.s.newestVersion = Math.max(this.s.newestVersion, version);
     return 'granted';
   }
 
@@ -145,18 +150,29 @@ export class ResolverStateCore {
     for (const [t, at] of Object.entries(this.s.released)) if (now - at > RELEASED_TOKEN_TTL_MS) delete this.s.released[t];
   }
 
-  /// The last store call before the raw send (r41, r49): enough lease left, and no journal entry holding `nonce`.
-  /// Entries older than the hold are marked presumed_dropped and no longer hold (r49, r51).
-  recheck(token: string, now: number, nonce: number): { ok: true } | { ok: false; reason: 'lease' | 'time-left' | 'nonce-held' } {
+  /// The last store call before the raw send (r41, r49): enough lease left, and no OTHER armed, unreconciled entry
+  /// holding `nonce`. A pass arms the asking entry `entryId` (r52); a refusal leaves it unarmed. Armed entries older
+  /// than the hold are marked presumed_dropped and no longer hold (r49, r51).
+  recheck(
+    token: string,
+    now: number,
+    nonce: number,
+    entryId: number,
+  ): { ok: true } | { ok: false; reason: 'lease' | 'time-left' | 'nonce-held' } {
     if (!this.fenced(token, now)) return { ok: false, reason: 'lease' };
     if (this.s.lease!.expiresAt - now < RECHECK_MIN_LEFT_MS) return { ok: false, reason: 'time-left' };
+    const own = this.s.journal.find((e) => e.id === entryId);
+    if (!own || own.result !== null || own.armedAt !== null) throw new Error(`entry ${entryId} is not an open, unarmed entry`);
     let held = false;
     for (const e of this.s.journal) {
-      if (e.result !== null || e.nonce < nonce) continue;
-      if (now - e.enteredAt < NONCE_HOLD_MS) held = true;
+      // The asking entry is still unarmed here (checked above), so it is never its own hold.
+      if (e.armedAt === null || e.result !== null || e.nonce < nonce) continue;
+      if (now - e.armedAt < NONCE_HOLD_MS) held = true;
       else e.presumedDropped = true;
     }
-    return held ? { ok: false, reason: 'nonce-held' } : { ok: true };
+    if (held) return { ok: false, reason: 'nonce-held' };
+    own.armedAt = now;
+    return { ok: true };
   }
 
   // ---------------------------------------------------------------- queue (§4.9 Within a settlement turn)
@@ -203,6 +219,17 @@ export class ResolverStateCore {
     turn: { kind: TurnKind; marketId: number } | null,
   ): void {
     this.fence(token, now);
+    // Every check before the first write, so a refused start transaction changes nothing.
+    if (turn?.kind === 'settlement') {
+      const c = this.s.candidates[turn.marketId];
+      const standing = c !== undefined && c.position !== null && c.backoffEnd === null && !read.gone.includes(turn.marketId);
+      const arriving =
+        read.entrants.some((e) => e.marketId === turn.marketId) &&
+        (c === undefined || (c.backoffEnd !== null && c.backoffEnd <= now));
+      if (!standing && !arriving) {
+        throw new Error(`market ${turn.marketId} is not an undemoted candidate`);
+      }
+    }
     for (const id of read.gone) delete this.s.candidates[id]; // absence ends count, level and position (r28, r29)
     // Entrants and returns from backoff take positions in (C, market id) order, before the turn's candidate (r27).
     const arriving: Candidate[] = [];
@@ -227,8 +254,7 @@ export class ResolverStateCore {
     }
     const undo: TurnUndo = { prevLastTurn: this.s.lastTurn, marketId: null, prevPosition: null, prevCount: 0 };
     if (turn.kind === 'settlement') {
-      const c = this.s.candidates[turn.marketId];
-      if (!c || c.position === null || c.backoffEnd !== null) throw new Error(`market ${turn.marketId} is not an undemoted candidate`);
+      const c = this.s.candidates[turn.marketId]!; // checked above
       undo.marketId = c.marketId;
       undo.prevPosition = c.position;
       undo.prevCount = c.count;
@@ -244,7 +270,7 @@ export class ResolverStateCore {
   journalEntry(token: string, now: number, e: { kind: TurnKind; marketId: number; nonce: number; calldataHash: string }): number {
     this.fence(token, now);
     const id = this.s.nextEntryId++;
-    this.s.journal.push({ id, ...e, enteredAt: now, txHash: null, result: null, presumedDropped: false });
+    this.s.journal.push({ id, ...e, enteredAt: now, armedAt: null, txHash: null, result: null, presumedDropped: false });
     return id;
   }
 

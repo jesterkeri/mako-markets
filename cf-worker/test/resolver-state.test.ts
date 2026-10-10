@@ -1,4 +1,4 @@
-// ResolverState's rules (RESOLVER_PRICE_PLAN r51 §4.9), spec-first: each case is written from the plan's text and run
+// ResolverState's rules (RESOLVER_PRICE_PLAN r52 §4.9), spec-first: each case is written from the plan's text and run
 // against the pure core in src/resolver-state.ts. Times are the store's clock in ms.
 import { describe, expect, it } from 'vitest';
 
@@ -39,6 +39,16 @@ describe('lease (§4.9 Lease and timing)', () => {
     expect(c.take('late', 1, T + 200_000)).toBe('token-released');
     expect(c.take('late', 1, T + RELEASED_TOKEN_TTL_MS + 1)).toBe('granted'); // after 24 h it is forgotten
   });
+  it('a token is released only if it was recorded, never by an inherited name', () => {
+    expect(core().take('constructor', 1, T)).toBe('granted');
+  });
+  it('an older take does not even prune old released tokens (it writes nothing)', () => {
+    const c = core();
+    c.take('new', 5, T);
+    c.release('new', T + 1);
+    c.take('old', 4, T + RELEASED_TOKEN_TTL_MS + 10);
+    expect(Object.keys(c.s.released)).toEqual(['new']);
+  });
   it('an older version gets no lease and writes nothing (r44)', () => {
     const c = core();
     c.take('new', 5, T);
@@ -56,34 +66,100 @@ describe('lease (§4.9 Lease and timing)', () => {
   });
 });
 
-describe('the re-check before the raw send (r41, r49, r51)', () => {
+describe('the re-check before the raw send (r41, r49, r51, r52)', () => {
+  const entry = (c: ResolverStateCore, token: string, now: number, nonce: number) =>
+    c.journalEntry(token, now, { kind: 'settlement', marketId: 7, nonce, calldataHash: '0xab' });
+
   it('needs 20 s of lease left', () => {
     const c = core();
     c.take('a', 1, T);
-    expect(c.recheck('a', T + LEASE_MS - 20_000, 0)).toEqual({ ok: true });
-    expect(c.recheck('a', T + LEASE_MS - 19_999, 0)).toEqual({ ok: false, reason: 'time-left' });
+    const id = entry(c, 'a', T, 0);
+    expect(c.recheck('a', T + LEASE_MS - 19_999, 0, id)).toEqual({ ok: false, reason: 'time-left' });
+    expect(c.recheck('a', T + LEASE_MS - 20_000, 0, id)).toEqual({ ok: true });
   });
-  it('a journal entry holds its nonce 345 s from its write, hash or not; then it is presumed dropped and holds nothing', () => {
+  it("a turn's own entry, written just before its re-check, does not hold it; the pass arms it (r52)", () => {
     const c = core();
     c.take('a', 1, T);
-    const id = c.journalEntry('a', T, { kind: 'settlement', marketId: 7, nonce: 4, calldataHash: '0xab' });
-    expect(c.recheck('a', T + 1000, 4)).toEqual({ ok: false, reason: 'nonce-held' }); // no hash yet: still holds
-    expect(c.recheck('a', T + 1000, 5)).toEqual({ ok: true }); // a higher nonce is not held
-    c.release('a', T + 2000);
-    c.take('b', 1, T + NONCE_HOLD_MS - 1);
-    expect(c.recheck('b', T + NONCE_HOLD_MS - 1, 4)).toEqual({ ok: false, reason: 'nonce-held' });
-    c.release('b', T + NONCE_HOLD_MS);
-    c.take('c', 1, T + NONCE_HOLD_MS);
-    expect(c.recheck('c', T + NONCE_HOLD_MS, 4)).toEqual({ ok: true });
-    expect(c.s.journal.find((e) => e.id === id)!.presumedDropped).toBe(true);
-    expect(c.s.journal.find((e) => e.id === id)!.result).toBeNull(); // not final
+    const id = entry(c, 'a', T + 30_000, 7);
+    expect(c.s.journal[0].armedAt).toBeNull();
+    expect(c.recheck('a', T + 34_000, 7, id)).toEqual({ ok: true });
+    expect(c.s.journal[0].armedAt).toBe(T + 34_000);
+  });
+  it('an armed entry holds its nonce 345 s from its passing re-check, hash or not; then it is presumed dropped', () => {
+    const c = core();
+    c.take('a', 1, T);
+    const sent = entry(c, 'a', T, 4);
+    c.recheck('a', T + 1000, 4, sent); // armed at T + 1000; its response is lost, so no hash
+    const next = entry(c, 'a', T + 2000, 4);
+    expect(c.recheck('a', T + 2000, 4, next)).toEqual({ ok: false, reason: 'nonce-held' });
+    expect(c.s.journal.find((e) => e.id === next)!.armedAt).toBeNull(); // refused: never armed
+    c.release('a', T + 3000);
+    c.take('b', 1, T + 1000 + NONCE_HOLD_MS - 1);
+    expect(c.recheck('b', T + 1000 + NONCE_HOLD_MS - 1, 4, entry(c, 'b', T + 1000 + NONCE_HOLD_MS - 1, 4))).toEqual({
+      ok: false,
+      reason: 'nonce-held',
+    });
+    c.release('b', T + 1000 + NONCE_HOLD_MS);
+    c.take('c', 1, T + 1000 + NONCE_HOLD_MS);
+    expect(c.recheck('c', T + 1000 + NONCE_HOLD_MS, 4, entry(c, 'c', T + 1000 + NONCE_HOLD_MS, 4))).toEqual({ ok: true });
+    expect(c.s.journal.find((e) => e.id === sent)!.presumedDropped).toBe(true);
+    expect(c.s.journal.find((e) => e.id === sent)!.result).toBeNull(); // not final
+  });
+  it('an armed entry holds its own nonce and lower ones, never a higher nonce', () => {
+    const c = core();
+    c.take('a', 1, T);
+    c.recheck('a', T + 1, 4, entry(c, 'a', T, 4));
+    expect(c.recheck('a', T + 2, 5, entry(c, 'a', T + 2, 5))).toEqual({ ok: true });
+    expect(c.recheck('a', T + 3, 3, entry(c, 'a', T + 3, 3))).toEqual({ ok: false, reason: 'nonce-held' });
+  });
+  it('an entry that never reached its re-check (a crash) or was refused holds nothing (r52)', () => {
+    const c = core();
+    c.take('a', 1, T);
+    const crashed = entry(c, 'a', T, 4); // the run crashed here, before its re-check
+    const refused = entry(c, 'a', T + 1, 4);
+    c.recheck('a', LEASE_MS + T - 10_000, 4, refused); // refused for time left
+    c.release('a', T + 2);
+    c.take('b', 1, T + 60_000);
+    expect(c.recheck('b', T + 60_000, 4, entry(c, 'b', T + 60_000, 4))).toEqual({ ok: true });
+    for (const id of [crashed, refused]) {
+      expect(c.s.journal.find((e) => e.id === id)).toMatchObject({ armedAt: null, presumedDropped: false }); // never held
+    }
+  });
+  it('a dropped response-lost send holds at most 345 s, then every later turn sends (no endless re-arming, r52)', () => {
+    const c = core();
+    let now = T;
+    let run = 0;
+    const tick = () => {
+      const tok = `run-${run++}`;
+      expect(c.take(tok, 1, now)).toBe('granted');
+      const id = entry(c, tok, now, 4); // the finalized nonce stays 4: the lost send was dropped, nothing landed
+      const r = c.recheck(tok, now + 1000, 4, id);
+      if (!r.ok) c.resultTurn(tok, now + 2000, { result: 'failed', entryId: id, notSent: true });
+      c.release(tok, now + 3000);
+      now += 60_000;
+      return r.ok;
+    };
+    expect(tick()).toBe(true); // the lost send: armed, then its response is lost
+    const after = Array.from({ length: 10 }, tick);
+    // Held while the lost send can still be in the pool (armed at T + 1000, ticks re-check at T + k*60 s + 1000).
+    expect(after.slice(0, 5).every((ok) => !ok)).toBe(true);
+    expect(after[5]).toBe(true); // 360 s after arming: past the 345 s hold
   });
   it('a reconciled entry holds nothing', () => {
     const c = core();
     c.take('a', 1, T);
-    const id = c.journalEntry('a', T, { kind: 'no-data', marketId: 1, nonce: 4, calldataHash: '0x' });
+    const id = entry(c, 'a', T, 4);
+    c.recheck('a', T + 1, 4, id);
     c.reconcile('a', T + 10, id, 'confirmed');
-    expect(c.recheck('a', T + 20, 4)).toEqual({ ok: true });
+    expect(c.recheck('a', T + 20, 4, entry(c, 'a', T + 20, 4))).toEqual({ ok: true });
+  });
+  it('the asking entry must be open and unarmed', () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4);
+    c.recheck('a', T + 1, 4, id);
+    expect(() => c.recheck('a', T + 2, 4, id)).toThrow();
+    expect(() => c.recheck('a', T + 2, 4, 999)).toThrow();
   });
 });
 
