@@ -31,7 +31,8 @@ CRE's EVM write calls `onReport(bytes,bytes)` on a receiver contract. The deploy
 version has `onReport`, but that version is not deployed. `cre/contracts/src/MakoRoundsCreAdapter.sol` fills
 the gap:
 
-- only the configured forwarder can call `onReport`;
+- only the configured forwarder can call `onReport`, and on the deployed-workflow instance only for a report
+  whose workflow owner is the configured one (SPEC §5.1; the workflow ID is not checked, see below);
 - it decodes `(uint256, bytes, bytes)` and calls the permissionless `settle`;
 - it passes any revert from `settle` through unchanged.
 
@@ -53,10 +54,10 @@ cre/
       rounds-abi.ts              MakoRoundsV1 ABI subset (selectors checked against the deployed bytecode)
       config.staging.json        Monad testnet config
       workflow.yaml              target "staging-settings"
-      test/                      bun tests (34) + a real Data Streams fixture
+      test/                      bun tests (39) + a real Data Streams fixture
   contracts/                     Foundry project for the adapter
     src/MakoRoundsCreAdapter.sol
-    test/MakoRoundsCreAdapter.t.sol   12 unit tests + 1 fork test against the deployed contracts
+    test/MakoRoundsCreAdapter.t.sol   15 unit tests + 1 fork test against the deployed contracts
 ```
 
 ## Facts this relies on, with sources
@@ -89,7 +90,7 @@ From `cre/rounds-settle/settle-rounds`:
 
 ```bash
 bun install
-bun test                 # 34 pass
+bun test                 # 39 pass
 bunx tsc --noEmit        # clean
 ```
 
@@ -102,7 +103,7 @@ cre workflow build settle-rounds --target staging-settings --non-interactive   #
 From `cre/contracts`:
 
 ```bash
-forge test                                                                       # 13 pass
+forge test                                                                       # 16 pass
 MONAD_RPC_URL=https://testnet-rpc.monad.xyz forge test --network monad --match-contract Fork -vv
 ```
 
@@ -147,22 +148,31 @@ cre workflow simulate settle-rounds --target staging-settings --non-interactive 
     `settled round N tx 0x…`, and the round's status on chain becomes Settled or Refunded(Tie).
 - A missing close report gives `waiting-report round N B=…`. This is normal for a few seconds after close.
   Any other report problem fails the run with its reason, for example
-  `report error unauthorized 401 <request-id>`. Neither the key nor the provider's text is ever included.
+  `report error unauthorized 401`. No request id is included (it can differ per node and would break consensus). Neither the key nor the provider's text is ever included.
 
 ## Deploying the adapter (needs Joshua's go; nothing has been deployed)
 
 The forwarder address is fixed at construction, so each use needs its own instance:
 
-| Instance | `forwarder` constructor argument | Used by |
-|---|---|---|
-| simulation | `0xB9F79d863261869B234c481D1f9A7af84AeAd192` (MockKeystoneForwarder) | `cre workflow simulate --broadcast` |
-| deployed workflow | `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` (KeystoneForwarder) | `cre workflow deploy` |
+| Instance | `forwarder` | `expectedAuthor` | Used by |
+|---|---|---|---|
+| simulation | `0xB9F79d863261869B234c481D1f9A7af84AeAd192` (MockKeystoneForwarder) | `0x0000000000000000000000000000000000000000` | `cre workflow simulate --broadcast` |
+| deployed workflow | `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` (KeystoneForwarder) | the workflow owner address shown after `cre login` | `cre workflow deploy` |
+
+**Workflow identity.** SPEC §5.1 asks for a matching workflow owner and ID. The deployed-workflow instance
+checks the owner from the report metadata (bytes 42 to 62: id, then a 10-byte name, then the owner). The
+simulation instance checks nothing, because Chainlink's docs say the MockKeystoneForwarder passes no workflow
+metadata and any metadata check fails every simulation. **The workflow ID is not checked by either instance**:
+the ID is derived from the workflow's config, the config holds the adapter's address, and the adapter is
+immutable with no owner, so it cannot learn an ID after it is deployed. This is a recorded deviation from
+§5.1. It moves no value, because `settle` is open to everyone.
 
 The `rounds` argument is `0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921` in both instances. The mock forwarder
 does not check DON signatures, so anyone can push a report through the simulation instance. That is harmless,
 because the adapter only reaches a permissionless call.
 
-- **Gas.** `eth_estimateGas` for the deployment on Monad testnet is **299,959 gas**. At the 102 gwei gas price
+- **Gas.** `eth_estimateGas` for the deployment on Monad testnet was **299,959 gas** before the owner check
+  was added; re-estimate before deploying. At the 102 gwei gas price
   read on 2026-10-10, that is about 0.031 MON per instance. Monad charges on the gas limit, so keep the limit
   close to the estimate.
 - **Command.** Run it from `cre/contracts`, with a Foundry keystore account so the key never reaches the shell:
@@ -170,7 +180,7 @@ because the adapter only reaches a permissionless call.
   ```bash
   forge create src/MakoRoundsCreAdapter.sol:MakoRoundsCreAdapter \
     --rpc-url https://testnet-rpc.monad.xyz --account <keystore-name> --broadcast \
-    --constructor-args <forwarder> 0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921
+    --constructor-args <forwarder> 0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921 <expectedAuthor>
   ```
 
 - **Config.** Put the deployed address in `settle-rounds/config.staging.json` as `adapterAddress`. Use the

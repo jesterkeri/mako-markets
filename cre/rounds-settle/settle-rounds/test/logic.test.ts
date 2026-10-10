@@ -10,6 +10,7 @@ import {
   hmacSha256Hex,
   pickRound,
   readReport,
+  ROTATION_SLOTS,
   reportHeaders,
   reportPath,
   ROUNDS_ABI,
@@ -132,14 +133,27 @@ describe('dueRounds and pickRound', () => {
     expect(pickRound([], 123)).toBeNull();
   });
 
-  test('every due round gets a turn within n consecutive minutes, whatever the start', () => {
+  test('every due round gets a turn within ROTATION_SLOTS consecutive minutes, whatever the start', () => {
     const due = dueRounds([1n, 2n, 3n], closes, 900n, 50_000, 10);
     for (const start of [0, 59, 60, 1_789_529_160]) {
       const seen = new Set<bigint>();
-      for (let k = 0; k < due.length; k++) seen.add(pickRound(due, start + 60 * k)!.roundId);
+      for (let k = 0; k < ROTATION_SLOTS; k++) seen.add(pickRound(due, start + 60 * k)!.roundId);
       expect(seen).toEqual(new Set([1n, 2n, 3n]));
     }
   });
+
+  test('a minute whose slot is empty passes the turn on, so no run is wasted while a round is due', () => {
+    const due = dueRounds([3n], closes, 900n, 50_000, 10);
+    for (let k = 0; k < 20; k++) expect(pickRound(due, 60 * k)!.roundId).toBe(3n);
+  });
+
+  test('rounds sharing a slot (ids 1 and 11) take it in turns', () => {
+    const due = [1n, 11n].map((roundId) => ({ roundId, anchorAt: 0, closeAt: 900 }));
+    const seen = new Set<bigint>();
+    for (let k = 0; k < 2 * ROTATION_SLOTS; k++) seen.add(pickRound(due, 60 * k)!.roundId);
+    expect(seen).toEqual(new Set([1n, 11n]));
+  });
+
 
   test('candidateIds returns all when they fit, else a rotating window that covers every id', () => {
     expect(candidateIds([1n, 2n, 2n, 3n], 0, 12)).toEqual([1n, 2n, 3n]);
@@ -198,6 +212,11 @@ describe('checkConfig', () => {
     expect(checkConfig({ ...good, adapterAddress: '0x00000000000000000000000000000000000000aa' }).adapterAddress).toBe(
       '0x00000000000000000000000000000000000000AA',
     );
+  });
+
+  test('the schedule must be one run a minute (the slot rotation assumes it)', () => {
+    expect(() => checkConfig({ ...good, schedule: '0 */2 * * * *' })).toThrow('config.schedule must be');
+    expect(() => checkConfig({ ...good, schedule: '*/30 * * * * *' })).toThrow('config.schedule must be');
   });
 
   test('refuses bad values, naming the field only', () => {

@@ -18,7 +18,6 @@ import {
   CronCapability,
   encodeCallMsg,
   EVMClient,
-  getHeader,
   getNetwork,
   handler,
   HTTPClient,
@@ -77,8 +76,8 @@ const fetchReport = (
   boundary: number,
 ): string => {
   const response = sendRequester.sendRequest({ url, method: 'GET', headers }).result();
-  const requestId = getHeader(response, 'x-request-id') ?? null;
-  return JSON.stringify(readReport(response.statusCode, text(response), requestId, boundary));
+  // No request id: it can differ per node, and identical consensus over the failure would then never agree.
+  return JSON.stringify(readReport(response.statusCode, text(response), null, boundary));
 };
 
 export const onCronTrigger = (runtime: Runtime<Config>): string => {
@@ -145,6 +144,10 @@ export const onCronTrigger = (runtime: Runtime<Config>): string => {
   // succeeds. A settle revert (already settled, spread too wide, wrong report) shows up only here.
   if (reply.receiverContractExecutionStatus === EVM_PB.ReceiverContractExecutionStatus.REVERTED) {
     throw new Error(`${round} adapter or settle reverted, tx ${txHash}`);
+  }
+  // The field is optional in the reply: only an explicit SUCCESS counts as settled.
+  if (reply.receiverContractExecutionStatus !== EVM_PB.ReceiverContractExecutionStatus.SUCCESS) {
+    throw new Error(`${round} write mined but the receiver's status is unknown, tx ${txHash}`);
   }
   runtime.log(`${round} settle submitted, tx ${txHash}`);
   return `settled ${round} tx ${txHash}`;

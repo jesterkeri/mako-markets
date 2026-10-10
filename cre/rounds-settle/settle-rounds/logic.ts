@@ -37,6 +37,8 @@ export const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b93
 // Config
 // ---------------------------------------------------------------------------------------------------------
 
+export const EVERY_MINUTE = '0 * * * * *';
+
 export type Config = {
   /// Six-field CRE cron (seconds first).
   schedule: string;
@@ -71,7 +73,8 @@ export function checkConfig(c: Config): CheckedConfig {
       throw new Error(`config.${name} is not a valid address`);
     }
   };
-  if (typeof c.schedule !== 'string' || c.schedule.trim() === '') throw new Error('config.schedule is not set');
+  // pickRound's per-slot bound assumes one run a minute, at second 0.
+  if (c.schedule !== EVERY_MINUTE) throw new Error(`config.schedule must be "${EVERY_MINUTE}" (one run a minute)`);
   if (typeof c.chainSelectorName !== 'string' || c.chainSelectorName === '') throw new Error('config.chainSelectorName is not set');
   if (typeof c.dataStreamsUrl !== 'string' || !/^https:\/\/[^/\s]+$/.test(c.dataStreamsUrl))
     throw new Error('config.dataStreamsUrl must be an https origin with no path or trailing slash');
@@ -211,17 +214,32 @@ export function dueRounds(
   return out.map(({ id, close }) => ({ roundId: id, anchorAt: Number(close - duration), closeAt: Number(close) }));
 }
 
+/// MakoRoundsV1.MAX_ACTIVE_ROUNDS: at most this many rounds are pending at once, so it is the number of slots.
+export const ROTATION_SLOTS = 10;
+
 /// The one round this run settles, or null when nothing is due.
 ///
 /// The keeper takes turns using a per-round "last tried" memory, so a round that cannot settle (report
-/// missing, spread too wide) spends only its own turn and never blocks the rounds behind it until their
-/// deadline (adversary pass on the keeper, 2026-09-28). A CRE workflow has no memory between runs, so the
-/// same guarantee comes from rotating on the minute: run k takes due[k mod n]. With n due rounds and one run
-/// a minute, every due round is attempted at least once every n minutes, whatever the others do.
-export function pickRound(due: readonly Due[], nowS: number, periodS = 60): Due | null {
+/// missing, spread too wide) spends only its own turn and never blocks the rounds behind it (adversary pass on
+/// the keeper, 2026-09-28). A CRE workflow keeps no memory between runs, so the guarantee comes from fixed
+/// slots instead: minute m belongs to slot s = m mod ROTATION_SLOTS, and slot s to the due rounds whose
+/// id mod ROTATION_SLOTS is s. If slot s has no due round, the turn passes to the next slot that has one, so
+/// no minute is wasted. A round's own slot comes round every ROTATION_SLOTS minutes whatever the other rounds
+/// do or settle, so a due round whose id shares its slot with no other due round gets a turn at least once
+/// every ROTATION_SLOTS minutes (10 rounds closing together, one stuck: all healthy ones settle within 10
+/// runs). The rotation shrinking with the due list, as a `due[m mod n]` pick does, cannot happen: the slot of
+/// a round never changes. Rounds sharing a slot take it in turns, one per visit (minute / ROTATION_SLOTS).
+/// Requires one run a minute (checkConfig pins the schedule).
+export function pickRound(due: readonly Due[], nowS: number, periodS = 60, slots = ROTATION_SLOTS): Due | null {
   if (due.length === 0) return null;
-  const turn = Math.floor(nowS / periodS) % due.length;
-  return due[turn];
+  const minute = Math.floor(nowS / periodS);
+  const slotOf = (d: Due) => Number(d.roundId % BigInt(slots));
+  for (let k = 0; k < slots; k++) {
+    const slot = (minute + k) % slots;
+    const here = due.filter((d) => slotOf(d) === slot);
+    if (here.length > 0) return here[Math.floor(minute / slots) % here.length];
+  }
+  return null; // unreachable: every due round has a slot
 }
 
 // ---------------------------------------------------------------------------------------------------------

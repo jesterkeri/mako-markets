@@ -53,7 +53,7 @@ contract MakoRoundsCreAdapterTest is TestBase {
     function setUp() public {
         rounds = new RoundsStub();
         forwarder = address(new ForwarderStub());
-        adapter = new MakoRoundsCreAdapter(forwarder, address(rounds));
+        adapter = new MakoRoundsCreAdapter(forwarder, address(rounds), address(0));
     }
 
     // ---------------------------------------------------------------- constructor
@@ -65,17 +65,17 @@ contract MakoRoundsCreAdapterTest is TestBase {
 
     function test_constructor_refusesZeroAddresses() public {
         vm.expectRevert(abi.encodeWithSelector(MakoRoundsCreAdapter.ZeroAddress.selector));
-        new MakoRoundsCreAdapter(address(0), address(rounds));
+        new MakoRoundsCreAdapter(address(0), address(rounds), address(0));
         vm.expectRevert(abi.encodeWithSelector(MakoRoundsCreAdapter.ZeroAddress.selector));
-        new MakoRoundsCreAdapter(forwarder, address(0));
+        new MakoRoundsCreAdapter(forwarder, address(0), address(0));
     }
 
     function test_constructor_refusesAccountsWithoutCode() public {
         address eoa = address(0xBEEF);
         vm.expectRevert(abi.encodeWithSelector(MakoRoundsCreAdapter.NotAContract.selector, eoa));
-        new MakoRoundsCreAdapter(eoa, address(rounds));
+        new MakoRoundsCreAdapter(eoa, address(rounds), address(0));
         vm.expectRevert(abi.encodeWithSelector(MakoRoundsCreAdapter.NotAContract.selector, eoa));
-        new MakoRoundsCreAdapter(forwarder, eoa);
+        new MakoRoundsCreAdapter(forwarder, eoa, address(0));
     }
 
     // ---------------------------------------------------------------- forwarder-only
@@ -113,7 +113,9 @@ contract MakoRoundsCreAdapterTest is TestBase {
         assertEq(rounds.lastClose(), hex"abcdef", "close from the viem vector");
     }
 
-    function testFuzz_onReport_forwardsAnyReportBytesUnchanged(uint256 roundId, bytes calldata a, bytes calldata c) public {
+    function testFuzz_onReport_forwardsAnyReportBytesUnchanged(uint256 roundId, bytes calldata a, bytes calldata c)
+        public
+    {
         vm.prank(forwarder);
         adapter.onReport("", abi.encode(roundId, a, c));
         assertEq(rounds.lastRoundId(), roundId, "roundId");
@@ -121,13 +123,51 @@ contract MakoRoundsCreAdapterTest is TestBase {
         assertEq(rounds.lastClose(), c, "close");
     }
 
-    function test_onReport_metadataIsIgnored() public {
+    /// The simulation instance (EXPECTED_AUTHOR zero): the MockKeystoneForwarder passes no metadata.
+    function test_onReport_metadataIsIgnoredWithoutAnAuthor() public {
         bytes memory report = abi.encode(uint256(5), hex"aa", hex"bb");
         vm.prank(forwarder);
         adapter.onReport(new bytes(64), report);
         vm.prank(forwarder);
         adapter.onReport("", report);
         assertEq(rounds.calls(), 2, "both delivered");
+    }
+
+    // ---------------------------------------------------------------- workflow owner (EXPECTED_AUTHOR set)
+
+    address internal constant AUTHOR = address(0xA07A1);
+
+    /// Production metadata as the KeystoneForwarder passes it: id | name (bytes10) | owner | reportId (bytes2).
+    function _metadata(address owner) internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes32(uint256(0x1d)), bytes10(0x62373666336165316465), owner, bytes2(0x0001));
+    }
+
+    function test_author_matchingOwnerIsDelivered() public {
+        MakoRoundsCreAdapter a = new MakoRoundsCreAdapter(forwarder, address(rounds), AUTHOR);
+        assertEq(_metadata(AUTHOR).length, 64, "64-byte production metadata");
+        vm.prank(forwarder);
+        a.onReport(_metadata(AUTHOR), abi.encode(uint256(9), hex"aa", hex"bb"));
+        assertEq(rounds.lastRoundId(), 9, "delivered");
+    }
+
+    function testFuzz_author_anyOtherOwnerIsRefused(address other) public {
+        if (other == AUTHOR) return;
+        MakoRoundsCreAdapter a = new MakoRoundsCreAdapter(forwarder, address(rounds), AUTHOR);
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(MakoRoundsCreAdapter.WrongWorkflowAuthor.selector, other));
+        a.onReport(_metadata(other), abi.encode(uint256(9), hex"aa", hex"bb"));
+        assertEq(rounds.calls(), 0, "settle must not be reached");
+    }
+
+    function test_author_missingOrShortMetadataIsRefused() public {
+        MakoRoundsCreAdapter a = new MakoRoundsCreAdapter(forwarder, address(rounds), AUTHOR);
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(MakoRoundsCreAdapter.MetadataTooShort.selector, 0));
+        a.onReport("", abi.encode(uint256(9), hex"aa", hex"bb"));
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(MakoRoundsCreAdapter.MetadataTooShort.selector, 61));
+        a.onReport(new bytes(61), abi.encode(uint256(9), hex"aa", hex"bb"));
+        assertEq(rounds.calls(), 0, "settle must not be reached");
     }
 
     function test_onReport_malformedReportReverts() public {
@@ -168,7 +208,9 @@ contract MakoRoundsCreAdapterTest is TestBase {
         vm.deal(address(this), 1 ether);
         (bool ok,) = address(adapter).call{value: 1}("");
         assertTrue(!ok, "plain transfer must fail");
-        (ok,) = address(adapter).call{value: 1}(abi.encodeCall(adapter.onReport, ("", abi.encode(uint256(1), hex"", hex""))));
+        (ok,) = address(adapter).call{value: 1}(
+            abi.encodeCall(adapter.onReport, ("", abi.encode(uint256(1), hex"", hex"")))
+        );
         assertTrue(!ok, "onReport is not payable");
         assertEq(address(adapter).balance, 0, "adapter holds nothing");
     }
@@ -188,7 +230,7 @@ contract MakoRoundsCreAdapterForkTest is TestBase {
         string memory rpc = vm.envOr("MONAD_RPC_URL", string(""));
         if (bytes(rpc).length == 0) return; // not configured: nothing to check
         vm.createSelectFork(rpc);
-        MakoRoundsCreAdapter adapter = new MakoRoundsCreAdapter(FORWARDER, ROUNDS);
+        MakoRoundsCreAdapter adapter = new MakoRoundsCreAdapter(FORWARDER, ROUNDS, address(0));
         // A round id that cannot exist: the deployed MakoRoundsV1 decodes the forwarded call (proving the
         // selector and argument layout match its bytecode) and reverts NoSuchRound, which surfaces unchanged.
         vm.prank(FORWARDER);

@@ -214,7 +214,8 @@ describe('onCronTrigger', () => {
     } catch (e) {
       msg = (e as Error).message;
     }
-    expect(msg).toBe(`round 7 report error unauthorized 401 r-9 for B=${ANCHOR}`);
+    // The request id is dropped: it can differ per node and would break identical consensus.
+    expect(msg).toBe(`round 7 report error unauthorized 401 for B=${ANCHOR}`);
     expect(msg).not.toContain(KEY);
     expect(writes).toHaveLength(0);
   });
