@@ -217,6 +217,21 @@ describe('V4 pools refund themselves after 24 hours', () => {
     expect(w.sent).toHaveLength(1); // market 1 was resolved: never touched
   });
 
+  it('never refunds a TWO-SIDED market, however overdue: it is held for the resolver (Joshua 2026-10-11)', async () => {
+    // The live V4 on 2026-10-11 held ten two-sided unresolved markets (e.g. #110: 16 USDC YES, 6 USDC NO).
+    w.world.markets = [
+      { close: T0, resolved: false, yes: 16_000_000n, no: 6_000_000n },
+      { close: T0, resolved: false, yes: 20_000_000n, no: 0n },
+    ];
+    w.now = T0 + 7 * DAY;
+    for (let i = 0; i < 5; i++) {
+      await run();
+      w.now += 60;
+    }
+    expect(w.sent).toEqual([{ to: POOLS, fn: 'forceRefund', id: 1n }]); // only the one-sided market
+    expect(w.meta.poolsOpen).not.toContain(0);
+  });
+
   it('if the resolver settles first, the refund is not sent and that is a success', async () => {
     w.world.markets = [market(T0)];
     w.reverts.set('pool:0', 'AlreadyResolved');

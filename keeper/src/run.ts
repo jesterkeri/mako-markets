@@ -632,6 +632,8 @@ interface RoundRow {
 interface MarketRow {
   closeTime: bigint;
   resolved: boolean;
+  totalYes: bigint;
+  totalNo: bigint;
 }
 
 async function takeRefund(cfg: RunConfig, deps: Deps, token: number, meta: Meta, nowMs: number): Promise<Outcome> {
@@ -670,6 +672,10 @@ async function takeRefund(cfg: RunConfig, deps: Deps, token: number, meta: Meta,
   const poolsOpen = new Set(meta.poolsOpen.filter((id) => !p.read.has(id)));
   for (const [id, m] of p.read) {
     if (m.closeTime === 0n || m.resolved) continue;
+    // Two-sided V4 markets are never refunded by Mako: they are held for the resolver, which settles them (Joshua
+    // 2026-10-11; RESOLVER_PRICE_PLAN, 'Mako never refunds two-sided pools'). Only a market with no stake on one side
+    // is refunded here; it is not tracked as open either, so it never enters the refund memory.
+    if (m.totalYes > 0n && m.totalNo > 0n) continue;
     poolsOpen.add(id);
     if (BigInt(nowS) >= m.closeTime + grace) poolsDue.push(id);
   }

@@ -15,6 +15,9 @@ export interface FakeRound {
 export interface FakeMarket {
   close: number;
   resolved: boolean;
+  /// Stakes in 6-decimal USDC; default one-sided (1 USDC YES, nothing NO), as before.
+  yes?: bigint;
+  no?: bigint;
 }
 
 export interface RefundWorld {
@@ -52,8 +55,8 @@ export function refundAnswer(call: { to: Hex; data: Hex }, rounds: Hex, pools: H
             createdAt: 0n,
             closeTime: BigInt(m?.close ?? 0),
             bettingCloseTime: 0n,
-            totalYes: 1_000_000n,
-            totalNo: 0n,
+            totalYes: m?.yes ?? 1_000_000n,
+            totalNo: m?.no ?? 0n,
             yesBettorCount: 1,
             noBettorCount: 0,
             outcome: m?.resolved ? 3 : 0,
