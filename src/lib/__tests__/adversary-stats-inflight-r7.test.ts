@@ -177,9 +177,9 @@ describe('adversary r7: statement_timeout is scoped to the stats transaction', (
 });
 
 describe('adversary r7: at most one database read per instance', () => {
-  // Since e93214a's adversary pass: a read stuck past STUCK_READ_MS (60 s; its own limits are 5 s to connect and 5 s to
-  // run) is abandoned and its connection closed, so a stalled socket cannot block every later run on the instance.
-  it('50 concurrent requests and a minute of later ones start no second read while one hangs; past 60 s its connection is closed and one new read starts', async () => {
+  // Since Codex RELEASE_R10 #1: after the 5 s wait a read gets 2 s more (STALL_GRACE_MS); still open then, its
+  // connection is closed within the same call while the close holds the guard (no later call is needed).
+  it('50 concurrent requests start one read; while it hangs no second read starts; 2 s after the wait its connection is closed, then one new read', async () => {
     const get = await GET();
     let end: (e: unknown) => void = () => {};
     h.script = scriptWith(() => new Promise((_r, reject) => (end = reject)));
@@ -188,35 +188,35 @@ describe('adversary r7: at most one database read per instance', () => {
       end(Object.assign(new Error('write CONNECTION_ENDED'), { code: 'CONNECTION_ENDED' }));
       await new Promise((r) => setImmediate(r));
     });
-    const burst = Array.from({ length: 50 }, () => get());
+    const [first, ...rest] = Array.from({ length: 50 }, () => get());
+    for (const p of rest) expect((await (await p).json()).makoWallets).toBeNull(); // refused at once
     await vi.advanceTimersByTimeAsync(5_000);
-    for (const p of burst) expect((await (await p).json()).makoWallets).toBeNull();
-    for (let i = 0; i < 5; i++) {
-      await vi.advanceTimersByTimeAsync(10_000); // up to 55 s
-      expect((await (await get()).json()).makoWallets).toBeNull();
-    }
-    expect(begins()).toBe(1);
+    expect((await (await get()).json()).makoWallets, 'still inside the grace: refused').toBeNull();
     expect(h.reset).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(5_000); // 60 s
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect((await (await first).json()).makoWallets).toBeNull();
+    expect(h.reset).toHaveBeenCalledTimes(1);
+    expect(begins()).toBe(1);
     h.script = scriptWith(() => [ROW]);
     expect((await (await get()).json()).makoWallets).toBe(64);
-    expect(h.reset).toHaveBeenCalledTimes(1);
     expect(begins()).toBe(2);
     expect(h.maxOpen).toBe(1);
     expect(unhandled).toEqual([]);
   });
 
-  it('a read that answers after the page stopped waiting is not reused, and the next read starts only after it ends', async () => {
+  it('a read that answers inside the grace is not reused or reset, and the next read starts only after it ends', async () => {
     const get = await GET();
+    h.reset = vi.fn(async () => {});
     h.script = scriptWith(() => new Promise((r) => setTimeout(() => r([{ actions: 1, accounts: 1, wallets: 999 }]), 5_500)));
     const first = get();
     await vi.advanceTimersByTimeAsync(5_000);
-    expect((await (await first).json()).makoWallets).toBeNull();
     // Still running at 5.2 s: no second read.
     await vi.advanceTimersByTimeAsync(200);
     expect((await (await get()).json()).makoWallets).toBeNull();
     expect(begins()).toBe(1);
     await vi.advanceTimersByTimeAsync(400); // the late answer lands at 5.5 s
+    expect((await (await first).json()).makoWallets, 'the wait had ended: no figures').toBeNull();
+    expect(h.reset).not.toHaveBeenCalled();
     h.script = scriptWith(() => [ROW]);
     const body = await (await get()).json();
     expect(body.makoWallets).toBe(64); // read afresh, never the late 999
@@ -224,13 +224,15 @@ describe('adversary r7: at most one database read per instance', () => {
     expect(h.maxOpen).toBe(1);
   });
 
-  it('a late REJECTION after the page stopped waiting is handled (no unhandled rejection) and clears the guard', async () => {
+  it('a late REJECTION after the connection was closed is handled (no unhandled rejection) and leaves no guard', async () => {
     const get = await GET();
+    h.reset = vi.fn(async () => {});
     h.script = scriptWith(() => new Promise((_r, reject) => setTimeout(() => reject(new Error(`connect ${SENTINEL_DSN}`)), 9_000)));
     const first = get();
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(7_000);
     expect((await (await first).json()).makoWallets).toBeNull();
-    await vi.advanceTimersByTimeAsync(4_000);
+    expect(h.reset).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000);
     await vi.advanceTimersByTimeAsync(0);
     expect(unhandled).toEqual([]);
     h.script = scriptWith(() => [ROW]);

@@ -141,53 +141,54 @@ function track(p: Promise<unknown>) {
 const okRow = [{ actions: 1, accounts: 1, wallets: 1 }];
 
 describe('adversary 1892887: the stuck-read guard under interleavings', () => {
-  it('ten callers at the stuck boundary: one closes, nine refused at once, one read after the close', async () => {
-    const { readDbFigures, STUCK_READ_MS, ReadStillRunning } = await load();
-    track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(STUCK_READ_MS);
+  // Since Codex RELEASE_R10 #1 the first call itself closes a read still open 2 s after its 5 s wait (7 s), and holds
+  // the guard through the close; the invariants below are unchanged.
+  it('ten callers while the first call closes its stalled read: all refused; after the close, exactly one read', async () => {
+    const { readDbFigures, ReadStillRunning } = await load();
+    const first = track(readDbFigures());
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(h.closes.length).toBe(1);
     const calls = Array.from({ length: 10 }, () => track(readDbFigures()));
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.closes.length).toBe(1);
-    expect(calls.filter((c) => c.state === 'err' && c.err instanceof ReadStillRunning).length).toBe(9);
-    // The old read settles while the close is still in progress; it must not clear the close's guard.
-    h.reads[0].resolve(okRow);
-    await vi.advanceTimersByTimeAsync(0);
-    const during = track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(0);
-    expect(during.state).toBe('err');
+    expect(calls.filter((c) => c.state === 'err' && c.err instanceof ReadStillRunning).length).toBe(10);
     h.closes[0].resolve();
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.reads.length).toBe(2);
-    const after = track(readDbFigures());
+    expect(first.state).toBe('err');
+    const next = track(readDbFigures());
     await vi.advanceTimersByTimeAsync(0);
-    expect(after.err).toBeInstanceOf(ReadStillRunning);
+    expect(next.state).toBe('pending');
+    expect(h.reads.length).toBe(2);
+    const during = track(readDbFigures());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(during.err).toBeInstanceOf(ReadStillRunning);
     expect(h.violations).toEqual([]);
     expect(unhandled).toEqual([]);
   });
 
   it('a close that rejects still frees the guard for exactly one read', async () => {
-    const { readDbFigures, STUCK_READ_MS } = await load();
-    track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(STUCK_READ_MS + 1);
+    const { readDbFigures } = await load();
+    const first = track(readDbFigures());
+    await vi.advanceTimersByTimeAsync(7_000);
+    h.closes[0].reject(new Error('close failed'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(first.state).toBe('err');
     track(readDbFigures());
     await vi.advanceTimersByTimeAsync(0);
-    h.closes[0].reject(new Error('end failed'));
     const b = track(readDbFigures());
     await vi.advanceTimersByTimeAsync(0);
     expect(b.state).toBe('err');
-    // A rejected close leaves read 0 live in this model; the code starts read 1 regardless.
     expect(h.reads.length).toBe(2);
     expect(unhandled).toEqual([]);
   });
 
   it('a new read failing synchronously right after a close leaves no guard behind', async () => {
-    const { readDbFigures, STUCK_READ_MS } = await load();
+    const { readDbFigures } = await load();
     track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(STUCK_READ_MS + 1);
+    await vi.advanceTimersByTimeAsync(7_000);
+    h.closes[0].resolve();
+    await vi.advanceTimersByTimeAsync(0);
     h.syncThrowNext = true;
     const a = track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(0);
-    h.closes[0].resolve();
     await vi.advanceTimersByTimeAsync(0);
     expect((a.err as Error).name).toBe('StatsDbNotConfigured');
     const b = track(readDbFigures());

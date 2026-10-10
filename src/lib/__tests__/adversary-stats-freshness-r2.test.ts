@@ -110,44 +110,41 @@ describe('adversary r2: a clock that steps backwards', () => {
 // run reads again. Since RELEASE_R9 only the 15-minute job reads the database (src/lib/stats-db-read.ts), so this is
 // tested on that read directly; the page shows the saved figures until they are 20 minutes old.
 describe('a database read that hangs', () => {
-  it('times out at 5 s, starts no second query while it hangs, and reads again once it ends', async () => {
+  // Since Codex RELEASE_R10 #1: after the 5 s wait a read gets STALL_GRACE_MS (2 s) more, which the database's own
+  // statement_timeout gives a healthy query; still open then, its connection is closed within the same call.
+  it('times out at 5 s; a read the database ends inside the grace needs no reset, and the next run reads again', async () => {
     const { readDbFigures } = await import('../stats-db-read');
     let endHung: (e: unknown) => void = () => {};
     mocks.dbExecute.mockImplementation(() => new Promise((_resolve, reject) => (endHung = reject))); // hangs
-    const pending = readDbFigures();
-    const settled = pending.then(
+    const settled = readDbFigures().then(
       () => 'ok',
       (e: { code?: string }) => e.code,
     );
     await vi.advanceTimersByTimeAsync(5_000);
+    // Codex RELEASE_R7 #2: while it is still running, another run starts no other read.
+    await expect(readDbFigures()).rejects.toThrow('still running');
+    await vi.advanceTimersByTimeAsync(1_000);
+    endHung(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })); // at 6 s
     expect(await settled).toBe('TIMEOUT');
-    // Codex RELEASE_R7 #2: while the hung query is still running, later runs start no other one.
-    for (let i = 0; i < 3; i++) {
-      vi.advanceTimersByTime(15_000); // up to 50 s
-      await expect(readDbFigures()).rejects.toThrow('still running');
-    }
-    expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
-    // The database ends it (its statement_timeout); the next run reads again and recovers.
-    endHung(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
-    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.reset, 'a read that ended by itself needs no reset').not.toHaveBeenCalled();
     mocks.dbExecute.mockResolvedValue([ROW]);
     expect((await readDbFigures()).makoWallets).toBe(64);
     expect(mocks.dbExecute).toHaveBeenCalledTimes(2);
-    expect(mocks.reset, 'a read that ended by itself needs no reset').not.toHaveBeenCalled();
   });
 
-  it('a read that never ends is abandoned after 60 s: its connection is closed and the next run reads afresh', async () => {
-    const { readDbFigures, STUCK_READ_MS } = await import('../stats-db-read');
+  it('a read that never ends has its connection closed in the same call, with no later call needed; the next run reads afresh', async () => {
+    const { readDbFigures, STALL_GRACE_MS } = await import('../stats-db-read');
     mocks.dbExecute.mockImplementation(() => new Promise(() => {})); // a stalled socket: never settles
-    const first = readDbFigures().catch(() => 'timed out');
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(await first).toBe('timed out');
-    vi.advanceTimersByTime(STUCK_READ_MS - 5_001);
-    await expect(readDbFigures(), 'still inside 60 s').rejects.toThrow('still running');
-    vi.advanceTimersByTime(1);
+    const first = readDbFigures().catch((e: { code?: string }) => e.code);
+    await vi.advanceTimersByTimeAsync(5_000 + STALL_GRACE_MS - 1);
+    expect(mocks.reset, 'not before the grace ends').not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await first).toBe('TIMEOUT');
+    expect(mocks.reset, 'closed with no other call made').toHaveBeenCalledTimes(1);
+    expect(mocks.dbExecute).toHaveBeenCalledTimes(1);
     mocks.dbExecute.mockResolvedValue([ROW]);
     expect((await readDbFigures()).makoWallets).toBe(64);
-    expect(mocks.reset).toHaveBeenCalledTimes(1);
     expect(mocks.dbExecute).toHaveBeenCalledTimes(2);
   });
 });
+

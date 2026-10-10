@@ -38,6 +38,13 @@ let dbReadSince = 0;
 /// its connection closed, so one stalled socket cannot stop every later run on this instance (adversary on e93214a).
 export const STUCK_READ_MS = 60_000;
 
+/// After the caller stops waiting (DB_TIMEOUT_MS), a read gets this much longer to settle, which the database's own
+/// statement_timeout (also DB_TIMEOUT_MS) gives a healthy query. Still open after that, its connection is closed
+/// within the same call (Codex RELEASE_R10 #1: waiting for a later run to notice let a stalled connection stay open
+/// until the next scheduled run, or indefinitely if none came; a timer is no fix on a serverless instance that may be
+/// frozen once it has answered).
+export const STALL_GRACE_MS = 2_000;
+
 /// A failed read as a code or class for the logs, never the message: a driver error's message can carry the
 /// connection string.
 export function statsErrorCode(e: unknown): string {
@@ -45,6 +52,28 @@ export function statsErrorCode(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code ?? (e as { cause?: { code?: unknown } } | null)?.cause?.code;
   if (e instanceof UnexpectedShape) return `${e.name}: ${e.message}`;
   return typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code) ? code : e instanceof Error ? e.name : 'unknown';
+}
+
+/// Gives `read` STALL_GRACE_MS more; if it is still open and still the read in flight, closes its connection while the
+/// close itself holds the guard, so no other read can start until the connection is gone.
+async function closeIfStalled(read: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settled = await Promise.race([
+    read.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<false>((r) => {
+      timer = setTimeout(() => r(false), STALL_GRACE_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+  if (settled || dbRead !== read) return;
+  const closing = resetStatsDb().catch(() => {});
+  dbRead = closing;
+  dbReadSince = performance.now();
+  await closing;
+  if (dbRead === closing) dbRead = null;
 }
 
 /// The figures in one query, or a throw. A malformed row is a throw, never a zero.
@@ -81,7 +110,13 @@ export async function readDbFigures(): Promise<DbFigures> {
       if (dbRead === read) dbRead = null;
     },
   );
-  const rows = await within(read, DB_TIMEOUT_MS);
+  let rows: Awaited<typeof read>;
+  try {
+    rows = await within(read, DB_TIMEOUT_MS);
+  } catch (e) {
+    if ((e as { code?: unknown } | null)?.code === 'TIMEOUT') await closeIfStalled(read);
+    throw e;
+  }
   const row = Array.isArray(rows) ? rows[0] : undefined;
   // A count arrives as a number (or a digit string from some drivers); null, '' or anything else is a malformed row,
   // never a zero (Number(null) and Number('') are both 0).
