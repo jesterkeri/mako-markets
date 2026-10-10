@@ -265,8 +265,18 @@ describe('checkConfig', () => {
       [{ settleDelaySeconds: 1.5 }, /settleDelaySeconds/],
       [{ gasLimit: '0' }, /gasLimit/],
       [{ gasLimit: '1e6' }, /gasLimit/],
+      [{ gasLimit: '99999' }, /gasLimit/],
+      [{ gasLimit: '5000001' }, /gasLimit/],
+      [{ settleDelaySeconds: 16 }, /settleDelaySeconds/],
+      [{ dataStreamsUrl: 'https://api.testnet-dataengine.chain.link@attacker.example' }, /dataStreamsUrl/],
+      [{ dataStreamsUrl: 'https://api.dataengine.chain.link' }, /dataStreamsUrl/],
       [{ schedule: ' ' }, /schedule/],
     ];
     for (const [over, msg] of bad) expect(() => checkConfig({ ...good, ...over } as Config)).toThrow(msg);
+  });
+
+  test('accepts the bounds themselves', () => {
+    for (const over of [{ gasLimit: '100000' }, { gasLimit: '5000000' }, { settleDelaySeconds: 0 }, { settleDelaySeconds: 15 }])
+      expect(() => checkConfig({ ...good, ...over })).not.toThrow();
   });
 });

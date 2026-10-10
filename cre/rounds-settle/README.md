@@ -121,6 +121,8 @@ From `cre/contracts`:
 
 ```bash
 forge test                                                                       # 16 pass (15 without MONAD_RPC_URL plus the fork test, which then returns early)
+# With MONAD_RPC_URL exported, plain `forge test` fails the fork test ("cannot create a monad fork with an EVM
+# instantiated for ethereum"): unset it, or run the fork command below with `--network monad`.
 MONAD_RPC_URL=https://testnet-rpc.monad.xyz forge test --network monad --match-contract Fork -vv
 ```
 
@@ -202,7 +204,7 @@ because the adapter only reaches a permissionless call.
 
 - **Config.** Put the deployed address in `settle-rounds/config.staging.json` as `adapterAddress`. Use the
   simulation instance while simulating, and the KeystoneForwarder instance for a deployed workflow.
-- **Write gas.** `gasLimit` is `1500000`. The SPEC holds `settle` to at most 1,000,000 gas, and the extra
+- **Write gas.** `gasLimit` is `1500000` (config accepts 100,000 to 5,000,000, the CRE transaction gas quota). The SPEC holds `settle` to at most 1,000,000 gas, and the extra
   covers the forwarder and the adapter. On Monad the limit is what gets charged.
 
 ## Before this branch can merge

@@ -38,6 +38,12 @@ export const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b93
 // ---------------------------------------------------------------------------------------------------------
 
 export const EVERY_MINUTE = '15 * * * * *';
+/// The only Data Streams REST origin this testnet workflow may send credentials to.
+export const DATA_STREAMS_ORIGINS = ['https://api.testnet-dataengine.chain.link'] as const;
+export const MAX_SETTLE_DELAY_S = 15;
+export const MIN_GAS_LIMIT = 100_000;
+/// SPEC §5.5a: CRE transaction gas quota.
+export const MAX_GAS_LIMIT = 5_000_000;
 
 export type Config = {
   /// Six-field CRE cron (seconds first).
@@ -49,7 +55,7 @@ export type Config = {
   /// MakoRoundsCreAdapter, the receiver of the signed report. Empty until the adapter is deployed: the
   /// workflow then still reads and fetches, and stops with a clear error at the write step.
   adapterAddress: string;
-  /// Data Streams REST origin, HTTPS, no trailing slash.
+  /// Data Streams REST origin: exactly one of DATA_STREAMS_ORIGINS.
   dataStreamsUrl: string;
   /// Seconds past closeTime before a round is attempted, so the close report has been published.
   settleDelaySeconds: number;
@@ -77,12 +83,18 @@ export function checkConfig(c: Config): CheckedConfig {
   // close, past settleDelaySeconds (10), so ten rounds closing together all get a turn within 10 minutes.
   if (c.schedule !== EVERY_MINUTE) throw new Error(`config.schedule must be "${EVERY_MINUTE}" (one run a minute)`);
   if (typeof c.chainSelectorName !== 'string' || c.chainSelectorName === '') throw new Error('config.chainSelectorName is not set');
-  if (typeof c.dataStreamsUrl !== 'string' || !/^https:\/\/[^/\s]+$/.test(c.dataStreamsUrl))
-    throw new Error('config.dataStreamsUrl must be an https origin with no path or trailing slash');
-  if (!Number.isSafeInteger(c.settleDelaySeconds) || c.settleDelaySeconds < 0 || c.settleDelaySeconds > 86_400)
-    throw new Error('config.settleDelaySeconds must be an integer in [0, 86400]');
-  if (typeof c.gasLimit !== 'string' || !/^[1-9][0-9]{4,7}$/.test(c.gasLimit))
-    throw new Error('config.gasLimit must be a decimal string between 10000 and 99999999');
+  // The API key travels to this origin, so it is pinned exactly, not pattern-matched: a pattern admitted
+  // "https://api.testnet-dataengine.chain.link@attacker.example", whose real host is attacker.example (adversary r6).
+  if (!DATA_STREAMS_ORIGINS.includes(c.dataStreamsUrl as (typeof DATA_STREAMS_ORIGINS)[number]))
+    throw new Error(`config.dataStreamsUrl must be one of: ${DATA_STREAMS_ORIGINS.join(', ')}`);
+  // At most 15 s: the first run after a minute-mark close is at close + 15 s, which the close + 555 s bound for ten
+  // rounds closing together relies on; a longer delay also risks leaving rounds never due (adversary r6).
+  if (!Number.isSafeInteger(c.settleDelaySeconds) || c.settleDelaySeconds < 0 || c.settleDelaySeconds > MAX_SETTLE_DELAY_S)
+    throw new Error(`config.settleDelaySeconds must be an integer in [0, ${MAX_SETTLE_DELAY_S}]`);
+  // SPEC §5.5a: CRE's transaction gas quota is 5,000,000; settle is held to 1,000,000, so 100,000 is a floor.
+  const gas = typeof c.gasLimit === 'string' && /^[1-9][0-9]{0,6}$/.test(c.gasLimit) ? Number(c.gasLimit) : NaN;
+  if (!(gas >= MIN_GAS_LIMIT && gas <= MAX_GAS_LIMIT))
+    throw new Error(`config.gasLimit must be a decimal string between ${MIN_GAS_LIMIT} and ${MAX_GAS_LIMIT}`);
   const roundsAddress = addr(c.roundsAddress, 'roundsAddress');
   const adapterAddress =
     typeof c.adapterAddress === 'string' && c.adapterAddress.trim() === '' ? null : addr(c.adapterAddress, 'adapterAddress');
