@@ -142,7 +142,8 @@ export const onCronTrigger = (runtime: Runtime<Config>): string => {
       })
       .result();
   } catch {
-    throw new Error(`${round} settle simulation reverted: nothing submitted`);
+    // callContract does not distinguish a revert from an RPC failure here, so the message names both.
+    throw new Error(`${round} settle simulation failed (revert or RPC error): nothing submitted`);
   }
   runtime.log(`${round} settle simulation passed`);
 

@@ -235,8 +235,10 @@ export const ROTATION_SLOTS = 10;
 ///     too (stuckness belongs to a boundary report). With a stuck round there is NO bound to state. Examples found
 ///     by adversarial search, not worst cases: 17 runs (stuck round 9 beside 10..90, all slot 0), 38 runs (one bad
 ///     boundary, 3 stuck, 9 rounds on staggered closes), up to 95 runs with several scattered bad boundaries.
-///   - no healthy round waits forever: while the due set is unchanged, the minute-slot visits cycle through every
-///     member of each slot, and arrivals are finite (MAX_ACTIVE_ROUNDS, MIN_LEAD).
+///   - starvation is possible: MAX_ACTIVE_ROUNDS caps rounds active at once, not arrivals, so freed places are
+///     refilled. Adversary r5 built a world inside the contract's rules (bad boundary reports, ten creators,
+///     arrivals timed to minute residues) where a healthy round is due for 1,440 runs and never picked; a
+///     stateless rule that sees only the due set and the minute cannot rule this out. Pinned by a test.
 /// The keeper (least recently tried, first attempt at close + 300 s) is the latency backstop and the capacity
 /// release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
 export function pickRound(due: readonly Due[], nowS: number, periodS = 60, slots = ROTATION_SLOTS): Due | null {

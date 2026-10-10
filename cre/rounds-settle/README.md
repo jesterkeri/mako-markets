@@ -22,7 +22,7 @@ Every minute:
    with Chainlink's HMAC scheme. A report for the wrong feed or the wrong second is refused before anything is sent.
 4. **Settle simulation** (SPEC §5.5 step 3, N20; the keeper does the same): an `eth_call` of
    `settle(roundId, anchor, close)` at the latest block. If it reverts (fee manager on, spread too wide, already
-   settled), the run stops with `settle simulation reverted: nothing submitted` and no gas is spent.
+   settled), the run stops with `settle simulation failed (revert or RPC error): nothing submitted` and no gas is spent.
 5. **EVM write**: the DON signs `abi.encode(roundId, anchorReport, closeReport)` and CRE delivers it through
    Chainlink's KeystoneForwarder to `MakoRoundsCreAdapter.onReport`. The adapter calls `MakoRoundsV1.settle`.
 
@@ -60,10 +60,10 @@ cre/
       rounds-abi.ts              MakoRoundsV1 ABI subset (selectors checked against the deployed bytecode)
       config.staging.json        Monad testnet config
       workflow.yaml              target "staging-settings"
-      test/                      bun tests (39) + a real Data Streams fixture
+      test/                      bun tests (48) + a real Data Streams fixture
   contracts/                     Foundry project for the adapter
     src/MakoRoundsCreAdapter.sol
-    test/MakoRoundsCreAdapter.t.sol   15 unit tests + 1 fork test against the deployed contracts
+    test/MakoRoundsCreAdapter.t.sol   15 unit tests + 1 fork test (the fork test returns early and counts as passing when MONAD_RPC_URL is unset) against the deployed contracts
 ```
 
 ## Facts this relies on, with sources
@@ -93,7 +93,8 @@ paths accept and refuse exactly the same reports. There are two differences, and
   ahead), and a bad boundary report makes every round closing at that minute stuck. With a stuck round there is
   **no bound to state**: adversarial search found healthy rounds waiting 17 runs (shared slot), 38 runs (one bad
   boundary, 3 stuck, staggered closes; pinned by a test) and up to 95 runs (several scattered bad boundaries).
-  No healthy round waits forever. The keeper, which first tries at close + 300 s with least-recently-tried order,
+  Starvation inside the 24 h window is also possible in a constructed world (arrivals timed to minute residues;
+  pinned by a test). The keeper, which first tries at close + 300 s with least-recently-tried order,
   is the latency backstop and the capacity release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
 - The workflow raises no alert of its own: a failed run shows as a failed CRE execution. N20's alerts come from
   the keeper and the watchdog.
@@ -106,7 +107,7 @@ From `cre/rounds-settle/settle-rounds`:
 
 ```bash
 bun install
-bun test                 # 39 pass
+bun test                 # 48 pass
 bunx tsc --noEmit        # clean
 ```
 
@@ -119,7 +120,7 @@ cre workflow build settle-rounds --target staging-settings --non-interactive   #
 From `cre/contracts`:
 
 ```bash
-forge test                                                                       # 16 pass
+forge test                                                                       # 16 pass (15 without MONAD_RPC_URL plus the fork test, which then returns early)
 MONAD_RPC_URL=https://testnet-rpc.monad.xyz forge test --network monad --match-contract Fork -vv
 ```
 

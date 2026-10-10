@@ -184,7 +184,7 @@ describe('onCronTrigger', () => {
 
   test('a settle simulation that reverts stops the run before any write', () => {
     const { runtime, writes } = setup({ pending: [7n], simulateRevert: true });
-    expect(() => onCronTrigger(runtime)).toThrow('round 7 settle simulation reverted: nothing submitted');
+    expect(() => onCronTrigger(runtime)).toThrow('round 7 settle simulation failed (revert or RPC error): nothing submitted');
     expect(writes).toHaveLength(0);
   });
 
