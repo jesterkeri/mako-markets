@@ -216,10 +216,13 @@ because the adapter only reaches a permissionless call.
 
 This branch already keeps `cre/` out of the app's own checks: the root `tsconfig.json` lists `"cre"` in `exclude`
 and the root `eslint.config.mjs` ignores `"cre/**"`, so the Next typecheck, lint and Vercel build never compile the
-CRE workflow or the adapter (they have their own Bun and Foundry checks above). To confirm from the repo root (the `|| true` keeps the expected zero-match case from exiting 1, as `grep -c` does):
+CRE workflow or the adapter (they have their own Bun and Foundry checks above). To confirm from the repo root, after the root install, in any shell (no `pipefail` needed): it prints `0` and exits
+0 when `cre/` is excluded; it prints the number of `cre/` files when it is not; and if `tsc` itself fails it prints
+nothing and exits non-zero, so a failed check can never look like a pass (`&&` keeps tsc's status, and the `|| true`
+only covers `grep -c`, which exits 1 when it counts zero):
 
 ```bash
-npx --no-install tsc --noEmit -p tsconfig.json --listFilesOnly | { grep -c '/cre/' || true; }   # prints 0 (after the root install)
+files=$(npx --no-install tsc --noEmit -p tsconfig.json --listFilesOnly) && { printf '%s\n' "$files" | grep -c '/cre/' || true; }
 ```
 
 ## Deploying the workflow (not done)
