@@ -534,7 +534,7 @@ function EnrollStep({ step, setStep, finishEnroll, variant }: FlowProps & { vari
         Takes about 30 seconds. It protects your wallet if someone ever gets into your email: moving your funds also takes the code from the app, so your email alone can&apos;t.
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)', marginTop: 10 }}>
-        Works with Google Authenticator, Authy or 1Password. Pick one that backs up your codes to your account (Google Authenticator signed in to Google, Authy, or 1Password), so a new phone gets them back. Lose the app and its backup, and you could lose access.
+        Works with Google Authenticator, Authy or 1Password. Turn on the app&apos;s backup (sign in to Google in Google Authenticator, switch on Authy&apos;s backups; 1Password keeps codes in your vault), so a new phone gets your codes back. Lose the app and its backup, and you could lose access.
       </div>
       {step.authUrl ? (
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>

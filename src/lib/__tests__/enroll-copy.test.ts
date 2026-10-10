@@ -25,7 +25,9 @@ describe('authenticator setup copy', () => {
   });
   it('names apps that work and how to keep codes', () => {
     for (const app of ['Google Authenticator', 'Authy', '1Password']) expect(copy).toContain(app);
-    expect(copy).toContain('backs up your codes');
+    expect(copy).toContain('Turn on the app’s backup');
+    // Each app named once (adversary on 1b06a62: they were listed twice).
+    for (const app of ['Authy', '1Password']) expect(copy.split(app).length - 1).toBeLessThanOrEqual(2);
   });
   it('stays mandatory: no skip on this step', () => {
     expect(copy).not.toMatch(/\bskip\b|not now|later\b.*button/i);
