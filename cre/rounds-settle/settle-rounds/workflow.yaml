@@ -1,0 +1,12 @@
+# ==========================================================================
+# CRE WORKFLOW SETTINGS FILE (layout from the CRE CLI v1.34.0 template)
+# ==========================================================================
+# staging-settings is the Monad testnet target used for `cre workflow simulate`.
+# There is deliberately no production target: nothing here is meant for mainnet.
+staging-settings:
+  user-workflow:
+    workflow-name: "mako-rounds-settle-staging"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.staging.json"
+    secrets-path: "../secrets.yaml"

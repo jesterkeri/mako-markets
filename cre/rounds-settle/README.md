@@ -1,0 +1,186 @@
+# rounds-settle: settling Mako rounds with Chainlink CRE
+
+A Chainlink CRE workflow that settles Mako's BTC "rounds" (`MakoRoundsV1`) on Monad testnet using
+Chainlink Data Streams. It is built for the Monad Metropolis prize "Best workflow with CRE": it connects
+a blockchain (Monad testnet) to an external data source (Data Streams), and CRE does the orchestration.
+
+## What it does
+
+Every minute:
+
+1. **Cron trigger** (CRE `CronCapability`, schedule `0 * * * * *`).
+2. **EVM read** (Monad testnet, at the last finalized block) of `MakoRoundsV1` at
+   `0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921`: `pendingSettlement()`, `DURATION()` and `closeTimeOf(id)`.
+   It picks one round at least `settleDelaySeconds` (10) past its close. If none is due, the run ends with
+   `nothing-due`.
+3. **HTTP fetch** (CRE `HTTPClient`, results checked by DON consensus) of the two BTC/USD Data Streams full
+   reports the round needs: one observed at exactly `startTime`, one at exactly `closeTime`. Requests are signed
+   with Chainlink's HMAC scheme. A report for the wrong feed or the wrong second is refused before anything is sent.
+4. **EVM write**: the DON signs `abi.encode(roundId, anchorReport, closeReport)` and CRE delivers it through
+   Chainlink's KeystoneForwarder to `MakoRoundsCreAdapter.onReport`. The adapter calls `MakoRoundsV1.settle`.
+
+The workflow never computes a price or an outcome. `MakoRoundsV1` checks both reports on-chain through
+Chainlink's VerifierProxy (`0x72790f9eB82db492a7DDb6d2af22A270Dcc3Db64`) and works out the result itself.
+A wrong report causes a revert. It can never produce a wrong settlement.
+
+### Why an adapter
+
+CRE's EVM write calls `onReport(bytes,bytes)` on a receiver contract. The deployed `MakoRoundsV1` has no
+`onReport`. Its bytecode contains the `settle` selector `0x577b64a0` and not `0x805f2132`. A newer source
+version has `onReport`, but that version is not deployed. `cre/contracts/src/MakoRoundsCreAdapter.sol` fills
+the gap:
+
+- only the configured forwarder can call `onReport`;
+- it decodes `(uint256, bytes, bytes)` and calls the permissionless `settle`;
+- it passes any revert from `settle` through unchanged.
+
+It holds no funds: nothing is payable and there is no `receive` or `fallback`. It has no owner, no storage
+and no settings, and it grants no privilege, because anyone can call `settle` directly with the same
+arguments.
+
+## Layout
+
+```
+cre/
+  .gitignore                     keeps .env, node_modules, *.wasm and Foundry output out of git
+  rounds-settle/                 CRE project root (run every cre command from here)
+    project.yaml                 Monad testnet RPC (public, keyless)
+    secrets.yaml                 secret NAMES -> environment variable names (no values)
+    settle-rounds/               the workflow
+      main.ts                    the handler: read -> fetch -> report -> write
+      logic.ts                   pure logic (config, round picking, signing, report checks, encoding)
+      rounds-abi.ts              MakoRoundsV1 ABI subset (selectors checked against the deployed bytecode)
+      config.staging.json        Monad testnet config
+      workflow.yaml              target "staging-settings"
+      test/                      bun tests (31) + a real Data Streams fixture
+  contracts/                     Foundry project for the adapter
+    src/MakoRoundsCreAdapter.sol
+    test/MakoRoundsCreAdapter.t.sol   12 unit tests + 1 fork test against the deployed contracts
+```
+
+## Facts this relies on, with sources
+
+| Fact | Value | Source |
+|---|---|---|
+| CRE chain selector name for Monad testnet | `monad-testnet`, chain id 10143, selector `2183018362218727504` | `@chainlink/cre-sdk` 1.23.0 `dist/generated/chain-selectors/testnet/evm/monad-testnet.js` |
+| KeystoneForwarder, Monad testnet (deployed workflows) | `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` | CRE forwarder directory (docs.chain.link/cre/guides/workflow/using-evm-client/forwarder-directory-ts); on-chain `typeAndVersion()` = `KeystoneForwarder 1.0.0` |
+| MockKeystoneForwarder, Monad testnet (`simulate --broadcast`) | `0xB9F79d863261869B234c481D1f9A7af84AeAd192` | same directory; on-chain `typeAndVersion()` = `MockKeystoneForwarder 1.0.0` |
+| BTC/USD Data Streams feed (testnet) | `0x00037da06d56d083fe599397a4769a042d63aa73dc4ef57709d31e9971a5b439` | pinned by MakoRoundsV1; same id in the keeper |
+| Data Streams REST | `https://api.testnet-dataengine.chain.link`, `GET /api/v1/reports?feedID=…&timestamp=…` | keeper code on `origin/feat/rounds-keeper` |
+
+The forwarder directory says addresses can differ per CRE tenant. After `cre login`, confirm with
+`cre workflow supported-chains`.
+
+The signing, report checks and round selection are ported from the reviewed keeper code
+(`origin/feat/rounds-keeper:rounds-delivery/src/index.ts`, commit `25e02c0`). That way both settlement
+paths accept and refuse exactly the same reports. There are two differences, and both are documented in
+`logic.ts`:
+
+- HMAC uses `@noble/hashes`, because CRE's WASM runtime has no WebCrypto.
+- CRE keeps no state between runs, so the keeper's "least recently tried" order is replaced by a rotation
+  keyed on the minute. Each due round still gets a turn at least once every *n* minutes.
+
+The keeper waits 300 s after close, so CRE settles first whenever it is healthy.
+
+## Checks that run without any secret
+
+From `cre/rounds-settle/settle-rounds`:
+
+```bash
+bun install
+bun test                 # 31 pass
+bunx tsc --noEmit        # clean
+```
+
+From `cre/rounds-settle`:
+
+```bash
+cre workflow build settle-rounds --target staging-settings --non-interactive   # compiles to WASM
+```
+
+From `cre/contracts`:
+
+```bash
+forge test                                                                       # 13 pass
+MONAD_RPC_URL=https://testnet-rpc.monad.xyz forge test --network monad --match-contract Fork -vv
+```
+
+The fork test deploys the adapter on a Monad testnet fork, wired to the real KeystoneForwarder and the real
+`MakoRoundsV1`. It then shows that the deployed contract decodes the forwarded call and that its revert
+(`NoSuchRound`) comes back through the adapter unchanged.
+
+## Running `cre workflow simulate` (Joshua)
+
+**1. Log in.** CRE CLI v1.34.0 refuses to simulate without a login. It stops with
+`✗ Authentication required: not logged in and no CRE_API_KEY set`. Run `cre login` and finish the sign-in
+in the browser.
+
+**2. Supply the Data Streams secrets in this shell only.** Nothing gets written to disk, and the
+variable names match `secrets.yaml`:
+
+```bash
+read -rs -p "Data Streams API key: " DATASTREAMS_API_KEY_VAR; echo; export DATASTREAMS_API_KEY_VAR
+read -rs -p "Data Streams API secret: " DATASTREAMS_API_SECRET_VAR; echo; export DATASTREAMS_API_SECRET_VAR
+```
+
+These are the same Data Streams testnet credentials the keeper uses. They are only read when a round is due.
+
+**3. Simulate.** Run this from `cre/rounds-settle`:
+
+```bash
+cre workflow simulate settle-rounds --target staging-settings --non-interactive --trigger-index 0
+```
+
+### What output proves success
+
+- **No round due.** This was the state on 2026-10-10, when `pendingSettlement()` returned `[]`. The log shows
+  `[USER LOG] nothing due: pendingSettlement() is empty` and the result is `"nothing-due"`. That proves the
+  cron trigger fired and that the EVM read of the deployed contract on Monad testnet worked through CRE.
+- **A round is due.** A round shows up in `pendingSettlement()` once it has closed with stakes on both sides,
+  and stays there for up to 24 h. The log shows `round N due: anchor B=…, close B=…`, then
+  `both reports fetched and checked`. This proves the external data source. Then:
+  - if `adapterAddress` is still empty (as committed), the run stops with
+    `config.adapterAddress is empty: deploy MakoRoundsCreAdapter and set it`. That message is deliberate.
+  - once the adapter is deployed and configured, add `--broadcast`. You need a funded key for this
+    (`CRE_ETH_PRIVATE_KEY`, exported the same way). The run ends with
+    `settled round N tx 0x…`, and the round's status on chain becomes Settled or Refunded(Tie).
+- A missing close report gives `waiting-report round N B=…`. This is normal for a few seconds after close.
+  Any other report problem fails the run with its reason, for example
+  `report error unauthorized 401 <request-id>`. Neither the key nor the provider's text is ever included.
+
+## Deploying the adapter (needs Joshua's go; nothing has been deployed)
+
+The forwarder address is fixed at construction, so each use needs its own instance:
+
+| Instance | `forwarder` constructor argument | Used by |
+|---|---|---|
+| simulation | `0xB9F79d863261869B234c481D1f9A7af84AeAd192` (MockKeystoneForwarder) | `cre workflow simulate --broadcast` |
+| deployed workflow | `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` (KeystoneForwarder) | `cre workflow deploy` |
+
+The `rounds` argument is `0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921` in both instances. The mock forwarder
+does not check DON signatures, so anyone can push a report through the simulation instance. That is harmless,
+because the adapter only reaches a permissionless call.
+
+- **Gas.** `eth_estimateGas` for the deployment on Monad testnet is **299,959 gas**. At the 102 gwei gas price
+  read on 2026-10-10, that is about 0.031 MON per instance. Monad charges on the gas limit, so keep the limit
+  close to the estimate.
+- **Command.** Run it from `cre/contracts`, with a Foundry keystore account so the key never reaches the shell:
+
+  ```bash
+  forge create src/MakoRoundsCreAdapter.sol:MakoRoundsCreAdapter \
+    --rpc-url https://testnet-rpc.monad.xyz --account <keystore-name> --broadcast \
+    --constructor-args <forwarder> 0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921
+  ```
+
+- **Config.** Put the deployed address in `settle-rounds/config.staging.json` as `adapterAddress`. Use the
+  simulation instance while simulating, and the KeystoneForwarder instance for a deployed workflow.
+- **Write gas.** `gasLimit` is `1500000`. The SPEC holds `settle` to at most 1,000,000 gas, and the extra
+  covers the forwarder and the adapter. On Monad the limit is what gets charged.
+
+## Before this branch can merge
+
+The repo's root `tsconfig.json` includes `**/*.ts` and does not exclude `cre`. So the Next typecheck and
+the Vercel build would try to compile these files, and `bun:test` and `@chainlink/cre-sdk` are not root
+dependencies. Merging needs `"cre"` added to the root `exclude` list, the same way `cf-worker`, `keeper` and
+`rounds-delivery` are excluded. Root ESLint may also need a `cre/**` ignore. Both are edits outside `cre/`,
+so this branch leaves them out.

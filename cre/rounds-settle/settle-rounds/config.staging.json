@@ -1,0 +1,9 @@
+{
+  "schedule": "0 * * * * *",
+  "chainSelectorName": "monad-testnet",
+  "roundsAddress": "0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921",
+  "adapterAddress": "",
+  "dataStreamsUrl": "https://api.testnet-dataengine.chain.link",
+  "settleDelaySeconds": 10,
+  "gasLimit": "1500000"
+}

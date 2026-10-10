@@ -1,0 +1,8 @@
+# ==========================================================================
+# CRE PROJECT SETTINGS FILE (layout from the CRE CLI v1.34.0 template)
+# ==========================================================================
+# Monad testnet (chain id 10143, CRE chain selector name "monad-testnet") through its public RPC.
+staging-settings:
+  rpcs:
+    - chain-name: monad-testnet
+      url: https://testnet-rpc.monad.xyz
