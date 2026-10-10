@@ -78,6 +78,7 @@ interface TurnUndo {
 
 export interface State {
   lease: Lease | null;
+  /// Released tokens by `releasedKey(token)`, with their release time.
   released: Record<string, number>;
   newestVersion: number;
   nextSeq: number;
@@ -102,6 +103,9 @@ export const emptyState = (): State => ({
 
 export type TakeResult = 'granted' | 'held' | 'older' | 'token-released';
 
+/// A prefixed key, so no token text ('__proto__', 'constructor') can collide with an object's own machinery.
+const releasedKey = (token: string) => `t:${token}`;
+
 export class FenceError extends Error {
   constructor() {
     super('fenced: not the current, unexpired lease');
@@ -118,10 +122,11 @@ export class ResolverStateCore {
   /// The version is recorded whatever else the take answers, so a newer run that finds the lease held still shuts
   /// out every later run of an older version (r43).
   take(token: string, version: number, now: number): TakeResult {
-    if (version < this.s.newestVersion) return 'older'; // writes nothing at all
+    // A malformed version is treated as older: it writes nothing and never lowers the newest seen.
+    if (!Number.isSafeInteger(version) || version < this.s.newestVersion) return 'older'; // writes nothing at all
     this.s.newestVersion = version;
     this.forgetOldReleases(now);
-    if (Object.hasOwn(this.s.released, token)) return 'token-released';
+    if (Object.hasOwn(this.s.released, releasedKey(token))) return 'token-released';
     if (this.s.lease && this.s.lease.expiresAt > now) return 'held';
     this.s.lease = { token, expiresAt: now + LEASE_MS };
     return 'granted';
@@ -138,7 +143,7 @@ export class ResolverStateCore {
 
   /// Fenced release (compare, then delete). Every release records its token, whether or not it deleted (r46).
   release(token: string, now: number): boolean {
-    this.s.released[token] = now;
+    this.s.released[releasedKey(token)] = now;
     if (this.s.lease && this.s.lease.token === token) {
       this.s.lease = null;
       return true;
@@ -285,6 +290,8 @@ export class ResolverStateCore {
 
   /// Records the turn's result. A decision-storing turn and both holds undo the count; holds also restore the
   /// position (r47, r48); only a nonce hold restores `lastTurn`, so an out-of-funds hold moves to the other kind.
+  /// An out-of-funds answer is the node refusing the raw send before its pool, so the entry is `not_sent` and stops
+  /// holding its nonce at once (plan r53); otherwise the refund at that nonce would wait 345 s.
   resultTurn(
     token: string,
     now: number,
@@ -295,7 +302,7 @@ export class ResolverStateCore {
       const e = this.s.journal.find((x) => x.id === r.entryId);
       if (e) {
         if (r.txHash) e.txHash = r.txHash;
-        if (r.notSent) e.result = 'not_sent';
+        if (r.notSent || r.result === 'out-of-funds') e.result = 'not_sent';
       }
     }
     const undo = this.s.turnUndo;

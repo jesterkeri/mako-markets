@@ -47,7 +47,7 @@ describe('lease (§4.9 Lease and timing)', () => {
     c.take('new', 5, T);
     c.release('new', T + 1);
     c.take('old', 4, T + RELEASED_TOKEN_TTL_MS + 10);
-    expect(Object.keys(c.s.released)).toEqual(['new']);
+    expect(Object.keys(c.s.released)).toEqual(['t:new']);
   });
   it('an older version gets no lease and writes nothing (r44)', () => {
     const c = core();
