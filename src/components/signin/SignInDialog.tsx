@@ -528,11 +528,13 @@ function EnrollStep({ step, setStep, finishEnroll, variant }: FlowProps & { vari
       }}
     >
       {title(variant, 'Protect your account')}
+      {/* Tester feedback, 2026-10-10: say how long it takes and why before asking. Kept mandatory: the wallet is made
+          only after this step (INBOX_GAP_PLAN [C5]). */}
       <div style={lead}>
-        Anyone who can read your email could otherwise use your wallet. With an authenticator app, your email alone can&apos;t move your funds: it also takes the code from the app.
+        Takes about 30 seconds. It protects your wallet if someone ever gets into your email: moving your funds also takes the code from the app, so your email alone can&apos;t.
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)', marginTop: 10 }}>
-        Pick an app that backs up your codes to your account, such as Google Authenticator signed in to Google, Authy, or 1Password, so a new phone gets them back. Lose the app and its backup, and you could lose access.
+        Works with Google Authenticator, Authy or 1Password. Pick one that backs up your codes to your account (Google Authenticator signed in to Google, Authy, or 1Password), so a new phone gets them back. Lose the app and its backup, and you could lose access.
       </div>
       {step.authUrl ? (
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
