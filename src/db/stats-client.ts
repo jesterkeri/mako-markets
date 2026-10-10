@@ -91,12 +91,17 @@ function client(): StatsDb {
 }
 
 /// Closes this instance's stats connection at once, ending any read stuck on it (a network stall after connect, which
-/// neither statement_timeout nor connect_timeout ends), so the next read opens a fresh one.
+/// neither statement_timeout nor connect_timeout ends). The client is forgotten only after its close succeeds: if the
+/// close is refused, the same client stays referenced, so a retry closes it again instead of a new client being made
+/// beside a connection that may still be live (Codex RELEASE_R11 #1). Rejects when the close does.
 export async function resetStatsDb(): Promise<void> {
   const pg = globalForStats.__makoStatsPg;
-  globalForStats.__makoStatsPg = undefined;
-  globalForStats.__makoStatsDb = undefined;
-  await pg?.end({ timeout: 0 });
+  if (!pg) return;
+  await pg.end({ timeout: 0 });
+  if (globalForStats.__makoStatsPg === pg) {
+    globalForStats.__makoStatsPg = undefined;
+    globalForStats.__makoStatsDb = undefined;
+  }
 }
 
 export const statsDb = new Proxy({} as StatsDb, {

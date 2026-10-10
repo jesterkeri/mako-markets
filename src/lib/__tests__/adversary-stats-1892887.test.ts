@@ -73,9 +73,10 @@ vi.mock('@/db/stats-client', () => ({
       return p;
     },
   },
+  // Since Codex RELEASE_R11 #1, resetStatsDb forgets the client only after its close succeeds; a refused or pending
+  // close leaves the same client (same gen), so a retry closes that client again.
   resetStatsDb: () => {
     const gen = h.gen;
-    h.gen++;
     h.closesPending++;
     let resolve!: (v?: unknown) => void;
     let reject!: (e: unknown) => void;
@@ -92,6 +93,7 @@ vi.mock('@/db/stats-client', () => ({
         c.settled = true;
         h.closesPending--;
         for (const r of h.reads) if (r.gen === gen) r.reject(Object.assign(new Error('x'), { code: 'CONNECTION_DESTROYED' }));
+        if (h.gen === gen) h.gen++;
         resolve();
       },
       reject: (e: unknown) => {
@@ -165,19 +167,32 @@ describe('adversary 1892887: the stuck-read guard under interleavings', () => {
     expect(unhandled).toEqual([]);
   });
 
-  it('a close that rejects still frees the guard for exactly one read', async () => {
-    const { readDbFigures } = await load();
+  // Codex RELEASE_R11 #1: a refused close must not free the guard; the same client is closed again after
+  // STUCK_READ_MS, and only a confirmed close lets one read start.
+  it('a close that rejects keeps the guard; a later retry closes the same client, and only then one read starts', async () => {
+    const { readDbFigures, STUCK_READ_MS, ReadStillRunning } = await load();
     const first = track(readDbFigures());
     await vi.advanceTimersByTimeAsync(7_000);
     h.closes[0].reject(new Error('close failed'));
     await vi.advanceTimersByTimeAsync(0);
     expect(first.state).toBe('err');
-    track(readDbFigures());
+    const soon = track(readDbFigures());
     await vi.advanceTimersByTimeAsync(0);
-    const b = track(readDbFigures());
+    expect(soon.err).toBeInstanceOf(ReadStillRunning);
+    expect(h.reads.length, 'no read while the old connection may be live').toBe(1);
+    await vi.advanceTimersByTimeAsync(STUCK_READ_MS);
+    const retry = track(readDbFigures());
     await vi.advanceTimersByTimeAsync(0);
-    expect(b.state).toBe('err');
+    expect(h.closes.length, 'the retry closes again').toBe(2);
+    const during = track(readDbFigures());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(during.err).toBeInstanceOf(ReadStillRunning);
+    expect(h.reads.length).toBe(1);
+    h.closes[1].resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(retry.state, 'the retrying call reads once the close is confirmed').toBe('pending');
     expect(h.reads.length).toBe(2);
+    expect(h.violations).toEqual([]);
     expect(unhandled).toEqual([]);
   });
 
@@ -198,22 +213,20 @@ describe('adversary 1892887: the stuck-read guard under interleavings', () => {
     expect(h.violations).toEqual([]);
   });
 
-  it('a close slower than 60 s: the else-throw branch, and who holds the guard after', async () => {
+  it('a close that never settles keeps the guard for good: every later call refused, no second read, ever', async () => {
     const { readDbFigures, STUCK_READ_MS, ReadStillRunning } = await load();
     track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(STUCK_READ_MS + 1);
-    const a = track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(STUCK_READ_MS + 1);
-    const c = track(readDbFigures());
-    await vi.advanceTimersByTimeAsync(0);
-    h.closes[1].resolve();
-    await vi.advanceTimersByTimeAsync(0);
-    h.closes[0].resolve();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(a.err).toBeInstanceOf(ReadStillRunning);
-    expect(c.state).toBe('pending');
-    // Record (not assert) the overlap: read 1 started while close 0 was still pending.
-    console.log('slow-close violations', JSON.stringify(h.violations));
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(h.closes.length).toBe(1);
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(STUCK_READ_MS + 1);
+      const c = track(readDbFigures());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(c.err).toBeInstanceOf(ReadStillRunning);
+    }
+    expect(h.closes.length, 'a pending close is never replaced').toBe(1);
+    expect(h.reads.length).toBe(1);
+    expect(h.violations).toEqual([]);
     expect(unhandled).toEqual([]);
   });
 

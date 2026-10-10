@@ -29,10 +29,15 @@ export class ReadStillRunning extends Error {
   override name = 'ReadStillRunning';
 }
 
-/// The read in flight on this server instance, or null. A read that outlives the wait keeps running on the database;
-/// while it does, no other read starts (Codex RELEASE_R7 #2), so a hung database never collects a pile of reads.
-let dbRead: Promise<unknown> | null = null;
-let dbReadSince = 0;
+/// What holds this instance's one stats connection, or null when nothing does (Codex RELEASE_R7 #2: a hung database
+/// must never collect a pile of reads). Only a CONFIRMED close frees it (Codex RELEASE_R11 #1):
+///   read          a read is in flight;
+///   closing       its connection is being closed; nothing may start until the close settles;
+///   close_failed  the close was refused; the old client may still be live, so nothing may start, and after
+///                 STUCK_READ_MS the SAME client is closed again (never a new one).
+/// A close that never settles therefore keeps the guard for the instance's life: fail closed, by design.
+type Guard = { kind: 'read' | 'closing' | 'close_failed'; p: Promise<unknown>; since: number };
+let guard: Guard | null = null;
 
 /// A read still open after this long is stuck (its own limits are 5 s to connect and 5 s to run): it is abandoned and
 /// its connection closed, so one stalled socket cannot stop every later run on this instance (adversary on e93214a).
@@ -54,8 +59,23 @@ export function statsErrorCode(e: unknown): string {
   return typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code) ? code : e instanceof Error ? e.name : 'unknown';
 }
 
-/// Gives `read` STALL_GRACE_MS more; if it is still open and still the read in flight, closes its connection while the
-/// close itself holds the guard, so no other read can start until the connection is gone.
+/// Closes this instance's stats client while the close holds the guard. The guard is freed only if the close settles
+/// successfully; a refused close leaves `close_failed`, so no new read can start while the old connection may live.
+async function closeGuarded(): Promise<boolean> {
+  const closing = resetStatsDb();
+  const mine: Guard = { kind: 'closing', p: closing, since: performance.now() };
+  guard = mine;
+  try {
+    await closing;
+    if (guard === mine) guard = null;
+    return true;
+  } catch {
+    if (guard === mine) guard = { kind: 'close_failed', p: closing.catch(() => {}), since: performance.now() };
+    return false;
+  }
+}
+
+/// Gives `read` STALL_GRACE_MS more; if it is still open and still the read in flight, closes its connection.
 async function closeIfStalled(read: Promise<unknown>): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const settled = await Promise.race([
@@ -68,28 +88,20 @@ async function closeIfStalled(read: Promise<unknown>): Promise<void> {
     }),
   ]);
   clearTimeout(timer);
-  if (settled || dbRead !== read) return;
-  const closing = resetStatsDb().catch(() => {});
-  dbRead = closing;
-  dbReadSince = performance.now();
-  await closing;
-  if (dbRead === closing) dbRead = null;
+  if (settled || guard?.kind !== 'read' || guard.p !== read) return;
+  await closeGuarded();
 }
 
 /// The figures in one query, or a throw. A malformed row is a throw, never a zero.
 export async function readDbFigures(): Promise<DbFigures> {
-  // Ages are elapsed time (performance.now), so a wall-clock step neither holds a stuck read nor drops a healthy one
-  // (adversary on 72be4fa).
-  if (dbRead && performance.now() - dbReadSince < STUCK_READ_MS) throw new ReadStillRunning('a previous stats read is still running');
-  if (dbRead) {
-    // The close itself holds the guard: a run arriving while the old connection closes finds a read in flight and
-    // starts nothing, so two live reads can never coexist (adversary on 72be4fa).
-    const closing = resetStatsDb().catch(() => {});
-    dbRead = closing;
-    dbReadSince = performance.now();
-    await closing;
-    if (dbRead === closing) dbRead = null;
-    else throw new ReadStillRunning('another stats read started while the stuck one closed');
+  if (guard) {
+    // Ages are elapsed time (performance.now), so a wall-clock step neither holds nor drops a guard early.
+    if (guard.kind === 'closing') throw new ReadStillRunning('the stats connection is still closing');
+    if (performance.now() - guard.since < STUCK_READ_MS) throw new ReadStillRunning('a previous stats read is still running');
+    // A read stuck past STUCK_READ_MS, or a refused close being retried: close the SAME client again. Only a confirmed
+    // close lets this call go on to read.
+    if (!(await closeGuarded())) throw new ReadStillRunning('the stats connection could not be closed');
+    if (guard) throw new ReadStillRunning('another stats read started while the connection closed');
   }
   const read = statsDb.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(DB_TIMEOUT_MS))}`);
@@ -100,14 +112,13 @@ export async function readDbFigures(): Promise<DbFigures> {
         (SELECT count(*)::int FROM user_safes WHERE chain_id = ${MONAD_TESTNET_ID}) AS wallets
     `);
   });
-  dbRead = read;
-  dbReadSince = performance.now();
+  guard = { kind: 'read', p: read, since: performance.now() };
   read.then(
     () => {
-      if (dbRead === read) dbRead = null;
+      if (guard?.kind === 'read' && guard.p === read) guard = null;
     },
     () => {
-      if (dbRead === read) dbRead = null;
+      if (guard?.kind === 'read' && guard.p === read) guard = null;
     },
   );
   let rows: Awaited<typeof read>;

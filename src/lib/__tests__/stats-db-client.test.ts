@@ -2,11 +2,11 @@
 // Neon's direct endpoint only (a pooler would hide the role's connection limit), and no fallback to the app's database.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const pg = vi.hoisted(() => ({ calls: [] as { first: unknown; opts: Record<string, unknown> }[] }));
+const pg = vi.hoisted(() => ({ calls: [] as { first: unknown; opts: Record<string, unknown> }[], end: vi.fn(async () => {}) }));
 vi.mock('postgres', () => ({
   default: (first: unknown, second?: Record<string, unknown>) => {
     pg.calls.push({ first, opts: (second ?? first) as Record<string, unknown> });
-    return {};
+    return { end: pg.end };
   },
 }));
 vi.mock('drizzle-orm/postgres-js', () => ({ drizzle: () => ({ transaction: 'stats-transaction' }) }));
@@ -17,6 +17,7 @@ const POOLED = 'postgresql://mako_stats_reader:pw@ep-withered-lab-b7hrdz3d-poole
 async function fresh() {
   vi.resetModules();
   delete (globalThis as { __makoStatsDb?: unknown }).__makoStatsDb;
+  delete (globalThis as { __makoStatsPg?: unknown }).__makoStatsPg;
   return import('@/db/stats-client');
 }
 
@@ -99,6 +100,7 @@ describe('the scheduled read without the stats login', () => {
     vi.stubEnv('STATS_DATABASE_URL', '');
     vi.resetModules();
     delete (globalThis as { __makoStatsDb?: unknown }).__makoStatsDb;
+  delete (globalThis as { __makoStatsPg?: unknown }).__makoStatsPg;
     const { readDbFigures, statsErrorCode } = await import('@/lib/stats-db-read');
     const err = await readDbFigures().then(
       () => null,
@@ -106,5 +108,30 @@ describe('the scheduled read without the stats login', () => {
     );
     expect(statsErrorCode(err)).toBe('StatsDbNotConfigured');
     expect(pg.calls).toHaveLength(0);
+  });
+});
+
+describe('resetStatsDb (Codex RELEASE_R11 #1)', () => {
+  it('a refused close keeps the same client, so a retry closes it again; only a successful close forgets it', async () => {
+    vi.stubEnv('STATS_DATABASE_URL', DIRECT);
+    const { statsDb, resetStatsDb } = await fresh();
+    void statsDb.transaction;
+    expect(pg.calls).toHaveLength(1);
+    pg.end.mockRejectedValueOnce(new Error('end failed'));
+    await expect(resetStatsDb()).rejects.toThrow('end failed');
+    void statsDb.transaction;
+    expect(pg.calls, 'no new client beside one that may be live').toHaveLength(1);
+    pg.end.mockResolvedValueOnce(undefined);
+    await resetStatsDb();
+    expect(pg.end).toHaveBeenCalledTimes(2);
+    void statsDb.transaction;
+    expect(pg.calls, 'a new client only after a confirmed close').toHaveLength(2);
+  });
+  it('with no client open, resetting does nothing', async () => {
+    vi.stubEnv('STATS_DATABASE_URL', DIRECT);
+    const { resetStatsDb } = await fresh();
+    pg.end.mockClear();
+    await resetStatsDb();
+    expect(pg.end).not.toHaveBeenCalled();
   });
 });
