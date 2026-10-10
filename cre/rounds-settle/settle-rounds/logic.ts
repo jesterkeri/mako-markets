@@ -41,7 +41,9 @@ export const EVERY_MINUTE = '15 * * * * *';
 /// The only Data Streams REST origin this testnet workflow may send credentials to.
 export const DATA_STREAMS_ORIGINS = ['https://api.testnet-dataengine.chain.link'] as const;
 export const MAX_SETTLE_DELAY_S = 15;
-/// settle's own budget (SPEC §5.5a, T0.1c): the forwarder and adapter need gas on top of it.
+/// settle's own budget (SPEC §5.5a, T0.1c), used as a conservative floor, not a measured minimum. Measured by the
+/// adversary pass on 2a927be: settle with real verifies about 385,000 to 444,000 gas, leaving over 550,000 at this
+/// floor for the forwarder, adapter and calldata (the forwarder's own overhead was not measured).
 export const MIN_GAS_LIMIT = 1_000_000;
 /// SPEC §5.5a: CRE transaction gas quota.
 export const MAX_GAS_LIMIT = 5_000_000;
@@ -92,9 +94,9 @@ export function checkConfig(c: Config): CheckedConfig {
   // rounds closing together relies on; a longer delay also risks leaving rounds never due (adversary r6).
   if (!Number.isSafeInteger(c.settleDelaySeconds) || c.settleDelaySeconds < 0 || c.settleDelaySeconds > MAX_SETTLE_DELAY_S)
     throw new Error(`config.settleDelaySeconds must be an integer in [0, ${MAX_SETTLE_DELAY_S}]`);
-  // SPEC §5.5a: CRE's transaction gas quota is 5,000,000 (ceiling). settle is budgeted at up to 1,000,000 (two
-  // verifies alone are about 210,000), so a lower limit would run every write out of gas inside the forwarder (floor;
-  // adversary r7).
+  // SPEC §5.5a: CRE's transaction gas quota is 5,000,000 (ceiling). The floor is settle's 1,000,000 budget: a limit
+  // below what settle needs (two verifies alone are about 210,000) runs every write out of gas inside the forwarder
+  // while Monad still charges the limit (adversary r7), and the budget is a safe margin above the measured need.
   const gas = typeof c.gasLimit === 'string' && /^[1-9][0-9]{0,6}$/.test(c.gasLimit) ? Number(c.gasLimit) : NaN;
   if (!(gas >= MIN_GAS_LIMIT && gas <= MAX_GAS_LIMIT))
     throw new Error(`config.gasLimit must be a decimal string between ${MIN_GAS_LIMIT} and ${MAX_GAS_LIMIT}`);
