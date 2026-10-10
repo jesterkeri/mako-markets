@@ -83,12 +83,20 @@ describe('the decision on the real report (price $75,938.79178788)', () => {
   });
 });
 
-describe('a verified report that is not this pool’s report', () => {
+describe('a verified report for another feed or second waits (retryable: the API is untrusted for availability)', () => {
   const base = { symbol: 'BTC', op: 'gt' as const, strike: 1n };
   it.each([
     ['another feed', { feedId: CRYPTO_FEEDS.get('ETH')!.feedId }],
     ['observed one second late', { observationsTimestamp: C + 1 }],
     ['observed one second early', { observationsTimestamp: C - 1 }],
+  ])('%s is report_mismatch', (_n, change) => {
+    expect(decideCrypto(base, BTC, { ...REAL, ...change }, C, T)).toEqual({ kind: 'wait', reason: 'report_mismatch' });
+  });
+});
+
+describe('an intrinsic defect of this pool’s report', () => {
+  const base = { symbol: 'BTC', op: 'gt' as const, strike: 1n };
+  it.each([
     ['valid from after the observation', { validFromTimestamp: C + 1 }],
     ['a zero price', { price: 0n }],
     ['a negative price', { price: -1n }],

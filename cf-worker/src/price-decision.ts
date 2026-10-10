@@ -52,7 +52,7 @@ export function parseCryptoRef(oracleRef: Hex): CryptoRef | null {
 }
 
 export type FinalReason = 'wrong_report';
-export type RetryReason = 'symbol_paused' | 'parse_fail' | 'bad_spread' | 'report_expired';
+export type RetryReason = 'symbol_paused' | 'parse_fail' | 'bad_spread' | 'report_expired' | 'report_mismatch';
 export type Decision =
   | { kind: 'settle'; outcome: typeof OUTCOME_YES | typeof OUTCOME_NO; price: bigint; strike: bigint; reason: 'ok' }
   | { kind: 'final'; reason: FinalReason }
@@ -70,9 +70,11 @@ export function feedFor(mType: number, ref: CryptoRef | null): { ok: true; feed:
 
 /// Decides a pool with close second `closeSecond` from its verified, decoded report, judged at block time `blockTime`.
 export function decideCrypto(ref: CryptoRef, feed: CryptoFeed, report: V3Report, closeSecond: number, blockTime: number): Decision {
-  // A verified report for another feed or another second is not this pool's report: it can never become right.
-  if (report.feedId !== feed.feedId.toLowerCase()) return { kind: 'final', reason: 'wrong_report' };
-  if (report.observationsTimestamp !== closeSecond) return { kind: 'final', reason: 'wrong_report' };
+  // A verified report for another feed or another second is not this pool's report, but the API is untrusted for
+  // availability: a retry can return the right one, so this waits (plan r21; adversary on r20, finding 3).
+  if (report.feedId !== feed.feedId.toLowerCase()) return { kind: 'wait', reason: 'report_mismatch' };
+  if (report.observationsTimestamp !== closeSecond) return { kind: 'wait', reason: 'report_mismatch' };
+  // An intrinsic defect of the report for this feed and second can never become right: final.
   if (report.validFromTimestamp > report.observationsTimestamp) return { kind: 'final', reason: 'wrong_report' };
   if (report.price <= 0n) return { kind: 'final', reason: 'wrong_report' };
   if (!(report.expiresAt > blockTime)) return { kind: 'wait', reason: 'report_expired' };
