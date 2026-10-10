@@ -1,0 +1,65 @@
+{
+  "note": "Crypto settlement feeds (Chainlink Data Streams, schema v3), from mako-design/bench/datastreams-probe/mako-feed-map.json (probe 2, 2026-09-18). Plan r15 \u00a73a: crypto has no paused intervals.",
+  "feeds": [
+    {
+      "symbol": "BTC",
+      "feedId": "0x00037da06d56d083fe599397a4769a042d63aa73dc4ef57709d31e9971a5b439",
+      "schema": 3,
+      "name": "BTC/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "ETH",
+      "feedId": "0x000359843a543ee2fe414dc14c7e7920ef10f4372990b79d6361cdc0dd1ba782",
+      "schema": 3,
+      "name": "ETH/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "SOL",
+      "feedId": "0x0003d338ea2ac3be9e026033b1aa601673c37bab5e13851c59966f9f820754d6",
+      "schema": 3,
+      "name": "SOL/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "AVAX",
+      "feedId": "0x0003735a076086936550bd316b18e5e27fc4f280ee5b6530ce68f5aad404c796",
+      "schema": 3,
+      "name": "AVAX/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "NEAR",
+      "feedId": "0x0003d64b0bdb0046a65e4ebb0a9866215044634524673c65bff4096a197fcff5",
+      "schema": 3,
+      "name": "NEAR/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "APT",
+      "feedId": "0x0003e78d7e9dc688cdc06620629fcd5ee7427f36f8740bea66588596e7dc085e",
+      "schema": 3,
+      "name": "APT/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "SUI",
+      "feedId": "0x00034881db604b551ff226aa414ba73dd5b2be0a06834124dafa9bf66871ce89",
+      "schema": 3,
+      "name": "SUI/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "DOGE",
+      "feedId": "0x00032057c7f224d0266b4311a81cdc3e38145e36442713350d3300fb12e85c99",
+      "schema": 3,
+      "name": "DOGE/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "LINK",
+      "feedId": "0x00036fe43f87884450b4c7e093cd5ed99cac6640d8c2000e6afc02c8838d0265",
+      "schema": 3,
+      "name": "LINK/USD-RefPrice-DSSepolia-Premium-GlobalTestnet-003"
+    },
+    {
+      "symbol": "MON",
+      "feedId": "0x000381c8eef81ce25de70989747ed85f75cf383e91db61097bbe15b15cf2f60a",
+      "schema": 3,
+      "name": "MON/USD-Streams-CexPrice-testnet-production"
+    }
+  ]
+}
