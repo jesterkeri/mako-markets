@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   useAccount,
   useChainId,
@@ -155,6 +155,37 @@ export function useMarkets() {
     refetch: () => {
       refetchCount();
       refetchMarkets();
+    },
+  };
+}
+
+/**
+ * Every market, or none. Unlike `useMarkets`, which drops a pool whose own read failed, one refused `getMarket` read
+ * fails the whole read here, so TanStack Query retries it (3 times, with backoff) before reporting an error, and a
+ * refetch that fails keeps the last complete list. For pages whose totals must cover every pool (Me): the public
+ * Monad RPC refuses a call now and then, and one refusal should not blank the page.
+ */
+export function useAllMarkets() {
+  const countQ = useReadContract({ ...makoContract, functionName: 'nextMarketId', query: { refetchInterval: 5000 } });
+  const count = countQ.data !== undefined ? Number(countQ.data) : 0;
+  const listQ = useReadContracts({
+    allowFailure: false,
+    contracts: Array.from({ length: count }, (_, i) => ({ ...makoContract, functionName: 'getMarket' as const, args: [BigInt(i)] as const })),
+    query: { enabled: count > 0, refetchInterval: 5000 },
+  });
+  const { data } = listQ;
+  // A list for another count (a pool was just created) is not this count's list: loading until it is read.
+  const complete = data !== undefined && data.length === count;
+  const markets = useMemo(() => (complete ? data.map((raw, i) => decodeMarket(raw, BigInt(i))) : []), [complete, data]);
+  return {
+    markets,
+    count,
+    isLoading: countQ.isLoading || (count > 0 && !complete && !listQ.isError),
+    /// Every retry failed and nothing was loaded: an empty `markets` then means "unknown", not "none".
+    isError: (countQ.isError && countQ.data === undefined) || (listQ.isError && data === undefined),
+    refetch: () => {
+      void countQ.refetch();
+      void listQ.refetch();
     },
   };
 }

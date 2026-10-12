@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useReadContracts } from 'wagmi';
 
 import { makoContract, MarketType } from '@/lib/contract';
-import { useMarkets, useUsdcBalance } from '@/lib/hooks';
+import { useAllMarkets, useUsdcBalance } from '@/lib/hooks';
 import { createdCount, mePositions, meStats, type MePosition, type MeStats } from '@/lib/me-stats';
 import type { UserBet } from '@/lib/pool-list';
 import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
@@ -13,17 +13,21 @@ export type Labels = { yes: string; no: string };
 
 export type MeChain =
   | { status: 'loading' }
-  /// A read failed or came back incomplete: the page shows the error, never zeros.
+  /// A read still failed after TanStack Query's retries, with nothing read before: the page shows the error, never
+  /// zeros. A refetch that fails keeps showing the last complete reading.
   | { status: 'error' }
   | { status: 'ready'; positions: MePosition[]; stats: MeStats; created: number };
 
 /// Everything Me reads from the chain for one account: every V4 pool, the account's stake in each (one multicall),
-/// and its USDC balance. The balance is separate, so a failed balance read does not hide the positions.
+/// and its USDC balance. The balance is separate, so a failed balance read does not hide the positions. The pool and
+/// stake reads are all-or-nothing (one refused call fails the read), so a refusal is retried instead of blanking
+/// the totals.
 export function useMeData(account: `0x${string}`, nowSec: number | null) {
-  const marketsQ = useMarkets();
+  const marketsQ = useAllMarkets();
   const { markets } = marketsQ;
   const ids = useMemo(() => markets.map((m) => m.id), [markets]);
   const betsQ = useReadContracts({
+    allowFailure: false,
     contracts: ids.map((id) => ({ ...makoContract, functionName: 'getUserBet' as const, args: [id, account] as const })),
     query: { enabled: ids.length > 0, refetchInterval: 10_000 },
   });
@@ -31,20 +35,19 @@ export function useMeData(account: `0x${string}`, nowSec: number | null) {
 
   const bets = useMemo(() => {
     const d = betsQ.data;
-    if (!d || d.length !== ids.length || d.some((r) => r.status !== 'success')) return null;
+    if (!d || d.length !== ids.length) return null;
     const out = new Map<string, UserBet>();
     d.forEach((r, i) => {
-      const [yes, no, claimed] = r.result as readonly [bigint, bigint, boolean];
+      const [yes, no, claimed] = r as readonly [bigint, bigint, boolean];
       out.set(ids[i].toString(), { yes, no, claimed });
     });
     return out;
   }, [betsQ.data, ids]);
 
   let chain: MeChain;
-  // useMarkets drops a pool whose own read failed, so fewer pools than the count means a partial read.
-  const marketsFailed = marketsQ.isError || (!marketsQ.isLoading && markets.length < marketsQ.count);
-  const betsFailed = (betsQ.isError && !betsQ.data) || (!!betsQ.data && betsQ.data.some((r) => r.status !== 'success'));
-  if (marketsFailed || betsFailed) chain = { status: 'error' };
+  // Both reads are all-or-nothing, so a failure here is one that outlasted the retries with nothing read before.
+  const betsFailed = betsQ.isError && !betsQ.data;
+  if (marketsQ.isError || betsFailed) chain = { status: 'error' };
   else if (marketsQ.isLoading || nowSec === null || (ids.length > 0 && bets === null)) chain = { status: 'loading' };
   else {
     const positions = mePositions(markets, bets ?? new Map(), nowSec);
