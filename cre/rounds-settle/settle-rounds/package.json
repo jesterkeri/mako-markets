@@ -1,0 +1,21 @@
+{
+  "name": "mako-rounds-settle",
+  "version": "1.0.0",
+  "main": "dist/main.js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@chainlink/cre-sdk": "^1.21.1",
+    "@noble/hashes": "^1.8.0",
+    "viem": "^2.37.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.21",
+    "typescript": "5.9.3"
+  }
+}

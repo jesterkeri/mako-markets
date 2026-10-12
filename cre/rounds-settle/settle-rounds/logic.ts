@@ -1,0 +1,370 @@
+// Pure logic for the rounds-settle CRE workflow. No capability calls, no clock, no secrets of its own:
+// main.ts does the I/O and passes values in, so everything here is unit-tested directly (test/logic.test.ts).
+//
+// The Data Streams request signing, the narrow reading of a report answer and the round-picking rule are
+// ported from the reviewed keeper code on origin/feat/rounds-keeper:rounds-delivery/src/index.ts (25e02c0),
+// so the CRE path and the Cloudflare keeper ask for, accept and refuse exactly the same reports. Two changes,
+// both forced by CRE and both stated where they happen:
+//   1. HMAC is computed with @noble/hashes (pure JS), because the CRE WASM runtime has no WebCrypto, and it is
+//      synchronous because CRE handlers are synchronous.
+//   2. A CRE workflow keeps no state between runs, so the keeper's "least recently tried" memory is replaced
+//      by a stateless rotation over the due rounds keyed on the minute (pickRound below).
+
+import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha2';
+import { utf8ToBytes } from '@noble/hashes/utils';
+import {
+  decodeAbiParameters,
+  decodeFunctionResult,
+  encodeAbiParameters,
+  encodeFunctionData,
+  getAddress,
+  type Address,
+  type Hex,
+} from 'viem';
+import { ROUNDS_ABI } from './rounds-abi';
+
+export { ROUNDS_ABI };
+
+/// BTC/USD on the Data Streams testnet. The rounds contract pins the same id and refuses any other feed
+/// on-chain; it is refused here first so a wrong report never costs gas.
+export const FEED_ID = '0x00037da06d56d083fe599397a4769a042d63aa73dc4ef57709d31e9971a5b439' as const;
+
+/// sha256 of the empty body, hex: the third field of Chainlink's HMAC string for a GET.
+export const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+// ---------------------------------------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------------------------------------
+
+export const EVERY_MINUTE = '15 * * * * *';
+/// The only Data Streams REST origin this testnet workflow may send credentials to.
+export const DATA_STREAMS_ORIGINS = ['https://api.testnet-dataengine.chain.link'] as const;
+export const MAX_SETTLE_DELAY_S = 15;
+/// settle's own budget (SPEC §5.5a, T0.1c), used as a conservative floor, not a measured minimum. Measured by the
+/// adversary pass on 2a927be: settle with real verifies about 385,000 to 444,000 gas, leaving over 550,000 at this
+/// floor for the forwarder, adapter and calldata (the forwarder's own overhead was not measured).
+export const MIN_GAS_LIMIT = 1_000_000;
+/// SPEC §5.5a: CRE transaction gas quota.
+export const MAX_GAS_LIMIT = 5_000_000;
+
+export type Config = {
+  /// Six-field CRE cron (seconds first).
+  schedule: string;
+  /// CRE chain selector name; "monad-testnet" is chain id 10143.
+  chainSelectorName: string;
+  /// MakoRoundsV1, read for due rounds.
+  roundsAddress: string;
+  /// MakoRoundsCreAdapter, the receiver of the signed report. Empty until the adapter is deployed: the
+  /// workflow then still reads and fetches, and stops with a clear error at the write step.
+  adapterAddress: string;
+  /// Data Streams REST origin: exactly one of DATA_STREAMS_ORIGINS.
+  dataStreamsUrl: string;
+  /// Seconds past closeTime before a round is attempted, so the close report has been published.
+  settleDelaySeconds: number;
+  /// Gas limit for the forwarder's call into the adapter (settle verifies two reports).
+  gasLimit: string;
+};
+
+export type CheckedConfig = Omit<Config, 'roundsAddress' | 'adapterAddress'> & {
+  roundsAddress: Address;
+  /// null when config.adapterAddress is empty (adapter not deployed yet).
+  adapterAddress: Address | null;
+};
+
+/// Validates the config once per run. Throws naming the FIELD only, never echoing a value.
+export function checkConfig(c: Config): CheckedConfig {
+  const addr = (v: unknown, name: string): Address => {
+    if (typeof v !== 'string') throw new Error(`config.${name} is not set`);
+    try {
+      return getAddress(v.trim());
+    } catch {
+      throw new Error(`config.${name} is not a valid address`);
+    }
+  };
+  // pickRound's per-slot bound assumes one run a minute; second 15 puts the first run 15 s after a minute-mark
+  // close, past settleDelaySeconds (10), so ten rounds closing together all get a turn within 10 minutes.
+  if (c.schedule !== EVERY_MINUTE) throw new Error(`config.schedule must be "${EVERY_MINUTE}" (one run a minute)`);
+  if (typeof c.chainSelectorName !== 'string' || c.chainSelectorName === '') throw new Error('config.chainSelectorName is not set');
+  // The API key travels to this origin, so it is pinned exactly, not pattern-matched: a pattern admitted
+  // "https://api.testnet-dataengine.chain.link@attacker.example", whose real host is attacker.example (adversary r6).
+  if (!DATA_STREAMS_ORIGINS.includes(c.dataStreamsUrl as (typeof DATA_STREAMS_ORIGINS)[number]))
+    throw new Error(`config.dataStreamsUrl must be one of: ${DATA_STREAMS_ORIGINS.join(', ')}`);
+  // At most 15 s: the first run after a minute-mark close is at close + 15 s, which the close + 555 s bound for ten
+  // rounds closing together relies on; a longer delay also risks leaving rounds never due (adversary r6).
+  if (!Number.isSafeInteger(c.settleDelaySeconds) || c.settleDelaySeconds < 0 || c.settleDelaySeconds > MAX_SETTLE_DELAY_S)
+    throw new Error(`config.settleDelaySeconds must be an integer in [0, ${MAX_SETTLE_DELAY_S}]`);
+  // SPEC §5.5a: CRE's transaction gas quota is 5,000,000 (ceiling). The floor is settle's 1,000,000 budget: a limit
+  // below what settle needs (two verifies alone are about 210,000) runs every write out of gas inside the forwarder
+  // while Monad still charges the limit (adversary r7), and the budget is a safe margin above the measured need.
+  const gas = typeof c.gasLimit === 'string' && /^[1-9][0-9]{0,6}$/.test(c.gasLimit) ? Number(c.gasLimit) : NaN;
+  if (!(gas >= MIN_GAS_LIMIT && gas <= MAX_GAS_LIMIT))
+    throw new Error(`config.gasLimit must be a decimal string between ${MIN_GAS_LIMIT} and ${MAX_GAS_LIMIT}`);
+  const roundsAddress = addr(c.roundsAddress, 'roundsAddress');
+  const adapterAddress =
+    typeof c.adapterAddress === 'string' && c.adapterAddress.trim() === '' ? null : addr(c.adapterAddress, 'adapterAddress');
+  if (roundsAddress === adapterAddress) throw new Error('config.adapterAddress must differ from config.roundsAddress');
+  return { ...c, roundsAddress, adapterAddress };
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Reading the rounds contract
+// ---------------------------------------------------------------------------------------------------------
+
+export const pendingSettlementData = (): Hex => encodeFunctionData({ abi: ROUNDS_ABI, functionName: 'pendingSettlement' });
+export const durationData = (): Hex => encodeFunctionData({ abi: ROUNDS_ABI, functionName: 'DURATION' });
+export const closeTimeData = (roundId: bigint): Hex =>
+  encodeFunctionData({ abi: ROUNDS_ABI, functionName: 'closeTimeOf', args: [roundId] });
+
+export const decodePending = (data: Hex): readonly bigint[] =>
+  decodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'pendingSettlement', data });
+export const decodeDuration = (data: Hex): bigint =>
+  BigInt(decodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'DURATION', data }));
+export const decodeCloseTime = (data: Hex): bigint =>
+  BigInt(decodeFunctionResult({ abi: ROUNDS_ABI, functionName: 'closeTimeOf', data }));
+
+export interface Due {
+  roundId: bigint;
+  /// The two boundary seconds whose reports settle it: B = startTime (anchor) and B = closeTime (close).
+  anchorAt: number;
+  closeAt: number;
+}
+
+/// Multicall3, the canonical deployment (same address on every EVM chain; runtime code present on Monad testnet,
+/// checked 2026-10-10). The deployed MakoRoundsV1 returns only ids from pendingSettlement(), so the close times
+/// come from one aggregate3 call: a run makes 2 EVM reads in all, within SPEC §5.5a / N24's "at most 3".
+export const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11' as const;
+
+export const MULTICALL3_ABI = [
+  {
+    type: 'function',
+    name: 'aggregate3',
+    // payable on chain; declared view here because it is only ever eth_call-ed (the selector is unchanged).
+    stateMutability: 'view',
+    inputs: [
+      {
+        name: 'calls',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', type: 'address' },
+          { name: 'allowFailure', type: 'bool' },
+          { name: 'callData', type: 'bytes' },
+        ],
+      },
+    ],
+    outputs: [
+      {
+        name: 'returnData',
+        type: 'tuple[]',
+        components: [
+          { name: 'success', type: 'bool' },
+          { name: 'returnData', type: 'bytes' },
+        ],
+      },
+    ],
+  },
+] as const;
+
+/// Close times read per run. MakoRoundsV1 caps active rounds at MAX_ACTIVE_ROUNDS = 10, so today every pending
+/// round fits; past this, a rotating window (candidateIds) still reaches every id.
+export const MAX_CLOSE_READS = 50;
+
+/// One aggregate3 call: DURATION() first (may not fail), then closeTimeOf(id) per id (may fail: a round can
+/// leave pendingSettlement between the two reads, and that id is then skipped for this run).
+export function roundTimesData(rounds: Address, ids: readonly bigint[]): Hex {
+  const calls = [
+    { target: rounds, allowFailure: false, callData: durationData() },
+    ...ids.map((id) => ({ target: rounds, allowFailure: true, callData: closeTimeData(id) })),
+  ];
+  return encodeFunctionData({ abi: MULTICALL3_ABI, functionName: 'aggregate3', args: [calls] });
+}
+
+/// Decodes roundTimesData's answer. Throws if the shape is wrong or DURATION failed; a failed or undecodable
+/// closeTimeOf leaves that id out of `closeTimes`, so dueRounds skips it.
+export function decodeRoundTimes(data: Hex, ids: readonly bigint[]): { duration: bigint; closeTimes: Map<bigint, bigint> } {
+  const results = decodeFunctionResult({ abi: MULTICALL3_ABI, functionName: 'aggregate3', data });
+  if (results.length !== ids.length + 1) throw new Error(`aggregate3 returned ${results.length} results for ${ids.length + 1} calls`);
+  if (!results[0].success) throw new Error('DURATION() failed inside aggregate3');
+  const duration = decodeDuration(results[0].returnData);
+  const closeTimes = new Map<bigint, bigint>();
+  ids.forEach((id, i) => {
+    const r = results[i + 1];
+    if (!r.success) return;
+    try {
+      closeTimes.set(id, decodeCloseTime(r.returnData));
+    } catch {
+      // A malformed answer is treated like a failed call: the round waits for a later run.
+    }
+  });
+  return { duration, closeTimes };
+}
+
+/// The pending ids whose close time this run reads. All of them when they fit; otherwise a window of
+/// `max` ids that rotates with the minute, so no pending round is left unread for good.
+export function candidateIds(pending: readonly bigint[], nowS: number, max: number, periodS = 60): bigint[] {
+  const unique = [...new Set(pending)];
+  if (unique.length <= max) return unique;
+  const start = Math.floor(nowS / periodS) % unique.length;
+  const out: bigint[] = [];
+  for (let i = 0; i < max; i++) out.push(unique[(start + i) % unique.length]);
+  return out;
+}
+
+/// Rounds from `pendingSettlement()` that are at least `delayS` past close, ordered by close time then id.
+export function dueRounds(
+  pending: readonly bigint[],
+  closeTimes: ReadonlyMap<bigint, bigint>,
+  duration: bigint,
+  nowS: number,
+  delayS: number,
+): Due[] {
+  const out: { id: bigint; close: bigint }[] = [];
+  const seen = new Set<bigint>();
+  for (const id of pending) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const close = closeTimes.get(id);
+    if (close === undefined) continue;
+    if (BigInt(nowS) < close + BigInt(delayS)) continue;
+    out.push({ id, close });
+  }
+  out.sort((a, b) => (a.close !== b.close ? (a.close < b.close ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out.map(({ id, close }) => ({ roundId: id, anchorAt: Number(close - duration), closeAt: Number(close) }));
+}
+
+/// MakoRoundsV1.MAX_ACTIVE_ROUNDS: at most this many rounds are pending at once, so it is the number of slots.
+export const ROTATION_SLOTS = 10;
+
+/// The one round this run settles, or null when nothing is due.
+///
+/// The keeper takes turns using a per-round "last tried" memory, so a round that cannot settle spends only its
+/// own turn. A CRE workflow keeps no memory between runs, and no stateless rule can match that once a round is
+/// stuck. This rule: minute m belongs to slot m mod ROTATION_SLOTS; if due rounds have that slot (id mod
+/// ROTATION_SLOTS), one of them takes the turn, moving through them one per visit; otherwise the turn rotates
+/// over every due round (minute mod count).
+///
+/// What holds, and what does not:
+///   - every run picks a due round when one exists; with no stuck round each run settles one, so ten rounds
+///     closing together all get a turn by close + 555 s at the second-15 schedule (TASKS T0.1c (a));
+///   - a due round alone in its slot gets a turn at least every ROTATION_SLOTS minutes;
+///   - rounds share a slot through ordinary scheduling (MAX_LEAD is 7 days, so round 10 can be booked far ahead
+///     and round 20 later for the same close), and a stuck round makes every round closing at its minute stuck
+///     too (stuckness belongs to a boundary report). With a stuck round there is NO bound to state. Examples found
+///     by adversarial search, not worst cases: 17 runs (stuck round 9 beside 10..90, all slot 0), 38 runs (one bad
+///     boundary, 3 stuck, 9 rounds on staggered closes), up to 95 runs with several scattered bad boundaries.
+///   - starvation is possible: MAX_ACTIVE_ROUNDS caps rounds active at once, not arrivals, so freed places are
+///     refilled. Adversary r5 built a world inside the contract's rules (bad boundary reports, ten creators,
+///     arrivals timed to minute residues) where a healthy round is due for 1,440 runs and never picked; a
+///     stateless rule that sees only the due set and the minute cannot rule this out. Pinned by a test.
+/// The keeper (least recently tried, first attempt at close + 300 s) is the latency backstop and the capacity
+/// release gate (TASKS T0.1c); CRE latency is measured, not guaranteed.
+export function pickRound(due: readonly Due[], nowS: number, periodS = 60, slots = ROTATION_SLOTS): Due | null {
+  if (due.length === 0) return null;
+  const minute = Math.floor(nowS / periodS);
+  const own = due.filter((d) => Number(d.roundId % BigInt(slots)) === minute % slots);
+  if (own.length > 0) return own[Math.floor(minute / slots) % own.length];
+  return due[minute % due.length];
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Fetching reports: signing and a NARROW reading of the answer
+// ---------------------------------------------------------------------------------------------------------
+
+export const reportPath = (boundary: number, feedId: string = FEED_ID): string =>
+  `/api/v1/reports?feedID=${feedId}&timestamp=${boundary}`;
+
+/// The string Chainlink's HMAC scheme signs for a GET: method, path, body hash, key, timestamp (ms).
+export const signingString = (path: string, apiKey: string, timestampMs: string): string =>
+  `GET ${path} ${EMPTY_BODY_SHA256} ${apiKey} ${timestampMs}`;
+
+/// HMAC-SHA256(secret, message) as lowercase hex, synchronous and pure JS (no WebCrypto in CRE's WASM).
+export function hmacSha256Hex(secret: string, message: string): string {
+  const mac = hmac(sha256, utf8ToBytes(secret), utf8ToBytes(message));
+  let out = '';
+  for (const b of mac) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+export function reportHeaders(path: string, apiKey: string, secret: string, timestampMs: string): Record<string, string> {
+  return {
+    Authorization: apiKey,
+    'X-Authorization-Timestamp': timestampMs,
+    'X-Authorization-Signature-SHA256': hmacSha256Hex(secret, signingString(path, apiKey, timestampMs)),
+  };
+}
+
+/// The only things a report error may carry: never the request, the headers, the key or the provider's text,
+/// so nothing sensitive can reach a log or the workflow result.
+export type ReportReason = 'not_found' | 'unauthorized' | 'rate_limited' | 'server_error' | 'bad_status' | 'bad_body' | 'mismatch' | 'transport';
+export type ReportResult =
+  | { ok: true; fullReport: Hex }
+  | { ok: false; status: number; reason: ReportReason; requestId: string | null };
+
+const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/// Reads one API answer for boundary `boundary`. A report is accepted only if it is for FEED_ID and was
+/// observed at exactly `boundary`, the same rule the contract applies, so a wrong report is caught here
+/// instead of costing a reverted transaction.
+export function readReport(status: number, body: string, requestIdHeader: string | null, boundary: number): ReportResult {
+  const requestId = requestIdHeader !== null && REQUEST_ID.test(requestIdHeader) ? requestIdHeader : null;
+  const fail = (reason: ReportReason): ReportResult => ({ ok: false, status, reason, requestId });
+  if (status === 404) return fail('not_found');
+  if (status === 401 || status === 403) return fail('unauthorized');
+  if (status === 429) return fail('rate_limited');
+  if (status >= 500 && status <= 599) return fail('server_error');
+  if (status !== 200) return fail('bad_status');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return fail('bad_body');
+  }
+  const r = (parsed as { report?: Record<string, unknown> } | null)?.report;
+  if (!r || typeof r !== 'object') return fail('bad_body');
+  const full = r.fullReport;
+  if (typeof full !== 'string' || !/^0x([0-9a-fA-F]{2})+$/.test(full)) return fail('bad_body');
+  if (typeof r.feedID !== 'string' || r.feedID.toLowerCase() !== FEED_ID) return fail('mismatch');
+  if (Number(r.observationsTimestamp) !== boundary) return fail('mismatch');
+  return { ok: true, fullReport: full.toLowerCase() as Hex };
+}
+
+/// The fixed answer for a report fetch that threw instead of returning (transport, capability or consensus
+/// failure). It carries nothing from the error: a thrown diagnostic can include the attempted request, and with it
+/// the API key and signature (Codex CRE R1). Frozen, so no caller can change the shared value.
+///
+/// The cost, accepted: every throw at these two boundaries ends the run as `transport 0`, including a missing HTTP
+/// capability, a bug in readReport, or nodes disagreeing (one sees 404, another 200), so a run that could have
+/// waited fails instead and the cause is not in the message. The next run retries; the keeper is the backstop.
+export const TRANSPORT_FAILURE: ReportResult = Object.freeze({ ok: false, status: 0, reason: 'transport', requestId: null });
+
+/// Runs `f`; if it throws, returns `fallback` and drops the error unread, so nothing from it can reach a log, an
+/// error message or the workflow result.
+export function withoutThrow<T>(f: () => T, fallback: T): T {
+  try {
+    return f();
+  } catch {
+    return fallback;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The report CRE signs and the adapter decodes
+// ---------------------------------------------------------------------------------------------------------
+
+/// The adapter's `onReport` decodes exactly `abi.decode(report, (uint256, bytes, bytes))`.
+export const SETTLE_REPORT_PARAMS = [
+  { name: 'roundId', type: 'uint256' },
+  { name: 'anchorReport', type: 'bytes' },
+  { name: 'closeReport', type: 'bytes' },
+] as const;
+
+export const encodeSettleReport = (roundId: bigint, anchorReport: Hex, closeReport: Hex): Hex =>
+  encodeAbiParameters(SETTLE_REPORT_PARAMS, [roundId, anchorReport, closeReport]);
+
+export const decodeSettleReport = (data: Hex): readonly [bigint, Hex, Hex] =>
+  decodeAbiParameters(SETTLE_REPORT_PARAMS, data);
+
+/// The calldata the adapter forwards, for comparison in tests: rounds.settle(roundId, anchor, close).
+export const settleData = (roundId: bigint, anchorReport: Hex, closeReport: Hex): Hex =>
+  encodeFunctionData({ abi: ROUNDS_ABI, functionName: 'settle', args: [roundId, anchorReport, closeReport] });
+
