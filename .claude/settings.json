@@ -1,13 +1,20 @@
 {
+  "enabledPlugins": {
+    "hyperframes@hyperframes": true,
+    "product-film@product-film-skill": true
+  },
   "extraKnownMarketplaces": {
     "hyperframes": {
       "source": {
         "source": "github",
         "repo": "heygen-com/hyperframes"
       }
+    },
+    "product-film-skill": {
+      "source": {
+        "source": "github",
+        "repo": "Rieranthony/product-film-skill"
+      }
     }
-  },
-  "enabledPlugins": {
-    "hyperframes@hyperframes": true
   }
 }
