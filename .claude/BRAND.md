@@ -34,8 +34,10 @@ Read by the `video-director` skill.
 
 ## Voice
 
-- Team voice: "we", "with us".
+- Brand name is "Mako Market" (singular). Speak as "Mako Market ...". Never "we", "our", "us" or "team".
+- No em dashes in on-screen text or scripts. Use commas, periods or colons.
 - Plain words and short sentences. No hype.
+- Lead with the viewer's reason to care before the mechanics.
 
 ## Live-site screenshots in cloud sessions
 
