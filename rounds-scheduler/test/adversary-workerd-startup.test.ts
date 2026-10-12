@@ -4,29 +4,19 @@
 // SEND_TIMEOUT_MS, WORST_CASE_SUBREQUESTS, ROUNDS_ABI) for the Node tests, so `wrangler dev --test-scheduled` stops
 // with "Incorrect type for map entry 'MAX_SCAN_PAGES'", and no cron run can ever happen. Every other test imports
 // runScheduler in Node or the Durable Object alone, so none loads the Worker as a whole.
-// No network: RPC_URL points at a local port that was just closed, so the run's reads fail at once and scheduled()
-// reports the error and returns. The house keys are generated fresh here and DRY_RUN stays "true".
-import { createServer } from 'node:net';
-import { fileURLToPath } from 'node:url';
+// No network: RPC_URL points at local port 9 (discard), which nothing listens on, so the run's reads fail at once and
+// scheduled() reports the error and returns. The house keys are generated fresh here and DRY_RUN stays "true".
+// Node-only APIs stay out: this file is typechecked with the Workers types (test/tsconfig.json), so paths are relative
+// to the package root, where vitest runs.
 import { generatePrivateKey } from 'viem/accounts';
 import { describe, expect, it } from 'vitest';
 import { unstable_dev } from 'wrangler';
 
-const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
-
-async function closedPort(): Promise<number> {
-  const srv = createServer();
-  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
-  const port = (srv.address() as { port: number }).port;
-  await new Promise<void>((r) => srv.close(() => r()));
-  return port;
-}
-
 describe('the Worker loads in workerd', () => {
   it('starts, and its scheduled() runs to completion', async () => {
-    const rpc = `http://127.0.0.1:${await closedPort()}/`;
-    const starting = unstable_dev(here('../src/index.ts'), {
-      config: here('../wrangler.toml'),
+    const rpc = 'http://127.0.0.1:9/';
+    const starting = unstable_dev('src/index.ts', {
+      config: 'wrangler.toml',
       ip: '127.0.0.1',
       port: 0,
       inspectorPort: 0,
@@ -49,7 +39,7 @@ describe('the Worker loads in workerd', () => {
     try {
       expect(await Promise.race([run, bounded])).toBe('200 Ran scheduled event');
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       await Promise.race([starting.then((w) => w.stop()), new Promise((r) => setTimeout(r, 5_000))]).catch(() => {});
     }
   }, 90_000);
