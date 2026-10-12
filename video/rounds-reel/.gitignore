@@ -1,0 +1,5 @@
+node_modules/
+out/
+public/storyboard/
+*.mp4
+*.wav

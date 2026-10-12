@@ -1,0 +1,91 @@
+1
+00:00:00,050 --> 00:00:01,000
+Think
+
+2
+00:00:01,050 --> 00:00:02,000
+BTC goes up
+
+3
+00:00:02,150 --> 00:00:03,000
+in the next 15 minutes?
+
+4
+00:00:03,250 --> 00:00:04,000
+Call it.
+
+5
+00:00:06,250 --> 00:00:07,500
+Pick UP or DOWN.
+Before the round starts.
+
+6
+00:00:08,550 --> 00:00:09,500
+From 0.10 USDC.
+
+7
+00:00:09,700 --> 00:00:11,000
+One side per account.
+Predictions close 60 seconds before the start.
+
+8
+00:00:12,050 --> 00:00:13,000
+15:00
+
+9
+00:00:13,150 --> 00:00:14,500
+15 minutes.
+Up or down?
+
+10
+00:00:16,150 --> 00:00:17,500
+Prices come from Chainlink.
+The exact start and end second, checked on-chain.
+
+11
+00:00:17,550 --> 00:00:19,000
+Nobody at Mako Market
+picks the price.
+
+12
+00:00:20,050 --> 00:00:21,500
+The side that called it
+splits the pot.
+
+13
+00:00:21,600 --> 00:00:23,000
+1% to Mako Market.
+2% of the smaller side to the round's host.
+
+14
+00:00:23,100 --> 00:00:24,500
+One side only,
+or a tie?
+
+15
+00:00:24,550 --> 00:00:26,000
+Everyone gets their full stake back.
+No fee.
+
+16
+00:00:26,150 --> 00:00:27,000
+Sign in with email.
+No MON needed.
+
+17
+00:00:27,000 --> 00:00:27,333
+Gas covered
+
+18
+00:00:27,333 --> 00:00:27,667
+Free test USDC
+
+19
+00:00:27,667 --> 00:00:28,000
+Monad testnet
+
+20
+00:00:28,100 --> 00:00:30,000
+Mako Market
+Live now: makomarket.xyz/rounds
+New rounds every 2 hours.

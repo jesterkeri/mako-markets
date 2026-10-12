@@ -20,6 +20,8 @@ const eslintConfig = defineConfig([
     // The Envio indexer's generated types (codegen output, not committed).
     "indexer/.envio/**",
     "indexer/envio-env.d.ts",
+    // Standalone Remotion video projects with their own package.json.
+    "video/**",
   ]),
 ]);
 

@@ -1,0 +1,20 @@
+{
+  "name": "mako-rounds-film-test",
+  "private": true,
+  "type": "module",
+  "scripts": {},
+  "dependencies": {
+    "@fontsource/bricolage-grotesque": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@remotion/bundler": "^4.0.532",
+    "@remotion/cli": "^4.0.532",
+    "@remotion/fonts": "^4.0.532",
+    "@remotion/renderer": "^4.0.532",
+    "@types/react": "^19.3.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "remotion": "^4.0.532",
+    "typescript": "^7.0.2"
+  }
+}
