@@ -140,9 +140,9 @@ riser(1.6, 1.4, 1.0)
 impact(3.0, 1.0); stab(3.0, CH[0], 0.5, 1.4, 3400)
 
 # 02 PICK + 03 STAKE + 04 15 MIN: full groove 4.0 to 14.5
-whoosh(4.0, 0.4)
+# transitions live in sfx.py
 groove(4.0, 14.5)
-whoosh(6.0, 0.35); whoosh(7.5, 0.35); whoosh(11.0, 0.4); whoosh(13.0, 0.35)
+# transitions live in sfx.py
 # 15:00 digit ticks live in the SFX layer (sfx.py)
 
 # 05 PRICE 14.5 to 19: breakdown, pad + arp, build
@@ -161,10 +161,10 @@ for k in range(8): hat(18.0 + k * BEAT / 8, 0.25 + k * 0.06)
 # 06 POT 19 to 23: the drop
 impact(19.0, 0.7)
 groove(19.0, 23.0)
-whoosh(20.0, 0.3); whoosh(21.5, 0.35)
+# transitions live in sfx.py
 
 # 07 REFUND 23 to 26: half-time on paper, filtered
-whoosh(23.0, 0.5)
+# transitions live in sfx.py
 for k in range(3):
     t0 = 23.0 + k * 1.0
     kick(t0, 0.75); hat(t0 + 0.5, 0.6, pan=0.25)
