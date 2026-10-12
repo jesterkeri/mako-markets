@@ -31,8 +31,10 @@ export function dsEligible(mType: number, oracleRef: Hex): boolean {
 }
 
 /// The pools (by id, eligible ones only, ascending) that get this tick's DS_PER_TICK evaluations. The slots rotate
-/// through them by the minute, so with ticks every minute each eligible pool is evaluated at least once every
-/// ceil(n / DS_PER_TICK) ticks, and pools that never settle cannot starve later ones (adversary r2 on d15c3dc).
+/// through them by the minute, so pools that never settle cannot starve later ones (adversary r2 on d15c3dc). With n
+/// fixed, each pool is evaluated within ceil(n / DS_PER_TICK) minutes; when n shrinks the phase restarts, so the wait
+/// can be longer (adversary r3: 6 minutes at n = 6, about 2n in simulation). Accepted for this stopgap and disclosed;
+/// the full resolver plan keeps durable queue positions instead.
 export function dsTurns(eligible: readonly number[], nowMs: number, perTick: number = DS_PER_TICK): Set<number> {
   const n = eligible.length;
   const out = new Set<number>();
