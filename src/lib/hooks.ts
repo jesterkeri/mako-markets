@@ -180,7 +180,9 @@ export function useAllMarkets() {
   return {
     markets,
     count,
-    isLoading: countQ.isLoading || (count > 0 && !complete && !listQ.isError),
+    // isPending, not isLoading: a count query paused (the browser offline) has no data and is not fetching, so
+    // isLoading is false and an empty list would read as "no pools", zeros instead of "loading".
+    isLoading: countQ.isPending || (count > 0 && !complete && !listQ.isError),
     /// Every retry failed and nothing was loaded: an empty `markets` then means "unknown", not "none".
     isError: (countQ.isError && countQ.data === undefined) || (listQ.isError && data === undefined),
     refetch: () => {
