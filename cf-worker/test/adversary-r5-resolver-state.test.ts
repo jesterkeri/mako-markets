@@ -22,7 +22,7 @@ describe('adversary r5: a run that becomes older mid-run (a deploy lands while i
     const c = core();
     expect(c.take('a-v1', 1, T)).toBe('granted');
     expect(c.take('b-v2', 2, T + MIN)).toBe('held'); // a is still running; v2 is now the newest seen
-    c.release('a-v1', T + MIN + 10_000, undefined, 1); // a finishes and releases (it did not crash)
+    c.release('a-v1', T + MIN + 10_000, undefined); // a finishes and releases (it did not crash)
     expect(c.take('c-v2', 2, T + 2 * MIN)).toBe('granted');
   });
 
@@ -41,7 +41,7 @@ describe('adversary r5: a run that becomes older mid-run (a deploy lands while i
     c.startTurn('a-v1', T + 1_000, { entrants: [], gone: [] }, { kind: 'settlement', marketId: 5 });
     const id = c.journalEntry('a-v1', T + 70_000, st(4));
     expect(c.take('b-v2', 2, T + MIN)).toBe('held');
-    c.release('a-v1', T + 74_000, { outcome: 'not-sent', entryId: id }, 1); // the re-check timed out at the run
+    c.release('a-v1', T + 74_000, { outcome: 'not-sent', entryId: id }); // the re-check timed out at the run
     const late = c.recheck('a-v1', T + 75_000, 4, id); // the same re-check, landing after the release
     expect(late).toEqual({ ok: false, reason: 'lease' });
     // The next v2 run's refund at nonce 4 is not held by an entry nothing was ever sent for.
@@ -60,14 +60,14 @@ describe('adversary r5: attacks the core withstood (kept as regression cases)', 
     const id = c.journalEntry('a', T, nd(4));
     expect(c.recheck('a', T + 1_000, 4, id)).toEqual({ ok: true });
     c.reconcile('a', T + 2_000, id, 'dropped');
-    c.release('a', T + 3_000, { outcome: 'sent', entryId: id }, 1);
+    c.release('a', T + 3_000, { outcome: 'sent', entryId: id });
     expect(c.s.journal[0]).toMatchObject({ result: 'dropped', armedAt: T + 1_000 });
   });
 
   // r55 row 1: an error-answered send is `not_sent`, so the next send at that nonce is not held.
   it('an error-answered refund on the store-unavailable path writes no entry and holds nothing', () => {
     const c = core();
-    c.release('su', T + 9_000, { outcome: 'not-sent' }, 1);
+    c.release('su', T + 9_000, { outcome: 'not-sent' });
     expect(c.s.journal).toEqual([]);
     c.take('b', 1, T + MIN);
     const id = c.journalEntry('b', T + MIN, st(4));
@@ -75,24 +75,27 @@ describe('adversary r5: attacks the core withstood (kept as regression cases)', 
   });
 
   // An older version's late `sent` release cannot arm, and its take cannot be granted, in either order.
-  it('an older run whose take and release both land after a newer take writes nothing either way', () => {
+  // Plan r56 reverses r55 here: a release is applied whatever the run's version (r43 covers decision state only), so
+  // an older run's store-unavailable refund is held by its release; its take, landing after, is still refused.
+  it('an older run whose take and release both land after a newer take: the release holds its refund, the take is refused (r56)', () => {
     const c = core();
     c.take('n', 2, T);
-    c.release('n', T + 1_000, undefined, 2);
-    expect(c.release('o', T + 2_000, { outcome: 'sent', entry: nd(4) }, 1)).toBe(false);
+    c.release('n', T + 1_000);
+    expect(c.release('o', T + 2_000, { outcome: 'sent', entry: nd(4) })).toBe(false); // it held no lease
+    expect(c.s.journal).toHaveLength(1);
+    expect(c.s.journal[0]).toMatchObject({ writer: 'o', armedAt: T + 2_000 });
     expect(c.take('o', 1, T + 3_000)).toBe('older');
-    expect(c.s.journal).toEqual([]);
     expect(c.s.lease).toBeNull();
   });
 
   // The hold still ends at 345 s for an entry armed by a sent release on the store-unavailable path.
   it('a store-unavailable entry written armed holds exactly NONCE_HOLD_MS', () => {
     const c = core();
-    c.release('su', T, { outcome: 'sent', entry: nd(4) }, 1);
+    c.release('su', T, { outcome: 'sent', entry: nd(4) });
     c.take('b', 1, T + NONCE_HOLD_MS - 1);
     const id = c.journalEntry('b', T + NONCE_HOLD_MS - 1, st(4));
     expect(c.recheck('b', T + NONCE_HOLD_MS - 1, 4, id)).toEqual({ ok: false, reason: 'nonce-held' });
-    c.release('b', T + NONCE_HOLD_MS, undefined, 1);
+    c.release('b', T + NONCE_HOLD_MS, undefined);
     c.take('c', 1, T + NONCE_HOLD_MS);
     const id2 = c.journalEntry('c', T + NONCE_HOLD_MS, st(4));
     expect(c.recheck('c', T + NONCE_HOLD_MS, 4, id2)).toEqual({ ok: true });
