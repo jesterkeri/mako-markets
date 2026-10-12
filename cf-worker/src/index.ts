@@ -53,7 +53,7 @@ import {
   formatPrice18,
   readCryptoPriceSource,
   readFinalized,
-  SHADOW_PER_TICK,
+  DS_PER_TICK,
   VERIFY_RPC_URLS,
   type DsDecision,
   type DsDeps,
@@ -1009,10 +1009,10 @@ export async function runResolver(env: Env): Promise<void> {
           creds: { apiKey: dsKey, secret: dsSecret },
           providers: [httpEthCall(VERIFY_RPC_URLS[0]), httpEthCall(VERIFY_RPC_URLS[1])],
           finalized: () => readFinalized((i, x) => fetch(i, x), VERIFY_RPC_URLS[0]),
-          nowMs: Date.now(),
+          now: () => Date.now(),
         }
       : null;
-  let shadowLeft = SHADOW_PER_TICK;
+  let dsLeft = DS_PER_TICK;
   if (crypto.invalid !== null) console.error(`CRYPTO_PRICE_SOURCE "${crypto.invalid}" is not coingecko, datastreams-shadow or datastreams — using coingecko`);
   if (crypto.source !== 'coingecko' && !dsDeps) console.error(`CRYPTO_PRICE_SOURCE=${crypto.source} but DATASTREAMS_API_KEY/SECRET are not set`);
 
@@ -1302,6 +1302,12 @@ export async function runResolver(env: Env): Promise<void> {
         skipped++;
         continue;
       }
+      if (dsLeft <= 0) {
+        console.log(`[${ts}] market ${i}: datastreams budget for this tick spent (${DS_PER_TICK}) — retry next tick`);
+        skipped++;
+        continue;
+      }
+      dsLeft--;
       const d = await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps);
       if (d.kind !== 'settle') {
         const say = d.kind === 'final' ? console.error : console.log;
@@ -1312,9 +1318,9 @@ export async function runResolver(env: Env): Promise<void> {
       outcome = d.yes ? Outcome.YES : Outcome.NO;
       reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}`;
     } else if (market.mType === MarketType.CRYPTO) {
-      if (crypto.source === 'datastreams-shadow' && shadowLeft > 0) {
+      if (crypto.source === 'datastreams-shadow' && dsLeft > 0) {
         // Shadow: log what Data Streams would decide beside today's CoinGecko path; nothing is sent from it.
-        shadowLeft--;
+        dsLeft--;
         const d: DsDecision = dsDeps
           ? await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps)
           : { kind: 'wait', reason: 'no_credentials' };

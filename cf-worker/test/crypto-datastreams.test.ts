@@ -42,7 +42,7 @@ function deps(over: Partial<DsDeps> & { status?: number; body?: string } = {}): 
     creds: { apiKey: 'test-key-id', secret: 'test-secret-value' },
     providers: over.providers ?? [provider(), provider()],
     finalized: over.finalized ?? (async () => BLOCK),
-    nowMs: 1_790_000_000_000,
+    now: () => 1_790_000_000_000,
     urls,
   };
 }

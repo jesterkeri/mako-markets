@@ -20,8 +20,9 @@ import { decideCrypto, feedFor, parseCryptoRef, OUTCOME_YES } from './price-deci
 export const VERIFY_RPC_URLS = ['https://testnet-rpc.monad.xyz', 'https://rpc.ankr.com/monad_testnet'] as const;
 export const DEFAULT_DATASTREAMS_URL = 'https://api.testnet-dataengine.chain.link';
 export const FINALIZED_TIMEOUT_MS = 8_000;
-/// Shadow evaluations per tick: each costs one Data Streams request and up to five RPC calls.
-export const SHADOW_PER_TICK = 2;
+/// Data Streams evaluations per tick, shadow and live alike: each costs one Data Streams request and up to five RPC
+/// calls, at most about 32 s with every timeout spent, and the worker runs every minute.
+export const DS_PER_TICK = 2;
 
 export type CryptoPriceSource = 'coingecko' | 'datastreams-shadow' | 'datastreams';
 
@@ -66,7 +67,9 @@ export type DsDeps = {
   creds: ReportCredentials;
   providers: readonly [RpcCall, RpcCall];
   finalized: () => Promise<FinalizedBlock | null>;
-  nowMs: number;
+  /// The clock read when the request is signed: Data Streams refuses a signature more than 5 s from its own clock, and
+  /// a tick reaches its crypto pools well after it starts (adversary on 3da84d8).
+  now: () => number;
 };
 
 /// The Data Streams decision for one pool, never throwing. `wait` means try again on a later tick; `final` means the
@@ -75,7 +78,7 @@ export async function dataStreamsCryptoDecision(market: { mType: number; oracleR
   const ref = parseCryptoRef(market.oracleRef);
   const fed = feedFor(market.mType, ref);
   if (!fed.ok || !ref) return { kind: 'wait', reason: fed.ok ? 'parse_fail' : fed.reason };
-  const report = await fetchReport({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, feedId: fed.feed.feedId, boundary: market.closeTime, nowMs: deps.nowMs });
+  const report = await fetchReport({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, feedId: fed.feed.feedId, boundary: market.closeTime, nowMs: deps.now() });
   if (!report.ok) return { kind: 'wait', reason: `report_${report.reason}` };
   const block = await deps.finalized();
   if (!block) return { kind: 'wait', reason: 'block_unavailable' };
