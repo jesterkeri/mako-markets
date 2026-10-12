@@ -47,7 +47,7 @@ POOLS_ADDRESS = "0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195"
 # the trip, never in the future: a future time is ignored and the alarm says so) and deploy. Leave unset.
 # REFUND_BREAKER_RESET = "<now, e.g. from: date -u +%Y-%m-%dT%H:%M:%SZ>"
 DATASTREAMS_URL = "https://api.testnet-dataengine.chain.link"
-DRY_RUN = "true"
+DRY_RUN = "false"
 
 # Secrets, via `wrangler secret put`, from Bitwarden, never in this file:
 #   KEEPER_PRIVATE_KEY      gas-only key (scripts/keeper-key.sh creates it and prints only the address)
