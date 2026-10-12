@@ -5,7 +5,9 @@ def fnoise(d,lo,hi):
     n=rng.standard_normal(int(d*SR)); F=np.fft.rfft(n); fr=np.fft.rfftfreq(len(n),1/SR); F[(fr<lo)|(fr>hi)]=0
     o=np.fft.irfft(F,len(n)); return o/(np.abs(o).max()+1e-9)
 def put(sig,t0,g=1.0,pan=0.0):
-    i=int(t0*SR); sig=sig[:N-i]*g; l=np.cos((pan+1)*np.pi/4)*1.414; r=np.sin((pan+1)*np.pi/4)*1.414
+    i=int(t0*SR)
+    if i<0: sig=sig[-i:]; i=0
+    sig=sig[:N-i]*g; l=np.cos((pan+1)*np.pi/4)*1.414; r=np.sin((pan+1)*np.pi/4)*1.414
     out[0,i:i+len(sig)]+=sig*l; out[1,i:i+len(sig)]+=sig*r
 def click(t0,g=1.0):   # UI tap: short body thump + bright tick
     d=0.08; t=tt(d)
@@ -19,10 +21,60 @@ def lock(t0,g=1.0):    # lock-on snap: two quick ticks + metallic ring
 def key(t0,g=1.0):
     d=0.05; t=tt(d); s=fnoise(d,1800,8000)*np.exp(-t/0.006)*0.5+np.sin(2*np.pi*420*t)*np.exp(-t/0.01)*0.3
     put(s,t0,g,pan=rng.uniform(-0.2,0.2))
+
+def whoosh(t0,d=0.4,g=1.0,lo=700,hi=9000):  # band-passed air, peaks on the cut
+    x=tt(d)/d; s=fnoise(d,lo,hi)*np.sin(np.pi*x)**2*0.5
+    put(s,t0-d*0.62,g)
+def slam(t0,g=1.0):        # word landing: low thump + short noise crack
+    d=0.45; t=tt(d)
+    body=np.sin(2*np.pi*np.cumsum(55+140*np.exp(-t/0.03))/SR)*np.exp(-t/0.16)
+    crack=fnoise(d,1500,9000)*np.exp(-t/0.008)*0.6
+    put(np.tanh(1.8*body)*0.8+crack,t0-0.004,g)
+def digit(t0,g=1.0):       # 15:00 digit drop: woody tick
+    d=0.09; t=tt(d)
+    s=np.sin(2*np.pi*(1300+500*np.exp(-t/0.005))*t)*np.exp(-t/0.018)*0.6+fnoise(d,2000,7000)*np.exp(-t/0.003)*0.3
+    put(s,t0,g,pan=rng.uniform(-0.15,0.15))
+def sparkle(t0,t1,n=26,g=1.0):  # particle sphere: scattered high glints
+    for k in range(n):
+        tk=t0+(t1-t0)*rng.random(); f=rng.choice([2637,3136,3520,4186,5274]); d=0.5; t=tt(d)
+        s=(np.sin(2*np.pi*f*t)+0.3*np.sin(2*np.pi*f*2.01*t))*np.exp(-t/0.12)*0.18
+        put(s,tk,g*rng.uniform(0.5,1.0),pan=rng.uniform(-0.8,0.8))
+def shimmer(t0,t1,g=1.0):  # coins into the pot: rising metallic shimmer
+    n=18
+    for k in range(n):
+        tk=t0+(t1-t0)*k/(n-1); f=2000*(1+0.6*k/n)*rng.uniform(0.97,1.03); d=0.25; t=tt(d)
+        s=(np.sin(2*np.pi*f*t)+0.6*np.sin(2*np.pi*f*1.5*t))*np.exp(-t/0.05)*0.22
+        put(s,tk,g*(0.6+0.4*k/n),pan=rng.uniform(-0.5,0.5))
+def paper(t0,g=1.0):       # soft paper swish
+    d=0.55; x=tt(d)/d; s=fnoise(d,300,4500)*(np.sin(np.pi*x)**1.5)*0.45
+    s+=fnoise(d,5000,11000)*np.exp(-tt(d)/0.05)*0.1
+    put(s,t0-d*0.55,g)
+def pop(t0,g=1.0):         # chip pop
+    d=0.12; t=tt(d)
+    s=np.sin(2*np.pi*(380+900*np.exp(-t/0.01))*t)*np.exp(-t/0.04)*0.7
+    put(s,t0,g)
+def whoomp(t0,g=1.0):      # low swell into the URL
+    d=0.9; t=tt(d); x=t/d
+    s=np.sin(2*np.pi*np.cumsum(45+35*x)/SR)*np.sin(np.pi*np.clip(x*1.6,0,1))**2*np.exp(-np.clip(t-0.55,0,None)/0.25)
+    s+=fnoise(d,200,1800)*np.sin(np.pi*x)**2*0.25
+    put(np.tanh(1.5*s)*0.9,t0-0.5,g)
+
 click(5.45,1.0)          # 2b: cursor taps UP
 click(8.05,0.9)          # 3a: taps the 0.10 chip
 lock(16.45,1.0); lock(17.2,1.0)   # 5b: START then CLOSE lock
 for k in range(12): key(26.15+k*0.05,0.6)   # 8a: email typing
+
+# --- added layer: cuts, word slams, digits, sphere, pot, paper, chips, URL
+for t0 in [1.0,2.0,5.0,8.5,9.5,12.0,16.0,17.5,24.5,26.0]: whoosh(t0,0.35,0.7)
+whoosh(14.5,0.6,1.1,400,11000)          # yellow slash into 05 PRICE
+slam(0.0,0.9); slam(3.0,1.0); slam(17.55,0.9)   # Think / Call it. / Nobody
+for i in range(5): digit(12.08+0.07*i,0.9)       # 15:00 digits drop in
+sparkle(14.6,15.9,26,0.9)                         # particle sphere
+shimmer(20.15,21.2,1.0)                           # shares fly into the pot
+paper(23.0,1.0)                                   # paper slash into 07 REFUND
+for t0 in [27.0,27.333,27.667]: pop(t0,0.9)       # three end chips
+whoomp(28.35,1.0)                                 # URL pill opens
+
 out=np.tanh(out); peak=np.abs(out).max(); out/=peak/0.9
 with wave.open(sys.argv[1],'wb') as w:
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes((out.T*32767).astype(np.int16).tobytes())

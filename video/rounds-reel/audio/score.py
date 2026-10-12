@@ -143,7 +143,7 @@ impact(3.0, 1.0); stab(3.0, CH[0], 0.5, 1.4, 3400)
 whoosh(4.0, 0.4)
 groove(4.0, 14.5)
 whoosh(6.0, 0.35); whoosh(7.5, 0.35); whoosh(11.0, 0.4); whoosh(13.0, 0.35)
-for k in range(8): tick(12.0 + k * BEAT / 4, 0.9)        # 15:00 ticking
+# 15:00 digit ticks live in the SFX layer (sfx.py)
 
 # 05 PRICE 14.5 to 19: breakdown, pad + arp, build
 pad(14.5, [220, 261.63, 329.63, 392], 4.6, 2.2)
