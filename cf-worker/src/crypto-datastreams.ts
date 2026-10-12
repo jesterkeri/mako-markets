@@ -30,11 +30,15 @@ export function dsEligible(mType: number, oracleRef: Hex): boolean {
   return feedFor(mType, parseCryptoRef(oracleRef)).ok;
 }
 
-/// The pools (by id, eligible ones only, ascending) that get this tick's DS_PER_TICK evaluations. The slots rotate
-/// through them by the minute, so pools that never settle cannot starve later ones (adversary r2 on d15c3dc). With n
-/// fixed, each pool is evaluated within ceil(n / DS_PER_TICK) minutes; when n shrinks the phase restarts, so the wait
-/// can be longer (adversary r3: 6 minutes at n = 6, about 2n in simulation). Accepted for this stopgap and disclosed;
-/// the full resolver plan keeps durable queue positions instead.
+/// The pools (by id, eligible ones only, ascending) that get this tick's DS_PER_TICK Data Streams evaluations. The
+/// slots rotate through them by the minute, so crypto pools that never settle cannot keep the Data Streams slots from
+/// later crypto pools (adversary r2 on d15c3dc); when n shrinks the phase restarts (adversary r3).
+///
+/// This bounds nothing about settlement time. Sending is production's unchanged rule: at most one transaction per tick,
+/// markets in id order, any type; a pool reached after the tick's send is deferred before its evaluation and loses that
+/// minute's turn. So, exactly as for every pool type today, a steady run of lower-id pools settling each minute can
+/// delay a crypto pool indefinitely (Codex DS_SWAP R1). A fair send slot is the full resolver plan's job
+/// (RESOLVER_PRICE_PLAN §4.9), after this stopgap.
 export function dsTurns(eligible: readonly number[], nowMs: number, perTick: number = DS_PER_TICK): Set<number> {
   const n = eligible.length;
   const out = new Set<number>();

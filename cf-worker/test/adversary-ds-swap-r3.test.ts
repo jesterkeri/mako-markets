@@ -151,9 +151,9 @@ async function runUntilSettled(target: bigint, maxRuns: number): Promise<{ settl
 }
 
 describe('adversary r3: the rotation stride resets when the eligible count shrinks', () => {
-  // Found by r3: the rotation phase restarts when n shrinks, so the ideal ceil(n/2) bound does not hold (here 6 minutes,
-  // not 3). Accepted and disclosed for the swap (a stopgap until the full resolver plan): the decision stays correct and
-  // no pool starves; the asserted bound is 2n minutes. Kept as a regression case for that bound.
+  // Found by r3: the rotation phase restarts when n shrinks (here 6 minutes, not ceil(6/2) = 3). Accepted for the swap
+  // (a stopgap). This is a DRY-RUN case: it measures the Data Streams rotation only. Live settlement time is NOT bounded
+  // by it: production's one-send-per-tick rule applies first (Codex DS_SWAP R1, disclosed in dsTurns' doc).
   it('no starvation: with n = 6 eligible pools waiting and some settling, pool 118 settles within 2n = 12 minutes', async () => {
     pools = new Map([
       [113n, { ref: 'ETH:gt:2500', close: CLOSE - 180 }],
