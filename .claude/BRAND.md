@@ -28,7 +28,7 @@ Read by the `video-director` skill.
 ## Assets
 
 - **Logo:** `public/logos/mako-logo.svg`
-- **Mascot (29 poses):** `public/designsystem/mako/*.webp`
+- **Mascot (29 poses):** `public/designsystem/mako/*.webp`. Do not use the mascot in videos.
 - **Design system:** `public/designsystem/index.html` (live at https://makomarket.xyz/designsystem)
 - **Product screens:** the live site at https://makomarket.xyz. Use real screens only.
 
