@@ -1,4 +1,4 @@
-// ResolverState's rules (RESOLVER_PRICE_PLAN r54 §4.9), spec-first: each case is written from the plan's text and run
+// ResolverState's rules (RESOLVER_PRICE_PLAN r55 §4.9), spec-first: each case is written from the plan's text and run
 // against the pure core in src/resolver-state.ts. Times are the store's clock in ms.
 import { describe, expect, it } from 'vitest';
 
@@ -221,6 +221,36 @@ describe('the one release after a store timeout (r53)', () => {
     expect(c.s.journal[0]).toMatchObject({ writer: 'su', armedAt: T + 9_000 });
     c.take('b', 1, T + 60_000);
     expect(c.recheck('b', T + 60_000, 4, entry(c, 'b', T + 60_000, 4))).toEqual({ ok: false, reason: 'nonce-held' });
+  });
+  it('a refused re-check whose not_sent landed, then a refund sent anyway: the sent release clears it and arms (r55)', () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4, 'no-data');
+    expect(c.recheck('a', T + LEASE_MS - 10_000, 4, id)).toEqual({ ok: false, reason: 'time-left' });
+    c.resultTurn('a', T + LEASE_MS - 9_000, { result: 'failed', entryId: id, notSent: true }); // timed out, but landed
+    c.release('a', T + LEASE_MS - 1_000, { outcome: 'sent', entryId: id }); // the refund went out production's way
+    expect(c.s.journal[0]).toMatchObject({ result: null, armedAt: T + LEASE_MS - 1_000 });
+    c.take('b', 1, T + LEASE_MS + 60_000);
+    expect(c.recheck('b', T + LEASE_MS + 60_000, 4, entry(c, 'b', T + LEASE_MS + 60_000, 4))).toEqual({ ok: false, reason: 'nonce-held' });
+  });
+  it('a sent release keeps the arming time of an entry its re-check armed (r55)', () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4);
+    c.recheck('a', T + 1000, 4, id);
+    c.release('a', T + 400_000, { outcome: 'sent', entryId: id }); // landed very late
+    expect(c.s.journal[0].armedAt).toBe(T + 1000);
+  });
+  it('a release from an older version writes nothing at all, not even its token (r55)', () => {
+    const c = core();
+    c.take('new', 5, T);
+    c.release('new', T + 1, undefined, 5);
+    const before = JSON.stringify(c.s);
+    expect(c.release('old', T + 2, { outcome: 'sent', entry: { kind: 'no-data', marketId: 1, nonce: 4, calldataHash: '0x' } }, 4)).toBe(false);
+    expect(c.release('bad', T + 3, undefined, Number.NaN)).toBe(false);
+    expect(JSON.stringify(c.s)).toBe(before);
+    expect(c.release('same', T + 4, undefined, 5)).toBe(false); // the current version is not older: its token is recorded
+    expect(Object.keys(c.s.released)).toContain('t:same');
   });
   it("a release never changes an entry another token wrote (r54)", () => {
     const c = core();

@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // cf-worker/src/resolver-state.ts
 //
-// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r54 §4.9), as a pure state
+// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r55 §4.9), as a pure state
 // machine with no Cloudflare dependency, so every rule is unit-tested in Node. The Durable Object that hosts it
 // wraps each method below in ONE storage transaction; nothing here awaits, so each method is all-or-nothing.
 //
@@ -154,11 +154,15 @@ export class ResolverStateCore {
   /// After a store timeout the run's one release, made after its raw send if any, also carries what the run knows
   /// about that send (r53, r54). It is applied whether or not the lease is still the run's, but only to an entry this
   /// token wrote, since it concerns only the run's own send:
-  /// - `not-sent`: no raw send started, or the node refused it before its pool (insufficient funds), so the entry
-  ///   (armed by a late re-check, or not) is `not_sent` and holds nothing;
-  /// - `sent`: a raw send of either kind was made, so its entry is armed from now, after Monad's insert, or written
-  ///   armed from `entry` when no entry was written (the entry write timed out, or the store-unavailable path).
-  release(token: string, now: number, after?: ReleaseOutcome): boolean {
+  /// - `not-sent`: no raw send started, or the node answered it with an error (any JSON-RPC error object: it never
+  ///   entered the pool, r55), so the entry (armed by a late re-check, or not) is `not_sent` and holds nothing;
+  /// - `sent`: a raw send of either kind was made (a hash, or no answer), so the run's own `not_sent` mark is cleared
+  ///   and an unarmed entry is armed from now, after Monad's insert (an entry armed by its re-check keeps that time),
+  ///   or one is written armed from `entry` when none was (the entry write timed out, or the store-unavailable path).
+  /// `version` is the run's version, which the host always passes: an older version's release writes nothing at all
+  /// (r43, r55), not even its token.
+  release(token: string, now: number, after?: ReleaseOutcome, version?: number): boolean {
+    if (version !== undefined && (!Number.isSafeInteger(version) || version < this.s.newestVersion)) return false;
     if (after) this.applyOutcome(token, now, after);
     this.s.released[releasedKey(token)] = now;
     if (this.s.lease && this.s.lease.token === token) {
@@ -171,13 +175,14 @@ export class ResolverStateCore {
   private applyOutcome(token: string, now: number, o: ReleaseOutcome): void {
     const e = o.entryId === undefined ? undefined : this.s.journal.find((x) => x.id === o.entryId);
     if (e && e.writer !== token) return; // another run's entry: not this release's to change
-    if (e && e.result !== null) return; // reconciled already: nothing to change
+    if (e && e.result !== null && e.result !== 'not_sent') return; // reconciled already: final
     if (o.outcome === 'not-sent') {
       if (e) e.result = 'not_sent';
       return;
     }
     if (e) {
-      e.armedAt = now;
+      e.result = null; // the run's own not_sent mark (a refused re-check) no longer holds: it sent after all (r55)
+      if (e.armedAt === null) e.armedAt = now; // armed by its passing re-check: that time stands (r55)
       return;
     }
     if (!o.entry) throw new Error('a sent refund with no entry needs its nonce and calldata hash');
