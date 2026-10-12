@@ -160,7 +160,7 @@ cre workflow simulate settle-rounds --target staging-settings --non-interactive 
 
 **Full flow recorded on 2026-10-12 (round 4, real stakes on both sides).** `simulate --broadcast` through the
 MockKeystoneForwarder settled MakoRoundsV1 round 4 on Monad testnet in tx
-[`0x5b3c2060…8778`](https://testnet.monadexplorer.com/tx/0x5b3c20601cc89c6bef20b29ee1e54c2e7b4ca0a5372e9f71952b8146791c8778)
+[`0x5b3c2060…8778`](https://testnet.monadvision.com/tx/0x5b3c20601cc89c6bef20b29ee1e54c2e7b4ca0a5372e9f71952b8146791c8778)
 (block 70442901, 2026-10-12T16:16:54Z, status success): the log reads `round 4 due` -> `both reports fetched and
 checked (feed, exact boundary)` -> `settle simulation passed` -> `settle submitted`. On chain afterwards, `roundOf(4)`
 is Settled, outcome Up: Chainlink Data Streams BTC/USD anchor 82,631.70 at 16:00:00Z and close 82,803.53 at 16:15:00Z;
