@@ -1,4 +1,5 @@
-// Me (11a), rendered with mocked chain reads: a failed or partial read shows the error, never zeros; the totals
+// Me (11a), rendered with mocked chain reads: a read that failed every retry with nothing read shows the error,
+// never zeros, and a failed refetch keeps the last totals; the totals
 // come from the account's stakes; a claim goes through the confirm sheet and the row then reads "Claimed" with the
 // amount that landed, not the refetched zero.
 
@@ -54,7 +55,9 @@ const MARKETS: MarketWithId[] = [
 
 type Bet = readonly [bigint, bigint, boolean];
 let bets: Bet[] = [];
-let betFails = false;
+/// 'none': the stake read works. 'nothing-read': every retry failed and nothing was ever read. 'refetch': an earlier
+/// read succeeded and the latest refetch failed, so TanStack Query keeps the earlier data beside the error.
+let betFails: 'none' | 'nothing-read' | 'refetch' = 'none';
 let marketsState: { markets: MarketWithId[]; count: number; isLoading: boolean; isError: boolean } = { markets: MARKETS, count: MARKETS.length, isLoading: false, isError: false };
 const refetchBets = vi.fn(async () => {
   bets = bets.map((b, i) => (i === 1 ? [b[0], b[1], true] : b));
@@ -66,8 +69,8 @@ vi.mock('wagmi', async () => {
     useReadContracts: () => {
       const [, force] = R.useReducer((n: number) => n + 1, 0);
       return {
-        data: bets.map((b, i) => (betFails && i === 1 ? { status: 'failure', error: new Error('reverted') } : { status: 'success', result: b })),
-        isError: false,
+        data: betFails === 'nothing-read' ? undefined : bets,
+        isError: betFails !== 'none',
         refetch: async () => {
           await refetchBets();
           force();
@@ -80,7 +83,7 @@ vi.mock('wagmi', async () => {
   };
 });
 vi.mock('@/lib/hooks', () => ({
-  useMarkets: () => ({ ...marketsState, refetch: vi.fn() }),
+  useAllMarkets: () => ({ ...marketsState, refetch: vi.fn() }),
   useUsdcBalance: () => ({ data: 50n * USDC, isError: false, refetch: vi.fn() }),
   useEnsureMonadChain: () => vi.fn(),
 }));
@@ -124,7 +127,7 @@ function totals(): Record<string, string> {
 
 beforeEach(() => {
   signedIn = true;
-  betFails = false;
+  betFails = 'none';
   bets = [
     [4n * USDC, 0n, false],
     [10n * USDC, 0n, false],
@@ -152,8 +155,8 @@ describe('Me page', () => {
     expect(screen.getAllByText('You’ve created 1 pool.').length).toBeGreaterThan(0);
   });
 
-  it('shows the error, not zeros, when one stake read fails', () => {
-    betFails = true;
+  it('shows the error, not zeros, when the stake read failed every retry with nothing read', () => {
+    betFails = 'nothing-read';
     renderMe();
     expect(screen.getAllByText('Can’t load your positions').length).toBeGreaterThan(0);
     const t = totals();
@@ -163,12 +166,19 @@ describe('Me page', () => {
     expect(screen.queryAllByText(/^0\.00/)).toHaveLength(0);
   });
 
-  it('shows the error when a pool read came back missing', () => {
-    marketsState = { markets: MARKETS.slice(0, 3), count: MARKETS.length, isLoading: false, isError: false };
-    bets = bets.slice(0, 3);
+  it('shows the error when the pool read failed every retry with nothing read', () => {
+    marketsState = { markets: [], count: MARKETS.length, isLoading: false, isError: true };
     renderMe();
     expect(screen.getAllByText('Can’t load your positions').length).toBeGreaterThan(0);
     expect(totals()['IN PLAY']).toBe('Unavailable');
+  });
+
+  it('keeps the last complete totals when a refetch fails (one refused RPC call no longer blanks them)', () => {
+    betFails = 'refetch';
+    renderMe();
+    expect(screen.queryAllByText('Can’t load your positions')).toHaveLength(0);
+    expect(totals()['IN PLAY']).toBe('4.00 USDC');
+    expect(totals()['WON ALL TIME']).toBe('12.93 USDC');
   });
 
   it('claims one pool through the confirm sheet and keeps the claimed amount on the row', async () => {
