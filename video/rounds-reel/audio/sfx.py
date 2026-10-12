@@ -32,7 +32,7 @@ def slam(t0,g=1.0):        # word landing: low thump + short noise crack
     put(np.tanh(1.8*body)*0.8+crack,t0-0.004,g)
 def digit(t0,g=1.0):       # 15:00 digit drop: woody tick
     d=0.09; t=tt(d)
-    s=np.sin(2*np.pi*(1300+500*np.exp(-t/0.005))*t)*np.exp(-t/0.018)*0.6+fnoise(d,2000,7000)*np.exp(-t/0.003)*0.3
+    s=np.sin(2*np.pi*(1300*(0.85+0.3*g)+500*np.exp(-t/0.005))*t)*np.exp(-t/0.018)*0.6+fnoise(d,2000,7000)*np.exp(-t/0.003)*0.3
     put(s,t0,g,pan=rng.uniform(-0.15,0.15))
 def sparkle(t0,t1,n=26,g=1.0):  # particle sphere: scattered high glints
     for k in range(n):
@@ -51,7 +51,7 @@ def paper(t0,g=1.0):       # soft paper swish
     put(s,t0-d*0.55,g)
 def pop(t0,g=1.0):         # chip pop
     d=0.12; t=tt(d)
-    s=np.sin(2*np.pi*(380+900*np.exp(-t/0.01))*t)*np.exp(-t/0.04)*0.7
+    s=np.sin(2*np.pi*(380*(0.7+0.6*g)+900*np.exp(-t/0.01))*t)*np.exp(-t/0.04)*0.7
     put(s,t0,g)
 def whoomp(t0,g=1.0):      # low swell into the URL
     d=0.9; t=tt(d); x=t/d
@@ -102,33 +102,25 @@ def rise(t0,g=1.0):        # sign-in card rises: soft tonal swell
     s=(np.sin(2*np.pi*440*t)+np.sin(2*np.pi*659.25*t))*np.sin(np.pi*np.clip(x,0,1))**2*0.06
     put(s,t0-0.35,g)
 
-T=0.45  # overall transition level (quieter than before)
-whip(4.0,T)                         # 1d -> 2a: whip push into the round page
-air(5.0,T*0.8)                      # 2a -> 2b: macro push
-split(6.0,T)                        # 2b -> 2c: UP / DOWN split screen
-air(7.5,T*0.8)                      # 2c -> 3a: back into the page, chips
-ratchet(8.5,0.3,T)                  # 3a -> 3b: type stack scrolls
-air(9.5,T*0.7)                      # 3b -> 3c: countdown macro
-air(11.0,T*0.8)                     # 3c -> 4a: chart
-blip(12.0,T,1200)                   # 4a -> 4b: cut to black, 15:00
-air(13.0,T*0.6)                     # 4b -> 4c: back over the chart
-swipe(14.5,T*1.3)                   # 4c -> 5a: yellow slash into PRICE
-blip(16.0,T,1800)                   # 5a -> 5b: HUD to the price line
-blip(17.5,T*0.8,900)                # 5b -> 5c: cut to black type
-air(19.0,T*0.6)                     # 5c -> 6a: pot bar (score impact carries it)
-blip(21.5,T*0.8,1400)               # 6b -> 6c: fee card
-paper(23.0,T*1.6)                   # 6c -> 7a: paper slash into REFUND
-flick(24.5,T)                       # 7a -> 7b: paper type
-rise(26.0,T)                        # 7b -> 8a: sign-in card
-# 1.0 / 2.0 / 20.0 / 27.0 / 28.0 are plain cuts on the beat: the music carries them
+T=0.45  # overall transition level
+# Transitions: one sound per type, only on the switches that earn one.
+# Every other cut rides the music on the beat.
+whip(4.0,T)              # 1d -> 2a: whip push into the round page
+split(6.0,T)             # 2b -> 2c: the UP / DOWN split screen
+ratchet(8.5,0.3,T)       # 3a -> 3b: the "0.10 USDC" type stack scrolls
+air(11.0,T*0.8)          # 3c -> 4a: settle onto the chart
+swipe(14.5,T*1.3)        # 4c -> 5a: yellow slash into PRICE
+blip(16.0,T,1800)        # 5a -> 5b: HUD hands over to the price line
+paper(23.0,T*1.6)        # 6c -> 7a: paper slash into REFUND
+rise(26.0,T)             # 7b -> 8a: the sign-in card rises
 
-# --- in-scene action sounds
-slam(0.0,0.9); slam(3.0,1.0); slam(17.55,0.9)   # Think / Call it. / Nobody
-ratchet(2.0,0.25,T*0.6)                          # 1c: 15 MINUTES stack scrolls in
-for i in range(5): digit(12.08+0.07*i,0.9)       # 15:00 digits drop in
-sparkle(14.6,15.9,26,0.9)                         # particle sphere
+# In-scene action sounds, varied so no single sound repeats identically
+slam(0.0,0.9)                                     # "Think"
+slam(17.55,0.7)                                   # "Nobody" (lighter); "Call it." rides the score impact
+for i in range(5): digit(12.08+0.07*i,0.75+0.05*i)  # 15:00 digits, building
+sparkle(14.6,15.9,20,0.8)                         # particle sphere
 shimmer(20.15,21.2,1.0)                           # shares fly into the pot
-for t0 in [27.0,27.333,27.667]: pop(t0,0.9)       # three end chips
+for k,t0 in enumerate([27.0,27.333,27.667]): pop(t0,0.7+0.1*k)   # three end chips, building
 whoomp(28.35,1.0)                                 # URL pill opens
 
 out=np.tanh(out); peak=np.abs(out).max(); out/=peak/0.9
