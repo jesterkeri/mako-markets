@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // cf-worker/src/resolver-state.ts
 //
-// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r53 §4.9), as a pure state
+// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r54 §4.9), as a pure state
 // machine with no Cloudflare dependency, so every rule is unit-tested in Node. The Durable Object that hosts it
 // wraps each method below in ONE storage transaction; nothing here awaits, so each method is all-or-nothing.
 //
@@ -51,6 +51,8 @@ export interface JournalEntry {
   marketId: number;
   nonce: number;
   calldataHash: string;
+  /// The lease token of the run that wrote it: a release's outcome applies only to its own token's entries (r54).
+  writer: string;
   /// The store's stamp on the entry write.
   enteredAt: number;
   /// The store's stamp from this entry's own passing re-check (r52). Only an armed entry holds its nonce, timed from
@@ -149,13 +151,15 @@ export class ResolverStateCore {
   }
 
   /// Fenced release (compare, then delete). Every release records its token, whether or not it deleted (r46).
-  /// After a store timeout the run's one release also carries what it knows about its journal entry (r53), applied
-  /// whether or not the lease is still the run's, since it concerns only the run's own send:
-  /// - `not-sent`: no raw send started, so the entry (armed by a late re-check, or not) is `not_sent` and holds nothing;
-  /// - `sent`: a no-data refund went out production's way, so its entry is armed from now, after Monad's insert, or
-  ///   written armed from `entry` when the entry write itself timed out (no `entryId`).
+  /// After a store timeout the run's one release, made after its raw send if any, also carries what the run knows
+  /// about that send (r53, r54). It is applied whether or not the lease is still the run's, but only to an entry this
+  /// token wrote, since it concerns only the run's own send:
+  /// - `not-sent`: no raw send started, or the node refused it before its pool (insufficient funds), so the entry
+  ///   (armed by a late re-check, or not) is `not_sent` and holds nothing;
+  /// - `sent`: a raw send of either kind was made, so its entry is armed from now, after Monad's insert, or written
+  ///   armed from `entry` when no entry was written (the entry write timed out, or the store-unavailable path).
   release(token: string, now: number, after?: ReleaseOutcome): boolean {
-    if (after) this.applyOutcome(now, after);
+    if (after) this.applyOutcome(token, now, after);
     this.s.released[releasedKey(token)] = now;
     if (this.s.lease && this.s.lease.token === token) {
       this.s.lease = null;
@@ -164,8 +168,9 @@ export class ResolverStateCore {
     return false;
   }
 
-  private applyOutcome(now: number, o: ReleaseOutcome): void {
+  private applyOutcome(token: string, now: number, o: ReleaseOutcome): void {
     const e = o.entryId === undefined ? undefined : this.s.journal.find((x) => x.id === o.entryId);
+    if (e && e.writer !== token) return; // another run's entry: not this release's to change
     if (e && e.result !== null) return; // reconciled already: nothing to change
     if (o.outcome === 'not-sent') {
       if (e) e.result = 'not_sent';
@@ -177,7 +182,7 @@ export class ResolverStateCore {
     }
     if (!o.entry) throw new Error('a sent refund with no entry needs its nonce and calldata hash');
     const id = this.s.nextEntryId++;
-    this.s.journal.push({ id, ...o.entry, enteredAt: now, armedAt: now, txHash: null, result: null, presumedDropped: false });
+    this.s.journal.push({ id, ...o.entry, writer: token, enteredAt: now, armedAt: now, txHash: null, result: null, presumedDropped: false });
   }
 
   private forgetOldReleases(now: number): void {
@@ -304,7 +309,7 @@ export class ResolverStateCore {
   journalEntry(token: string, now: number, e: { kind: TurnKind; marketId: number; nonce: number; calldataHash: string }): number {
     this.fence(token, now);
     const id = this.s.nextEntryId++;
-    this.s.journal.push({ id, ...e, enteredAt: now, armedAt: null, txHash: null, result: null, presumedDropped: false });
+    this.s.journal.push({ id, ...e, writer: token, enteredAt: now, armedAt: null, txHash: null, result: null, presumedDropped: false });
     return id;
   }
 

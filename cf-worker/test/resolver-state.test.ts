@@ -1,4 +1,4 @@
-// ResolverState's rules (RESOLVER_PRICE_PLAN r53 §4.9), spec-first: each case is written from the plan's text and run
+// ResolverState's rules (RESOLVER_PRICE_PLAN r54 §4.9), spec-first: each case is written from the plan's text and run
 // against the pure core in src/resolver-state.ts. Times are the store's clock in ms.
 import { describe, expect, it } from 'vitest';
 
@@ -203,8 +203,34 @@ describe('the one release after a store timeout (r53)', () => {
     expect(c.fenced('b', T + LEASE_MS + 2)).toBe(true); // b's lease is untouched
     const id2 = entry(c, 'b', T + LEASE_MS + 3, 5);
     c.reconcile('b', T + LEASE_MS + 4, id2, 'confirmed');
-    c.release('x', T + LEASE_MS + 5, { outcome: 'not-sent', entryId: id2 });
+    c.release('b', T + LEASE_MS + 5, { outcome: 'not-sent', entryId: id2 });
     expect(c.s.journal[1].result).toBe('confirmed');
+  });
+  it('an out-of-funds settlement whose result transaction timed out: its release marks the entry not_sent (r54)', () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4);
+    c.recheck('a', T + 1000, 4, id); // armed; the node then answers insufficient funds; the result write times out
+    c.release('a', T + 12_000, { outcome: 'not-sent', entryId: id });
+    c.take('b', 1, T + 60_000);
+    expect(c.recheck('b', T + 60_000, 4, entry(c, 'b', T + 60_000, 4, 'no-data'))).toEqual({ ok: true });
+  });
+  it("a refund on the store-unavailable path: the release writes its entry armed, so the next settlement is held (r54)", () => {
+    const c = core();
+    c.release('su', T + 9_000, { outcome: 'sent', entry: { kind: 'no-data', marketId: 3, nonce: 4, calldataHash: '0xef' } });
+    expect(c.s.journal[0]).toMatchObject({ writer: 'su', armedAt: T + 9_000 });
+    c.take('b', 1, T + 60_000);
+    expect(c.recheck('b', T + 60_000, 4, entry(c, 'b', T + 60_000, 4))).toEqual({ ok: false, reason: 'nonce-held' });
+  });
+  it("a release never changes an entry another token wrote (r54)", () => {
+    const c = core();
+    c.take('a', 1, T);
+    const id = entry(c, 'a', T, 4);
+    c.recheck('a', T + 1000, 4, id);
+    c.release('x', T + 2000, { outcome: 'not-sent', entryId: id });
+    expect(c.s.journal[0]).toMatchObject({ result: null, armedAt: T + 1000 });
+    c.release('y', T + 3000, { outcome: 'sent', entryId: id });
+    expect(c.s.journal[0].armedAt).toBe(T + 1000);
   });
 });
 
