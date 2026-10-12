@@ -49,6 +49,8 @@ import {
 } from './price-feed-assets';
 import {
   dataStreamsCryptoDecision,
+  dsEligible,
+  dsTurns,
   DEFAULT_DATASTREAMS_URL,
   formatPrice18,
   readCryptoPriceSource,
@@ -1012,7 +1014,6 @@ export async function runResolver(env: Env): Promise<void> {
           now: () => Date.now(),
         }
       : null;
-  let dsLeft = DS_PER_TICK;
   if (crypto.invalid !== null) console.error(`CRYPTO_PRICE_SOURCE "${crypto.invalid}" is not coingecko, datastreams-shadow or datastreams — using coingecko`);
   if (crypto.source !== 'coingecko' && !dsDeps) console.error(`CRYPTO_PRICE_SOURCE=${crypto.source} but DATASTREAMS_API_KEY/SECRET are not set`);
 
@@ -1160,6 +1161,15 @@ export async function runResolver(env: Env): Promise<void> {
         types.includes(r.value.mType),
     );
   const needsCoinGecko = crypto.source !== 'datastreams' && needsData([MarketType.CRYPTO]);
+  // This tick's Data Streams evaluations: DS_PER_TICK slots rotating through the eligible crypto pools by the minute.
+  const dsTurn = dsTurns(
+    crypto.source === 'coingecko'
+      ? []
+      : marketResults.flatMap((r, idx) =>
+          actions[idx] === 'fetch_and_resolve' && r.status === 'fulfilled' && r.value.mType === MarketType.CRYPTO && dsEligible(r.value.mType, r.value.oracleRef) ? [idx] : [],
+        ),
+    Date.now(),
+  );
   const needsPyth = needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
 
   // No-data settlement (one-sided REFUND + 24h forceRefund keeper). Sends
@@ -1302,12 +1312,11 @@ export async function runResolver(env: Env): Promise<void> {
         skipped++;
         continue;
       }
-      if (dsLeft <= 0) {
-        console.log(`[${ts}] market ${i}: datastreams budget for this tick spent (${DS_PER_TICK}) — retry next tick`);
+      if (dsEligible(market.mType, market.oracleRef) && !dsTurn.has(Number(i))) {
+        console.log(`[${ts}] market ${i}: datastreams not this tick's turn (${DS_PER_TICK} a tick, rotating) — later tick`);
         skipped++;
         continue;
       }
-      dsLeft--;
       const d = await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps);
       if (d.kind !== 'settle') {
         const say = d.kind === 'final' ? console.error : console.log;
@@ -1318,9 +1327,8 @@ export async function runResolver(env: Env): Promise<void> {
       outcome = d.yes ? Outcome.YES : Outcome.NO;
       reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}`;
     } else if (market.mType === MarketType.CRYPTO) {
-      if (crypto.source === 'datastreams-shadow' && dsLeft > 0) {
+      if (crypto.source === 'datastreams-shadow' && dsTurn.has(Number(i))) {
         // Shadow: log what Data Streams would decide beside today's CoinGecko path; nothing is sent from it.
-        dsLeft--;
         const d: DsDecision = dsDeps
           ? await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps)
           : { kind: 'wait', reason: 'no_credentials' };

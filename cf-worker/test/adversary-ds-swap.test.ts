@@ -188,7 +188,7 @@ describe('adversary: attacks that held', () => {
       DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
     } as Env);
     expect(dsSkews).toHaveLength(2);
-    expect(lines.filter((l) => l.includes('datastreams budget for this tick spent'))).toHaveLength(2);
+    expect(lines.filter((l) => l.includes("datastreams not this tick's turn"))).toHaveLength(2);
     expect(lines.filter((l) => l.includes('datastreams wait (report_report_missing)'))).toHaveLength(2);
   }, 60_000);
 });

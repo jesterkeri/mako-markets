@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import verifiedEvidence from './fixtures/btcusd-1789529160-verified.json';
-import { dataStreamsCryptoDecision, formatPrice18, readCryptoPriceSource, readFinalized, type DsDeps, type FinalizedBlock } from '../src/crypto-datastreams';
+import { dataStreamsCryptoDecision, dsEligible, dsTurns, formatPrice18, readCryptoPriceSource, readFinalized, type DsDeps, type FinalizedBlock } from '../src/crypto-datastreams';
 import type { RpcCall } from '../src/datastreams';
 
 const CLOSE = Number(fixture.observationsTimestamp);
@@ -108,5 +108,24 @@ describe('config and helpers', () => {
   it('formats 18-decimal prices', () => {
     expect(formatPrice18(BigInt(verifiedEvidence.price))).toBe('75938.791787');
     expect(formatPrice18(10n ** 17n)).toBe('0.100000');
+  });
+});
+
+describe('the per-tick rotation (adversary r2 on d15c3dc)', () => {
+  it('gives every eligible pool a turn within ceil(n / 2) consecutive minutes, so none starves', () => {
+    const ids = [116, 117, 118, 119, 120];
+    for (let start = 0; start < 7; start++) {
+      const seen = new Set<number>();
+      for (let k = start; k < start + Math.ceil(ids.length / 2); k++) for (const id of dsTurns(ids, k * 60_000)) seen.add(id);
+      expect([...seen].sort()).toEqual(ids);
+    }
+    expect(dsTurns([], 0).size).toBe(0);
+    expect([...dsTurns([7], 123)]).toEqual([7]);
+  });
+  it('only CRYPTO pools with a parseable ref on a pinned feed are eligible', () => {
+    expect(dsEligible(1, ref('BTC:gt:75000'))).toBe(true);
+    expect(dsEligible(1, ref('BTC:gt:7.5e4'))).toBe(false);
+    expect(dsEligible(1, ref('XRP:gt:1'))).toBe(false);
+    expect(dsEligible(5, ref('BTC:gt:75000'))).toBe(false);
   });
 });

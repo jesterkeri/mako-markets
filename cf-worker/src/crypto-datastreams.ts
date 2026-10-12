@@ -24,6 +24,24 @@ export const FINALIZED_TIMEOUT_MS = 8_000;
 /// calls, at most about 32 s with every timeout spent, and the worker runs every minute.
 export const DS_PER_TICK = 2;
 
+/// Whether a pool can be evaluated at all: a CRYPTO pool whose ref parses to a coin with a pinned feed. Others get an
+/// immediate `wait` with no request, and never use a tick's evaluation slot (adversary r2 on d15c3dc).
+export function dsEligible(mType: number, oracleRef: Hex): boolean {
+  return feedFor(mType, parseCryptoRef(oracleRef)).ok;
+}
+
+/// The pools (by id, eligible ones only, ascending) that get this tick's DS_PER_TICK evaluations. The slots rotate
+/// through them by the minute, so with ticks every minute each eligible pool is evaluated at least once every
+/// ceil(n / DS_PER_TICK) ticks, and pools that never settle cannot starve later ones (adversary r2 on d15c3dc).
+export function dsTurns(eligible: readonly number[], nowMs: number, perTick: number = DS_PER_TICK): Set<number> {
+  const n = eligible.length;
+  const out = new Set<number>();
+  if (n === 0) return out;
+  const start = (Math.floor(nowMs / 60_000) * perTick) % n;
+  for (let j = 0; j < Math.min(perTick, n); j++) out.add(eligible[(start + j) % n]);
+  return out;
+}
+
 export type CryptoPriceSource = 'coingecko' | 'datastreams-shadow' | 'datastreams';
 
 /// The configured source; an unknown value keeps today's behaviour and says so.
