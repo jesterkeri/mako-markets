@@ -1,4 +1,4 @@
-// ResolverState's rules (RESOLVER_PRICE_PLAN r55 §4.9), spec-first: each case is written from the plan's text and run
+// ResolverState's rules (RESOLVER_PRICE_PLAN r56 §4.9), spec-first: each case is written from the plan's text and run
 // against the pure core in src/resolver-state.ts. Times are the store's clock in ms.
 import { describe, expect, it } from 'vitest';
 
@@ -241,16 +241,18 @@ describe('the one release after a store timeout (r53)', () => {
     c.release('a', T + 400_000, { outcome: 'sent', entryId: id }); // landed very late
     expect(c.s.journal[0].armedAt).toBe(T + 1000);
   });
-  it('a release from an older version writes nothing at all, not even its token (r55)', () => {
+  it("a release is applied whatever the run's version: an older run frees its own lease and holds its own send (r56)", () => {
     const c = core();
-    c.take('new', 5, T);
-    c.release('new', T + 1, undefined, 5);
-    const before = JSON.stringify(c.s);
-    expect(c.release('old', T + 2, { outcome: 'sent', entry: { kind: 'no-data', marketId: 1, nonce: 4, calldataHash: '0x' } }, 4)).toBe(false);
-    expect(c.release('bad', T + 3, undefined, Number.NaN)).toBe(false);
-    expect(JSON.stringify(c.s)).toBe(before);
-    expect(c.release('same', T + 4, undefined, 5)).toBe(false); // the current version is not older: its token is recorded
-    expect(Object.keys(c.s.released)).toContain('t:same');
+    expect(c.take('v1', 1, T)).toBe('granted');
+    const id = c.journalEntry('v1', T, { kind: 'settlement', marketId: 7, nonce: 4, calldataHash: '0xab' });
+    expect(c.take('v2', 2, T + 10_000)).toBe('held'); // v2 recorded as the newest version
+    c.release('v1', T + 20_000, { outcome: 'not-sent', entryId: id }); // v1's re-check timed out: it sent nothing
+    expect(c.recheck('v1', T + 21_000, 4, id)).toEqual({ ok: false, reason: 'lease' }); // the late re-check lands: refused
+    expect(c.s.journal[0]).toMatchObject({ result: 'not_sent', armedAt: null });
+    expect(c.take('v2b', 2, T + 60_000)).toBe('granted'); // the lease is free for the next tick
+    // An older version's store-unavailable refund is held by its release.
+    c.release('v1-su', T + 61_000, { outcome: 'sent', entry: { kind: 'no-data', marketId: 3, nonce: 5, calldataHash: '0xef' } });
+    expect(c.s.journal[1]).toMatchObject({ writer: 'v1-su', armedAt: T + 61_000 });
   });
   it("a release never changes an entry another token wrote (r54)", () => {
     const c = core();

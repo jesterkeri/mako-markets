@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // cf-worker/src/resolver-state.ts
 //
-// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r55 §4.9), as a pure state
+// The rules of ResolverState, the resolver's one durable store (RESOLVER_PRICE_PLAN r56 §4.9), as a pure state
 // machine with no Cloudflare dependency, so every rule is unit-tested in Node. The Durable Object that hosts it
 // wraps each method below in ONE storage transaction; nothing here awaits, so each method is all-or-nothing.
 //
@@ -159,10 +159,10 @@ export class ResolverStateCore {
   /// - `sent`: a raw send of either kind was made (a hash, or no answer), so the run's own `not_sent` mark is cleared
   ///   and an unarmed entry is armed from now, after Monad's insert (an entry armed by its re-check keeps that time),
   ///   or one is written armed from `entry` when none was (the entry write timed out, or the store-unavailable path).
-  /// `version` is the run's version, which the host always passes: an older version's release writes nothing at all
-  /// (r43, r55), not even its token.
-  release(token: string, now: number, after?: ReleaseOutcome, version?: number): boolean {
-    if (version !== undefined && (!Number.isSafeInteger(version) || version < this.s.newestVersion)) return false;
+  /// A release is applied whatever the run's version (r56): r43's "an older version writes nothing" covers decision
+  /// state, while a release touches only the run's own token, lease and send. So a run that held the lease when a
+  /// newer version's take was recorded still frees it, and a re-check of its landing late is refused.
+  release(token: string, now: number, after?: ReleaseOutcome): boolean {
     if (after) this.applyOutcome(token, now, after);
     this.s.released[releasedKey(token)] = now;
     if (this.s.lease && this.s.lease.token === token) {
