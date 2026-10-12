@@ -158,6 +158,17 @@ cre workflow simulate settle-rounds --target staging-settings --non-interactive 
 
 ### What output proves success
 
+**Full flow recorded on 2026-10-12 (round 4, real stakes on both sides).** `simulate --broadcast` through the
+MockKeystoneForwarder settled MakoRoundsV1 round 4 on Monad testnet in tx
+[`0x5b3c2060…8778`](https://testnet.monadexplorer.com/tx/0x5b3c20601cc89c6bef20b29ee1e54c2e7b4ca0a5372e9f71952b8146791c8778)
+(block 70442901, 2026-10-12T16:16:54Z, status success): the log reads `round 4 due` -> `both reports fetched and
+checked (feed, exact boundary)` -> `settle simulation passed` -> `settle submitted`. On chain afterwards, `roundOf(4)`
+is Settled, outcome Up: Chainlink Data Streams BTC/USD anchor 82,631.70 at 16:00:00Z and close 82,803.53 at 16:15:00Z;
+pots 2.00 UP / 1.00 DOWN USDC, protocol fee 0.03, creator fee 0.02, distributable 2.95. It settled 2 min 54 s after
+close, before the live keeper's 300 s backstop delay, so the CRE workflow did it. Evidence (raw output and the
+read-back): `mako-design/bench/cre-simulate/2026-10-12T16-16-41Z-*`. The CLI prints its log times in local time with a
+`Z` suffix (its 17:16:51Z is 16:16:51 UTC).
+
 - **No round due.** This was the state on 2026-10-10, when `pendingSettlement()` returned `[]`. The run ends with
   `✓ Workflow Simulation Result: "nothing-due"` (CLI 1.34.0 printed no `[USER LOG]` line for it). That proves the
   cron trigger fired and that the EVM read of the deployed contract on Monad testnet worked through CRE. Recorded
