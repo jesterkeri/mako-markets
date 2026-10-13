@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 
+import { EnvioBudgetExhausted, EnvioBudgetUnavailable } from '@/lib/envio-budget';
+import { authorizeMeRoundsCaller } from '@/lib/me-rounds-caller';
 import { discoverMeRounds, IndexerNotConfigured, TooManyRows, WrongSource } from '@/lib/me-rounds-indexer';
 import type { MeRoundsDiscoveryWire } from '@/lib/me-rounds-discovery';
 import { ttlMemo, type Memoized } from '@/lib/ttl-memo';
@@ -17,6 +19,12 @@ import { ttlMemo, type Memoized } from '@/lib/ttl-memo';
  *   200 { roundIds: ["3", "7", ...], indexedThrough: "400",
  *         head: { id: "400", openTime: "1760000000", startTime: "1760000900", creator: "0x…" } }   head null iff 0 rounds
  *   400 { error: "bad_account" }        not exactly one `account`, or not a 0x address (any letter case)
+ *   401 { error: "sign_in_required" }   no valid session: the route answers only for the signed-in caller (Codex R5)
+ *   403 { error: "not_your_account" }   `account` is not the caller's own (Safe for email, wallet for wallet accounts)
+ *   503 { error: "caller_unavailable" } the session's account could not be looked up (Upstash down): refused
+ *   429 { error: "indexer_busy" }       the shared Envio budget (envio-budget.ts) is spent for this window
+ *   503 { error: "budget_unavailable" } the shared budget cannot be checked (Upstash not configured or down): no call
+ *                                        is sent to Envio
  *   503 { error: "not_configured" }     ENVIO_ROUNDS_GRAPHQL_URL unset
  *   502 { error: "indexer_unavailable" } the indexer failed or answered something unusable, including a missing or
  *                                        malformed head round when it has rounds
@@ -57,10 +65,19 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'bad_account' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
   }
   const account = given[0].toLowerCase();
+  const caller = await authorizeMeRoundsCaller(account);
+  if (!caller.ok) return NextResponse.json({ error: caller.error }, { status: caller.status, headers: { 'Cache-Control': 'no-store' } });
   try {
     const { value } = await cachedFor(account);
     return NextResponse.json(value, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e) {
+    if (e instanceof EnvioBudgetExhausted) {
+      return NextResponse.json({ error: 'indexer_busy' }, { status: 429, headers: { 'Cache-Control': 'no-store', 'Retry-After': '10' } });
+    }
+    if (e instanceof EnvioBudgetUnavailable) {
+      console.error('[me/rounds] Envio budget unavailable');
+      return NextResponse.json({ error: 'budget_unavailable' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
     if (e instanceof IndexerNotConfigured) {
       return NextResponse.json({ error: 'not_configured' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }

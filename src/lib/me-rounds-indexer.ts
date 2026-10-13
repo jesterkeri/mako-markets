@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { MONAD_TESTNET_ID } from './chain';
+import { reserveEnvioCall } from './envio-budget';
 import { parseUint64, type MeRoundsDiscoveryWire, type MeRoundsHeadWire } from './me-rounds-discovery';
 import { ROUNDS_RELEASE_RECORD } from './rounds-release-record';
 
@@ -21,6 +22,9 @@ import { ROUNDS_RELEASE_RECORD } from './rounds-release-record';
 // deployment (rounds-release-record.ts) on Monad testnet (Codex ME_ROUNDS R3). One GraphQL request is answered from one
 // database, so each page carries its own proof of source: a gateway that sends some queries to another deployment's
 // indexer fails the check on those pages, and nothing it says is used.
+//
+// Every request, each page included, first reserves a slot in the shared Envio budget (envio-budget.ts); a request
+// without a slot is never sent, and the route answers rounds unavailable (Codex ME_ROUNDS R5).
 
 export const PAGE_SIZE = 1000;
 /// Rows read per list before the answer is refused as too long.
@@ -72,6 +76,7 @@ const ROUND_ID = /^[1-9][0-9]{0,77}$/;
 /// One query. Its RoundsSource rows are checked unless `sourceMayBeAbsent` and there are none (the head query only: an
 /// indexer that has seen no round yet has no source row, which discoverMeRounds accepts only when it also has 0 rounds).
 async function gql(url: string, query: string, variables: Record<string, unknown>, sourceMayBeAbsent = false): Promise<Record<string, unknown>> {
+  await reserveEnvioCall();
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

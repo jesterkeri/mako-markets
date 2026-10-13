@@ -24,6 +24,11 @@ import { roundsAbi } from '@/lib/rounds-abi';
 
 import { answerEnvio, fakeEnvio, type FakeEnvio } from './helpers/fake-envio';
 
+// The route's caller binding and the shared Envio budget are tested on their own (me-rounds-caller / envio-budget
+// tests); here every caller is allowed and every call has budget, so this file tests discovery itself.
+vi.mock('@/lib/me-rounds-caller', () => ({ authorizeMeRoundsCaller: async () => ({ ok: true }) }));
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const ROUNDS = '0x00000000000000000000000000000000000000f0' as const;
 const A = '0xe490ab83c7f247bec7d5e04ce04bc48d6609b550' as const;
 const HOUSE = '0x00000000000000000000000000000000000000c2' as const;

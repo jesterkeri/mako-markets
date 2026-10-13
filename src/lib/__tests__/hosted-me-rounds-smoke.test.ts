@@ -18,6 +18,11 @@ import { roundsAbi } from '@/lib/rounds-abi';
 import { ROUNDS_RELEASE_RECORD } from '@/lib/rounds-release-record';
 import { toRound, type RoundTuple } from '@/lib/use-rounds';
 
+// The route's caller binding and the shared Envio budget are tested on their own (me-rounds-caller / envio-budget
+// tests); here every caller is allowed and every call has budget, so this file tests discovery itself.
+vi.mock('@/lib/me-rounds-caller', () => ({ authorizeMeRoundsCaller: async () => ({ ok: true }) }));
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const URL_ = process.env.ME_ROUNDS_SMOKE_URL;
 const WRONG = process.env.ME_ROUNDS_SMOKE_WRONG_URL;
 const WINNER = process.env.ME_ROUNDS_SMOKE_WINNER as Address | undefined;

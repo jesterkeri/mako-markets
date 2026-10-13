@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { answerEnvio, envioFetch, FAKE_OPEN, FAKE_START, fakeEnvio, type FakeEnvio } from './helpers/fake-envio';
 
+// The route's caller binding and the shared Envio budget are tested on their own (me-rounds-caller / envio-budget
+// tests); here every caller is allowed and every call has budget, so this file tests discovery itself.
+vi.mock('@/lib/me-rounds-caller', () => ({ authorizeMeRoundsCaller: async () => ({ ok: true }) }));
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const URL_ = 'https://indexer.test/v1/graphql';
 const A = '0xE490ab83C7f247bEC7D5e04Ce04BC48d6609b550';
 const a = A.toLowerCase();

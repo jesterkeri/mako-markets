@@ -23,8 +23,9 @@ const POLL_MS = 10_000;
 /// The discovery answer changes only when the indexer catches up; every round it has not caught up with is read on
 /// chain anyway (planMeRoundReads: every id above the indexer's head, and the newest ME_ROUNDS_RECENT), so a new round
 /// or entry shows on the next 10 s chain poll without asking the indexer. It is asked every 2 minutes, and a focus or
-/// remount within that time reuses the answer: about 8 GraphQL requests per open Me page per 2 minutes, so Envio's
-/// development-plan limit of 100 queries a minute holds for about two dozen people on Me at once (Joshua, 2026-10-13).
+/// remount within that time reuses the answer: at least 8 GraphQL requests per open Me page per 2 minutes, more for a
+/// long paged history. This lowers load; the guarantee that Me never exceeds its share of Envio's 100 queries a minute
+/// is the server's shared budget (src/lib/envio-budget.ts), not this schedule (Codex ME_ROUNDS R5).
 export const ME_ROUNDS_DISCOVERY_POLL_MS = 120_000;
 /// roundOf, stakeOf, stakeClaimed, creatorFeeClaimed.
 const PER_ROUND = 4;
@@ -55,6 +56,9 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
     enabled: roundsContract !== null,
     refetchInterval: ME_ROUNDS_DISCOVERY_POLL_MS,
     staleTime: ME_ROUNDS_DISCOVERY_POLL_MS,
+    // No automatic retries: each would reach Envio again exactly when it is failing or busy (Codex R5). The 2-minute
+    // interval, a regained focus after it, and Me's Try again are the recovery paths.
+    retry: false,
   });
   const count = typeof countQ.data === 'bigint' ? countQ.data : null;
   const discovery = discoveryQ.data;

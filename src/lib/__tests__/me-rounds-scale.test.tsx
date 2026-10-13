@@ -22,6 +22,11 @@ import { roundsAbi } from '@/lib/rounds-abi';
 
 import { answerEnvio, fakeEnvio, type FakeEnvio } from './helpers/fake-envio';
 
+// The route's caller binding and the shared Envio budget are tested on their own (me-rounds-caller / envio-budget
+// tests); here every caller is allowed and every call has budget, so this file tests discovery itself.
+vi.mock('@/lib/me-rounds-caller', () => ({ authorizeMeRoundsCaller: async () => ({ ok: true }) }));
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const ROUNDS = '0x00000000000000000000000000000000000000f0' as const;
 const A = '0xe490ab83c7f247bec7d5e04ce04bc48d6609b550' as const;
 const CHECKSUMMED = getAddress(A);
@@ -474,6 +479,17 @@ describe('a failed discovery: rounds unavailable, never pools-only totals', () =
 });
 
 describe('indexer query budget (Envio development plan: 100 queries a minute)', () => {
+  it('a failed discovery is not retried automatically (each retry would reach Envio while it is failing)', async () => {
+    history(400);
+    discoveryDown = true;
+    const t = track();
+    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+    expect(discoveryHits).toBe(1);
+  });
+
   it('asks the indexer once on load; a window focus or a remount within 2 minutes reuses the answer', async () => {
     history(400);
     const t = track();
@@ -490,16 +506,14 @@ describe('indexer query budget (Envio development plan: 100 queries a minute)', 
     expect(discoveryHits).toBe(after);
   });
 
-  it('one open Me page costs at most 5 GraphQL requests a minute, so 100 a minute holds for 20 people on Me', async () => {
+  it('the 2-minute poll halves-to-quarters the load: a typical discovery is 8 requests, so one open Me page asks about 4 a minute (the hard cap is the server budget, envio-budget.ts)', async () => {
     const { ME_ROUNDS_DISCOVERY_POLL_MS } = await import('@/lib/use-me-rounds');
     expect(ME_ROUNDS_DISCOVERY_POLL_MS).toBe(120_000);
     history(400);
     env.log.length = 0;
     const res = await discoveryRoute(new Request(`http://localhost/api/me/rounds?account=${A}`));
     expect(res.status).toBe(200);
-    const perDiscovery = env.log.length;
-    const perMinute = (perDiscovery * 60_000) / ME_ROUNDS_DISCOVERY_POLL_MS;
-    expect(perMinute).toBeLessThanOrEqual(5);
-    expect(Math.floor(100 / perMinute)).toBeGreaterThanOrEqual(20);
+    expect(env.log.length).toBe(8);
+    expect((env.log.length * 60_000) / ME_ROUNDS_DISCOVERY_POLL_MS).toBe(4);
   });
 });
