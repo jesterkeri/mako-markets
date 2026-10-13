@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   selectFromUserSafes: vi.fn(),
   loadInFlightForSafe: vi.fn(),
-  hasLandedOpWithCallData: vi.fn(),
+  creatorFeeOpMayHaveLanded: vi.fn(),
+  readContract: vi.fn(),
   insertPending: vi.fn(),
   incrementOrReject: vi.fn(),
   decrementForRefund: vi.fn(),
@@ -35,7 +36,7 @@ vi.mock('@/db/client', () => ({
 }));
 vi.mock('@/lib/aa-pending-user-ops', () => ({
   loadInFlightForSafe: (args: unknown) => mocks.loadInFlightForSafe(args),
-  hasLandedOpWithCallData: (args: unknown) => mocks.hasLandedOpWithCallData(args),
+  creatorFeeOpMayHaveLanded: (args: unknown) => mocks.creatorFeeOpMayHaveLanded(args),
   insertPending: (args: unknown) => mocks.insertPending(args),
 }));
 vi.mock('@/lib/aa-sponsor-limits', () => ({
@@ -46,11 +47,11 @@ vi.mock('@/lib/user-op', async (importActual) => ({
   ...(await importActual<typeof import('../user-op')>()),
   buildSponsoredUserOp: (args: unknown) => mocks.buildSponsoredUserOp(args),
 }));
-// The creator-fee path reads nothing from the chain; any read would be a regression.
+// The creator-fee path reads exactly one thing from the chain at sponsor time: getMarket(id).creatorFeeClaimed.
 vi.mock('@/lib/aa-public-client', () => ({
-  getAaPublicClient: () => {
-    throw new Error('claim_creator_fee must not read the chain at sponsor time');
-  },
+  getAaPublicClient: () => ({
+    readContract: (a: { functionName: string; args: unknown[] }) => mocks.readContract(a),
+  }),
 }));
 
 import { POST } from '../../app/api/aa/sponsor/route';
@@ -67,7 +68,11 @@ function happy(): void {
   mocks.getUserSession.mockResolvedValue({ userId: 'user-1', email: 'a@b.com', magicEoa: MAGIC_EOA, sessionId: 's-1' });
   mocks.selectFromUserSafes.mockResolvedValue([{ safeAddress: SAFE }]);
   mocks.loadInFlightForSafe.mockResolvedValue(null);
-  mocks.hasLandedOpWithCallData.mockResolvedValue(false);
+  mocks.creatorFeeOpMayHaveLanded.mockResolvedValue(false);
+  mocks.readContract.mockImplementation(async (a: { functionName: string }) => {
+    if (a.functionName !== 'getMarket') throw new Error(`unexpected chain read ${a.functionName}`);
+    return { creatorFeeClaimed: false };
+  });
   mocks.incrementOrReject.mockResolvedValue({ kind: 'within_cap', count: 1 });
   mocks.buildSponsoredUserOp.mockResolvedValue({
     userOp: {
@@ -102,14 +107,14 @@ afterEach(() => {
 describe('/api/aa/sponsor, claim_creator_fee: one landed claim per pool (Codex CREATOR_EARNINGS R2)', () => {
   it('a creator-fee claim that already landed from this Safe is refused (403 creator_fee_already_sent), before the daily count or the build', async () => {
     happy();
-    mocks.hasLandedOpWithCallData.mockResolvedValue(true);
+    mocks.creatorFeeOpMayHaveLanded.mockResolvedValue(true);
     const res = await POST(mkReq(body(41n)));
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' });
     expect(mocks.incrementOrReject).not.toHaveBeenCalled();
     expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
     // Asked about exactly this Safe and this claim's Safe-wrapper callData.
-    const asked = mocks.hasLandedOpWithCallData.mock.calls[0][0] as { chainId: number; safeAddress: string; callData: Hex };
+    const asked = mocks.creatorFeeOpMayHaveLanded.mock.calls[0][0] as { chainId: number; safeAddress: string; callData: Hex };
     expect(asked.chainId).toBe(MONAD_TESTNET_ID);
     expect(asked.safeAddress.toLowerCase()).toBe(SAFE.toLowerCase());
     const { decodeFunctionData } = await import('viem');
@@ -125,7 +130,28 @@ describe('/api/aa/sponsor, claim_creator_fee: one landed claim per pool (Codex C
     happy();
     const res = await POST(mkReq(body(42n)));
     expect(res.status).toBe(200);
-    expect(mocks.hasLandedOpWithCallData).toHaveBeenCalledTimes(1);
+    expect(mocks.creatorFeeOpMayHaveLanded).toHaveBeenCalledTimes(1);
+  });
+
+  it('the chain already shows the fee claimed (a wallet, another device, or an op the server lost track of): 403, nothing built', async () => {
+    happy();
+    mocks.readContract.mockResolvedValue({ creatorFeeClaimed: true });
+    const res = await POST(mkReq(body(41n)));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' });
+    expect(mocks.readContract.mock.calls[0][0]).toMatchObject({ functionName: 'getMarket', args: [41n] });
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+  });
+
+  it('the chain read fails: 502, refused (fail closed), nothing built', async () => {
+    happy();
+    mocks.readContract.mockRejectedValue(new Error('rpc down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await POST(mkReq(body(41n)));
+    expect(res.status).toBe(502);
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
   });
 
   it('the shown words for that refusal say it was already claimed, nothing moved', async () => {

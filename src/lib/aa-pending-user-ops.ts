@@ -135,12 +135,19 @@ export async function loadInFlightForSafe(args: {
   return rows[0] ?? null;
 }
 
-/// True when this Safe already has an op with exactly this wrapper callData that LANDED (`sent`). Used for creator-fee
-/// claims (Codex CREATOR_EARNINGS R2): `claimCreatorFee(id)` pays once, so a second sponsored op for the same pool
-/// can only revert AlreadyClaimed and waste a sponsored op. This is the server's own record, so no browser clock, tab
-/// or lagging RPC can get around it. In-flight ops ('pending' … 'ambiguous') are already refused by
-/// loadInFlightForSafe; a `reverted` op does not count, since the fee is then still unclaimed by it.
-export async function hasLandedOpWithCallData(args: { chainId: number; safeAddress: Address; callData: Hex }): Promise<boolean> {
+/// True when an op from this Safe with exactly this wrapper callData may already be on chain (Codex CREATOR_EARNINGS R2
+/// and the adversary on 48c6c5b). Used for creator-fee claims: `claimCreatorFee(id)` pays once, so a second sponsored
+/// op for the same pool could only revert AlreadyClaimed and use up one of the user's daily ops. This is the server's
+/// own record, so no browser clock, tab or lagging RPC can get around it. Counts:
+///   - an op that LANDED (`sent`), for good;
+///   - an op handed to the bundler (it has a user-op hash) whose row ended any way other than `reverted` or
+///     `failed_pre_submit`, for SUBMITTED_SETTLE_S after its last status change, on the database's clock. Such a row can
+///     say `expired` while its signed op still lands, when a lagging node made the resolver give up early.
+/// After that window a claim is allowed again if the chain read in the sponsor route shows the fee unclaimed: a dropped op
+/// must not block a creator for good, and the Safe's nonce lets only one of two ops with the same nonce ever land.
+/// In-flight ops are refused earlier anyway (loadInFlightForSafe).
+export const SUBMITTED_SETTLE_S = 600;
+export async function creatorFeeOpMayHaveLanded(args: { chainId: number; safeAddress: Address; callData: Hex }): Promise<boolean> {
   const rows = await db
     .select({ id: aaPendingUserOps.id })
     .from(aaPendingUserOps)
@@ -148,8 +155,8 @@ export async function hasLandedOpWithCallData(args: { chainId: number; safeAddre
       and(
         eq(aaPendingUserOps.chainId, args.chainId),
         eq(aaPendingUserOps.safeAddress, args.safeAddress.toLowerCase()),
-        eq(aaPendingUserOps.status, 'sent'),
         sql`lower(${aaPendingUserOps.userOp}->>'callData') = ${args.callData.toLowerCase()}`,
+        sql`(${aaPendingUserOps.status} = 'sent' OR (${aaPendingUserOps.userOpHash} IS NOT NULL AND ${aaPendingUserOps.status} NOT IN ('reverted', 'failed_pre_submit') AND ${aaPendingUserOps.statusUpdatedAt} > now() - make_interval(secs => ${SUBMITTED_SETTLE_S})))`,
       ),
     )
     .limit(1);

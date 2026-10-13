@@ -65,7 +65,7 @@ import { getAaPublicClient } from '@/lib/aa-public-client';
 import { summarizeAaErrorWithCause } from '@/lib/aa-errors';
 import {
   insertPending,
-  hasLandedOpWithCallData,
+  creatorFeeOpMayHaveLanded,
   loadInFlightForSafe,
   transitionPendingToExpired,
 } from '@/lib/aa-pending-user-ops';
@@ -1028,11 +1028,25 @@ export async function POST(req: Request) {
     }
   }
 
-  // Step 6b: a creator-fee claim that already landed from this Safe is not sponsored again (Codex CREATOR_EARNINGS
-  // R2): the contract pays it once, so a repeat could only revert and use up one of the user's daily ops. Checked
-  // against the server's own record of sent ops, before the daily count is touched.
-  if (buildArgs.kind === 'claim_creator_fee' && (await hasLandedOpWithCallData({ chainId, safeAddress, callData: expectedCallData }))) {
-    return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
+  // Step 6b: a creator-fee claim is not sponsored when it may already have been made (Codex CREATOR_EARNINGS R2): the
+  // contract pays it once, so a repeat could only revert and use up one of the user's daily ops. Two checks, before
+  // the daily count is touched: the server's own record of this Safe's ops (creatorFeeOpMayHaveLanded), and the chain,
+  // read here, which also covers a claim made from a wallet or another device. A failed chain read refuses (fail closed).
+  if (buildArgs.kind === 'claim_creator_fee') {
+    if (await creatorFeeOpMayHaveLanded({ chainId, safeAddress, callData: expectedCallData })) {
+      return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
+    }
+    let claimedOnChain: boolean;
+    try {
+      const { args: [marketId] } = decodeFunctionData({ abi: makoAbi, data: buildArgs.call.data });
+      const m = (await getAaPublicClient(chainId).readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket', args: [marketId as bigint] })) as { creatorFeeClaimed?: unknown };
+      if (typeof m?.creatorFeeClaimed !== 'boolean') throw new Error('getMarket shape');
+      claimedOnChain = m.creatorFeeClaimed;
+    } catch (e) {
+      console.error('[aa.sponsor.creator_fee_read_failed]', summarizeAaErrorWithCause(e));
+      return Response.json({ error: 'VALIDATE_FAILED' }, { status: 502 });
+    }
+    if (claimedOnChain) return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
   }
 
   // Step 7: atomic rate-limit increment.
