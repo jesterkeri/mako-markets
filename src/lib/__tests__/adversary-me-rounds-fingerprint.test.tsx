@@ -125,7 +125,7 @@ describe('route: the head row as Hasura may answer it', () => {
   beforeEach(async () => {
     vi.resetModules();
     env = fakeEnvio();
-    process.env.ENVIO_GRAPHQL_URL = ENVIO;
+    process.env.ENVIO_ROUNDS_GRAPHQL_URL = ENVIO;
     vi.spyOn(globalThis, 'fetch').mockImplementation((async (i: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof i === 'string' ? i : i instanceof URL ? i.href : i.url;
       if (url !== ENVIO) throw new Error(`unscripted ${url}`);
@@ -136,7 +136,7 @@ describe('route: the head row as Hasura may answer it', () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.ENVIO_GRAPHQL_URL;
+    delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
   });
   const get = () => GET(new Request(`http://localhost/api/me/rounds?account=${A}`));
 
@@ -298,7 +298,7 @@ async function freshRoute() {
 beforeEach(async () => {
   await freshRoute();
   env = fakeEnvio();
-  process.env.ENVIO_GRAPHQL_URL = ENVIO;
+  process.env.ENVIO_ROUNDS_GRAPHQL_URL = ENVIO;
   rounds = Array.from({ length: 100 }, (_, i) => rawRound(i));
   roundStakes = { [`3:${A}`]: { side: 1, amount: 2n * USDC, claimed: false } };
   roundCalls.length = 0;
@@ -309,7 +309,7 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  delete process.env.ENVIO_GRAPHQL_URL;
+  delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
 });
 
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 150)); });

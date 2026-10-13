@@ -4,7 +4,7 @@
 // answers the wire shape below, use-me-rounds.ts parses it and plans the reads here.
 //
 // Everything below holds only if the indexer indexes THIS Rounds contract (NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS on Monad
-// testnet). Nothing in the answer can say so by itself: ENVIO_GRAPHQL_URL may serve a preview build, a redeploy or
+// testnet). Nothing in the answer can say so by itself: ENVIO_ROUNDS_GRAPHQL_URL may serve a preview build, a redeploy or
 // another deployment, and a repo config test cannot prove what the hosted endpoint serves (Codex ME_ROUNDS R2, MAJOR).
 // So the answer is BOUND to the chain at runtime, every poll, before any of it is trusted:
 //   0. `head` is the indexer's own round `indexedThrough` (openTime, startTime, creator, as RoundScheduled set them).

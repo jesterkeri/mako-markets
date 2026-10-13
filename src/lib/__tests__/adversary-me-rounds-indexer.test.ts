@@ -4,7 +4,7 @@
 // that is wrong or stuck makes the rounds part unavailable rather than partial. The read plan only checks one
 // direction: an indexer far BEHIND the chain is refused, but an indexer far AHEAD of it (it claims hundreds of rounds
 // the contract has never scheduled) is accepted, and the plan then reads only the newest ME_ROUNDS_RECENT ids plus
-// the discovered ids. That happens whenever ENVIO_GRAPHQL_URL serves a different MakoRoundsV1 deployment than
+// the discovered ids. That happens whenever ENVIO_ROUNDS_GRAPHQL_URL serves a different MakoRoundsV1 deployment than
 // NEXT_PUBLIC_MAKO_ROUNDS_ADDRESS (a redeploy, a Preview pointed at the production indexer), or GlobalStats.rounds is
 // overcounted. An account's claimable stake in an older round of the contract Me actually reads is then not read, and
 // the hook reports `ready`, not `error`.

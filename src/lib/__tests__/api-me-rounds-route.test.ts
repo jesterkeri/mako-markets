@@ -25,7 +25,7 @@ let MAX_ROWS: number;
 beforeEach(async () => {
   vi.resetModules();
   env = fakeEnvio();
-  process.env.ENVIO_GRAPHQL_URL = URL_;
+  process.env.ENVIO_ROUNDS_GRAPHQL_URL = URL_;
   vi.spyOn(globalThis, 'fetch').mockImplementation(envioFetch(env, URL_) as typeof fetch);
   vi.spyOn(console, 'error').mockImplementation(() => {});
   ({ GET } = await import('@/app/api/me/rounds/route'));
@@ -33,7 +33,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env.ENVIO_GRAPHQL_URL;
+  delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
 });
 
 const call = (qs: string) => GET(new Request(`http://localhost/api/me/rounds${qs}`));
@@ -178,8 +178,8 @@ describe('paging', () => {
 });
 
 describe('failures are errors, never an empty list', () => {
-  it('ENVIO_GRAPHQL_URL unset: 503 not_configured, no request', async () => {
-    delete process.env.ENVIO_GRAPHQL_URL;
+  it('ENVIO_ROUNDS_GRAPHQL_URL unset: 503 not_configured, no request', async () => {
+    delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
     const res = await call(`?account=${A}`);
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'not_configured' });

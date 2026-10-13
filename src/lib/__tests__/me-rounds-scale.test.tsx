@@ -247,7 +247,7 @@ beforeEach(async () => {
   vi.resetModules();
   ({ GET: discoveryRoute } = await import('@/app/api/me/rounds/route'));
   env = fakeEnvio();
-  process.env.ENVIO_GRAPHQL_URL = ENVIO;
+  process.env.ENVIO_ROUNDS_GRAPHQL_URL = ENVIO;
   rounds = [];
   roundStakes = {};
   creatorFeeClaimed = {};
@@ -262,7 +262,7 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  delete process.env.ENVIO_GRAPHQL_URL;
+  delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
 });
 
 const PER_ROUND = ['roundOf', 'stakeOf', 'stakeClaimed', 'creatorFeeClaimed'];
@@ -345,7 +345,7 @@ describe('indexer lag never hides a round', () => {
 
 describe('an indexer for ANOTHER Rounds contract is never trusted (Codex ME_ROUNDS R2)', () => {
   /// The chain has 100 rounds; the account's unclaimed 2.95-USDC win is in #3 and its fee-only host claim in #7. The
-  /// indexer at ENVIO_GRAPHQL_URL serves a different MakoRoundsV1 deployment: it has no entry for this account in #3,
+  /// indexer at ENVIO_ROUNDS_GRAPHQL_URL serves a different MakoRoundsV1 deployment: it has no entry for this account in #3,
   /// and did not see #7 as this account's.
   function foreignIndexer(head: number, fingerprint: { openTime?: bigint; startTime?: bigint; creator?: string } = {}) {
     history(100);
@@ -454,7 +454,7 @@ describe('a failed discovery: rounds unavailable, never pools-only totals', () =
 
   it('indexer not configured (503 from the route): error, not an empty list', async () => {
     history(400);
-    delete process.env.ENVIO_GRAPHQL_URL;
+    delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
     const t = track();
     await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
     expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
