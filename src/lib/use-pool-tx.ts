@@ -214,7 +214,7 @@ export function usePoolTx(onLanded?: () => void) {
     // A creator-fee claim that may have reached Monad holds its pool (src/lib/creator-claim-pending.ts): every outcome
     // that does not say nothing moved (still confirming, lost track, already sending, held for a check, a send whose
     // reply was lost). 'sent' and a wallet hash are held where they happen, before any wait. (Adversary r2 on e37da59.)
-    if (tx.kind === 'creatorFee' && (next.step === 'done' || (next.step === 'failed' && !next.nothingMoved))) markCreatorClaimSent(tx.marketId);
+    if (tx.kind === 'creatorFee' && (next.step === 'done' || (next.step === 'failed' && !next.nothingMoved))) markCreatorClaimSent(tx.marketId, next.txHash ?? 'unconfirmed');
     setPhase(next);
     if (next.step === 'done') onLanded?.();
 
@@ -260,7 +260,7 @@ export function usePoolTx(onLanded?: () => void) {
       // the result is not done: it says the claim was sent and is still confirming, and the hold stays (Codex
       // CREATOR_EARNINGS R1).
       if (t.kind === 'creatorFee' && outcome.kind === 'sent') {
-        markCreatorClaimSent(t.marketId);
+        markCreatorClaimSent(t.marketId, outcome.txHash);
         try {
           await publicClient.waitForTransactionReceipt({ hash: outcome.txHash, timeout: 30_000 });
         } catch {
@@ -371,13 +371,13 @@ export function usePoolTx(onLanded?: () => void) {
           }
           sent = true;
           const hash = await write({ ...makoContract, functionName: fn, args: [t.marketId], chainId: monadTestnet.id });
-          if (t.kind === 'creatorFee') markCreatorClaimSent(t.marketId);
+          if (t.kind === 'creatorFee') markCreatorClaimSent(t.marketId, hash);
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           if (receipt.status === 'success') return { step: 'done', txHash: hash };
-          // Turned down on Monad: the fee is still unclaimed, so this claim's hold goes (the pre-send check refused any
-          // claim already held, so the hold is this one's).
-          if (t.kind === 'creatorFee') clearCreatorClaimSent(t.marketId);
+          // Turned down on Monad: the fee is still unclaimed by this claim, so its own hold goes. Another claim's hold on
+          // the pool (another tab's) is named by its own transaction and stays.
+          if (t.kind === 'creatorFee') clearCreatorClaimSent(t.marketId, hash);
           return undone(w);
         } catch (err) {
           // Refused before the wallet saw anything, so nothing was sent, whatever `sent` says.

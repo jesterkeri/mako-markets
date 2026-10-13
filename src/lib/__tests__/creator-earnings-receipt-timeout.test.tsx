@@ -171,7 +171,7 @@ describe('receipt wait times out and the read stays stale (Codex CREATOR_EARNING
 
   it('the hold lapses after HOLD_MS (the contract would refuse a repeat anyway)', async () => {
     const { markCreatorClaimSent, creatorClaimHeld } = await import('@/lib/creator-claim-pending');
-    markCreatorClaimSent(1n, 1_000);
+    markCreatorClaimSent(1n, '0xr', 1_000);
     expect(creatorClaimHeld(1n, 1_000 + HOLD_MS - 1)).toBe(true);
     expect(creatorClaimHeld(1n, 1_000 + HOLD_MS)).toBe(false);
   });
