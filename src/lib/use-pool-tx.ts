@@ -247,6 +247,16 @@ export function usePoolTx(onLanded?: () => void) {
       }
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
       if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
+      // A creator-fee claim is done only once this browser's RPC has the receipt too: the refetch that follows reads
+      // from that node, and a node still behind would show the Claim button again and let a second op go out.
+      if (t.kind === 'creatorFee' && outcome.kind === 'sent') {
+        try {
+          await publicClient.waitForTransactionReceipt({ hash: outcome.txHash, timeout: 30_000 });
+        } catch {
+          // Still behind after 30 s: the claim has landed (the bundler said so); the 5 s poll catches up, and the
+          // pre-send re-read refuses a second claim once the node shows it.
+        }
+      }
       return phaseFromOutcome(outcome, w);
     }
 
