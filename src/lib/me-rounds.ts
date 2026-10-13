@@ -1,27 +1,36 @@
 // Rounds in Me (Joshua 2026-10-13: "users can only claim rounds earnings from the rounds tab ... let it appear in me
 // too"): the account's round positions as Me's totals and claims, beside its pools. Pure; read by use-me-rounds.ts.
 
-import { positionOf, type Position, type Round, type Stake } from './rounds-model';
+import { positionOf, RoundStatus, type Position, type Round, type Stake } from './rounds-model';
 
 export type MeRound = {
   round: Round;
+  /// `none` for a round the account hosted without a stake (it is listed only for its creator fee).
   position: Position;
-  /// What `claim(roundId)` pays now, or null: a win not yet claimed, or a refund marked on chain and not yet claimed.
-  /// A refund that qualifies but is not marked yet is not claimable from Me (the round page marks it first).
+  /// The host's creator fee `claim` also pays: the account created this settled round and has not claimed the fee.
+  creatorFee: bigint;
+  /// What `claim(roundId)` pays now, or null: a win not yet claimed, or a refund marked on chain and not yet claimed,
+  /// plus `creatorFee` (MakoRoundsV1.claim, adversary on 926d326). A refund that qualifies but is not marked yet is not
+  /// claimable from Me (the round page marks it first).
   claim: bigint | null;
 };
 
-export type RoundStakeRead = { stake: Stake; claimed: boolean };
+export type RoundStakeRead = { stake: Stake; claimed: boolean; creatorFeeClaimed: boolean };
 
-/// Every round this account has a stake in, newest first.
-export function meRoundPositions(rounds: readonly Round[], stakes: ReadonlyMap<string, RoundStakeRead>, nowS: number): MeRound[] {
+/// Every round this account has a stake in, or hosted with a creator fee still to claim, newest first.
+export function meRoundPositions(rounds: readonly Round[], stakes: ReadonlyMap<string, RoundStakeRead>, account: string, nowS: number): MeRound[] {
+  const me = account.toLowerCase();
   const out: MeRound[] = [];
   for (const round of rounds) {
     const s = stakes.get(round.id.toString());
-    if (!s || !s.stake.side || s.stake.amount === 0n) continue;
-    const position = positionOf(round, s.stake, s.claimed, nowS);
-    if (position.kind === 'none') continue;
-    out.push({ round, position, claim: claimOf(position) });
+    if (!s) continue;
+    const creatorFee =
+      round.creator.toLowerCase() === me && round.status === RoundStatus.Settled && round.creatorFee > 0n && !s.creatorFeeClaimed ? round.creatorFee : 0n;
+    const position = s.stake.side && s.stake.amount > 0n ? positionOf(round, s.stake, s.claimed, nowS) : ({ kind: 'none' } as const);
+    if (position.kind === 'none' && creatorFee === 0n) continue;
+    const own = claimOf(position);
+    const total = (own ?? 0n) + creatorFee;
+    out.push({ round, position, creatorFee, claim: total > 0n ? total : null });
   }
   return out.sort((a, b) => (a.round.id === b.round.id ? 0 : a.round.id > b.round.id ? -1 : 1));
 }

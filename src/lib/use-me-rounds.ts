@@ -12,6 +12,8 @@ import type { Round } from './rounds-model';
 import { roundsContract, toRound, type RoundTuple } from './use-rounds';
 
 const POLL_MS = 10_000;
+/// roundOf, stakeOf, stakeClaimed, creatorFeeClaimed.
+const PER_ROUND = 4;
 
 export type MeRoundsRead =
   | { status: 'off' }
@@ -34,6 +36,7 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
           { ...roundsContract, functionName: 'roundOf', args: [id] } as const,
           { ...roundsContract, functionName: 'stakeOf', args: [id, account] } as const,
           { ...roundsContract, functionName: 'stakeClaimed', args: [id, account] } as const,
+          { ...roundsContract, functionName: 'creatorFeeClaimed', args: [id] } as const,
         ])
       : [],
     query: { enabled: roundsContract !== null && ids.length > 0, refetchInterval: POLL_MS },
@@ -44,16 +47,17 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
   };
 
   const data = q.data as readonly unknown[] | undefined;
-  const complete = data !== undefined && data.length === ids.length * 3;
+  const complete = data !== undefined && data.length === ids.length * PER_ROUND;
   const parsed = useMemo(() => {
     if (!complete) return null;
     const rounds: Round[] = [];
     const stakes = new Map<string, RoundStakeRead>();
     ids.forEach((id, i) => {
-      rounds.push(toRound(id, data[i * 3] as RoundTuple));
-      const s = data[i * 3 + 1] as { side: number; amount: bigint };
+      const at = i * PER_ROUND;
+      rounds.push(toRound(id, data[at] as RoundTuple));
+      const s = data[at + 1] as { side: number; amount: bigint };
       const side = Number(s.side) === 1 ? 'up' : Number(s.side) === 2 ? 'down' : null;
-      stakes.set(id.toString(), { stake: { side, amount: BigInt(s.amount) }, claimed: Boolean(data[i * 3 + 2]) });
+      stakes.set(id.toString(), { stake: { side, amount: BigInt(s.amount) }, claimed: Boolean(data[at + 2]), creatorFeeClaimed: Boolean(data[at + 3]) });
     });
     return { rounds, stakes };
   }, [complete, data, ids]);

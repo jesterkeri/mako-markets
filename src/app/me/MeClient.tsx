@@ -35,16 +35,17 @@ function walletOf(user: AuthedUser): { kind: 'mako' | 'external'; address: strin
 function roundClaimSpec(r: MeRound): ConfirmSpec {
   const amt = usdcExact(r.claim ?? 0n);
   const refund = r.position.kind === 'refund';
+  const rows: ConfirmSpec['rows'] = [{ label: 'Round', value: `#${r.round.id.toString()} · ${V1_ASSET.pair}` }];
+  if (r.position.kind === 'won') rows.push({ label: 'Payout', value: `${usdcExact(r.position.payout)} USDC` });
+  if (r.position.kind === 'refund') rows.push({ label: 'Refund', value: `${usdcExact(r.position.amount)} USDC` });
+  if (r.creatorFee > 0n) rows.push({ label: 'House fee', value: `${usdcExact(r.creatorFee)} USDC` });
   return {
     glyph: '$',
     glyphColor: 'var(--mako-teal)',
     title: `${refund ? 'Claim refund' : 'Claim'} · ${amt} USDC`,
     confirmLabel: `Confirm · ${amt} USDC`,
     pendingTitle: refund ? 'Claiming your refund' : 'Claiming',
-    rows: [
-      { label: 'Round', value: `#${r.round.id.toString()} · ${V1_ASSET.pair}` },
-      { label: refund ? 'Refund' : 'Payout', value: `${amt} USDC` },
-    ],
+    rows,
     note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the round settled; the claim pays out the rest.',
     doneTitle: refund ? 'Refund claimed' : 'Claimed',
     doneBody: `${amt} USDC is in your balance.`,

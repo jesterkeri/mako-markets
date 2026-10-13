@@ -24,36 +24,54 @@ const base: Round = {
   creatorFee: 20_000n,
   distributable: 2_950_000n,
 };
-const stake = (side: 'up' | 'down' | null, amount: bigint, claimed = false): RoundStakeRead => ({ stake: { side, amount }, claimed });
+const stake = (side: 'up' | 'down' | null, amount: bigint, claimed = false, creatorFeeClaimed = false): RoundStakeRead => ({ stake: { side, amount }, claimed, creatorFeeClaimed });
+const PLAYER = '0x00000000000000000000000000000000000000a5';
+const HOST = '0xe490aB83c7f247BEC7d5E04Ce04bc48D6609b550'; // base.creator
 
 describe('meRoundPositions / meRoundTotals', () => {
   it('a won, unclaimed round is claimable for its payout and counts in Won all time', () => {
-    const rs = meRoundPositions([base], new Map([['1', stake('up', 2n * U)]]), NOW);
+    const rs = meRoundPositions([base], new Map([['1', stake('up', 2n * U)]]), PLAYER, NOW);
     expect(rs.map((r) => r.claim)).toEqual([2_950_000n]);
     expect(meRoundTotals(rs)).toMatchObject({ inPlay: 0n, wonAllTime: 2_950_000n, claimedBefore: false });
   });
   it('a claimed win is not claimable but still counts as won, and marks claimedBefore', () => {
-    const rs = meRoundPositions([base], new Map([['1', stake('up', 2n * U, true)]]), NOW);
+    const rs = meRoundPositions([base], new Map([['1', stake('up', 2n * U, true)]]), PLAYER, NOW);
     expect(rs[0].claim).toBeNull();
     expect(meRoundTotals(rs)).toMatchObject({ wonAllTime: 2_950_000n, claimedBefore: true, claims: [] });
   });
   it('a lost round adds nothing', () => {
-    const rs = meRoundPositions([base], new Map([['1', stake('down', U)]]), NOW);
+    const rs = meRoundPositions([base], new Map([['1', stake('down', U)]]), PLAYER, NOW);
     expect(rs[0].claim).toBeNull();
     expect(meRoundTotals(rs)).toMatchObject({ inPlay: 0n, wonAllTime: 0n });
   });
   it('a marked refund is claimable; one that qualifies but is not marked yet stays in play', () => {
     const marked = { ...base, id: 2n, status: RoundStatus.Refunded, outcome: RoundOutcome.None, refundReason: RefundReason.OneSided, upPool: U, downPool: 0n };
     const unmarked = { ...base, id: 3n, status: RoundStatus.Active, outcome: RoundOutcome.None, upPool: U, downPool: 0n, startTime: NOW - 10_000 };
-    const rs = meRoundPositions([marked, unmarked], new Map([['2', stake('up', U)], ['3', stake('up', U)]]), NOW);
+    const rs = meRoundPositions([marked, unmarked], new Map([['2', stake('up', U)], ['3', stake('up', U)]]), PLAYER, NOW);
     expect(rs.find((r) => r.round.id === 2n)!.claim).toBe(U);
     expect(rs.find((r) => r.round.id === 3n)!.claim).toBeNull();
     expect(meRoundTotals(rs).inPlay).toBe(U);
   });
   it('an open round is in play; rounds without a stake are left out; newest first', () => {
     const open = { ...base, id: 9n, status: RoundStatus.Active, outcome: RoundOutcome.None, startTime: NOW + 3_000, distributable: 0n };
-    const rs = meRoundPositions([base, open, { ...base, id: 7n }], new Map([['1', stake('up', 2n * U)], ['9', stake('down', 3n * U)], ['7', stake(null, 0n)]]), NOW);
+    const rs = meRoundPositions([base, open, { ...base, id: 7n }], new Map([['1', stake('up', 2n * U)], ['9', stake('down', 3n * U)], ['7', stake(null, 0n)]]), PLAYER, NOW);
     expect(rs.map((r) => r.round.id)).toEqual([9n, 1n]);
     expect(meRoundTotals(rs).inPlay).toBe(3n * U);
+  });
+
+  it('a host that won its own round claims the payout plus its unclaimed creator fee (adversary on 926d326)', () => {
+    const rs = meRoundPositions([base], new Map([['1', stake('up', 2n * U)]]), HOST, NOW);
+    expect(rs[0]).toMatchObject({ creatorFee: 20_000n, claim: 2_970_000n });
+    expect(meRoundTotals(rs).wonAllTime).toBe(2_950_000n); // the fee is not a win
+  });
+  it('a host with no stake (or a lost one) still claims its fee; a claimed fee adds nothing', () => {
+    expect(meRoundPositions([base], new Map([['1', stake(null, 0n)]]), HOST, NOW)).toMatchObject([{ position: { kind: 'none' }, claim: 20_000n }]);
+    expect(meRoundPositions([base], new Map([['1', stake('down', U)]]), HOST, NOW)).toMatchObject([{ position: { kind: 'lost' }, claim: 20_000n }]);
+    expect(meRoundPositions([base], new Map([['1', stake(null, 0n, false, true)]]), HOST, NOW)).toEqual([]);
+  });
+  it('no creator fee on a refunded round or for anyone but the host', () => {
+    const refunded = { ...base, status: RoundStatus.Refunded, outcome: RoundOutcome.None, refundReason: RefundReason.Tie };
+    expect(meRoundPositions([refunded], new Map([['1', stake(null, 0n)]]), HOST, NOW)).toEqual([]);
+    expect(meRoundPositions([base], new Map([['1', stake(null, 0n)]]), PLAYER, NOW)).toEqual([]);
   });
 });

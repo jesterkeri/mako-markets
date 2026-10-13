@@ -59,7 +59,7 @@ export function useMeData(account: `0x${string}`, nowSec: number | null) {
   else {
     const positions = mePositions(markets, bets ?? new Map(), nowSec);
     const pools = meStats(positions);
-    const rounds = roundsQ.status === 'ready' ? meRoundPositions(roundsQ.rounds, roundsQ.stakes, nowSec) : [];
+    const rounds = roundsQ.status === 'ready' ? meRoundPositions(roundsQ.rounds, roundsQ.stakes, account, nowSec) : [];
     const r = meRoundTotals(rounds);
     chain = {
       status: 'ready',

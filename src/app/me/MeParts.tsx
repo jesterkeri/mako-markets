@@ -35,8 +35,10 @@ export function claimTitle(c: ClaimItem): string {
 export function claimReason(c: ClaimItem, labelsOf: (p: MePosition) => Labels): string {
   if (c.kind === 'pool') return claimWhy(c.p, labelsOf(c.p));
   const pos = c.r.position;
-  if (pos.kind === 'refund') return 'Refund · round refunded';
-  return `${pos.kind === 'won' && pos.side === 'up' ? 'UP' : 'DOWN'} won`;
+  const fee = c.r.creatorFee > 0n ? ' + house fee' : '';
+  if (pos.kind === 'refund') return `Refund · round refunded${fee}`;
+  if (pos.kind === 'won') return `${pos.side === 'up' ? 'UP' : 'DOWN'} won${fee}`;
+  return 'House fee · round you hosted';
 }
 
 export type MeView = {
