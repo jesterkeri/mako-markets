@@ -1,17 +1,25 @@
 'use client';
 
-// Every round, and this account's stake and claim in each, for Me. All-or-nothing reads (the Me retry rule,
-// 2026-10-12): one refused call fails the read so TanStack Query retries it, and a failed refetch keeps the last
-// complete data. `off` when Rounds is not configured.
+// This account's rounds for Me: the rounds the indexer says it entered or created, plus every round the indexer
+// cannot vouch for yet, each read on chain with its stake and claims (me-rounds-discovery.ts). The cost per poll is
+// 4 reads per round in that set, not per round ever scheduled (Codex ME_ROUNDS R1). All-or-nothing reads (the Me retry
+// rule, 2026-10-12): one refused call fails the read so TanStack Query retries it, and a failed refetch keeps the last
+// complete data. A failed discovery is an error like a failed chain read: Me never shows pools-only totals for it.
+// `off` when Rounds is not configured.
 
 import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useReadContract, useReadContracts } from 'wagmi';
 
+import { parseMeRoundsDiscovery, planMeRoundReads, type MeRoundsDiscovery } from './me-rounds-discovery';
 import type { RoundStakeRead } from './me-rounds';
 import type { Round } from './rounds-model';
 import { roundsContract, toRound, type RoundTuple } from './use-rounds';
 
 const POLL_MS = 10_000;
+/// The discovery answer changes only when the indexer catches up; every round it has not caught up with is read on
+/// chain anyway, so it is asked less often than the chain.
+const DISCOVERY_POLL_MS = 30_000;
 /// roundOf, stakeOf, stakeClaimed, creatorFeeClaimed.
 const PER_ROUND = 4;
 
@@ -21,14 +29,30 @@ export type MeRoundsRead =
   | { status: 'error' }
   | { status: 'ready'; rounds: Round[]; stakes: Map<string, RoundStakeRead> };
 
+async function fetchDiscovery(account: string): Promise<MeRoundsDiscovery> {
+  const res = await fetch(`/api/me/rounds?account=${encodeURIComponent(account)}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`rounds discovery answered ${res.status}`);
+  const parsed = parseMeRoundsDiscovery(await res.json());
+  if (!parsed) throw new Error('rounds discovery answer not usable');
+  return parsed;
+}
+
 export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: () => void } {
   const countQ = useReadContract({
     ...(roundsContract ?? {}),
     functionName: 'roundCount',
     query: { enabled: roundsContract !== null, refetchInterval: POLL_MS },
   } as never) as { data?: bigint; isPending: boolean; isError: boolean; refetch: () => void };
-  const count = typeof countQ.data === 'bigint' ? Number(countQ.data) : null;
-  const ids = useMemo(() => (count === null ? [] : Array.from({ length: count }, (_, i) => BigInt(i + 1))), [count]);
+  const discoveryQ = useQuery({
+    queryKey: ['me-rounds-discovery', account.toLowerCase()],
+    queryFn: () => fetchDiscovery(account),
+    enabled: roundsContract !== null,
+    refetchInterval: DISCOVERY_POLL_MS,
+  });
+  const count = typeof countQ.data === 'bigint' ? countQ.data : null;
+  const discovery = discoveryQ.data;
+  const plan = useMemo(() => (count === null || discovery === undefined ? null : planMeRoundReads(count, discovery)), [count, discovery]);
+  const ids = useMemo(() => (plan?.ok ? plan.ids : []), [plan]);
   const q = useReadContracts({
     allowFailure: false,
     contracts: roundsContract
@@ -43,6 +67,7 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
   });
   const refetch = () => {
     void countQ.refetch();
+    void discoveryQ.refetch();
     void q.refetch();
   };
 
@@ -64,7 +89,10 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
 
   if (!roundsContract) return { status: 'off', refetch };
   if (countQ.isError && countQ.data === undefined) return { status: 'error', refetch };
-  if (countQ.isPending) return { status: 'loading', refetch };
+  if (discoveryQ.isError && discoveryQ.data === undefined) return { status: 'error', refetch };
+  if (countQ.isPending || discoveryQ.isPending || !plan) return { status: 'loading', refetch };
+  // The indexer is too far behind to bound the reads: unavailable, never a partial list.
+  if (!plan.ok) return { status: 'error', refetch };
   if (ids.length === 0) return { status: 'ready', rounds: [], stakes: new Map(), refetch };
   if (q.isError && q.data === undefined) return { status: 'error', refetch };
   if (!parsed) return { status: 'loading', refetch };

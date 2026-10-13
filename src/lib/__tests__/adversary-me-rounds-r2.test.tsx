@@ -205,6 +205,12 @@ beforeEach(() => {
   onlineManager.setOnline(true);
   runSponsoredRequest.mockReset();
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+  // GET /api/me/rounds (feat/me-rounds-indexer): an indexer that has every round and lists them all, so Me reads every
+  // round here exactly as it did before discovery existed.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    const body = { roundIds: rounds.map((_, i) => String(i + 1)), indexedThrough: String(rounds.length) };
+    return { ok: true, status: 200, json: async () => body } as Response;
+  });
 });
 afterEach(() => {
   cleanup();
