@@ -1324,6 +1324,7 @@ export async function runResolver(env: Env): Promise<void> {
         skipped++;
         continue;
       }
+      console.log(JSON.stringify({ event: 'crypto.ds.evidence', market: Number(i), closeTime: Number(market.closeTime), outcome: d.yes ? 'YES' : 'NO', strike: formatPrice18(d.strike), ...d.evidence }));
       outcome = d.yes ? Outcome.YES : Outcome.NO;
       reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}`;
     } else if (market.mType === MarketType.CRYPTO) {

@@ -145,6 +145,29 @@ describe('adversary: datastreams mode on a real-sized tick', () => {
       pool: [expect.stringContaining('Chainlink Data Streams 75938.791787 at close 1789529160 · YES · [DRY RUN')],
     });
     expect(dsSkews[0]).toBeLessThanOrEqual(DS_SKEW_LIMIT_MS);
+    // Gate step 1 (2026-10-13): every settle decision logs a complete, string-only evidence record.
+    const ev = lines.filter((l) => l.includes('"event":"crypto.ds.evidence"'));
+    expect(ev).toHaveLength(1);
+    const e = JSON.parse(ev[0]);
+    expect(e).toMatchObject({
+      event: 'crypto.ds.evidence',
+      market: Number(POOL),
+      closeTime: CLOSE,
+      outcome: 'YES',
+      strike: '75000.000000',
+      feedId: fixture.feedID,
+      observationsTimestamp: String(CLOSE),
+      validFromTimestamp: '1789529157',
+      expiresAt: '1792121160',
+      price: '75938791787880000000000',
+      bid: '75935199000000000000000',
+      ask: '75944083700820000000000',
+      verifyBlock: String(0x4337013),
+      verifyBlockTime: String(CLOSE + 3600),
+      verifiedBy: ['testnet-rpc.monad.xyz', 'rpc.ankr.com'],
+    });
+    expect(e.fullReportKeccak).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(e.verifiedKeccak).toMatch(/^0x[0-9a-f]{64}$/);
   }, 60_000);
 });
 

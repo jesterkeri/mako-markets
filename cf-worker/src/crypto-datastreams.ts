@@ -11,7 +11,7 @@
 // Data Streams; no CoinGecko, no fallback: a pool without a usable report waits).
 // ----------------------------------------------------------------------------
 
-import type { Hex } from 'viem';
+import { keccak256, type Hex } from 'viem';
 
 import { decodeVerified, fetchReport, verifyOnBoth, type ReportCredentials, type RpcCall } from './datastreams';
 import { decideCrypto, feedFor, parseCryptoRef, OUTCOME_YES } from './price-decision';
@@ -80,8 +80,24 @@ export async function readFinalized(fetchImpl: typeof fetch, url: string): Promi
   }
 }
 
+/// What a settle decision rests on, all strings so a log line can never hold a bigint (the shadow crash, 2026-10-13).
+export type DsEvidence = {
+  feedId: string;
+  observationsTimestamp: string;
+  validFromTimestamp: string;
+  expiresAt: string;
+  price: string;
+  bid: string;
+  ask: string;
+  fullReportKeccak: string;
+  verifiedKeccak: string;
+  verifyBlock: string;
+  verifyBlockTime: string;
+  verifiedBy: readonly string[];
+};
+
 export type DsDecision =
-  | { kind: 'settle'; yes: boolean; price: bigint; strike: bigint; symbol: string }
+  | { kind: 'settle'; yes: boolean; price: bigint; strike: bigint; symbol: string; evidence: DsEvidence }
   | { kind: 'wait'; reason: string }
   | { kind: 'final'; reason: string };
 
@@ -111,7 +127,24 @@ export async function dataStreamsCryptoDecision(market: { mType: number; oracleR
   const decoded = decodeVerified(verified.verified, 3);
   if (!decoded || decoded.schema !== 3) return { kind: 'final', reason: 'wrong_report' };
   const d = decideCrypto(ref, fed.feed, decoded, market.closeTime, block.timestamp);
-  if (d.kind === 'settle') return { kind: 'settle', yes: d.outcome === OUTCOME_YES, price: d.price, strike: d.strike, symbol: ref.symbol };
+  if (d.kind === 'settle') {
+    const evidence: DsEvidence = {
+      feedId: decoded.feedId,
+      observationsTimestamp: String(decoded.observationsTimestamp),
+      validFromTimestamp: String(decoded.validFromTimestamp),
+      expiresAt: String(decoded.expiresAt),
+      price: decoded.price.toString(),
+      bid: decoded.bid.toString(),
+      ask: decoded.ask.toString(),
+      fullReportKeccak: keccak256(report.fullReport),
+      verifiedKeccak: keccak256(verified.verified),
+      verifyBlock: block.number.toString(),
+      verifyBlockTime: String(block.timestamp),
+      // verifyOnBoth returns ok only when both providers answered with identical verified bytes.
+      verifiedBy: VERIFY_RPC_URLS.map((u) => new URL(u).hostname),
+    };
+    return { kind: 'settle', yes: d.outcome === OUTCOME_YES, price: d.price, strike: d.strike, symbol: ref.symbol, evidence };
+  }
   return d;
 }
 
