@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
 import * as React from 'react';
 import { createConfig, custom, WagmiProvider } from 'wagmi';
 import { decodeFunctionData, encodeFunctionResult, erc20Abi, getAddress, multicall3Abi, type Hex } from 'viem';
@@ -470,5 +470,36 @@ describe('a failed discovery: rounds unavailable, never pools-only totals', () =
     await act(async () => { t.current().refetch(); await new Promise((r) => setTimeout(r, 400)); });
     expect(discoveryHits).toBeGreaterThan(before);
     expect(summarise(t.current().chain)).toBe(READY);
+  });
+});
+
+describe('indexer query budget (Envio development plan: 100 queries a minute)', () => {
+  it('asks the indexer once on load; a window focus or a remount within 2 minutes reuses the answer', async () => {
+    history(400);
+    const t = track();
+    await waitFor(() => expect(t.current().chain.status).toBe('ready'), { timeout: 4000 });
+    const after = discoveryHits;
+    expect(after).toBe(1);
+    await act(async () => {
+      // The tab loses focus and comes back (TanStack Query refetches stale queries on regained focus).
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    focusManager.setFocused(undefined);
+    expect(discoveryHits).toBe(after);
+  });
+
+  it('one open Me page costs at most 5 GraphQL requests a minute, so 100 a minute holds for 20 people on Me', async () => {
+    const { ME_ROUNDS_DISCOVERY_POLL_MS } = await import('@/lib/use-me-rounds');
+    expect(ME_ROUNDS_DISCOVERY_POLL_MS).toBe(120_000);
+    history(400);
+    env.log.length = 0;
+    const res = await discoveryRoute(new Request(`http://localhost/api/me/rounds?account=${A}`));
+    expect(res.status).toBe(200);
+    const perDiscovery = env.log.length;
+    const perMinute = (perDiscovery * 60_000) / ME_ROUNDS_DISCOVERY_POLL_MS;
+    expect(perMinute).toBeLessThanOrEqual(5);
+    expect(Math.floor(100 / perMinute)).toBeGreaterThanOrEqual(20);
   });
 });
