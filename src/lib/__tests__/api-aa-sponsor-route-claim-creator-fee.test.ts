@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   selectFromUserSafes: vi.fn(),
   loadInFlightForSafe: vi.fn(),
+  hasLandedOpWithCallData: vi.fn(),
   insertPending: vi.fn(),
   incrementOrReject: vi.fn(),
   decrementForRefund: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('@/db/client', () => ({
 }));
 vi.mock('@/lib/aa-pending-user-ops', () => ({
   loadInFlightForSafe: (args: unknown) => mocks.loadInFlightForSafe(args),
+  hasLandedOpWithCallData: (args: unknown) => mocks.hasLandedOpWithCallData(args),
   insertPending: (args: unknown) => mocks.insertPending(args),
 }));
 vi.mock('@/lib/aa-sponsor-limits', () => ({
@@ -65,6 +67,7 @@ function happy(): void {
   mocks.getUserSession.mockResolvedValue({ userId: 'user-1', email: 'a@b.com', magicEoa: MAGIC_EOA, sessionId: 's-1' });
   mocks.selectFromUserSafes.mockResolvedValue([{ safeAddress: SAFE }]);
   mocks.loadInFlightForSafe.mockResolvedValue(null);
+  mocks.hasLandedOpWithCallData.mockResolvedValue(false);
   mocks.incrementOrReject.mockResolvedValue({ kind: 'within_cap', count: 1 });
   mocks.buildSponsoredUserOp.mockResolvedValue({
     userOp: {
@@ -94,6 +97,42 @@ const body = (marketId: bigint) => buildClaimCreatorFeeBody({ chainId: MONAD_TES
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+describe('/api/aa/sponsor, claim_creator_fee: one landed claim per pool (Codex CREATOR_EARNINGS R2)', () => {
+  it('a creator-fee claim that already landed from this Safe is refused (403 creator_fee_already_sent), before the daily count or the build', async () => {
+    happy();
+    mocks.hasLandedOpWithCallData.mockResolvedValue(true);
+    const res = await POST(mkReq(body(41n)));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' });
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+    // Asked about exactly this Safe and this claim's Safe-wrapper callData.
+    const asked = mocks.hasLandedOpWithCallData.mock.calls[0][0] as { chainId: number; safeAddress: string; callData: Hex };
+    expect(asked.chainId).toBe(MONAD_TESTNET_ID);
+    expect(asked.safeAddress.toLowerCase()).toBe(SAFE.toLowerCase());
+    const { decodeFunctionData } = await import('viem');
+    const outer = decodeFunctionData({
+      abi: [{ type: 'function', name: 'executeUserOp', inputs: [{ name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' }, { name: 'operation', type: 'uint8' }], outputs: [], stateMutability: 'nonpayable' }] as const,
+      data: asked.callData,
+    });
+    const b = body(41n);
+    expect(outer.args[2]).toBe(b.kind === 'claim_creator_fee' ? b.call.data : null);
+  });
+
+  it('another pool, or none landed: sponsored as usual', async () => {
+    happy();
+    const res = await POST(mkReq(body(42n)));
+    expect(res.status).toBe(200);
+    expect(mocks.hasLandedOpWithCallData).toHaveBeenCalledTimes(1);
+  });
+
+  it('the shown words for that refusal say it was already claimed, nothing moved', async () => {
+    const { phaseFromOutcome } = await import('../confirm-outcome');
+    const p = phaseFromOutcome({ kind: 'sponsor_failed', status: 403, error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { noun: 'claim', failTitle: "Claim didn't go through" });
+    expect(p).toMatchObject({ step: 'failed', title: 'Already claimed', nothingMoved: true });
+  });
 });
 
 describe('/api/aa/sponsor, claim_creator_fee', () => {

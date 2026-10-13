@@ -176,3 +176,22 @@ describe('receipt wait times out and the read stays stale (Codex CREATOR_EARNING
     expect(creatorClaimHeld(1n, 1_000 + HOLD_MS)).toBe(false);
   });
 });
+
+describe('a hold lapses on a page that stays open (Codex CREATOR_EARNINGS R2)', () => {
+  it('Me shows Confirming, and an hour later, with nothing else happening, the Claim button is back', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { markCreatorClaimSent } = await import('@/lib/creator-claim-pending');
+      markCreatorClaimSent(1n, '0xtx', Date.now());
+      render(<CreatorEarningsSection user={user} account={SAFE} variant="desktop" />);
+      expect(within(region()).getByText('Confirming')).toBeTruthy();
+      expect(within(region()).queryByRole('button', { name: 'Claim 0.80 USDC' })).toBeNull();
+      await React.act(async () => {
+        await vi.advanceTimersByTimeAsync(HOLD_MS + 10);
+      });
+      expect(within(region()).getByRole('button', { name: 'Claim 0.80 USDC' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

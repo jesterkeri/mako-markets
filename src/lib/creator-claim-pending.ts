@@ -95,9 +95,23 @@ function write(rec: HoldRecord): void {
   }
 }
 
+let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+/// Publish the record, and wake up again when its soonest hold lapses so a mounted page drops it on time (Codex
+/// CREATOR_EARNINGS R2: expiry used to happen only inside read(), which nothing called while a page sat open).
 function publish(rec: HoldRecord): void {
   snapshot = new Set(rec.keys());
   for (const l of listeners) l();
+  if (typeof window === 'undefined') return;
+  if (expiryTimer !== null) clearTimeout(expiryTimer);
+  expiryTimer = null;
+  let soonest = Infinity;
+  for (const list of rec.values()) for (const h of list) soonest = Math.min(soonest, h.at + HOLD_MS);
+  if (soonest === Infinity) return;
+  expiryTimer = setTimeout(() => {
+    expiryTimer = null;
+    publish(read());
+  }, Math.max(0, soonest - Date.now()) + 1);
 }
 
 let listening = false;
@@ -159,6 +173,8 @@ export function creatorClaimHeld(marketId: bigint, now = Date.now()): boolean {
 
 /// For tests: forget every hold.
 export function resetCreatorClaimHolds(): void {
+  if (expiryTimer !== null) clearTimeout(expiryTimer);
+  expiryTimer = null;
   memory = new Map();
   mine = new Map();
   released = new Map();

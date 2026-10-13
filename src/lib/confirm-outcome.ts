@@ -44,6 +44,8 @@ const SPONSOR_CREATE_REFUSALS: Record<string, [string, string]> = {
   bad_create_timestamps: CREATE_REFUSALS.BadCloseTime,
   bad_create_question: CREATE_REFUSALS.BadQuestion,
   bad_create_blocked_wallet: ['Account blocked', 'This account is blocked from creating Mako Market pools.'],
+  // The server's record shows this creator-fee claim already landed from this account (Codex CREATOR_EARNINGS R2).
+  creator_fee_already_sent: ['Already claimed', 'These creator earnings were already claimed from this account. Check your balance.'],
 };
 
 /// A contract refusal found before sending (a wallet account's pre-flight simulation), in the pool page's words.

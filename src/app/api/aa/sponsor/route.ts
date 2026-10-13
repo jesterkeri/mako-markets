@@ -65,6 +65,7 @@ import { getAaPublicClient } from '@/lib/aa-public-client';
 import { summarizeAaErrorWithCause } from '@/lib/aa-errors';
 import {
   insertPending,
+  hasLandedOpWithCallData,
   loadInFlightForSafe,
   transitionPendingToExpired,
 } from '@/lib/aa-pending-user-ops';
@@ -1025,6 +1026,13 @@ export async function POST(req: Request) {
       });
       return Response.json(result.body, { status: result.status });
     }
+  }
+
+  // Step 6b: a creator-fee claim that already landed from this Safe is not sponsored again (Codex CREATOR_EARNINGS
+  // R2): the contract pays it once, so a repeat could only revert and use up one of the user's daily ops. Checked
+  // against the server's own record of sent ops, before the daily count is touched.
+  if (buildArgs.kind === 'claim_creator_fee' && (await hasLandedOpWithCallData({ chainId, safeAddress, callData: expectedCallData }))) {
+    return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
   }
 
   // Step 7: atomic rate-limit increment.

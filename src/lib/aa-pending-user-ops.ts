@@ -135,6 +135,27 @@ export async function loadInFlightForSafe(args: {
   return rows[0] ?? null;
 }
 
+/// True when this Safe already has an op with exactly this wrapper callData that LANDED (`sent`). Used for creator-fee
+/// claims (Codex CREATOR_EARNINGS R2): `claimCreatorFee(id)` pays once, so a second sponsored op for the same pool
+/// can only revert AlreadyClaimed and waste a sponsored op. This is the server's own record, so no browser clock, tab
+/// or lagging RPC can get around it. In-flight ops ('pending' … 'ambiguous') are already refused by
+/// loadInFlightForSafe; a `reverted` op does not count, since the fee is then still unclaimed by it.
+export async function hasLandedOpWithCallData(args: { chainId: number; safeAddress: Address; callData: Hex }): Promise<boolean> {
+  const rows = await db
+    .select({ id: aaPendingUserOps.id })
+    .from(aaPendingUserOps)
+    .where(
+      and(
+        eq(aaPendingUserOps.chainId, args.chainId),
+        eq(aaPendingUserOps.safeAddress, args.safeAddress.toLowerCase()),
+        eq(aaPendingUserOps.status, 'sent'),
+        sql`lower(${aaPendingUserOps.userOp}->>'callData') = ${args.callData.toLowerCase()}`,
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 // ── transitions (each is a status-gated single-statement UPDATE) ────────────
 
 /// `pending` → `expired`. Used by /api/aa/send when the loaded row's
