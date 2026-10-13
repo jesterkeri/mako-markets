@@ -9,7 +9,7 @@ import { buildBetBody, buildClaimBody, buildClaimCreatorFeeBody, buildCreateBody
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
 import { createdMarketIdFor, MAKO_ADDRESS, makoContract } from './contract';
-import { creatorClaimHeld, markCreatorClaimSent } from './creator-claim-pending';
+import { clearCreatorClaimSent, creatorClaimHeld, markCreatorClaimSent } from './creator-claim-pending';
 import { creatorEarningNote, creatorEarningOf, isPoolCreator } from './creator-earnings';
 import { toBytes32 } from './oracle';
 import { buildPool, type CreateDraft } from './pool-create';
@@ -211,6 +211,10 @@ export function usePoolTx(onLanded?: () => void) {
     } finally {
       inFlight.current = false;
     }
+    // A creator-fee claim that may have reached Monad holds its pool (src/lib/creator-claim-pending.ts): every outcome
+    // that does not say nothing moved (still confirming, lost track, already sending, held for a check, a send whose
+    // reply was lost). 'sent' and a wallet hash are held where they happen, before any wait. (Adversary r2 on e37da59.)
+    if (tx.kind === 'creatorFee' && (next.step === 'done' || (next.step === 'failed' && !next.nothingMoved))) markCreatorClaimSent(tx.marketId);
     setPhase(next);
     if (next.step === 'done') onLanded?.();
 
@@ -370,7 +374,11 @@ export function usePoolTx(onLanded?: () => void) {
           if (t.kind === 'creatorFee') markCreatorClaimSent(t.marketId);
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
+          if (receipt.status === 'success') return { step: 'done', txHash: hash };
+          // Turned down on Monad: the fee is still unclaimed, so this claim's hold goes (the pre-send check refused any
+          // claim already held, so the hold is this one's).
+          if (t.kind === 'creatorFee') clearCreatorClaimSent(t.marketId);
+          return undone(w);
         } catch (err) {
           // Refused before the wallet saw anything, so nothing was sent, whatever `sent` says.
           if (err instanceof WalletSwitched || isAccountNotConnected(err)) return wrongWallet(u, connectedNow.current ?? account);

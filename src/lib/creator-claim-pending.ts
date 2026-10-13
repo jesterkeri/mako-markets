@@ -69,6 +69,15 @@ export function markCreatorClaimSent(marketId: bigint, now = Date.now()): void {
   changed();
 }
 
+/// Drop the hold for `marketId`: only for a claim this browser sent that Monad then turned down (a reverted receipt),
+/// so the fee is still unclaimed and the creator may try again.
+export function clearCreatorClaimSent(marketId: bigint): void {
+  ensureLoaded();
+  if (!sent.delete(marketId.toString())) return;
+  save();
+  changed();
+}
+
 /// True while a claim for `marketId` sent from this browser is within its hold.
 export function creatorClaimHeld(marketId: bigint, now = Date.now(), from: ReadonlyMap<string, number> = (ensureLoaded(), snapshot)): boolean {
   const at = from.get(marketId.toString());
