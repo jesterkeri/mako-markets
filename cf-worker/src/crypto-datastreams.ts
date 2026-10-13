@@ -78,25 +78,51 @@ export function readCryptoPriceSource(raw: string | undefined): { source: Crypto
 }
 
 export type FinalizedBlock = { number: bigint; timestamp: number };
+type BlockHeader = FinalizedBlock & { hash: string };
 
-/// The finalized block from one provider, or null.
-export async function readFinalized(fetchImpl: typeof fetch, url: string): Promise<FinalizedBlock | null> {
+/// A finalized block may be at most this old on the worker's own clock (Monad finalizes in about a second), and at most
+/// this far in the future. A stale block could make an expired report look unexpired (Codex DS_SWAP R4).
+export const MAX_FINALIZED_AGE_S = 60;
+export const MAX_FINALIZED_AHEAD_S = 10;
+
+/// One block header from one provider: `tag` is "finalized" or a 0x block number. Null on any failure.
+export async function readBlock(fetchImpl: typeof fetch, url: string, tag: string): Promise<BlockHeader | null> {
   try {
     const res = await fetchImpl(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBlockByNumber', params: ['finalized', false] }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBlockByNumber', params: [tag, false] }),
       signal: AbortSignal.timeout(FINALIZED_TIMEOUT_MS),
     });
     if (!res.ok) return null;
-    const body = (await res.json()) as { result?: { number?: string; timestamp?: string } | null };
+    const body = (await res.json()) as { result?: { number?: string; timestamp?: string; hash?: string } | null };
     const n = body.result?.number;
     const t = body.result?.timestamp;
+    const h = body.result?.hash;
     if (typeof n !== 'string' || typeof t !== 'string' || !/^0x[0-9a-f]+$/i.test(n) || !/^0x[0-9a-f]+$/i.test(t)) return null;
-    return { number: BigInt(n), timestamp: Number(BigInt(t)) };
+    if (typeof h !== 'string' || !/^0x[0-9a-f]{64}$/i.test(h)) return null;
+    return { number: BigInt(n), timestamp: Number(BigInt(t)), hash: h.toLowerCase() };
   } catch {
     return null;
   }
+}
+
+export type FinalizedResult = { ok: true; block: FinalizedBlock } | { ok: false; reason: 'block_unavailable' | 'block_disagree' | 'block_stale' };
+
+/// The verification block, agreed by BOTH providers (Codex DS_SWAP R4): each names its finalized block, the lower one
+/// is taken, and both must return the same hash and timestamp for it; it must also be fresh on the worker's clock. So
+/// neither provider alone can choose the block whose timestamp the expiry check uses, and a stale pair waits.
+export async function agreedFinalized(fetchImpl: typeof fetch, urls: readonly [string, string], nowMs: number): Promise<FinalizedResult> {
+  const [a, b] = await Promise.all(urls.map((u) => readBlock(fetchImpl, u, 'finalized')));
+  if (!a || !b) return { ok: false, reason: 'block_unavailable' };
+  const n = a.number < b.number ? a.number : b.number;
+  const tag = `0x${n.toString(16)}`;
+  const [x, y] = await Promise.all([a.number === n ? a : readBlock(fetchImpl, urls[0], tag), b.number === n ? b : readBlock(fetchImpl, urls[1], tag)]);
+  if (!x || !y) return { ok: false, reason: 'block_unavailable' };
+  if (x.number !== n || y.number !== n || x.hash !== y.hash || x.timestamp !== y.timestamp) return { ok: false, reason: 'block_disagree' };
+  const nowS = Math.floor(nowMs / 1000);
+  if (x.timestamp < nowS - MAX_FINALIZED_AGE_S || x.timestamp > nowS + MAX_FINALIZED_AHEAD_S) return { ok: false, reason: 'block_stale' };
+  return { ok: true, block: { number: n, timestamp: x.timestamp } };
 }
 
 /// What a settle decision rests on, all strings so a log line can never hold a bigint (the shadow crash, 2026-10-13).
@@ -125,7 +151,8 @@ export type DsDeps = {
   base: string;
   creds: ReportCredentials;
   providers: readonly [RpcCall, RpcCall];
-  finalized: () => Promise<FinalizedBlock | null>;
+  /// The block both providers agree is finalized and fresh (agreedFinalized), or why not.
+  finalized: () => Promise<FinalizedResult>;
   /// The providers' hostnames, for the evidence (never the URLs: Alchemy's carries a key).
   verifiedBy: readonly string[];
   /// The clock read when the request is signed: Data Streams refuses a signature more than 5 s from its own clock, and
@@ -141,8 +168,9 @@ export async function dataStreamsCryptoDecision(market: { mType: number; oracleR
   if (!fed.ok || !ref) return { kind: 'wait', reason: fed.ok ? 'parse_fail' : fed.reason };
   const report = await fetchReport({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, feedId: fed.feed.feedId, boundary: market.closeTime, nowMs: deps.now() });
   if (!report.ok) return { kind: 'wait', reason: `report_${report.reason}` };
-  const block = await deps.finalized();
-  if (!block) return { kind: 'wait', reason: 'block_unavailable' };
+  const fin = await deps.finalized();
+  if (!fin.ok) return { kind: 'wait', reason: fin.reason };
+  const block = fin.block;
   const verified = await verifyOnBoth(deps.providers, report.fullReport, block.number);
   if (!verified.ok) return { kind: 'wait', reason: verified.reason };
   const decoded = decodeVerified(verified.verified, 3);

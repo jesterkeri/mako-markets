@@ -54,7 +54,7 @@ import {
   DEFAULT_DATASTREAMS_URL,
   formatPrice18,
   readCryptoPriceSource,
-  readFinalized,
+  agreedFinalized,
   DS_PER_TICK,
   verifyPair,
   type DsDecision,
@@ -1013,7 +1013,7 @@ export async function runResolver(env: Env): Promise<void> {
           base: env.DATASTREAMS_URL?.trim() || DEFAULT_DATASTREAMS_URL,
           creds: { apiKey: dsKey, secret: dsSecret },
           providers: [httpEthCall(pair[0]), httpEthCall(pair[1])],
-          finalized: () => readFinalized((i, x) => fetch(i, x), pair[0]),
+          finalized: () => agreedFinalized((i, x) => fetch(i, x), pair, Date.now()),
           verifiedBy: pair.map((u) => new URL(u).hostname),
           now: () => Date.now(),
         }

@@ -86,7 +86,7 @@ function makoAnswer(m: { id: number; method: string; params?: unknown[] }) {
 
 function verifyAnswer(m: { id: number; method: string; params?: unknown[] }) {
   if (m.method === 'eth_getBlockByNumber') {
-    return { jsonrpc: '2.0', id: m.id, result: { number: '0x4337013', timestamp: `0x${(CLOSE + 3600).toString(16)}` } };
+    return { jsonrpc: '2.0', id: m.id, result: { number: '0x4337013', timestamp: `0x${(Math.floor(Date.now() / 1000) - 1).toString(16)}`, hash: `0x${'ab'.repeat(32)}` } };
   }
   const data = (m.params![0] as { data: string }).data;
   return { jsonrpc: '2.0', id: m.id, result: data.length <= 10 ? ZERO_WORD : verifyReturn };

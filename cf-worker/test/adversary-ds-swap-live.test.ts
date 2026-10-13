@@ -26,10 +26,15 @@ import {
   type TransactionSerialized,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import { makoAbi } from '../src/abi';
+
+// Codex DS_SWAP R4: verification blocks must be fresh on the worker clock; pin Date to an hour after the fixture close.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'], now: (CLOSE + 3600) * 1000 });
+});
 import { runResolver, type Env } from '../src/index';
 
 const CLOSE = Number(fixture.observationsTimestamp);
@@ -190,9 +195,22 @@ function makoAnswer(m: Rpc) {
   }
 }
 
-function verifyAnswer(m: Rpc) {
+/// Codex DS_SWAP R4 regression: when set, Alchemy names an OLD but real finalized block (a block both providers know,
+/// with its true hash and timestamp); Ankr names the real current one. Both accept eth_call at either block.
+let alchemyOldFinalized = false;
+const HEAD = 0x4337013n;
+const OLD = HEAD - 100_000n;
+const blockAt = (n: bigint) => ({
+  number: `0x${n.toString(16)}`,
+  // the old block is ~8 hours older than now (100,000 blocks at ~0.3 s), the head is current
+  timestamp: `0x${(Math.floor(Date.now() / 1000) - (n === OLD ? 30_000 : 1)).toString(16)}`,
+  hash: `0x${n.toString(16).padStart(64, '0')}`,
+});
+function verifyAnswer(m: Rpc, alchemy = false) {
   if (m.method === 'eth_getBlockByNumber') {
-    return { jsonrpc: '2.0', id: m.id, result: { number: '0x4337013', timestamp: `0x${(CLOSE + 3600).toString(16)}` } };
+    const tag = m.params![0] as string;
+    const n = tag === 'finalized' ? (alchemy && alchemyOldFinalized ? OLD : HEAD) : BigInt(tag);
+    return { jsonrpc: '2.0', id: m.id, result: blockAt(n) };
   }
   const data = (m.params![0] as { data: string }).data;
   return { jsonrpc: '2.0', id: m.id, result: data.length <= 10 ? ZERO_WORD : verifyReturnOf(verifyPayload) };
@@ -209,7 +227,9 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   }
   const body = JSON.parse(String(init?.body));
   if (url === MAKO_RPC) return json(Array.isArray(body) ? body.map(makoAnswer) : makoAnswer(body));
-  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
+  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') || url.startsWith('https://rpc.ankr.com/monad_testnet')) {
+    return json(verifyAnswer(body, url.startsWith('https://monad-testnet.g.alchemy.com')));
+  }
   throw new Error(`stub: unexpected request to ${url}`);
 }
 
@@ -264,6 +284,7 @@ const CRYPTO = 1;
 const FOOTBALL = 0;
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   pools = [];
@@ -354,7 +375,21 @@ describe('adversary: datastreams LIVE (DRY_RUN unset), the signed transaction it
     expect(ev).toContainEqual([1, 'NO']);
   }, 60_000);
 
+  it('Codex R4: Alchemy names an old real block (Ankr accepts calls at it): the pool waits (block_stale), no transaction', async () => {
+    alchemyOldFinalized = true;
+    try {
+      pools = [{ mType: CRYPTO, ref: BTC_YES }];
+      const lines = await tick();
+      expect(await sent()).toEqual([]);
+      expect(lines.some((l) => l.includes('datastreams wait (block_stale)'))).toBe(true);
+      expect(evidence(lines)).toEqual([]);
+    } finally {
+      alchemyOldFinalized = false;
+    }
+  }, 60_000);
+
   it('a one-sided pool past close + 24 h earlier in the tick takes the slot (forceRefund); the crypto pool is deferred unevaluated', async () => {
+    vi.setSystemTime((CLOSE + 25 * 3600) * 1000); // past close + 24 h (the clock is pinned near close by default)
     pools = [{ mType: FOOTBALL, ref: 'FB:1:home_win', no: 0n }, { mType: CRYPTO, ref: BTC_YES }];
     const lines = await tick();
     expect(await sent()).toMatchObject([{ fn: 'forceRefund', args: [0] }]);

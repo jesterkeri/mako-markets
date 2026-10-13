@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import verifiedEvidence from './fixtures/btcusd-1789529160-verified.json';
-import { dataStreamsCryptoDecision, dsEligible, dsTurns, formatPrice18, verifyPair, readCryptoPriceSource, readFinalized, type DsDeps, type FinalizedBlock } from '../src/crypto-datastreams';
+import { dataStreamsCryptoDecision, dsEligible, dsTurns, formatPrice18, verifyPair, readCryptoPriceSource, agreedFinalized, readBlock, MAX_FINALIZED_AGE_S, type DsDeps, type FinalizedBlock } from '../src/crypto-datastreams';
 import type { RpcCall } from '../src/datastreams';
 
 const CLOSE = Number(fixture.observationsTimestamp);
@@ -41,7 +41,7 @@ function deps(over: Partial<DsDeps> & { status?: number; body?: string } = {}): 
     base: 'https://api.testnet-dataengine.chain.link',
     creds: { apiKey: 'test-key-id', secret: 'test-secret-value' },
     providers: over.providers ?? [provider(), provider()],
-    finalized: over.finalized ?? (async () => BLOCK),
+    finalized: over.finalized ?? (async () => ({ ok: true as const, block: BLOCK })),
     verifiedBy: ['monad-testnet.g.alchemy.com', 'rpc.ankr.com'],
     now: () => 1_790_000_000_000,
     urls,
@@ -72,7 +72,7 @@ describe('everything else waits (or is final), never settles', () => {
     ['a coin without a feed', pool('XRP:gt:1'), deps(), null],
     ['a report for another second', pool('BTC:gt:75000', { closeTime: CLOSE + 1 }), deps(), 'report_mismatch'],
     ['no report yet (404)', pool('BTC:gt:75000'), deps({ status: 404, body: '{}' }), 'report_report_missing'],
-    ['no finalized block', pool('BTC:gt:75000'), deps({ finalized: async () => null }), 'block_unavailable'],
+    ['no finalized block', pool('BTC:gt:75000'), deps({ finalized: async () => ({ ok: false as const, reason: 'block_unavailable' as const }) }), 'block_unavailable'],
     ['one provider down', pool('BTC:gt:75000'), deps({ providers: [provider(), provider('down')] }), 'verifier_unavailable'],
     [
       'providers disagree',
@@ -80,7 +80,7 @@ describe('everything else waits (or is final), never settles', () => {
       deps({ providers: [provider(), provider(encodeFunctionResult({ abi: verifierAbi, functionName: 'verify', result: `0x0003${'1'.repeat(572)}` }) as Hex)] }),
       'providers_disagree',
     ],
-    ['a report past its expiry at the verification block', pool('BTC:gt:75000'), deps({ finalized: async () => ({ number: 1n, timestamp: Number(verifiedEvidence.expiresAt) }) }), 'report_expired'],
+    ['a report past its expiry at the verification block', pool('BTC:gt:75000'), deps({ finalized: async () => ({ ok: true as const, block: { number: 1n, timestamp: Number(verifiedEvidence.expiresAt) } }) }), 'report_expired'],
   ])('%s', async (_n, p, d, reason) => {
     const out = await dataStreamsCryptoDecision(p, d);
     expect(out.kind).toBe('wait');
@@ -99,12 +99,14 @@ describe('config and helpers', () => {
   ])('CRYPTO_PRICE_SOURCE=%s', (raw, source, invalid) => {
     expect(readCryptoPriceSource(raw)).toEqual({ source, invalid });
   });
-  it('reads the finalized block, and returns null on anything malformed', async () => {
+  it('reads one block header, and returns null on anything malformed (a hash is required)', async () => {
     const answer = (body: unknown, status = 200) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
-    expect(await readFinalized(answer({ result: { number: '0x42', timestamp: '0x6a' } }), 'u')).toEqual({ number: 66n, timestamp: 106 });
-    expect(await readFinalized(answer({ result: null }), 'u')).toBeNull();
-    expect(await readFinalized(answer({ result: { number: 'x', timestamp: '0x1' } }), 'u')).toBeNull();
-    expect(await readFinalized(answer({}, 500), 'u')).toBeNull();
+    const h = `0x${'ab'.repeat(32)}`;
+    expect(await readBlock(answer({ result: { number: '0x42', timestamp: '0x6a', hash: h } }), 'u', 'finalized')).toEqual({ number: 66n, timestamp: 106, hash: h });
+    expect(await readBlock(answer({ result: { number: '0x42', timestamp: '0x6a' } }), 'u', 'finalized')).toBeNull();
+    expect(await readBlock(answer({ result: null }), 'u', 'finalized')).toBeNull();
+    expect(await readBlock(answer({ result: { number: 'x', timestamp: '0x1', hash: h } }), 'u', 'finalized')).toBeNull();
+    expect(await readBlock(answer({}, 500), 'u', 'finalized')).toBeNull();
   });
   it('formats 18-decimal prices', () => {
     expect(formatPrice18(BigInt(verifiedEvidence.price))).toBe('75938.791787');
@@ -155,5 +157,45 @@ describe('verifyPair: Alchemy + Ankr (2026-10-13)', () => {
     'https://monad-testnet.g.alchemy.com:8443/v2/k',
   ])('refuses %s (allowlist: only Alchemy Monad testnet)', (u) => {
     expect(verifyPair(u)).toBeNull();
+  });
+});
+
+describe('agreedFinalized: both providers choose the verification block (Codex DS_SWAP R4)', () => {
+  const NOW_S = 2_000_000_000;
+  const hashOf = (n: bigint) => `0x${n.toString(16).padStart(64, '0')}`;
+  type Chain = Map<bigint, { timestamp: number; hash: string }>;
+  /// A provider: `finalized` answers its own head; a number answers from `chain` (its own view).
+  const provider = (finalizedAt: bigint, chain: Chain) =>
+    (async (_url: string, init?: RequestInit) => {
+      const tag = JSON.parse(String(init?.body)).params[0] as string;
+      const n = tag === 'finalized' ? finalizedAt : BigInt(tag);
+      const b = chain.get(n);
+      return new Response(JSON.stringify({ result: b ? { number: `0x${n.toString(16)}`, timestamp: `0x${b.timestamp.toString(16)}`, hash: b.hash } : null }));
+    }) as unknown as typeof fetch;
+  const both = (a: typeof fetch, b: typeof fetch) =>
+    (async (url: string, init?: RequestInit) => (url === 'A' ? a(url, init) : b(url, init))) as unknown as typeof fetch;
+  const chain: Chain = new Map([
+    [100n, { timestamp: NOW_S - 2, hash: hashOf(100n) }],
+    [101n, { timestamp: NOW_S - 1, hash: hashOf(101n) }],
+  ]);
+
+  it('takes the lower finalized block when both agree on it', async () => {
+    const r = await agreedFinalized(both(provider(101n, chain), provider(100n, chain)), ['A', 'B'], NOW_S * 1000);
+    expect(r).toEqual({ ok: true, block: { number: 100n, timestamp: NOW_S - 2 } });
+  });
+  it('an old block named by one provider (the R4 scenario): both agree on it, but it is stale, so wait', async () => {
+    const old: Chain = new Map([...chain, [50n, { timestamp: NOW_S - MAX_FINALIZED_AGE_S - 1, hash: hashOf(50n) }]]);
+    const r = await agreedFinalized(both(provider(50n, old), provider(101n, old)), ['A', 'B'], NOW_S * 1000);
+    expect(r).toEqual({ ok: false, reason: 'block_stale' });
+  });
+  it('a block the other provider does not know, or knows differently, is refused', async () => {
+    const forged: Chain = new Map([[101n, { timestamp: NOW_S - 1, hash: hashOf(999n) }]]);
+    expect(await agreedFinalized(both(provider(101n, forged), provider(101n, chain)), ['A', 'B'], NOW_S * 1000)).toEqual({ ok: false, reason: 'block_disagree' });
+    const missing: Chain = new Map();
+    expect(await agreedFinalized(both(provider(101n, chain), provider(100n, missing)), ['A', 'B'], NOW_S * 1000)).toEqual({ ok: false, reason: 'block_unavailable' });
+  });
+  it('a block from the future is refused', async () => {
+    const ahead: Chain = new Map([[100n, { timestamp: NOW_S + 60, hash: hashOf(100n) }]]);
+    expect(await agreedFinalized(both(provider(100n, ahead), provider(100n, ahead)), ['A', 'B'], NOW_S * 1000)).toEqual({ ok: false, reason: 'block_stale' });
   });
 });

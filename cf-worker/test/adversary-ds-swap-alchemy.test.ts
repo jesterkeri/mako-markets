@@ -16,11 +16,16 @@
 //     test/crypto-datastreams.test.ts.
 import { decodeAbiParameters, decodeFunctionData, encodeFunctionResult, stringToHex, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import { makoAbi } from '../src/abi';
 import { runResolver, type Env } from '../src/index';
+
+// Codex DS_SWAP R4: verification blocks must be fresh on the worker clock; pin Date to an hour after the fixture close.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'], now: (CLOSE + 3600) * 1000 });
+});
 import { verifyPair } from '../src/crypto-datastreams';
 
 const CLOSE = Number(fixture.observationsTimestamp);
@@ -85,7 +90,7 @@ function makoAnswer(m: { id: number; method: string; params?: unknown[] }) {
 
 function verifyAnswer(m: { id: number; method: string; params?: unknown[] }) {
   if (m.method === 'eth_getBlockByNumber') {
-    return { jsonrpc: '2.0', id: m.id, result: { number: '0x4337013', timestamp: `0x${(CLOSE + 3600).toString(16)}` } };
+    return { jsonrpc: '2.0', id: m.id, result: { number: '0x4337013', timestamp: `0x${(Math.floor(Date.now() / 1000) - 1).toString(16)}`, hash: `0x${'ab'.repeat(32)}` } };
   }
   const data = (m.params![0] as { data: string }).data;
   return { jsonrpc: '2.0', id: m.id, result: data.length <= 10 ? ZERO_WORD : verifyReturn };
@@ -114,6 +119,7 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   liveIds = new Set([POOL]);
