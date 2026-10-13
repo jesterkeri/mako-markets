@@ -39,7 +39,7 @@ describe.skipIf(!RUN)('hosted Upstash budget smoke', () => {
     for (let i = 0; i < 90; i++) {
       const s = Date.now();
       try {
-        await b.reserveEnvioCall();
+        await b.reserveEnvioCall('me');
         admitted++;
       } catch (e) {
         expect((e as Error).name).toBe('EnvioBudgetExhausted');
@@ -56,5 +56,14 @@ describe.skipIf(!RUN)('hosted Upstash budget smoke', () => {
     const busy = await GET(new Request(`http://localhost/api/me/rounds?account=0x${'1'.repeat(40)}`));
     console.log(`[smoke] route while the minute is spent: status ${busy.status} ${JSON.stringify(await busy.json())}`);
     expect(busy.status).toBe(429);
+  }, 120_000);
+
+  it('on the real script: after the minute above, Me is at its cap; /stats still gets exactly its own share, then refused', async () => {
+    const b = await import('@/lib/envio-budget');
+    await expect(b.reserveEnvioCall('me')).rejects.toThrow(/at the cap/);
+    let stats = 0;
+    for (let i = 0; i < b.STATS_ENVIO_PER_MINUTE + 5; i++) await b.reserveEnvioCall('stats').then(() => stats++, () => undefined);
+    console.log(`[smoke] stats after Me used its 70: admitted ${stats} of ${b.STATS_ENVIO_PER_MINUTE + 5} (share ${b.STATS_ENVIO_PER_MINUTE}); project total in the minute <= ${b.ENVIO_PER_MINUTE}`);
+    expect(stats).toBe(b.STATS_ENVIO_PER_MINUTE);
   }, 120_000);
 });

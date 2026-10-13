@@ -11,6 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ttlMemo } from '../ttl-memo';
 
+// /stats now reserves a slot in the shared Envio budget before each indexer call (envio-budget.ts, tested on its own
+// and in stats-envio-budget.test.ts); here every call has one, so this file tests the stats logic itself.
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), snapshot: vi.fn(), reset: vi.fn(async () => {}) }));
 // Since RELEASE_R9 the route reads only the saved account figures (src/lib/stats-snapshot.ts); the database read is
 // the 15-minute job's (src/lib/stats-db-read.ts) and is tested directly below.

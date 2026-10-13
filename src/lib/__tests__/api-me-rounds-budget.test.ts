@@ -82,11 +82,26 @@ describe('the shared Envio budget in front of the route', () => {
     expect(env.log).toHaveLength(0);
   });
 
-  it('the worst case the code allows (10,000 entries, 11 pages) still fits one minute: one slot per page, 17 in all', async () => {
+  it('the worst case the code allows: 10,000 entries AND 10,000 created rounds is 26 calls, and still fits the Me share of a minute', async () => {
     const { PAGE_SIZE, MAX_ROWS } = await import('@/lib/me-rounds-indexer');
-    // head + head round + active (1 page + empty) + entries (MAX_ROWS / PAGE_SIZE full pages + empty) + created (1 + empty)
-    const worst = 1 + 1 + 2 + (MAX_ROWS / PAGE_SIZE + 1) + 2;
-    expect(worst).toBe(17);
+    const { MAX_ACTIVE_ROUNDS } = await import('@/lib/me-rounds-discovery');
+    const listPages = (rows: number) => Math.ceil(rows / PAGE_SIZE) + 1; // full pages plus the empty terminator
+    // head + head round + active (at most MAX_ACTIVE_ROUNDS rows) + entries + created, each list paged independently
+    const worst = 1 + 1 + listPages(MAX_ACTIVE_ROUNDS) + listPages(MAX_ROWS) + listPages(MAX_ROWS);
+    expect(worst).toBe(26);
     expect(worst).toBeLessThanOrEqual(PER_WINDOW);
+  });
+
+  it('that worst case, run for real: 10,000 entries and 10,000 created rounds cost exactly 26 reserved calls and answer', async () => {
+    const me = acct(8);
+    env.globalRounds = 20_000;
+    env.rounds = [
+      { id: '20000', creator: '0x00000000000000000000000000000000000000b2', status: 'Active' },
+      ...Array.from({ length: 10_000 }, (_, i) => ({ id: String(i + 1), creator: me, status: 'Up' as const })),
+    ];
+    env.entries = Array.from({ length: 10_000 }, (_, i) => ({ id: `e${String(i).padStart(5, '0')}`, round_id: String(10_001 + i), wallet_id: me }));
+    const res = await call(me);
+    expect(res.status).toBe(200);
+    expect(env.log.length).toBe(26);
   });
 });

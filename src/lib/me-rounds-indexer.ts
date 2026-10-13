@@ -76,7 +76,7 @@ const ROUND_ID = /^[1-9][0-9]{0,77}$/;
 /// One query. Its RoundsSource rows are checked unless `sourceMayBeAbsent` and there are none (the head query only: an
 /// indexer that has seen no round yet has no source row, which discoverMeRounds accepts only when it also has 0 rounds).
 async function gql(url: string, query: string, variables: Record<string, unknown>, sourceMayBeAbsent = false): Promise<Record<string, unknown>> {
-  await reserveEnvioCall();
+  await reserveEnvioCall('me');
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

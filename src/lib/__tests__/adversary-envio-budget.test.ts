@@ -56,10 +56,10 @@ describe('adversary: the rolling-minute cap holds in real time', () => {
     const b = await load();
     const start = t;
     // Instance A (correct clock) takes the whole budget at real time `start`.
-    for (let i = 0; i < a.ME_ENVIO_PER_MINUTE; i++) await a.reserveEnvioCall();
+    for (let i = 0; i < a.ME_ENVIO_PER_MINUTE; i++) await a.reserveEnvioCall('me');
     // 59.999 s later, instance B (whose own clock would read 1 ms ahead; the budget no longer reads instance clocks) asks.
     t = start + 59_999;
-    for (let i = 0; i < b.ME_ENVIO_PER_MINUTE; i++) await b.reserveEnvioCall().catch(() => undefined);
+    for (let i = 0; i < b.ME_ENVIO_PER_MINUTE; i++) await b.reserveEnvioCall('me').catch(() => undefined);
     expect(worstWindow(admitted)).toBeLessThanOrEqual(a.ME_ENVIO_PER_MINUTE);
   });
 
@@ -68,12 +68,12 @@ describe('adversary: the rolling-minute cap holds in real time', () => {
     const start = t;
     // A reservation starts at real time `start`; its EVAL reaches the store 1.5 s later.
     latencyMs = 1_500;
-    await b.reserveEnvioCall();
+    await b.reserveEnvioCall('me');
     // The rest of the budget goes immediately after, with no latency.
-    for (let i = 1; i < b.ME_ENVIO_PER_MINUTE; i++) await b.reserveEnvioCall();
+    for (let i = 1; i < b.ME_ENVIO_PER_MINUTE; i++) await b.reserveEnvioCall('me');
     // Exactly 60 s after the slow reservation STARTED (58.5 s after it was admitted), one more call.
     t = start + 60_000;
-    await b.reserveEnvioCall().catch(() => undefined);
+    await b.reserveEnvioCall('me').catch(() => undefined);
     expect(worstWindow(admitted)).toBeLessThanOrEqual(b.ME_ENVIO_PER_MINUTE);
   });
 });

@@ -8,6 +8,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// /stats now reserves a slot in the shared Envio budget before each indexer call (envio-budget.ts, tested on its own
+// and in stats-envio-budget.test.ts); here every call has one, so this file tests the stats logic itself.
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), saved: null as null | Record<string, unknown>, snapshotReads: 0 }));
 // Since RELEASE_R9 the route reads only the file the 15-minute job saves (src/lib/stats-snapshot.ts). Here the "file" is
 // mocks.saved, and job() below plays the scheduled run: it reads the mocked database and stamps the start of its read.

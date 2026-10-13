@@ -34,19 +34,19 @@ export async function answerUpstash(f: FakeUpstash, init?: RequestInit): Promise
   if (forced) return forced;
   const [name, ...args] = cmd;
   if (name === 'EVAL') {
-    // The sliding-window reserve script, scored on the STORE's clock (Redis TIME), as the real script is: ARGV = window
-    // ms, cap, member.
-    const [, , key, winS, capS, member] = args;
+    // The reserve script, scored on the STORE's clock (Redis TIME), as the real script is. KEYS: global log, consumer
+    // log. ARGV: window ms, global cap, consumer cap, member.
+    const [, , globalKey, consumerKey, winS, globalCapS, capS, member] = args;
     const now = f.now();
     const win = Number(winS);
-    const log = (f.zsets.get(key) ?? []).filter((x) => x.score > now - win);
-    if (log.length >= Number(capS)) {
-      f.zsets.set(key, log);
-      return Response.json({ result: 0 });
-    }
-    log.push({ score: now, member });
-    f.zsets.set(key, log);
-    return Response.json({ result: log.length });
+    const g = (f.zsets.get(globalKey) ?? []).filter((x) => x.score > now - win);
+    const c = (f.zsets.get(consumerKey) ?? []).filter((x) => x.score > now - win);
+    f.zsets.set(globalKey, g);
+    f.zsets.set(consumerKey, c);
+    if (g.length >= Number(globalCapS) || c.length >= Number(capS)) return Response.json({ result: 0 });
+    g.push({ score: now, member });
+    c.push({ score: now, member });
+    return Response.json({ result: c.length });
   }
   if (name === 'GET') return Response.json({ result: live(f, args[0])?.value ?? null });
   if (name === 'SET') {

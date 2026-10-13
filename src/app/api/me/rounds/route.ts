@@ -13,8 +13,9 @@ import { ttlMemo, type Memoized } from '@/lib/ttl-memo';
  * created, and every round the indexer still has as Active, from the Envio indexer (ENVIO_ROUNDS_GRAPHQL_URL), with the last
  * round the indexer has seen scheduled and that round's fingerprint (`head`: openTime, startTime, creator), which the
  * browser compares with roundOf on chain before it trusts the rest (Codex ME_ROUNDS R2: the answer is bound to this
- * Rounds contract, never assumed). Ids only; the amounts are read from the chain by the browser. Round entries and
- * creators are public chain data, so the route needs no session.
+ * Rounds contract, never assumed). Ids only; the amounts are read from the chain by the browser. The data is public
+ * chain data, but the route answers only for the signed-in caller's own account (me-rounds-caller.ts), so it is not an
+ * open proxy spending Mako Market's shared Envio budget on arbitrary wallets (Codex R5/R6).
  *
  *   200 { roundIds: ["3", "7", ...], indexedThrough: "400",
  *         head: { id: "400", openTime: "1760000000", startTime: "1760000900", creator: "0x…" } }   head null iff 0 rounds

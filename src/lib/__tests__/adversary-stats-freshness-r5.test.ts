@@ -14,6 +14,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// /stats now reserves a slot in the shared Envio budget before each indexer call (envio-budget.ts, tested on its own
+// and in stats-envio-budget.test.ts); here every call has one, so this file tests the stats logic itself.
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn(), snapshot: vi.fn() }));
 // Since RELEASE_R9 the account figures come from the 15-minute job's saved file (src/lib/stats-snapshot.ts). The file
 // here was read 5 s after the true start of the indexer read, so readAt is decided by the indexer's stamp, which is what

@@ -12,6 +12,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// /stats now reserves a slot in the shared Envio budget before each indexer call (envio-budget.ts, tested on its own
+// and in stats-envio-budget.test.ts); here every call has one, so this file tests the stats logic itself.
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 const mocks = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 // The stats read uses its own login (src/db/stats-client.ts); here it is the same mocked database.
 vi.mock('@/db/stats-client', async () => ({ statsDb: (await import('@/db/client')).db }));
