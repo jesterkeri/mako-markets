@@ -1304,6 +1304,10 @@ export async function runResolver(env: Env): Promise<void> {
     // price or result exactly as before.
     let outcome: Outcome | null = null;
     let reason = '';
+    let dsEvidence: Record<string, unknown> | null = null;
+    const logEvidence = (sent: Record<string, string>) => {
+      if (dsEvidence) console.log(JSON.stringify({ ...dsEvidence, ...sent }));
+    };
 
     if (market.mType === MarketType.CRYPTO && crypto.source === 'datastreams') {
       // Live: Chainlink Data Streams only, no CoinGecko and no fallback. Anything but a settle decision waits.
@@ -1324,7 +1328,9 @@ export async function runResolver(env: Env): Promise<void> {
         skipped++;
         continue;
       }
-      console.log(JSON.stringify({ event: 'crypto.ds.evidence', market: Number(i), closeTime: Number(market.closeTime), outcome: d.yes ? 'YES' : 'NO', strike: formatPrice18(d.strike), ...d.evidence }));
+      // Logged only once a transaction for it went out (or in dry run), with the send's outcome and hash: an evidence
+      // line describes a transaction, never a decision that was deferred or refused (adversary on 167d774).
+      dsEvidence = { event: 'crypto.ds.evidence', market: Number(i), closeTime: Number(market.closeTime), outcome: d.yes ? 'YES' : 'NO', strike: formatPrice18(d.strike), ...d.evidence };
       outcome = d.yes ? Outcome.YES : Outcome.NO;
       reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}`;
     } else if (market.mType === MarketType.CRYPTO) {
@@ -1537,6 +1543,7 @@ export async function runResolver(env: Env): Promise<void> {
 
     if (cfg.dryRun) {
       console.log(`[${ts}] market ${i}: ${reason} · ${label} · [DRY RUN — not written]`);
+      logEvidence({ send: 'dry-run' });
       resolvedCount++;
       continue;
     }
@@ -1553,6 +1560,7 @@ export async function runResolver(env: Env): Promise<void> {
     });
     if (sent.kind === 'landed') {
       console.log(`[${ts}] market ${i}: RESOLVED ${label} · block ${sent.blockNumber} · tx ${sent.hash} · nonce ${sent.nonce}`);
+      logEvidence({ send: 'landed', tx: sent.hash, txBlock: String(sent.blockNumber), nonce: String(sent.nonce) });
       resolvedCount++;
     } else if (sent.kind === 'out_of_funds') {
       console.warn(`[${ts}] market ${i}: resolver wallet out of MON — stopping tick`);
@@ -1572,8 +1580,10 @@ export async function runResolver(env: Env): Promise<void> {
       console.warn(
         `[${ts}] market ${i}: tx ${sent.hash} (nonce ${sent.nonce}) has no receipt yet; a later send reuses this nonce, so it cannot be paid twice`,
       );
+      logEvidence({ send: 'receipt_timeout', tx: sent.hash, nonce: String(sent.nonce) });
     } else if (sent.kind === 'reverted') {
       console.warn(`[${ts}] market ${i}: tx reverted (hash ${sent.hash})`);
+      logEvidence({ send: 'reverted', tx: sent.hash });
     } else if (sent.kind === 'not_yet') {
       console.warn(`[${ts}] market ${i}: resolveMarket reverted ${sent.errorName}, retry next tick`);
     } else if (sent.kind === 'nonce_unreadable') {
