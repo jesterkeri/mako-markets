@@ -5,19 +5,20 @@ import { BaseError, ContractFunctionRevertedError, maxUint256 } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 
 import type { ConfirmPhase } from '@/components/ConfirmSheet';
-import { buildBetBody, buildClaimBody, buildCreateBody, runSponsoredRequest } from './aa-client';
+import { buildBetBody, buildClaimBody, buildClaimCreatorFeeBody, buildCreateBody, runSponsoredRequest } from './aa-client';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
 import { createdMarketIdFor, MAKO_ADDRESS, makoContract } from './contract';
+import { creatorEarningNote, creatorEarningOf, isPoolCreator } from './creator-earnings';
 import { toBytes32 } from './oracle';
 import { buildPool, type CreateDraft } from './pool-create';
-import { useEnsureMonadChain } from './hooks';
+import { decodeMarket, useEnsureMonadChain } from './hooks';
 import { USDC_ADDRESS, usdcContract } from './usdc';
 import { formatAddress } from './user-display';
-import { useUser, type AuthedUser } from './use-user';
+import { accountAddress, useUser, type AuthedUser } from './use-user';
 import { isWalletDrifted } from './wallet-drift';
 
-// One on-chain pool action (a bet or a claim) driven through the confirm sheet (19a). An email account's action is
+// One on-chain pool action (a bet, a claim, a creator-fee claim or a new pool) driven through the confirm sheet (19a). An email account's action is
 // gas-free: one signature from its embedded wallet, sponsored by Mako Market. A wallet account signs and pays its
 // own gas: an approval first if the allowance is short, then the action, each checked by simulation before the
 // wallet is asked.
@@ -25,6 +26,8 @@ import { isWalletDrifted } from './wallet-drift';
 export type PoolTx =
   | { kind: 'bet'; marketId: bigint; isYes: boolean; amount: bigint }
   | { kind: 'claim'; marketId: bigint }
+  /// A creator's earnings on a pool it created: MakoMarketsV4.claimCreatorFee(id).
+  | { kind: 'creatorFee'; marketId: bigint }
   /// A new pool: built from the draft at the moment of confirming (a price pool runs from then), with the creator's
   /// first bet (`seed`, at least 1 USDC) on one side.
   | { kind: 'create'; draft: CreateDraft; seed: bigint; seedYes: boolean };
@@ -32,6 +35,16 @@ export type PoolTx =
 const WORDS: Record<PoolTx['kind'], OutcomeWords> = {
   bet: { noun: 'bet', failTitle: "Bet didn't go through" },
   claim: { noun: 'claim', failTitle: "Claim didn't go through" },
+  creatorFee: {
+    noun: 'claim',
+    failTitle: "Claim didn't go through",
+    refusals: {
+      NotAuthorized: ['Not your pool', "Only the pool's creator can claim its creator earnings."],
+      BadOutcome: ['Refunded pool', 'The pool was refunded, so it pays no creator fee.'],
+      NotResolved: ['Not settled yet', 'The pool has no result yet. Creator earnings can be claimed once it settles YES or NO.'],
+      AlreadyClaimed: ['Already claimed', 'These creator earnings were already claimed. Check your balance.'],
+    },
+  },
   create: { noun: 'pool', failTitle: "The pool wasn't created", afterRevert: 'Check the times and try again.' },
 };
 
@@ -94,6 +107,34 @@ class WalletSwitched extends Error {}
 /// wagmi's refusal when a write names an account the connector no longer has (it throws before the wallet sees it).
 const isAccountNotConnected = (err: unknown) => (err as { name?: string } | null)?.name === 'ConnectorAccountNotFoundError';
 
+/// A creator-fee claim is checked against the pool as the chain has it right before anything is signed: the
+/// contract pays 0 for a forfeited fee yet still succeeds, so a page that went stale must never send one. Returns the
+/// phase that refuses it, or null when it is claimable by this account. Nothing is sent either way.
+async function creatorFeeRefusal(client: Client, marketId: bigint, account: string, w: OutcomeWords): Promise<ConfirmPhase | null> {
+  let market;
+  try {
+    market = decodeMarket(await client.readContract({ ...makoContract, functionName: 'getMarket', args: [marketId] }), marketId);
+  } catch {
+    return { step: 'failed', title: "Couldn't check the pool", body: 'Mako Market could not read the pool from Monad, so nothing was sent. Try again in a moment.', nothingMoved: true, primary: { label: 'Try again', retry: true }, secondary: { label: 'Close' } };
+  }
+  const refuse = (title: string, body: string): ConfirmPhase => ({ step: 'failed', title, body, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } });
+  if (!isPoolCreator(market, account)) return refuse(...w.refusals!.NotAuthorized);
+  const e = creatorEarningOf(market);
+  if (!e) return refuse('No creator fee', 'This pool pays no creator fee.');
+  switch (e.state) {
+    case 'claimable':
+      return null;
+    case 'forfeited':
+      return refuse('Creator earnings forfeited', creatorEarningNote(e));
+    case 'claimed':
+      return refuse(...w.refusals!.AlreadyClaimed);
+    case 'refunded':
+      return refuse(...w.refusals!.BadOutcome);
+    case 'unresolved':
+      return refuse(...w.refusals!.NotResolved);
+  }
+}
+
 export function usePoolTx(onLanded?: () => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
@@ -150,7 +191,10 @@ export function usePoolTx(onLanded?: () => void) {
     const words = WORDS[tx.kind];
     let next: ConfirmPhase;
     try {
-      if (user.authType === 'magic') {
+      const refused = tx.kind === 'creatorFee' ? await creatorFeeRefusal(publicClient, tx.marketId, accountAddress(user), words) : null;
+      if (refused) {
+        next = refused;
+      } else if (user.authType === 'magic') {
         next = await runSponsored(tx, user, words);
       } else {
         next = await runWithWallet(tx, user, words);
@@ -196,8 +240,10 @@ export function usePoolTx(onLanded?: () => void) {
         });
       } else if (t.kind === 'bet') {
         body = buildBetBody({ chainId: MONAD_TESTNET_ID, marketId: t.marketId, isYes: t.isYes, amountUsdc: t.amount, usdcAddress: USDC_ADDRESS, makoAddress: MAKO_ADDRESS, currentAllowance: await safeAllowance() });
-      } else {
+      } else if (t.kind === 'claim') {
         body = buildClaimBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
+      } else {
+        body = buildClaimCreatorFeeBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
       }
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
       if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
@@ -288,13 +334,15 @@ export function usePoolTx(onLanded?: () => void) {
             const receipt = await publicClient.waitForTransactionReceipt({ hash });
             return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
           }
+          // A winnings claim or a creator-fee claim: one call with the pool id, simulated first.
+          const fn = t.kind === 'creatorFee' ? ('claimCreatorFee' as const) : ('claim' as const);
           try {
-            await publicClient.simulateContract({ ...makoContract, functionName: 'claim', args: [t.marketId], account });
+            await publicClient.simulateContract({ ...makoContract, functionName: fn, args: [t.marketId], account });
           } catch (err) {
             return refusalPhase(revertName(err), w);
           }
           sent = true;
-          const hash = await write({ ...makoContract, functionName: 'claim', args: [t.marketId], chainId: monadTestnet.id });
+          const hash = await write({ ...makoContract, functionName: fn, args: [t.marketId], chainId: monadTestnet.id });
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);
