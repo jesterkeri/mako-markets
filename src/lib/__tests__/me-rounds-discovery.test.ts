@@ -78,3 +78,12 @@ describe('planMeRoundReads', () => {
     }
   });
 });
+
+describe('planMeRoundReads: an indexer far AHEAD of the chain is another contract (adversary on 6469ed3)', () => {
+  it('a little ahead (timing) is fine; more than ME_ROUNDS_MAX_AHEAD is unavailable', async () => {
+    const { planMeRoundReads, ME_ROUNDS_MAX_AHEAD } = await import('../me-rounds-discovery');
+    expect(planMeRoundReads(30n, { roundIds: [5n], indexedThrough: 30n + BigInt(ME_ROUNDS_MAX_AHEAD) }).ok).toBe(true);
+    expect(planMeRoundReads(30n, { roundIds: [200n, 450n], indexedThrough: 500n })).toEqual({ ok: false, reason: 'indexer_ahead' });
+    expect(planMeRoundReads(0n, { roundIds: [], indexedThrough: 400n })).toEqual({ ok: false, reason: 'indexer_ahead' });
+  });
+});

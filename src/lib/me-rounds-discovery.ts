@@ -24,6 +24,10 @@ export const ME_ROUNDS_RECENT = 12;
 /// More rounds than this past the indexer's last scheduled round means the indexer is stuck or wrong: Me says the
 /// rounds part is unavailable instead of reading an unbounded range (12 rounds a day: about ten days).
 export const ME_ROUNDS_MAX_UNINDEXED = 120;
+/// The indexer may be a little ahead of this poll's roundCount read (it is read later, or the count is cached for a
+/// poll); far ahead can only mean it indexes ANOTHER Rounds contract (a redeploy, a preview build on the production
+/// indexer), whose ids say nothing about this one: unavailable (adversary on 6469ed3).
+export const ME_ROUNDS_MAX_AHEAD = 12;
 
 /// GET /api/me/rounds?account=0x... answers 200 with this. Ids are decimal strings, ascending, without duplicates.
 export type MeRoundsDiscoveryWire = { roundIds: string[]; indexedThrough: string };
@@ -46,12 +50,13 @@ export function parseMeRoundsDiscovery(body: unknown): MeRoundsDiscovery | null 
   return { roundIds: ids, indexedThrough: BigInt(indexedThrough) };
 }
 
-export type MeRoundsPlan = { ok: true; ids: bigint[] } | { ok: false; reason: 'indexer_behind' };
+export type MeRoundsPlan = { ok: true; ids: bigint[] } | { ok: false; reason: 'indexer_behind' | 'indexer_ahead' };
 
 /// The round ids to read on chain this poll, ascending: the discovered ids that exist (`<= count`), and every id from
 /// the lower of (the indexer's last round + 1) and (count - ME_ROUNDS_RECENT + 1) up to `count`. The number of ids is at
 /// most discovered + max(ME_ROUNDS_RECENT, ME_ROUNDS_MAX_UNINDEXED), however many rounds exist.
 export function planMeRoundReads(count: bigint, d: MeRoundsDiscovery): MeRoundsPlan {
+  if (d.indexedThrough - (count > 0n ? count : 0n) > BigInt(ME_ROUNDS_MAX_AHEAD)) return { ok: false, reason: 'indexer_ahead' };
   if (count <= 0n) return { ok: true, ids: [] };
   if (count - d.indexedThrough > BigInt(ME_ROUNDS_MAX_UNINDEXED)) return { ok: false, reason: 'indexer_behind' };
   const recentFrom = count - BigInt(ME_ROUNDS_RECENT) + 1n;
