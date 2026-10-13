@@ -3,7 +3,9 @@
 // claim are still found with the exact amounts MakoRoundsV1.claim pays. End to end: the real Me hooks (wagmi +
 // TanStack) over a scripted chain (the adversary-me-rounds harness), the real GET /api/me/rounds route over a scripted
 // Envio endpoint (helpers/fake-envio.ts). Also: indexer lag never hides a round, and a failed discovery shows the
-// rounds part as unavailable, never pools-only totals.
+// rounds part as unavailable, never pools-only totals. And (Codex ME_ROUNDS R2) an indexer serving ANOTHER Rounds
+// contract, even one only a round ahead or at the same count, is never trusted: its head round's fingerprint must match
+// roundOf on chain, and any head ahead of the chain is unavailable.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
@@ -227,7 +229,13 @@ function history(n: number) {
   roundStakes = { [`3:${A}`]: { side: 1, amount: 2n * USDC, claimed: false }, [`${n}:${A}`]: { side: 2, amount: 1n * USDC, claimed: false } };
   creatorFeeClaimed = {};
   env.globalRounds = n;
-  env.rounds = rounds.map((r, i) => ({ id: String(i + 1), creator: r.creator.toLowerCase(), status: r.status === 2 ? 'Up' : 'Active' }));
+  env.rounds = rounds.map((r, i) => ({
+    id: String(i + 1),
+    creator: r.creator.toLowerCase(),
+    status: r.status === 2 ? 'Up' : 'Active',
+    openTime: String(r.openTime),
+    startTime: String(r.startTime),
+  }));
   env.entries = [
     { id: `1000_0`, round_id: '3', wallet_id: A },
     { id: `9000_0`, round_id: String(n), wallet_id: A },
@@ -271,7 +279,8 @@ describe('scale: bounded reads, old claims still found', () => {
     await waitFor(() => expect(summarise(t.current().chain)).toBe(READY), { timeout: 4000 });
     expect(t.seen.filter((s) => s !== 'loading' && s !== READY)).toEqual([]);
 
-    // Discovered: 3 (entered), 7 (created), n (Active and entered) -> 3 ids; plus the newest K.
+    // Discovered: 3 (entered), 7 (created), n (Active and entered) -> 3 ids; plus the newest K, which holds the indexer
+    // head n (its fingerprint is checked against this roundOf).
     const discovered = 3;
     const expected = [3, 7, ...range(n - ME_ROUNDS_RECENT + 1, n)];
     expect(idsRead()).toEqual(expected);
@@ -282,7 +291,8 @@ describe('scale: bounded reads, old claims still found', () => {
     await waitFor(() => expect(roundCalls.length).toBe(expected.length * 4));
     await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
     expect(roundCalls.length).toBe(expected.length * 4);
-    expect(roundCalls.length).toBeLessThanOrEqual(4 * (discovered + ME_ROUNDS_RECENT));
+    expect(roundCalls.length).toBeLessThanOrEqual(4 * (discovered + ME_ROUNDS_RECENT + 1));
+    expect(roundCalls).toContain(`roundOf:${n}`);
     expect(idsRead()).toEqual(expected);
     for (const f of PER_ROUND) expect(roundCalls.filter((c) => c.startsWith(`${f}:`)).length).toBe(expected.length);
     expect(summarise(t.current().chain)).toBe(READY);
@@ -317,8 +327,10 @@ describe('indexer lag never hides a round', () => {
     const t = track();
     await waitFor(() => expect(summarise(t.current().chain)).toMatch(/^ready/), { timeout: 4000 });
     expect(summarise(t.current().chain)).toBe(`ready inPlay=${5n * USDC} won=5900000 roundClaims=390:3000000,7:20000,5:2950000,3:2950000`);
-    // 3 entered, 5 Active in the indexer, 7 created; 381..400 past the indexer.
-    expect(idsRead()).toEqual([3, 5, 7, ...range(381, 400)]);
+    // 3 entered, 5 Active in the indexer, 7 created; 380 the indexer's head (fingerprint); 381..400 past the indexer.
+    expect(idsRead()).toEqual([3, 5, 7, 380, ...range(381, 400)]);
+    // Within the bound: discovered (3, 5, 7) + max(K, unindexed 20) + the head.
+    expect(idsRead().length).toBeLessThanOrEqual(3 + Math.max(ME_ROUNDS_RECENT, 20) + 1);
   });
 
   it('more than ME_ROUNDS_MAX_UNINDEXED rounds past the indexer: unavailable, never a partial list', async () => {
@@ -328,6 +340,99 @@ describe('indexer lag never hides a round', () => {
     await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
     expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
     expect(roundCalls).toEqual([]);
+  });
+});
+
+describe('an indexer for ANOTHER Rounds contract is never trusted (Codex ME_ROUNDS R2)', () => {
+  /// The chain has 100 rounds; the account's unclaimed 2.95-USDC win is in #3 and its fee-only host claim in #7. The
+  /// indexer at ENVIO_GRAPHQL_URL serves a different MakoRoundsV1 deployment: it has no entry for this account in #3,
+  /// and did not see #7 as this account's.
+  function foreignIndexer(head: number, fingerprint: { openTime?: bigint; startTime?: bigint; creator?: string } = {}) {
+    history(100);
+    expect(contractPays(3, A)).toBe(2_950_000n);
+    expect(contractPays(7, A)).toBe(20_000n);
+    env.globalRounds = head;
+    env.rounds = Array.from({ length: head }, (_, i) => {
+      const chain = rounds[i];
+      return {
+        id: String(i + 1),
+        creator: HOUSE,
+        status: 'Up' as const,
+        openTime: String(chain?.openTime ?? BigInt(NOW - 100)),
+        startTime: String(chain?.startTime ?? BigInt(NOW + 800)),
+      };
+    });
+    const top = env.rounds[head - 1];
+    if (fingerprint.openTime !== undefined) top.openTime = String(fingerprint.openTime);
+    if (fingerprint.startTime !== undefined) top.startTime = String(fingerprint.startTime);
+    if (fingerprint.creator !== undefined) top.creator = fingerprint.creator;
+    env.entries = [];
+  }
+
+  it.each([101, 105, 112])('chain count 100, foreign head %i (ahead by 1 to 12): unavailable, never ready, no round read', async (head) => {
+    foreignIndexer(head);
+    const t = track();
+    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+    expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
+    expect(t.current().chain.status).toBe('error');
+    expect(roundCalls).toEqual([]);
+  });
+
+  it.each([
+    ['only in openTime', { openTime: BigInt(NOW - 19_999) }],
+    ['only in startTime', { startTime: BigInt(NOW + 3900) }],
+    ['only in creator', { creator: '0x00000000000000000000000000000000000000c3' }],
+  ])('same count (100), foreign head fingerprint differing %s: unavailable, never ready', async (_name, fingerprint) => {
+    foreignIndexer(100, fingerprint);
+    const t = track();
+    await waitFor(() => expect(roundCalls).toContain('roundOf:100'), { timeout: 4000 });
+    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+    expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
+    expect(t.current().chain.status).toBe('error');
+  });
+
+  it('the page reads Unavailable for the foreign same-count indexer, never pools-only totals', async () => {
+    foreignIndexer(100, { openTime: BigInt(NOW - 19_999) });
+    const Wrapper = makeWrapper();
+    render(<Wrapper><MeClient /></Wrapper>);
+    await waitFor(() => expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0), { timeout: 4000 });
+    expect(screen.queryByText('4.00')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Claim 2.95/ })).toBeNull();
+  });
+
+  it('matching fingerprint at count 100: ready, #3 win and #7 host fee found with the contract amounts', async () => {
+    history(100);
+    const t = track();
+    const READY = `ready inPlay=${5n * USDC} won=2950000 roundClaims=7:20000,3:2950000`;
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(READY), { timeout: 4000 });
+    expect(t.seen.filter((s) => s !== 'loading' && s !== READY)).toEqual([]);
+    expect(roundCalls).toContain('roundOf:100');
+    expect(contractPays(3, A)).toBe(2_950_000n);
+    expect(contractPays(7, A)).toBe(20_000n);
+  });
+
+  it('matching fingerprint with the indexer behind: its head round is read too, and the answer is ready', async () => {
+    history(100);
+    env.globalRounds = 80;
+    env.rounds = env.rounds.filter((r) => Number(r.id) <= 80);
+    env.entries = env.entries.filter((e) => Number(e.round_id) <= 80);
+    const t = track();
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(`ready inPlay=${5n * USDC} won=2950000 roundClaims=7:20000,3:2950000`), { timeout: 4000 });
+    expect(idsRead()).toEqual([3, 7, 80, ...range(81, 100)]);
+  });
+
+  it('a complete read, then the endpoint is switched to a foreign indexer: unavailable, the old totals are not kept', async () => {
+    history(100);
+    const t = track();
+    await waitFor(() => expect(summarise(t.current().chain)).toMatch(/^ready/), { timeout: 4000 });
+    vi.resetModules();
+    ({ GET: discoveryRoute } = await import('@/app/api/me/rounds/route'));
+    env.rounds[99] = { ...env.rounds[99], openTime: String(BigInt(NOW - 19_999)) };
+    env.entries = [];
+    await act(async () => { t.current().refetch(); });
+    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
   });
 });
 

@@ -208,7 +208,10 @@ beforeEach(() => {
   // GET /api/me/rounds (feat/me-rounds-indexer): an indexer that has every round and lists them all, so Me reads every
   // round here exactly as it did before discovery existed.
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-    const body = { roundIds: rounds.map((_, i) => String(i + 1)), indexedThrough: String(rounds.length) };
+    // Its head round's fingerprint is the chain's own (the same contract), as the binding check requires.
+    const top = rounds[rounds.length - 1];
+    const head = top ? { id: String(rounds.length), openTime: String(top.openTime), startTime: String(top.startTime), creator: top.creator.toLowerCase() } : null;
+    const body = { roundIds: rounds.map((_, i) => String(i + 1)), indexedThrough: String(rounds.length), head };
     return { ok: true, status: 200, json: async () => body } as Response;
   });
 });

@@ -2,7 +2,10 @@
 
 // This account's rounds for Me: the rounds the indexer says it entered or created, plus every round the indexer
 // cannot vouch for yet, each read on chain with its stake and claims (me-rounds-discovery.ts). The cost per poll is
-// 4 reads per round in that set, not per round ever scheduled (Codex ME_ROUNDS R1). All-or-nothing reads (the Me retry
+// 4 reads per round in that set, not per round ever scheduled (Codex ME_ROUNDS R1): at most
+// 4 x (discovered + max(ME_ROUNDS_RECENT, unindexed) + 1), the +1 being the indexer's head round, always read so its
+// fingerprint can be checked against the chain (Codex ME_ROUNDS R2). An answer whose head round does not match roundOf
+// describes another Rounds contract: the rounds part is unavailable, never `ready`. All-or-nothing reads (the Me retry
 // rule, 2026-10-12): one refused call fails the read so TanStack Query retries it, and a failed refetch keeps the last
 // complete data. A failed discovery is an error like a failed chain read: Me never shows pools-only totals for it.
 // `off` when Rounds is not configured.
@@ -11,7 +14,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useReadContract, useReadContracts } from 'wagmi';
 
-import { parseMeRoundsDiscovery, planMeRoundReads, type MeRoundsDiscovery } from './me-rounds-discovery';
+import { headMatchesChain, parseMeRoundsDiscovery, planMeRoundReads, type MeRoundsDiscovery } from './me-rounds-discovery';
 import type { RoundStakeRead } from './me-rounds';
 import type { Round } from './rounds-model';
 import { roundsContract, toRound, type RoundTuple } from './use-rounds';
@@ -77,24 +80,32 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
     if (!complete) return null;
     const rounds: Round[] = [];
     const stakes = new Map<string, RoundStakeRead>();
+    // The binding (me-rounds-discovery.ts, step 0): the indexer's head round is this contract's round of that id. No
+    // head means the indexer has no rounds, and then every round on chain is in `ids` (the plan starts at 1).
+    const head = discovery?.head ?? null;
+    let bound = head === null;
     ids.forEach((id, i) => {
       const at = i * PER_ROUND;
+      if (head !== null && id === head.id) bound = headMatchesChain(head, data[at] as RoundTuple);
       rounds.push(toRound(id, data[at] as RoundTuple));
       const s = data[at + 1] as { side: number; amount: bigint };
       const side = Number(s.side) === 1 ? 'up' : Number(s.side) === 2 ? 'down' : null;
       stakes.set(id.toString(), { stake: { side, amount: BigInt(s.amount) }, claimed: Boolean(data[at + 2]), creatorFeeClaimed: Boolean(data[at + 3]) });
     });
-    return { rounds, stakes };
-  }, [complete, data, ids]);
+    return { rounds, stakes, bound };
+  }, [complete, data, ids, discovery]);
 
   if (!roundsContract) return { status: 'off', refetch };
   if (countQ.isError && countQ.data === undefined) return { status: 'error', refetch };
   if (discoveryQ.isError && discoveryQ.data === undefined) return { status: 'error', refetch };
   if (countQ.isPending || discoveryQ.isPending || !plan) return { status: 'loading', refetch };
-  // The indexer is too far behind to bound the reads: unavailable, never a partial list.
+  // The indexer is too far behind to bound the reads, or ahead of the chain (not this contract's, or not checkable
+  // yet): unavailable, never a partial list.
   if (!plan.ok) return { status: 'error', refetch };
   if (ids.length === 0) return { status: 'ready', rounds: [], stakes: new Map(), refetch };
   if (q.isError && q.data === undefined) return { status: 'error', refetch };
   if (!parsed) return { status: 'loading', refetch };
-  return { status: 'ready', ...parsed, refetch };
+  // The discovery answer is for another Rounds contract (or its head round is missing from `ids`): unavailable.
+  if (!parsed.bound) return { status: 'error', refetch };
+  return { status: 'ready', rounds: parsed.rounds, stakes: parsed.stakes, refetch };
 }

@@ -9,13 +9,17 @@ import { ttlMemo, type Memoized } from '@/lib/ttl-memo';
  *
  * The round ids Me reads on chain for one account (src/lib/me-rounds-discovery.ts): every round the account entered or
  * created, and every round the indexer still has as Active, from the Envio indexer (ENVIO_GRAPHQL_URL), with the last
- * round the indexer has seen scheduled. Ids only; the amounts are read from the chain by the browser. Round entries
- * and creators are public chain data, so the route needs no session.
+ * round the indexer has seen scheduled and that round's fingerprint (`head`: openTime, startTime, creator), which the
+ * browser compares with roundOf on chain before it trusts the rest (Codex ME_ROUNDS R2: the answer is bound to this
+ * Rounds contract, never assumed). Ids only; the amounts are read from the chain by the browser. Round entries and
+ * creators are public chain data, so the route needs no session.
  *
- *   200 { roundIds: ["3", "7", ...], indexedThrough: "400" }
+ *   200 { roundIds: ["3", "7", ...], indexedThrough: "400",
+ *         head: { id: "400", openTime: "1760000000", startTime: "1760000900", creator: "0x…" } }   head null iff 0 rounds
  *   400 { error: "bad_account" }        not exactly one `account`, or not a 0x address (any letter case)
  *   503 { error: "not_configured" }     ENVIO_GRAPHQL_URL unset
- *   502 { error: "indexer_unavailable" } the indexer failed or answered something unusable
+ *   502 { error: "indexer_unavailable" } the indexer failed or answered something unusable, including a missing or
+ *                                        malformed head round when it has rounds
  *   502 { error: "too_many_rows" }      a list longer than the read cap: refused, never cut short
  */
 export const runtime = 'nodejs';

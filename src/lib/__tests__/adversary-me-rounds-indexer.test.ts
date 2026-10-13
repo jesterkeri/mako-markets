@@ -18,7 +18,11 @@ describe('adversary: an indexer that claims far more rounds than the chain has',
     // The chain Me reads has 30 rounds. The account holds a claimable win in round 5 of it.
     const count = 30n;
     // The indexer answers for another deployment: 500 rounds seen, the account's entries are in its rounds 200 and 450.
-    const discovery = { roundIds: [200n, 450n], indexedThrough: 500n };
+    const discovery = {
+      roundIds: [200n, 450n],
+      indexedThrough: 500n,
+      head: { id: 500n, openTime: 1_760_000_000n, startTime: 1_760_000_900n, creator: '0x00000000000000000000000000000000000000c2' },
+    };
 
     const plan = planMeRoundReads(count, discovery);
 
