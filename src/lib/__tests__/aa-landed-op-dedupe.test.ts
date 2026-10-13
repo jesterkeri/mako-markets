@@ -5,6 +5,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { aaPendingValidityWindowSql } from './aa-pending-migrations';
 
 const state = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock('server-only', () => ({}));
@@ -32,6 +33,7 @@ beforeAll(async () => {
       created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, sending_started_at timestamptz,
       status_updated_at timestamptz NOT NULL DEFAULT now()
     );`);
+  await pg.exec(aaPendingValidityWindowSql());
 });
 afterAll(async () => {
   await pg.close();

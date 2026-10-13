@@ -192,6 +192,8 @@ function buildPendingRow(args: { callData: Hex }) {
     expiresAt: new Date(Date.now() + 60_000),
     sendingStartedAt: null,
     statusUpdatedAt: new Date(),
+    validAfter: 0n,
+    validUntil: 0xffffffffffffn,
   };
 }
 

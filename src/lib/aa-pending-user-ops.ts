@@ -52,6 +52,10 @@ export type InsertPendingArgs = {
   nonceHex: Hex;
   safeOpHash: Hex;
   expiresAt: Date;
+  /// The SafeOp validity window the op was built with (`buildSponsoredUserOp`'s `validAfter`/`validUntil`). Stored so
+  /// a recovered response and the send route use the window the user's signature covers.
+  validAfter: bigint;
+  validUntil: bigint;
 };
 
 export type InsertPendingResult =
@@ -83,6 +87,8 @@ export async function insertPending(
       safeOpHash: args.safeOpHash.toLowerCase() as Hex,
       status: 'pending',
       expiresAt: args.expiresAt,
+      validAfter: args.validAfter,
+      validUntil: args.validUntil,
     })
     .onConflictDoNothing()
     .returning({

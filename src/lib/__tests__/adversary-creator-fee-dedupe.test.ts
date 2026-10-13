@@ -64,6 +64,7 @@ vi.mock('@/lib/user-op', async (importActual) => ({
 import { POST as sponsor } from '../../app/api/aa/sponsor/route';
 import { POST as send } from '../../app/api/aa/send/route';
 import { wrapperCallDataFor } from '../user-op-encode';
+import { aaPendingValidityWindowSql } from './aa-pending-migrations';
 
 let pg: PGlite;
 beforeAll(async () => {
@@ -82,6 +83,7 @@ beforeAll(async () => {
     );
     CREATE UNIQUE INDEX aa_pending_one_in_flight ON aa_pending_user_ops (chain_id, safe_address)
       WHERE status IN ('pending','sending','submitted','ambiguous');`);
+  await pg.exec(aaPendingValidityWindowSql());
   await pg.query(`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES ($1, $2, $3)`, [USER, MONAD_TESTNET_ID, SAFE]);
 });
 afterAll(async () => {

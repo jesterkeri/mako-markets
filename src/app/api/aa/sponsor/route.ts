@@ -16,10 +16,7 @@ import {
   assertRoundScheduleShape,
   assertRoundScheduler,
 } from '@/lib/rounds-call-allowlist';
-import {
-  PENDING_TTL_MS,
-  VALIDITY_WINDOW_MAX_UINT48,
-} from '@/lib/aa-constants';
+import { PENDING_TTL_MS } from '@/lib/aa-constants';
 import { isSupportedAaChainId } from '@/lib/aa-config';
 import { isPmEnabled } from '@/lib/pm-enabled';
 import {
@@ -197,8 +194,8 @@ function serializeExistingInFlight(args: {
         userOp: existing.userOp,
         safeOpHash: existing.safeOpHash,
         userOpHash,
-        validAfter: '0x0',
-        validUntil: toHex(VALIDITY_WINDOW_MAX_UINT48),
+        validAfter: toHex(existing.validAfter),
+        validUntil: toHex(existing.validUntil),
         expiresAt: existing.expiresAt.toISOString(),
         recovered: true,
       },
@@ -1122,6 +1119,8 @@ export async function POST(req: Request) {
     nonceHex: toHex(storedToPacked(built.userOp).nonce),
     safeOpHash: built.safeOpHash,
     expiresAt,
+    validAfter: built.validAfter,
+    validUntil: built.validUntil,
   });
 
   if (inserted.kind === 'conflict') {
@@ -1159,8 +1158,8 @@ export async function POST(req: Request) {
     userOp: built.userOp,
     safeOpHash: built.safeOpHash,
     userOpHash: built.userOpHash,
-    validAfter: '0x0',
-    validUntil: toHex(VALIDITY_WINDOW_MAX_UINT48),
+    validAfter: toHex(built.validAfter),
+    validUntil: toHex(built.validUntil),
     expiresAt: inserted.expiresAt.toISOString(),
   });
 }

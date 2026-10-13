@@ -1,9 +1,6 @@
 import { hexToBigInt, type Address, type Hex } from 'viem';
 
-import {
-  SENDING_RECOVERY_THRESHOLD_MS,
-  VALIDITY_WINDOW_MAX_UINT48,
-} from '@/lib/aa-constants';
+import { SENDING_RECOVERY_THRESHOLD_MS } from '@/lib/aa-constants';
 import { isSupportedAaChainId } from '@/lib/aa-config';
 import {
   assertSponsoredCallData,
@@ -275,7 +272,13 @@ export async function POST(req: Request) {
   // sponsor route would keep returning a usable signing payload (via
   // serializeExistingInFlight) for an op that can never be sent, and a
   // misconfigured cron would leave the Safe blocked indefinitely.
-  if (row.expiresAt.getTime() <= Date.now()) {
+  // A row whose SafeOp validUntil has passed is dead the same way: the
+  // EntryPoint rejects it, so it is expired here rather than sent to the
+  // bundler (a creator-fee op has a finite window, CREATOR_FEE_OP_TTL_S).
+  if (
+    row.expiresAt.getTime() <= Date.now() ||
+    row.validUntil <= BigInt(Math.floor(Date.now() / 1000))
+  ) {
     const transition = await transitionPendingToExpired({
       rowId: row.id,
       sessionUserId: session.userId,
@@ -327,8 +330,8 @@ export async function POST(req: Request) {
       signature: signature as Hex,
       expectedSafeOpHash: row.safeOpHash as Hex,
       expectedMagicEoa: row.magicEoa as Address,
-      validAfter: 0n,
-      validUntil: VALIDITY_WINDOW_MAX_UINT48,
+      validAfter: row.validAfter,
+      validUntil: row.validUntil,
       signatureScheme: 'eth_sign_envelope',
       onUserOpHashComputed: async (userOpHash) => {
         const result = await transitionToSending({
