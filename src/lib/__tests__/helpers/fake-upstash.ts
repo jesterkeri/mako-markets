@@ -43,6 +43,8 @@ export async function answerUpstash(f: FakeUpstash, init?: RequestInit): Promise
     const c = (f.zsets.get(consumerKey) ?? []).filter((x) => x.score > now - win);
     f.zsets.set(globalKey, g);
     f.zsets.set(consumerKey, c);
+    // A cap that is not a number makes the real script error (tonumber gives nil), so the fake errors too.
+    if (!Number.isFinite(Number(globalCapS)) || !Number.isFinite(Number(capS))) return Response.json({ error: 'ERR attempt to compare nil with number' });
     if (g.length >= Number(globalCapS) || c.length >= Number(capS)) return Response.json({ result: 0 });
     g.push({ score: now, member });
     c.push({ score: now, member });
