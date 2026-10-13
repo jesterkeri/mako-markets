@@ -25,6 +25,9 @@ type HoldRecord = Map<string, Hold[]>;
 let memory: HoldRecord = new Map();
 /// The holds this tab made, kept whatever storage does.
 let mine: HoldRecord = new Map();
+/// The holds this tab released (id -> ref -> when), kept until they would have lapsed: a release whose storage write
+/// failed must not come back from storage's older copy (adversary r5 on 0162c30).
+let released = new Map<string, Map<string, number>>();
 /// The pools held now, as React reads them: rebuilt on every change here or in another tab.
 let snapshot: ReadonlySet<string> = new Set();
 const listeners = new Set<() => void>();
@@ -64,6 +67,14 @@ function read(now = Date.now()): HoldRecord {
     if (typeof window !== 'undefined' && window.localStorage) memory = parse(window.localStorage.getItem(KEY), now);
   } catch {
     // No storage: the last record this tab knew.
+  }
+  for (const [id, refs] of released) {
+    for (const [ref, at] of refs) if (now - at >= HOLD_MS) refs.delete(ref);
+    if (refs.size === 0) released.delete(id);
+  }
+  for (const [id, refs] of released) {
+    const list = memory.get(id);
+    if (list) memory.set(id, list.filter((h) => !refs.has(h.ref)));
   }
   prune(mine, now);
   for (const [id, list] of mine) {
@@ -107,25 +118,29 @@ export function markCreatorClaimSent(marketId: bigint, ref = 'sent', now = Date.
   const list = (rec.get(id) ?? []).filter((h) => h.ref !== ref);
   rec.set(id, [...list, { ref, at: now }]);
   mine.set(id, [...(mine.get(id) ?? []).filter((h) => h.ref !== ref), { ref, at: now }]);
+  released.get(id)?.delete(ref);
   write(rec);
   publish(rec);
 }
 
 /// Release the hold of the one claim named `ref` on `marketId`: only for a claim Monad turned down (a reverted
 /// receipt), so its fee is still unclaimed. Any other claim's hold on the pool stays.
-export function clearCreatorClaimSent(marketId: bigint, ref: string): void {
+export function clearCreatorClaimSent(marketId: bigint, ref: string, now = Date.now()): void {
   listen();
   const id = marketId.toString();
   const own = mine.get(id)?.filter((h) => h.ref !== ref);
   if (own && own.length > 0) mine.set(id, own);
   else mine.delete(id);
-  const rec = read();
+  const refs = released.get(id) ?? new Map<string, number>();
+  refs.set(ref, now);
+  released.set(id, refs);
+  const rec = read(now);
   const list = rec.get(id);
-  if (!list) return;
-  const rest = list.filter((h) => h.ref !== ref);
-  if (rest.length === list.length) return;
-  if (rest.length === 0) rec.delete(id);
-  else rec.set(id, rest);
+  if (list) {
+    const rest = list.filter((h) => h.ref !== ref);
+    if (rest.length === 0) rec.delete(id);
+    else rec.set(id, rest);
+  }
   write(rec);
   publish(rec);
 }
@@ -140,6 +155,7 @@ export function creatorClaimHeld(marketId: bigint, now = Date.now()): boolean {
 export function resetCreatorClaimHolds(): void {
   memory = new Map();
   mine = new Map();
+  released = new Map();
   try {
     window.localStorage.removeItem(KEY);
   } catch {
