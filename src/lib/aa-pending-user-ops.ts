@@ -141,7 +141,9 @@ export async function loadInFlightForSafe(args: {
 /// own record, so no browser clock, tab or lagging RPC can get around it. Counts:
 ///   - an op that LANDED (`sent`), for good;
 ///   - an op handed to the bundler (it has a user-op hash) whose row ended any way other than `reverted` or
-///     `failed_pre_submit`, for SUBMITTED_SETTLE_S after its last status change, on the database's clock. Such a row can
+///     `failed_pre_submit`, for SUBMITTED_SETTLE_S after its last status change, on the database's clock: every
+///     transition in this file stamps `status_updated_at` with the database's `now()`, never an app server's clock, so
+///     the window's start and end come from the same clock (adversary on 1e2f041). Such a row can
 ///     say `expired` while its signed op still lands, when a lagging node made the resolver give up early.
 /// After that window a claim is allowed again if the chain read in the sponsor route shows the fee unclaimed: a dropped op
 /// must not block a creator for good, and the Safe's nonce lets only one of two ops with the same nonce ever land.
@@ -175,7 +177,7 @@ export async function transitionPendingToExpired(args: {
 }): Promise<'transitioned' | 'already_claimed'> {
   const result = await db
     .update(aaPendingUserOps)
-    .set({ status: 'expired', statusUpdatedAt: new Date() })
+    .set({ status: 'expired', statusUpdatedAt: sql`now()` })
     .where(
       and(
         eq(aaPendingUserOps.id, args.rowId),
@@ -202,7 +204,7 @@ export async function transitionToSending(args: {
       status: 'sending',
       userOpHash: args.userOpHash.toLowerCase() as Hex,
       sendingStartedAt: new Date(),
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -227,7 +229,7 @@ export async function transitionToSent(args: {
     .set({
       status: 'sent',
       txHash: args.txHash.toLowerCase() as Hex,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -252,7 +254,7 @@ export async function transitionToReverted(args: {
       status: 'reverted',
       txHash: args.txHash.toLowerCase() as Hex,
       failureReason: args.failureReason,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -275,7 +277,7 @@ export async function transitionToFailedPreSubmit(args: {
     .set({
       status: 'failed_pre_submit',
       failureReason: args.failureReason,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -298,7 +300,7 @@ export async function transitionToSubmitted(args: {
     .set({
       status: 'submitted',
       userOpHash: args.userOpHash.toLowerCase() as Hex,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -335,7 +337,7 @@ export async function transitionFromSubmitted(args: {
         .set({
           status: 'sent',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -354,7 +356,7 @@ export async function transitionFromSubmitted(args: {
           status: 'reverted',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
           failureReason: args.resolution.failureReason,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -369,7 +371,7 @@ export async function transitionFromSubmitted(args: {
     case 'expired': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'expired', statusUpdatedAt: new Date() })
+        .set({ status: 'expired', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -383,7 +385,7 @@ export async function transitionFromSubmitted(args: {
     case 'ambiguous': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'ambiguous', statusUpdatedAt: new Date() })
+        .set({ status: 'ambiguous', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -412,7 +414,7 @@ export async function transitionFromSendingViaResolver(args: {
         .set({
           status: 'sent',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -431,7 +433,7 @@ export async function transitionFromSendingViaResolver(args: {
           status: 'reverted',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
           failureReason: args.resolution.failureReason,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -446,7 +448,7 @@ export async function transitionFromSendingViaResolver(args: {
     case 'expired': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'expired', statusUpdatedAt: new Date() })
+        .set({ status: 'expired', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -460,7 +462,7 @@ export async function transitionFromSendingViaResolver(args: {
     case 'ambiguous': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'ambiguous', statusUpdatedAt: new Date() })
+        .set({ status: 'ambiguous', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -479,7 +481,7 @@ export async function transitionFromSendingViaResolver(args: {
 export async function expirePastDueRows(): Promise<number> {
   const result = await db
     .update(aaPendingUserOps)
-    .set({ status: 'expired', statusUpdatedAt: new Date() })
+    .set({ status: 'expired', statusUpdatedAt: sql`now()` })
     .where(
       and(
         eq(aaPendingUserOps.status, 'pending'),
