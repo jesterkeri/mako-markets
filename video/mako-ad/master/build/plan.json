@@ -1,0 +1,382 @@
+[
+ {
+  "id": "s01",
+  "proj": "macro",
+  "start": 0,
+  "dur": 2,
+  "pre": 0,
+  "post": 0.2,
+  "hs": 0,
+  "hd": 2.2
+ },
+ {
+  "id": "s02",
+  "proj": "macro",
+  "start": 2,
+  "dur": 1.5,
+  "pre": 0.1,
+  "post": 0,
+  "hs": 1.9,
+  "hd": 1.6
+ },
+ {
+  "id": "s03",
+  "proj": "flap",
+  "start": 3.5,
+  "dur": 1.5,
+  "pre": 0,
+  "post": 0.05,
+  "hs": 3.5,
+  "hd": 1.55
+ },
+ {
+  "id": "s04",
+  "proj": "glass",
+  "start": 5,
+  "dur": 2,
+  "pre": 0.05,
+  "post": 0.1,
+  "hs": 4.95,
+  "hd": 2.15
+ },
+ {
+  "id": "s05",
+  "proj": "flap",
+  "start": 7,
+  "dur": 1,
+  "pre": 0.1,
+  "post": 0,
+  "hs": 6.9,
+  "hd": 1.1
+ },
+ {
+  "id": "s06",
+  "proj": "flap",
+  "start": 8,
+  "dur": 1,
+  "pre": 0,
+  "post": 0,
+  "hs": 8,
+  "hd": 1
+ },
+ {
+  "id": "s07",
+  "proj": "flap",
+  "start": 9,
+  "dur": 1,
+  "pre": 0,
+  "post": 0,
+  "hs": 9,
+  "hd": 1
+ },
+ {
+  "id": "s08",
+  "proj": "flap",
+  "start": 10,
+  "dur": 0.5,
+  "pre": 0,
+  "post": 0,
+  "hs": 10,
+  "hd": 0.5
+ },
+ {
+  "id": "s09",
+  "proj": "flap",
+  "start": 10.5,
+  "dur": 0.5,
+  "pre": 0,
+  "post": 0,
+  "hs": 10.5,
+  "hd": 0.5
+ },
+ {
+  "id": "s10",
+  "proj": "flap",
+  "start": 11,
+  "dur": 0.5,
+  "pre": 0,
+  "post": 0,
+  "hs": 11,
+  "hd": 0.5
+ },
+ {
+  "id": "s11",
+  "proj": "flap",
+  "start": 11.5,
+  "dur": 1.5,
+  "pre": 0,
+  "post": 0.3,
+  "hs": 11.5,
+  "hd": 1.8
+ },
+ {
+  "id": "s12",
+  "proj": "glass",
+  "start": 13,
+  "dur": 2,
+  "pre": 0.2,
+  "post": 0,
+  "hs": 12.8,
+  "hd": 2.2
+ },
+ {
+  "id": "s13",
+  "proj": "glass",
+  "start": 15,
+  "dur": 1.5,
+  "pre": 0,
+  "post": 0.05,
+  "hs": 15,
+  "hd": 1.55
+ },
+ {
+  "id": "s14",
+  "proj": "expl",
+  "start": 16.5,
+  "dur": 1.5,
+  "pre": 0.05,
+  "post": 0.25,
+  "hs": 16.45,
+  "hd": 1.8
+ },
+ {
+  "id": "s15",
+  "proj": "glass",
+  "start": 18,
+  "dur": 1.5,
+  "pre": 0.25,
+  "post": 0.25,
+  "hs": 17.75,
+  "hd": 2
+ },
+ {
+  "id": "s16",
+  "proj": "glass",
+  "start": 19.5,
+  "dur": 1.5,
+  "pre": 0.25,
+  "post": 0,
+  "hs": 19.25,
+  "hd": 1.75
+ },
+ {
+  "id": "s17",
+  "proj": "flap",
+  "start": 21,
+  "dur": 1,
+  "pre": 0,
+  "post": 0,
+  "hs": 21,
+  "hd": 1
+ },
+ {
+  "id": "s18",
+  "proj": "expl",
+  "start": 22,
+  "dur": 2,
+  "pre": 0,
+  "post": 0,
+  "hs": 22,
+  "hd": 2
+ },
+ {
+  "id": "s19",
+  "proj": "expl",
+  "start": 24,
+  "dur": 2.5,
+  "pre": 0,
+  "post": 0.15,
+  "hs": 24,
+  "hd": 2.65
+ },
+ {
+  "id": "s21",
+  "proj": "expl",
+  "start": 26.5,
+  "dur": 1.5,
+  "pre": 0.15,
+  "post": 0.18,
+  "hs": 26.35,
+  "hd": 1.83
+ },
+ {
+  "id": "s22",
+  "proj": "macro",
+  "start": 28,
+  "dur": 1.5,
+  "pre": 0.18,
+  "post": 0.3,
+  "hs": 27.82,
+  "hd": 1.98
+ },
+ {
+  "id": "s23",
+  "proj": "glass",
+  "start": 29.5,
+  "dur": 2.5,
+  "pre": 0.3,
+  "post": 0,
+  "hs": 29.2,
+  "hd": 2.8
+ },
+ {
+  "id": "s24",
+  "proj": "flap",
+  "start": 32,
+  "dur": 1.5,
+  "pre": 0,
+  "post": 0.3,
+  "hs": 32,
+  "hd": 1.8
+ },
+ {
+  "id": "s25",
+  "proj": "expl",
+  "start": 33.5,
+  "dur": 1.5,
+  "pre": 0.2,
+  "post": 0.06,
+  "hs": 33.3,
+  "hd": 1.76
+ },
+ {
+  "id": "s26",
+  "proj": "glass",
+  "start": 35,
+  "dur": 1.5,
+  "pre": 0.06,
+  "post": 0.05,
+  "hs": 34.94,
+  "hd": 1.61
+ },
+ {
+  "id": "s27",
+  "proj": "flap",
+  "start": 36.5,
+  "dur": 1.5,
+  "pre": 0.05,
+  "post": 0,
+  "hs": 36.45,
+  "hd": 1.55
+ },
+ {
+  "id": "s28",
+  "proj": "macro",
+  "start": 38,
+  "dur": 2,
+  "pre": 0,
+  "post": 0.2,
+  "hs": 38,
+  "hd": 2.2
+ },
+ {
+  "id": "s29",
+  "proj": "expl",
+  "start": 40,
+  "dur": 2,
+  "pre": 0.25,
+  "post": 0.15,
+  "hs": 39.75,
+  "hd": 2.4
+ },
+ {
+  "id": "s30",
+  "proj": "glass",
+  "start": 42,
+  "dur": 1.5,
+  "pre": 0.15,
+  "post": 0,
+  "hs": 41.85,
+  "hd": 1.65
+ },
+ {
+  "id": "s31",
+  "proj": "flap",
+  "start": 43.5,
+  "dur": 2.5,
+  "pre": 0,
+  "post": 0.2,
+  "hs": 43.5,
+  "hd": 2.7
+ },
+ {
+  "id": "s32",
+  "proj": "flap",
+  "start": 46,
+  "dur": 1.5,
+  "pre": 0.2,
+  "post": 0,
+  "hs": 45.8,
+  "hd": 1.7
+ },
+ {
+  "id": "s33",
+  "proj": "glass",
+  "start": 47.5,
+  "dur": 1.5,
+  "pre": 0,
+  "post": 0.2,
+  "hs": 47.5,
+  "hd": 1.7
+ },
+ {
+  "id": "s34",
+  "proj": "macro",
+  "start": 49,
+  "dur": 2,
+  "pre": 0.2,
+  "post": 0,
+  "hs": 48.8,
+  "hd": 2.2
+ },
+ {
+  "id": "s35",
+  "proj": "expl",
+  "start": 51,
+  "dur": 1.5,
+  "pre": 0,
+  "post": 0,
+  "hs": 51,
+  "hd": 1.5
+ },
+ {
+  "id": "s36",
+  "proj": "glass",
+  "start": 52.5,
+  "dur": 1.5,
+  "pre": 0,
+  "post": 0,
+  "hs": 52.5,
+  "hd": 1.5
+ },
+ {
+  "id": "s37",
+  "proj": "macro",
+  "start": 54,
+  "dur": 2,
+  "pre": 0,
+  "post": 0.3,
+  "hs": 54,
+  "hd": 2.3
+ },
+ {
+  "id": "s38",
+  "proj": "flap",
+  "start": 56,
+  "dur": 2.5,
+  "pre": 0.3,
+  "post": 0.3,
+  "hs": 55.7,
+  "hd": 3.1
+ },
+ {
+  "id": "s39",
+  "proj": "glass",
+  "start": 58.5,
+  "dur": 1.5,
+  "pre": 0.3,
+  "post": 0,
+  "hs": 58.2,
+  "hd": 1.8
+ }
+]

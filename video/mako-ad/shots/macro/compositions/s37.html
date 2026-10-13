@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>s37 MACRO</title>
+  </head>
+  <body>
+    <template id="s37-template">
+      <style>
+@font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("assets/fonts/captured-bricolage-grotesque-latin-wght-normal.0hh3pksc_dt39.woff2") format("woff2-variations");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("assets/fonts/captured-bricolage-grotesque-latin-ext-wght-normal.0-cv.c7uda8um.woff2") format("woff2-variations");unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+1E00-1E9F,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:"Inter Variable";font-style:normal;font-weight:100 900;src:url("assets/fonts/captured-inter-latin-wght-normal.055ydel_y7o6i.woff2") format("woff2-variations")}
+@font-face{font-family:"JetBrains Mono";font-weight:100 800;src:url("assets/fonts/jbmono-latin.woff2") format("woff2")}
+#s37-root{position:absolute;inset:0;overflow:hidden;background:#0b0b0b;color:#EDE6D6;font-family:"Inter Variable",sans-serif}
+#s37-root .mk-stage{position:absolute;inset:0;--fx:960px;--fw:400px;--fy:540px;--fh:120px;--ff:110px}
+#s37-root .mk-copy{position:absolute;inset:0;overflow:hidden}
+#s37-root .mk-deep{filter:blur(26px)}
+#s37-root .mk-mid{filter:blur(8px);--sp:2.3;-webkit-mask-image:linear-gradient(180.00deg, transparent calc(var(--fy) - (var(--fh) + var(--ff)) * var(--sp)), #000 calc(var(--fy) - var(--fh) * var(--sp)), #000 calc(var(--fy) + var(--fh) * var(--sp)), transparent calc(var(--fy) + (var(--fh) + var(--ff)) * var(--sp)));mask-image:linear-gradient(180.00deg, transparent calc(var(--fy) - (var(--fh) + var(--ff)) * var(--sp)), #000 calc(var(--fy) - var(--fh) * var(--sp)), #000 calc(var(--fy) + var(--fh) * var(--sp)), transparent calc(var(--fy) + (var(--fh) + var(--ff)) * var(--sp)))}
+#s37-root .mk-sharp{--sp:1;-webkit-mask-image:linear-gradient(180.00deg, transparent calc(var(--fy) - (var(--fh) + var(--ff)) * var(--sp)), #000 calc(var(--fy) - var(--fh) * var(--sp)), #000 calc(var(--fy) + var(--fh) * var(--sp)), transparent calc(var(--fy) + (var(--fh) + var(--ff)) * var(--sp)));mask-image:linear-gradient(180.00deg, transparent calc(var(--fy) - (var(--fh) + var(--ff)) * var(--sp)), #000 calc(var(--fy) - var(--fh) * var(--sp)), #000 calc(var(--fy) + var(--fh) * var(--sp)), transparent calc(var(--fy) + (var(--fh) + var(--ff)) * var(--sp)))}
+#s37-root .mk-br{position:absolute;inset:0;transform-origin:50% 50%}
+#s37-root .mk-bg{position:absolute;inset:0;background:#0b0b0b}
+#s37-root .mk-cam,#s37-root .mk-fcam{position:absolute;left:960px;top:540px;width:1920px;height:1080px;transform-origin:0 0}
+#s37-root .mk-pan,#s37-root .mk-fpan{position:absolute;left:0;top:0;width:1920px;height:1080px}
+#s37-root .mk-persp{position:absolute;left:0;top:0;width:1920px;height:1620px;perspective:2600px;perspective-origin:960px 200px}
+#s37-root .mk-surf{position:absolute;left:-190px;top:-150px;width:2300px;height:1150px;transform:rotateX(74deg) rotateY(0deg) rotateZ(0deg);transform-origin:50% 100%;border-radius:72px;background:#121212;box-shadow:inset 0 0 0 2px #1c1c1c;overflow:hidden}
+#s37-root .mk-fall{position:absolute;inset:0;background:linear-gradient(to bottom, #0b0b0b 0%, rgba(11,11,11,0.45) 18%, rgba(11,11,11,0) 45%)}
+#s37-root .mk-sheen{position:absolute;pointer-events:none;overflow:hidden}
+#s37-root .mk-sheen i{position:absolute;inset:0;background-size:300% 100%;background-position:140% 0%}
+#s37-root .mk-a{position:absolute}
+#s37-root .mk-disp{font-family:"Bricolage Grotesque Variable",sans-serif;font-weight:800;letter-spacing:-0.025em;line-height:1;white-space:nowrap}
+#s37-root .mk-mono{font-family:"JetBrains Mono",monospace;font-weight:700}
+#s37-root .mk-vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 95% at 50% 45%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 100%)}
+#s37-root .mk-cursor{position:absolute;left:0;top:0;width:10px;height:10px}
+#s37-root .mk-cursor .mk-cs{position:absolute;left:0;top:0;width:10px;height:10px;transform-origin:0 0}
+#s37-root .hud{position:absolute;inset:0;pointer-events:none;font-family:"JetBrains Mono",monospace;font-size:15px;letter-spacing:0.08em;color:#EDE6D6}
+#s37-root .hud .hl{position:absolute;white-space:nowrap}
+#s37-root .hud .soft{color:rgba(237,230,214,0.62);font-weight:500}
+#s37-root .hud .ink{font-weight:700}
+
+      </style>
+      <div id="s37-root" data-composition-id="s37" data-width="1920" data-height="1080" data-duration="2">
+        <div class="mk-stage">
+<div class="mk-copy mk-deep" data-layout-ignore><div class="mk-br"> <div class="mk-bg"></div> <div class="mk-cam" data-layout-allow-overflow><div class="mk-pan" data-layout-allow-overflow><div class="mk-persp"><div class="mk-surf"><div class="mk-a mk-spill" style="left:350px;top:-200px;width:1600px;height:1400px;background:radial-gradient(closest-side, rgba(237,230,214,0.18), rgba(237,230,214,0.060) 55%, rgba(237,230,214,0) 100%)"></div> <svg class="mk-a" style="left:0;top:0" width="2300" height="1150" viewBox="0 0 2300 1150"><circle cx="1150" cy="520" r="160" fill="none" stroke="rgba(237,230,214,0.090)" stroke-width="4"/><circle cx="1150" cy="520" r="310" fill="none" stroke="rgba(237,230,214,0.081)" stroke-width="4"/><circle cx="1150" cy="520" r="460" fill="none" stroke="rgba(237,230,214,0.071)" stroke-width="4"/><circle cx="1150" cy="520" r="610" fill="none" stroke="rgba(237,230,214,0.062)" stroke-width="4"/><circle cx="1150" cy="520" r="760" fill="none" stroke="rgba(237,230,214,0.053)" stroke-width="4"/><circle cx="1150" cy="520" r="910" fill="none" stroke="rgba(237,230,214,0.043)" stroke-width="4"/><circle cx="1150" cy="520" r="1060" fill="none" stroke="rgba(237,230,214,0.034)" stroke-width="4"/></svg> <div class="mk-a mk-spill2" style="left:650px;top:120px;width:1000px;height:800px;background:radial-gradient(closest-side, rgba(250,204,21,0.22), rgba(250,204,21,0.073) 55%, rgba(250,204,21,0) 100%)"></div><div class="mk-fall" data-layout-ignore data-layout-allow-occlusion></div></div></div></div></div> <div class="mk-fcam" data-layout-allow-overflow><div class="mk-fpan" data-layout-allow-overflow> <div class="mk-a" style="left:530px;top:135.32019704433498px"> <svg viewBox="-3 -3 406 316" width="860" height="669.4" style="display:block;overflow:visible"> <defs> <linearGradient id="s37-fin-0" class="mk-fing" gradientUnits="objectBoundingBox" x1="-1.2" y1="0" x2="-0.2" y2="0.35"> <stop offset="0" stop-color="#a7a194"/><stop offset="0.4" stop-color="#d9d2c2"/><stop offset="0.5" stop-color="#ffffff"/><stop offset="0.6" stop-color="#d9d2c2"/><stop offset="1" stop-color="#a7a194"/> </linearGradient> <linearGradient id="s37-edge-0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.0"/><stop offset="1" stop-color="#FACC15" stop-opacity="0.35"/></linearGradient> </defs> <path d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z" fill="url(#s37-fin-0)" stroke="url(#s37-fin-0)" stroke-width="3" stroke-linejoin="round"/> <path d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z" fill="url(#s37-edge-0)"/> </svg> </div></div></div> </div></div>
+<div class="mk-copy mk-mid" data-layout-ignore><div class="mk-br"> <div class="mk-bg"></div> <div class="mk-cam" data-layout-allow-overflow><div class="mk-pan" data-layout-allow-overflow><div class="mk-persp"><div class="mk-surf"><div class="mk-a mk-spill" style="left:350px;top:-200px;width:1600px;height:1400px;background:radial-gradient(closest-side, rgba(237,230,214,0.18), rgba(237,230,214,0.060) 55%, rgba(237,230,214,0) 100%)"></div> <svg class="mk-a" style="left:0;top:0" width="2300" height="1150" viewBox="0 0 2300 1150"><circle cx="1150" cy="520" r="160" fill="none" stroke="rgba(237,230,214,0.090)" stroke-width="4"/><circle cx="1150" cy="520" r="310" fill="none" stroke="rgba(237,230,214,0.081)" stroke-width="4"/><circle cx="1150" cy="520" r="460" fill="none" stroke="rgba(237,230,214,0.071)" stroke-width="4"/><circle cx="1150" cy="520" r="610" fill="none" stroke="rgba(237,230,214,0.062)" stroke-width="4"/><circle cx="1150" cy="520" r="760" fill="none" stroke="rgba(237,230,214,0.053)" stroke-width="4"/><circle cx="1150" cy="520" r="910" fill="none" stroke="rgba(237,230,214,0.043)" stroke-width="4"/><circle cx="1150" cy="520" r="1060" fill="none" stroke="rgba(237,230,214,0.034)" stroke-width="4"/></svg> <div class="mk-a mk-spill2" style="left:650px;top:120px;width:1000px;height:800px;background:radial-gradient(closest-side, rgba(250,204,21,0.22), rgba(250,204,21,0.073) 55%, rgba(250,204,21,0) 100%)"></div><div class="mk-fall" data-layout-ignore data-layout-allow-occlusion></div></div></div></div></div> <div class="mk-fcam" data-layout-allow-overflow><div class="mk-fpan" data-layout-allow-overflow> <div class="mk-a" style="left:530px;top:135.32019704433498px"> <svg viewBox="-3 -3 406 316" width="860" height="669.4" style="display:block;overflow:visible"> <defs> <linearGradient id="s37-fin-1" class="mk-fing" gradientUnits="objectBoundingBox" x1="-1.2" y1="0" x2="-0.2" y2="0.35"> <stop offset="0" stop-color="#a7a194"/><stop offset="0.4" stop-color="#d9d2c2"/><stop offset="0.5" stop-color="#ffffff"/><stop offset="0.6" stop-color="#d9d2c2"/><stop offset="1" stop-color="#a7a194"/> </linearGradient> <linearGradient id="s37-edge-1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.0"/><stop offset="1" stop-color="#FACC15" stop-opacity="0.35"/></linearGradient> </defs> <path d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z" fill="url(#s37-fin-1)" stroke="url(#s37-fin-1)" stroke-width="3" stroke-linejoin="round"/> <path d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z" fill="url(#s37-edge-1)"/> </svg> </div></div></div> </div></div>
+<div class="mk-copy mk-sharp"><div class="mk-br"> <div class="mk-bg"></div> <div class="mk-cam" data-layout-allow-overflow><div class="mk-pan" data-layout-allow-overflow><div class="mk-persp"><div class="mk-surf"><div class="mk-a mk-spill" style="left:350px;top:-200px;width:1600px;height:1400px;background:radial-gradient(closest-side, rgba(237,230,214,0.18), rgba(237,230,214,0.060) 55%, rgba(237,230,214,0) 100%)"></div> <svg class="mk-a" style="left:0;top:0" width="2300" height="1150" viewBox="0 0 2300 1150"><circle cx="1150" cy="520" r="160" fill="none" stroke="rgba(237,230,214,0.090)" stroke-width="4"/><circle cx="1150" cy="520" r="310" fill="none" stroke="rgba(237,230,214,0.081)" stroke-width="4"/><circle cx="1150" cy="520" r="460" fill="none" stroke="rgba(237,230,214,0.071)" stroke-width="4"/><circle cx="1150" cy="520" r="610" fill="none" stroke="rgba(237,230,214,0.062)" stroke-width="4"/><circle cx="1150" cy="520" r="760" fill="none" stroke="rgba(237,230,214,0.053)" stroke-width="4"/><circle cx="1150" cy="520" r="910" fill="none" stroke="rgba(237,230,214,0.043)" stroke-width="4"/><circle cx="1150" cy="520" r="1060" fill="none" stroke="rgba(237,230,214,0.034)" stroke-width="4"/></svg> <div class="mk-a mk-spill2" style="left:650px;top:120px;width:1000px;height:800px;background:radial-gradient(closest-side, rgba(250,204,21,0.22), rgba(250,204,21,0.073) 55%, rgba(250,204,21,0) 100%)"></div><div class="mk-fall" data-layout-ignore data-layout-allow-occlusion></div></div></div></div></div> <div class="mk-fcam" data-layout-allow-overflow><div class="mk-fpan" data-layout-allow-overflow> <div class="mk-a" style="left:530px;top:135.32019704433498px"> <svg viewBox="-3 -3 406 316" width="860" height="669.4" style="display:block;overflow:visible"> <defs> <linearGradient id="s37-fin-2" class="mk-fing" gradientUnits="objectBoundingBox" x1="-1.2" y1="0" x2="-0.2" y2="0.35"> <stop offset="0" stop-color="#a7a194"/><stop offset="0.4" stop-color="#d9d2c2"/><stop offset="0.5" stop-color="#ffffff"/><stop offset="0.6" stop-color="#d9d2c2"/><stop offset="1" stop-color="#a7a194"/> </linearGradient> <linearGradient id="s37-edge-2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.0"/><stop offset="1" stop-color="#FACC15" stop-opacity="0.35"/></linearGradient> </defs> <path d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z" fill="url(#s37-fin-2)" stroke="url(#s37-fin-2)" stroke-width="3" stroke-linejoin="round"/> <path d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z" fill="url(#s37-edge-2)"/> </svg> </div></div></div> </div></div>
+        </div>
+        <div class="mk-vig" data-layout-ignore></div>
+
+
+      </div>
+      <script>
+        (function () {
+          const ID = "s37", DUR = 2;
+          const C = {"surf":{"left":-190,"top":-150,"w":2300,"h":1150,"tilt":74},"cam":[{"t":0,"x":780,"y":640,"z":1.62},{"t":2,"x":1080,"y":560,"z":1.34,"ease":"sine.inOut"}],"focus":[{"t":0,"tg":{"f":[960,720]},"h":110},{"t":0.15,"tg":{"f":[960,720]},"h":110},{"t":1.25,"tg":{"f":[960,330]},"h":150,"ease":"power2.inOut"},{"t":2,"tg":{"f":[960,300]},"h":160,"ease":"sine.inOut"}],"k":0.6,"fa":180};
+
+  const R = document.getElementById(ID + "-root");
+  const q = (s) => Array.from(R.querySelectorAll(s));
+  const E = (n) => gsap.parseEase(n || "none");
+  const tl = gsap.timeline({ paused: true });
+  const P = C.persp || 2600, PY = 200, K = C.k == null ? 0.45 : C.k;
+  const S = C.surf, rad = (S.tilt * Math.PI) / 180, COS = Math.cos(rad), SIN = Math.sin(rad);
+  const RZ = ((S.rz || 0) * Math.PI) / 180, CZ = Math.cos(RZ), SZ = Math.sin(RZ);
+  const RY = ((S.ry || 0) * Math.PI) / 180, CY = Math.cos(RY), SY = Math.sin(RY);
+  const OX = S.origin ? S.origin[0] : S.w / 2, OY = S.origin ? S.origin[1] : S.h;
+  const poy = (c) => (C.pyFollow ? c.y : PY);
+  // focus band runs parallel to the panel rows (gradient-line coordinate for angle FA)
+  const FA = (C.fa * Math.PI) / 180, FSIN = Math.sin(FA), FCOS = Math.cos(FA), FL = Math.abs(1920 * FSIN) + Math.abs(1080 * FCOS);
+  const gl = (p) => (p.x - 960) * FSIN - (p.y - 540) * FCOS + FL / 2;
+  const lerp = (a, b, u) => a + (b - a) * u;
+
+  function cam(t) {
+    const ks = C.cam;
+    if (t <= ks[0].t || ks.length === 1) return ks[0];
+    for (let i = 1; i < ks.length; i++) {
+      const a = ks[i - 1], b = ks[i];
+      if (t <= b.t) { const u = E(b.ease)((t - a.t) / (b.t - a.t)); return { x: lerp(a.x, b.x, u), y: lerp(a.y, b.y, u), z: lerp(a.z, b.z, u) }; }
+    }
+    return ks[ks.length - 1];
+  }
+  const far = (c) => ({ x: 960 + (c.x - 960) * K, y: 540 + (c.y - 540) * K, z: 1 + (c.z - 1) * K });
+  // screen position of a target at time t. {s:[u,v]} surface-local point, {f:[x,y]} far-layer point, {y} fixed screen y.
+  function scr(tg, t) {
+    const c = cam(t);
+    if (tg.s) {
+      // CSS rotateX(a) rotateY(b) rotateZ(c) about the origin: Rz, then Ry, then Rx, then perspective
+      const px = tg.s[0] - OX, py = tg.s[1] - OY, x1 = px * CZ - py * SZ, y1 = px * SZ + py * CZ;
+      const x2 = x1 * CY, z2 = -x1 * SY, y3 = y1 * COS - z2 * SIN, z3 = y1 * SIN + z2 * COS;
+      const k = P / (P - z3), oy = poy(c);
+      const Xw = c.x + (S.left + OX + x2 - c.x) * k, Yw = oy + (S.top + OY + y3 - oy) * k;
+      return { x: 960 + (Xw - c.x) * c.z, y: 540 + (Yw - c.y) * c.z };
+    }
+    if (tg.f) { const f = far(c); return { x: 960 + (tg.f[0] - f.x) * f.z, y: 540 + (tg.f[1] - f.y) * f.z }; }
+    return { x: 960, y: tg.y };
+  }
+  // rect focus: screen bbox of a target. {r:[u0,v0,u1,v1]} surface rect, {fr:[...]} far-layer rect, {sr:[...]} screen rect
+  function rectOf(tg, t) {
+    if (tg.sr) return tg.sr;
+    const k = tg.r ? "s" : "f", b = tg.r || tg.fr, xs = [], ys = [];
+    for (const u of [b[0], (b[0] + b[2]) / 2, b[2]]) for (const v of [b[1], b[3]]) { const p = scr({ [k]: [u, v] }, t); xs.push(p.x); ys.push(p.y); }
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+  function focusRect(t) {
+    const ks = C.focus;
+    const at = (key) => { const b = rectOf(key.tg, t), p = key.pad || 0; return { x: (b[0] + b[2]) / 2, y: (b[1] + b[3]) / 2, w: (b[2] - b[0]) / 2 + p, h: (b[3] - b[1]) / 2 + p }; };
+    let r;
+    if (t <= ks[0].t || ks.length === 1) r = at(ks[0]);
+    else {
+      for (let i = 1; i < ks.length; i++) {
+        const a = ks[i - 1], b = ks[i];
+        if (t <= b.t) { const u = E(b.ease)((t - a.t) / (b.t - a.t)), A = at(a), B = at(b); r = { x: lerp(A.x, B.x, u), y: lerp(A.y, B.y, u), w: lerp(A.w, B.w, u), h: lerp(A.h, B.h, u) }; break; }
+      }
+      if (!r) r = at(ks[ks.length - 1]);
+    }
+    const br = 1 + 0.025 * Math.sin((t / 1.7) * Math.PI * 2); // focus breathing
+    return { x: r.x, y: r.y, w: r.w * br, h: r.h * br };
+  }
+  function focus(t) {
+    const ks = C.focus;
+    let y, h;
+    if (t <= ks[0].t || ks.length === 1) { y = gl(scr(ks[0].tg, t)); h = ks[0].h; }
+    else {
+      let done = false;
+      for (let i = 1; i < ks.length; i++) {
+        const a = ks[i - 1], b = ks[i];
+        if (t <= b.t) { const u = E(b.ease)((t - a.t) / (b.t - a.t)); y = lerp(gl(scr(a.tg, t)), gl(scr(b.tg, t)), u); h = lerp(a.h, b.h, u); done = true; break; }
+      }
+      if (!done) { const l = ks[ks.length - 1]; y = gl(scr(l.tg, t)); h = l.h; }
+    }
+    // focus breathing: the band's depth swells and settles a hair
+    h *= 1 + 0.06 * Math.sin((t / 1.7) * Math.PI * 2);
+    return { y, h };
+  }
+
+  // ---- camera (all three copies move as one) ----
+  const cams = q(".mk-cam"), pans = q(".mk-pan"), pers = q(".mk-persp"), fcams = q(".mk-fcam"), fpans = q(".mk-fpan");
+  const poseOf = (c) => { const f = far(c); return {
+    cam: { scale: c.z }, pan: { x: -c.x, y: -c.y }, per: { perspectiveOrigin: c.x.toFixed(2) + "px " + poy(c).toFixed(2) + "px" },
+    fcam: { scale: f.z }, fpan: { x: -f.x, y: -f.y } }; };
+  // NOTE: no tl.set() at 0. A nested child timeline is not re-rendered when the playhead lands exactly on its start,
+  // so the local-0 pose must be the build-time state: every chain's first tween is an immediate-render fromTo.
+  if (C.cam.length === 1) C.cam.push({ ...C.cam[0], t: DUR });
+  for (let i = 1; i < C.cam.length; i++) {
+    const a = poseOf(C.cam[i - 1]), b = poseOf(C.cam[i]), d = C.cam[i].t - C.cam[i - 1].t, at = C.cam[i - 1].t;
+    const o = { duration: d, ease: C.cam[i].ease || "none", immediateRender: i === 1 };
+    tl.fromTo(cams, a.cam, { ...b.cam, ...o }, at);
+    tl.fromTo(pans, a.pan, { ...b.pan, ...o }, at);
+    tl.fromTo(pers, a.per, { ...b.per, ...o }, at);
+    tl.fromTo(fcams, a.fcam, { ...b.fcam, ...o }, at);
+    tl.fromTo(fpans, a.fpan, { ...b.fpan, ...o }, at);
+  }
+
+  // ---- focus band (rack focus), sampled at 60 Hz ----
+  const stage = R.querySelector(".mk-stage");
+  const N = Math.ceil(DUR * 60);
+  const FOC = C.mode === "rect" ? focusRect : focus;
+  const fv = (f) => C.mode === "rect"
+    ? { "--fx": f.x.toFixed(2) + "px", "--fw": f.w.toFixed(2) + "px", "--fy": f.y.toFixed(2) + "px", "--fh": f.h.toFixed(2) + "px" }
+    : { "--fy": f.y.toFixed(2) + "px", "--fh": f.h.toFixed(2) + "px" };
+  tl.fromTo(stage, fv(FOC(0)), { ...fv(FOC(1 / 60)), duration: 1 / 60, ease: "none" }, 0);
+  const kf = [];
+  for (let i = 2; i <= N; i++) kf.push({ ...fv(FOC(Math.min(DUR, i / 60))), duration: 1 / 60 });
+  tl.to(stage, { keyframes: kf, ease: "none", immediateRender: false }, 1 / 60);
+
+  // ---- lens breathing: bounded finite yoyo ----
+  const BR = 0.85;
+  tl.fromTo(q(".mk-br"), { scale: 1 }, { scale: 1.012, duration: BR, ease: "sine.inOut", yoyo: true, repeat: Math.max(0, Math.floor(DUR / BR) - 1) }, 0);
+
+  // ---- helpers for shot code ----
+  function sweep(cls, t0, t1, p0 = 140, p1 = -40, ease = "power2.inOut") {
+    tl.fromTo(q("." + cls + " i"), { backgroundPosition: p0 + "% 0%" }, { backgroundPosition: p1 + "% 0%", duration: t1 - t0, ease }, t0);
+  }
+  function press(cls, t, { fillFrom = 0, label = true, squeeze = 0.965 } = {}) {
+    const el = q("." + cls);
+    tl.fromTo(el, { scale: 1 }, { scale: squeeze, duration: 0.07, ease: "power2.out", immediateRender: false }, t - 0.04);
+    tl.fromTo(el, { scale: squeeze }, { scale: 1, duration: 0.26, ease: "power3.out", immediateRender: false }, t + 0.12);
+    tl.fromTo(q("." + cls + " .mk-fill"), { opacity: fillFrom, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.32, ease: "back.out(1.6)" }, t);
+    if (label) tl.fromTo(q("." + cls + " .mk-lab"), { color: C.labFrom || "#EDE6D6" }, { color: "#000000", duration: 0.16, ease: "power1.out" }, t + 0.02);
+  }
+  function cursor(keys) {
+    // keys: [{t, x, y, click?}] in screen px; tip lands exactly on (x, y)
+    const el = q(".mk-cursor"), cs = q(".mk-cursor .mk-cs");
+    for (let i = 1; i < keys.length; i++) {
+      const a = keys[i - 1], b = keys[i];
+      tl.fromTo(el, { x: a.x, y: a.y }, { x: b.x, y: b.y, duration: b.t - a.t, ease: b.ease || "power2.inOut", immediateRender: i === 1 }, a.t);
+      if (b.click) {
+        tl.fromTo(cs, { scale: 1 }, { scale: 0.86, duration: 0.07, ease: "power2.out", immediateRender: false }, b.t - 0.04);
+        tl.fromTo(cs, { scale: 0.86 }, { scale: 1, duration: 0.24, ease: "power3.out", immediateRender: false }, b.t + 0.1);
+      }
+    }
+  }
+  // HUD running timecode (60 fps, film time). The text at local 0 is authored in the HTML.
+  if (C.hud) {
+    const tc = q(".hud .tc"), clock = { f: 0 };
+    const two = (n) => String(n).padStart(2, "0");
+    const fmt = (f) => { const s = Math.floor(f / 60), m = Math.floor(s / 60); return "00:" + two(m) + ":" + two(s % 60) + ":" + two(f % 60); };
+    const F0 = Math.round(C.hud.start * 60);
+    tl.fromTo(clock, { f: 0 }, { f: DUR * 60, duration: DUR, ease: "none", onUpdate: () => { const s = fmt(F0 + Math.floor(clock.f + 1e-6)); for (const el of tc) if (el.textContent !== s) el.textContent = s; } }, 0);
+  }
+  // hold a value from 0, then move it at t (both seek-safe, no zero-duration sets)
+  function holdThen(sel, prop, a, b, t, d, ease = "power2.out") {
+    tl.fromTo(q(sel), { [prop]: a }, { [prop]: a, duration: t, ease: "none" }, 0);
+    tl.fromTo(q(sel), { [prop]: a }, { [prop]: b, duration: d, ease, immediateRender: false }, t);
+  }
+
+          // ---- shot-specific motion ----
+
+    // specular stop travels across the brushed fin
+    tl.fromTo(q(".mk-fing"), { attr: { x1: -1.1, x2: -0.1 } }, { attr: { x1: 0.6, x2: 1.6 }, duration: 1.8, ease: "sine.inOut" }, 0.15);
+    tl.fromTo(q(".mk-spill2"), { opacity: 0.5 }, { opacity: 1, duration: 1.2, ease: "sine.inOut" }, 0.4);
+  
+          window.__timelines[ID] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

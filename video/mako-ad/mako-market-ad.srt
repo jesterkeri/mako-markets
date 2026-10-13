@@ -1,0 +1,115 @@
+1
+00:00:02,300 --> 00:00:03,500
+What happens next?
+
+2
+00:00:03,600 --> 00:00:05,000
+Bet YES or NO.
+
+3
+00:00:05,200 --> 00:00:07,000
+Mako Market. Short-form prediction markets on Monad.
+
+4
+00:00:07,100 --> 00:00:11,500
+Crypto. Football. NBA. Forex. Commodities. Stocks.
+
+5
+00:00:11,700 --> 00:00:13,000
+YES or NO on anything.
+
+6
+00:00:13,100 --> 00:00:15,000
+Bet YES or NO on crypto, sport, forex, commodities and stocks. Open for hours to days.
+
+7
+00:00:15,200 --> 00:00:16,500
+Your email is your account.
+
+8
+00:00:16,600 --> 00:00:18,000
+No seed phrase.
+
+9
+00:00:18,100 --> 00:00:19,500
+Gas is paid for you. A bet costs only what you stake.
+
+10
+00:00:19,600 --> 00:00:21,000
+Free test USDC.
+
+11
+00:00:21,100 --> 00:00:22,000
+Bet in seconds.
+
+12
+00:00:24,100 --> 00:00:26,500
+Pick YES or NO.
+
+13
+00:00:26,600 --> 00:00:28,000
+From 0.10 USDC.
+
+14
+00:00:28,100 --> 00:00:29,500
+Confirm.
+
+15
+00:00:29,600 --> 00:00:32,000
+Settled on-chain.
+
+16
+00:00:32,100 --> 00:00:33,500
+Winners split the pool.
+
+17
+00:00:33,600 --> 00:00:35,000
+1% to Mako Market. 2% to the host.
+
+18
+00:00:35,100 --> 00:00:36,500
+Claim your payout. No deadline.
+
+19
+00:00:36,600 --> 00:00:38,000
+One side only? Full refund.
+
+20
+00:00:38,100 --> 00:00:40,000
+No fee on refunds.
+
+21
+00:00:40,100 --> 00:00:42,000
+Host your own.
+
+22
+00:00:42,100 --> 00:00:43,500
+Your pool is live.
+
+23
+00:00:43,600 --> 00:00:46,000
+Hosts earn up to 2%.
+
+24
+00:00:46,100 --> 00:00:47,500
+New: Rounds. 15 minutes. UP or DOWN.
+
+25
+00:00:49,100 --> 00:00:51,000
+Prices from Chainlink.
+
+26
+00:00:51,100 --> 00:00:52,500
+Climb the board.
+
+27
+00:00:52,600 --> 00:00:54,000
+Share any pool.
+
+28
+00:00:56,100 --> 00:00:58,500
+What happens next? makomarket.xyz
+
+29
+00:00:58,600 --> 00:01:00,000
+Free test USDC. Monad testnet.

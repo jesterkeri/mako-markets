@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- GLASS s13 (film 15.0-16.5, key 16.2 = local 1.2). Glass sign-in sheet rises; email field types. Camera from the right, phone left. -->
+  </head>
+  <body>
+    <template id="s13-template">
+      <style>
+        @font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("../assets/fonts/captured-bricolage-grotesque-latin-wght-normal.0hh3pksc_dt39.woff2") format("woff2-variations");}
+        @font-face{font-family:"Inter Variable";font-style:normal;font-weight:100 900;src:url("../assets/fonts/captured-inter-latin-wght-normal.055ydel_y7o6i.woff2") format("woff2-variations");}
+        @font-face{font-family:"JetBrains Mono";font-weight:100 800;src:url("../assets/fonts/jbmono-latin.woff2") format("woff2");}
+        #s13-root{position:absolute;inset:0;overflow:hidden;background:#000;color:#EDE6D6;font-family:"Inter Variable",sans-serif}
+        #s13-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+        #s13-shade{position:absolute;inset:0;background:linear-gradient(270deg,rgba(0,0,0,.7) 0%,rgba(0,0,0,.3) 38%,rgba(0,0,0,0) 58%)}
+        #s13-brand{position:absolute;left:1060px;top:96px;display:flex;align-items:center;gap:14px;font:800 30px "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.01em}
+        #s13-brand svg{width:40px;height:31px;display:block}
+        #s13-copy{position:absolute;left:1060px;top:390px;width:760px}
+        #s13-h1{font:800 120px/0.96 "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.04em;color:#EDE6D6}
+        #s13-h1 .ln{display:block;overflow:hidden;padding-bottom:12px}
+        #s13-h1 .ln span{display:block;white-space:nowrap}
+        #s13-h1 .y{color:#FACC15}
+      </style>
+      <div id="s13-root" data-composition-id="s13" data-width="1920" data-height="1080" data-duration="1.55">
+        <canvas id="s13-gl" width="1920" height="1080"></canvas>
+        <div id="s13-shade"></div>
+        <div id="s13-brand"><svg viewBox="-3 -3 406 316"><path fill="#EDE6D6" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg><span>Mako Market</span></div>
+        <div id="s13-copy">
+          <div id="s13-h1"><span class="ln"><span>Your <span class="y" style="display:inline">email</span> is</span></span><span class="ln"><span>your account.</span></span></div>
+        </div>
+      </div>
+      <script src="../assets/glass/glass-kit.js"></script>
+      <script>
+        (function () {
+          var ID = "s13", DUR = 1.5, MG = window.MakoGlass, PI = Math.PI;
+          window.__hf = window.__hf || {};
+          window.__hf.buildReady = window.__hf.buildReady || {};
+          var g2 = document.getElementById(ID + "-gl").getContext("2d");
+          var scr = null, built = false;
+          var SW = MG.SW, SH = MG.SH;
+          var EMAIL = "you@email.com";
+
+          var S = { t: 0, sheet: 0.3, scrim: 0.25, typed: 0, focus: 0, btn: 0,
+            ry: PI - 0.44, rx: 0.07, px: -1.42, py: -0.05, cx: 1.05, cy: 0.5, cz: 6.1 };
+
+          function paint() {
+            var c = scr.ctx;
+            scr.wall(S.t + 2.0, 0.8);
+            scr.poolList(S.t, 40, 108, false);
+            scr.header();
+            scr.scrim(S.scrim);
+            var back = scr.freeze();
+            var r = MG.rise(S.sheet, 560);
+            var y0 = 330 + r.dy;
+            // sheet
+            scr.glass(8, y0, SW - 16, SH - y0 + 40, 34, 1, "sheet", back);
+            c.save();
+            c.globalAlpha = 1;
+            MG.rr(c, SW / 2 - 24, y0 + 12, 48, 5, 3);
+            c.fillStyle = "rgba(237,230,214,0.45)";
+            c.fill();
+            // icon + title
+            MG.rr(c, 30, y0 + 40, 48, 48, 13);
+            c.fillStyle = "#FACC15";
+            c.fill();
+            c.restore();
+            MG.fin(c, 36, y0 + 50, 36, "#000");
+            scr.text("Sign in", 92, y0 + 75, "800 30px " + MG.BR, "#EDE6D6");
+            // field
+            scr.text("EMAIL", 30, y0 + 136, "600 11px " + MG.MO, "rgba(237,230,214,0.6)");
+            scr.glass(22, y0 + 148, SW - 44, 62, 18, 1, "clear", back);
+            if (S.focus > 0.01) {
+              MG.rr(c, 22, y0 + 148, SW - 44, 62, 18);
+              c.strokeStyle = "rgba(250,204,21," + 0.85 * S.focus + ")";
+              c.lineWidth = 2;
+              c.stroke();
+            }
+            var n = Math.max(0, Math.min(EMAIL.length, Math.floor(S.typed)));
+            var shown = EMAIL.slice(0, n);
+            c.save();
+            c.font = "500 21px " + MG.IN;
+            c.textBaseline = "middle";
+            if (n === 0) {
+              c.fillStyle = "rgba(237,230,214,0.35)";
+              c.fillText(EMAIL, 42, y0 + 180);
+            } else {
+              c.fillStyle = "#EDE6D6";
+              c.fillText(shown, 42, y0 + 180);
+            }
+            var cw = n ? c.measureText(shown).width : 0;
+            if (S.focus > 0.5 && Math.floor(S.t * 5) % 2 === 0) {
+              c.fillStyle = "#FACC15";
+              c.fillRect(43 + cw, y0 + 166, 2, 28);
+            }
+            c.restore();
+            // continue button
+            scr.glass(22, y0 + 232, SW - 44, 62, 20, 1, S.btn > 0.5 ? "yes" : "ink", back);
+            scr.text("Continue", SW / 2, y0 + 264, "800 20px " + MG.BR, S.btn > 0.5 ? "#000" : "rgba(237,230,214,0.85)", "center", 1, "middle");
+            scr.homeBar();
+          }
+
+          function frame() {
+            if (!built) return;
+            paint();
+            MG.render({
+              cam: { x: S.cx, y: S.cy, z: S.cz, lx: -0.15, ly: 0.05, lz: 0, fov: 34 },
+              bg: { t: S.t * 1.6 + 11.0, gx: -0.75, gy: -0.25, gs: 0.08, rib: 1.1, ox: 0.4 },
+              rim: [-4, 2.4, 2.5, 3.0],
+              phone: { x: S.px, y: S.py + Math.sin(S.t * 0.7) * 0.01, z: 0.4, rx: S.rx, ry: S.ry, rz: 0.02, screen: scr.canvas },
+            }, g2);
+          }
+
+          var inner = gsap.timeline({ paused: true });
+          inner.to(S, { t: DUR, duration: DUR, ease: "none" }, 0);
+          inner.to(S, { sheet: 1, duration: 0.55, ease: "none" }, 0);
+          inner.to(S, { scrim: 0.55, duration: 0.5, ease: "power1.out" }, 0);
+          inner.to(S, { focus: 1, duration: 0.2, ease: "power2.out" }, 0.3);
+          inner.to(S, { typed: EMAIL.length + 0.5, duration: 0.62, ease: "none" }, 0.38);
+          inner.to(S, { btn: 1, duration: 0.01, ease: "none" }, 1.02);
+          inner.to(S, { ry: PI - 0.3, rx: 0.02, py: 0.0, duration: 1.0, ease: MG.ease.enter }, 0);
+          inner.to(S, { cx: 0.7, cy: 0.3, cz: 5.55, duration: DUR, ease: MG.ease.drift }, 0);
+
+          var drvT = 0, drv = {};
+          Object.defineProperty(drv, "t", {
+            get: function () { return drvT; },
+            set: function (v) { drvT = v; inner.time(v, true); frame(); },
+          });
+          var tl = gsap.timeline({ paused: true });
+          tl.to(drv, { t: DUR, duration: DUR, ease: "none" }, 0);
+          tl.fromTo("#s13-h1 .ln > span", { yPercent: 108, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.7, ease: "expo.out", stagger: 0.1 }, 0.05);
+          tl.fromTo("#s13-brand", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, 0);
+
+          window.__hf.buildReady[ID] = MG.ready.then(MG.fonts).then(function () {
+            scr = new MG.Screen();
+            built = true;
+            inner.time(drvT, true);
+            frame();
+          });
+          window.__timelines[ID] = window.__hfPre(ID, tl);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

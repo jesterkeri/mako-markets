@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <!-- GLASS storyboard host: shots back to back only so they can be linted / snapshotted. -->
+    <script src="assets/gsap.min.js"></script>
+    <style>
+      body { margin: 0; background: #000; }
+      #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: #000; }
+      [data-composition-id="root"] > div[data-composition-src] { position: absolute; inset: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="root" data-width="1920" data-height="1080" data-duration="18.5">
+    <div id="el-s04" data-composition-id="s04" data-composition-src="compositions/s04.html" data-start="0" data-duration="2" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s12" data-composition-id="s12" data-composition-src="compositions/s12.html" data-start="2" data-duration="2" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s13" data-composition-id="s13" data-composition-src="compositions/s13.html" data-start="4" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s15" data-composition-id="s15" data-composition-src="compositions/s15.html" data-start="5.5" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s16" data-composition-id="s16" data-composition-src="compositions/s16.html" data-start="7" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s23" data-composition-id="s23" data-composition-src="compositions/s23.html" data-start="8.5" data-duration="2.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s26" data-composition-id="s26" data-composition-src="compositions/s26.html" data-start="11" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s30" data-composition-id="s30" data-composition-src="compositions/s30.html" data-start="12.5" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s33" data-composition-id="s33" data-composition-src="compositions/s33.html" data-start="14" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s36" data-composition-id="s36" data-composition-src="compositions/s36.html" data-start="15.5" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    <div id="el-s39" data-composition-id="s39" data-composition-src="compositions/s39.html" data-start="17" data-duration="1.5" data-track-index="1" data-width="1920" data-height="1080"></div>
+    </div>
+    <script>
+      window.__timelines["root"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

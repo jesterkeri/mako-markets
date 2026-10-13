@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- GLASS s15 (film 18.0-19.5, key 19.0 = local 1.0). A 3D glass badge with a gas-pump glyph slides onto the phone. High angle from the left, phone tilted back. -->
+  </head>
+  <body>
+    <template id="s15-template">
+      <style>
+        @font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("../assets/fonts/captured-bricolage-grotesque-latin-wght-normal.0hh3pksc_dt39.woff2") format("woff2-variations");}
+        @font-face{font-family:"Inter Variable";font-style:normal;font-weight:100 900;src:url("../assets/fonts/captured-inter-latin-wght-normal.055ydel_y7o6i.woff2") format("woff2-variations");}
+        @font-face{font-family:"JetBrains Mono";font-weight:100 800;src:url("../assets/fonts/jbmono-latin.woff2") format("woff2");}
+        #s15-root{position:absolute;inset:0;overflow:hidden;background:#000;color:#EDE6D6;font-family:"Inter Variable",sans-serif}
+        #s15-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+        #s15-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.74) 0%,rgba(0,0,0,.34) 38%,rgba(0,0,0,0) 58%)}
+        #s15-brand{position:absolute;left:140px;top:96px;display:flex;align-items:center;gap:14px;font:800 30px "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.01em}
+        #s15-brand svg{width:40px;height:31px;display:block}
+        #s15-copy{position:absolute;left:140px;top:330px;width:900px}
+        #s15-h1{font:800 132px/0.95 "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.045em;color:#EDE6D6}
+        #s15-h1 .ln{display:block;overflow:hidden;padding-bottom:14px}
+        #s15-h1 .ln > span{display:block;white-space:nowrap}
+        #s15-h1 .y{color:#FACC15}
+        #s15-h2{margin-top:34px;font:600 40px/1.15 "Inter Variable",sans-serif;letter-spacing:-.01em;color:rgba(237,230,214,.74)}
+      </style>
+      <div id="s15-root" data-composition-id="s15" data-width="1920" data-height="1080" data-duration="2">
+        <canvas id="s15-gl" width="1920" height="1080"></canvas>
+        <div id="s15-shade"></div>
+        <div id="s15-brand"><svg viewBox="-3 -3 406 316"><path fill="#EDE6D6" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg><span>Mako Market</span></div>
+        <div id="s15-copy">
+          <div id="s15-h1"><span class="ln"><span>Gas is paid</span></span><span class="ln"><span class="y">for you</span></span></div>
+          <div id="s15-h2">A bet costs only what you stake.</div>
+        </div>
+      </div>
+      <script src="../assets/glass/glass-kit.js"></script>
+      <script>
+        (function () {
+          var ID = "s15", DUR = 1.5, MG = window.MakoGlass, PI = Math.PI;
+          window.__hf = window.__hf || {};
+          window.__hf.buildReady = window.__hf.buildReady || {};
+          var g2 = document.getElementById(ID + "-gl").getContext("2d");
+          var scr = null, badge = null, built = false;
+          var SW = MG.SW, SH = MG.SH;
+
+          // badge face: soft yellow disc with a simple gas-pump glyph
+          function paintFace(cv) {
+            var x = cv.getContext("2d"), w = cv.width, h = cv.height;
+            x.clearRect(0, 0, w, h);
+            var cx = w / 2, cy = h / 2, R = w * 0.36;
+            var g = x.createRadialGradient(cx, cy, 0, cx, cy, R * 1.25);
+            g.addColorStop(0, "rgba(250,204,21,0.30)");
+            g.addColorStop(1, "rgba(250,204,21,0)");
+            x.fillStyle = g;
+            x.fillRect(0, 0, w, h);
+            x.beginPath();
+            x.arc(cx, cy, R, 0, PI * 2);
+            x.strokeStyle = "rgba(250,204,21,0.55)";
+            x.lineWidth = 6;
+            x.stroke();
+            // pump body
+            var s = w / 800;
+            x.save();
+            x.translate(cx - 70 * s, cy + 6 * s);
+            x.shadowColor = "rgba(0,0,0,0.45)";
+            x.shadowBlur = 12;
+            x.shadowOffsetY = 6;
+            x.fillStyle = "#FACC15";
+            MG.rr(x, -95 * s, -150 * s, 190 * s, 280 * s, 26 * s);
+            x.fill();
+            MG.rr(x, -125 * s, 120 * s, 250 * s, 44 * s, 14 * s);
+            x.fill();
+            x.shadowColor = "transparent";
+            // window
+            MG.rr(x, -60 * s, -112 * s, 120 * s, 86 * s, 14 * s);
+            x.fillStyle = "rgba(20,16,4,0.88)";
+            x.fill();
+            // hose + nozzle
+            x.beginPath();
+            x.moveTo(95 * s, -70 * s);
+            x.lineTo(150 * s, -70 * s);
+            x.quadraticCurveTo(190 * s, -70 * s, 190 * s, -30 * s);
+            x.lineTo(190 * s, 70 * s);
+            x.quadraticCurveTo(190 * s, 100 * s, 160 * s, 100 * s);
+            x.quadraticCurveTo(130 * s, 100 * s, 130 * s, 70 * s);
+            x.lineTo(130 * s, 0);
+            x.strokeStyle = "#FACC15";
+            x.lineWidth = 22 * s;
+            x.lineCap = "round";
+            x.lineJoin = "round";
+            x.stroke();
+            MG.rr(x, 168 * s, -150 * s, 44 * s, 90 * s, 12 * s);
+            x.fillStyle = "#FACC15";
+            x.fill();
+            x.restore();
+          }
+
+          var S = { t: 0, slide: 0.12, land: 0, sheen: -1.2, glow: 0, rx: -0.34, ry: PI + 0.34, rz: -0.08, cx: -1.3, cy: 2.6, cz: 6.4 };
+
+          function paint() {
+            var c = scr.ctx;
+            scr.wall(S.t + 9.0, 0.9 + 0.4 * S.land);
+            scr.header();
+            scr.glass(14, 120, 362, 300, 30, 1, "clear");
+            scr.chip("CRYPTO", 32, 142, 1);
+            scr.text("Will Bitcoin close", 32, 210, "800 29px " + MG.BR, "#EDE6D6");
+            scr.text("the week higher?", 32, 244, "800 29px " + MG.BR, "#EDE6D6");
+            scr.glass(32, 290, 158, 100, 22, 1, "yes");
+            scr.glass(200, 290, 158, 100, 22, 1, "no");
+            scr.text("YES", 111, 341, "800 32px " + MG.BR, "#000", "center", 1, "middle");
+            scr.text("NO", 279, 341, "800 32px " + MG.BR, "#EDE6D6", "center", 1, "middle");
+            MG.rr(c, 28, 286, 166, 108, 25);
+            c.strokeStyle = "rgba(250,204,21,0.9)";
+            c.lineWidth = 2;
+            c.stroke();
+            var vals = ["0.10", "1", "5", "10", "25", "50"], cw = (362 - 30) / 6;
+            for (var v = 0; v < 6; v++) {
+              var qx = 14 + v * (cw + 6);
+              scr.glass(qx, 440, cw, 50, 16, 1, v === 0 ? "yes" : "clear");
+              scr.text(vals[v], qx + cw / 2, 466, "600 14px " + MG.MO, v === 0 ? "#000" : "#EDE6D6", "center", 1, "middle");
+            }
+            scr.glass(14, 510, 362, 64, 22, 1, "ink");
+            scr.text("CONFIRM BET", SW / 2, 543, "800 20px " + MG.BR, "#EDE6D6", "center", 1, "middle");
+            if (S.land > 0.01) {
+              var g = c.createRadialGradient(SW / 2, 700, 0, SW / 2, 700, 240);
+              g.addColorStop(0, "rgba(250,204,21," + 0.4 * S.land + ")");
+              g.addColorStop(1, "rgba(250,204,21,0)");
+              c.fillStyle = g;
+              c.fillRect(0, 440, SW, SH - 440);
+            }
+            scr.homeBar();
+          }
+
+          function frame() {
+            if (!built) return;
+            paint();
+            var q = MG.ease.enter(MG.clamp(S.slide, 0, 1));
+            MG.render({
+              cam: { x: S.cx, y: S.cy, z: S.cz, lx: 0.2, ly: -0.15, lz: 0, fov: 34 },
+              bg: { t: S.t * 1.6 + 13.0, gx: 0.6, gy: -0.5, gs: 0.07 + 0.1 * S.land, rib: 1.2, ox: -0.4, oy: 0.5 },
+              rim: [4, 3, 2.5, 3.2 + 2.5 * S.land],
+              phone: { x: 1.3, y: -0.1, z: 0, rx: S.rx, ry: S.ry, rz: S.rz, screen: scr.canvas },
+              slabs: [{ mesh: badge, x: -(1 - q) * 2.5, y: -0.82 + (1 - q) * 0.35, z: -0.24 - (1 - q) * 0.6, rx: 0, ry: PI - (1 - q) * 0.9, rz: (1 - q) * -0.35, sheen: S.sheen, glow: S.glow }],
+            }, g2);
+          }
+
+          var inner = gsap.timeline({ paused: true });
+          inner.to(S, { t: DUR, duration: DUR, ease: "none" }, 0);
+          inner.to(S, { slide: 1, duration: 0.6, ease: "none" }, 0);
+          inner.to(S, { land: 1, duration: 0.2, ease: "power2.out" }, 0.5);
+          inner.to(S, { land: 0.5, duration: 0.7, ease: "power2.inOut" }, 0.72);
+          inner.to(S, { glow: 0.6, duration: 0.3, ease: "power2.out" }, 0.5);
+          inner.to(S, { sheen: 1.4, duration: 0.9, ease: "power1.inOut" }, 0.45);
+          inner.to(S, { rx: -0.26, ry: PI + 0.26, rz: -0.05, cx: -0.95, cy: 2.15, cz: 5.8, duration: DUR, ease: MG.ease.drift }, 0);
+
+          var drvT = 0, drv = {};
+          Object.defineProperty(drv, "t", {
+            get: function () { return drvT; },
+            set: function (v) { drvT = v; inner.time(v, true); frame(); },
+          });
+          var tl = gsap.timeline({ paused: true });
+          tl.to(drv, { t: DUR, duration: DUR, ease: "none" }, 0);
+          tl.fromTo("#s15-h1 .ln > span", { yPercent: 108, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.7, ease: "expo.out", stagger: 0.1 }, 0.0);
+          tl.fromTo("#s15-h2", { opacity: 0, y: 20, filter: "blur(8px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.55, ease: "power3.out" }, 0.4);
+          tl.fromTo("#s15-brand", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, 0);
+
+          window.__hf.buildReady[ID] = MG.ready.then(MG.fonts).then(function () {
+            scr = new MG.Screen();
+            var face = MG.faceCanvas(800, 800);
+            paintFace(face);
+            badge = MG.slab({ w: 0.9, h: 0.9, r: 0.24, depth: 0.08, bevel: 0.045, face: face, parent: "phone", frost: 0.012, lift: 0.9 });
+            built = true;
+            inner.time(drvT, true);
+            frame();
+          });
+          window.__timelines[ID] = window.__hfPre(ID, tl);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

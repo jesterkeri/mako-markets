@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- GLASS s39 (film 58.5-60.0, key 59.6 = local 1.1). End card: glass slab with logo over yellow liquid. Near-frontal, slow push. Holds. -->
+  </head>
+  <body>
+    <template id="s39-template">
+      <style>
+        @font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("../assets/fonts/captured-bricolage-grotesque-latin-wght-normal.0hh3pksc_dt39.woff2") format("woff2-variations");}
+        @font-face{font-family:"Inter Variable";font-style:normal;font-weight:100 900;src:url("../assets/fonts/captured-inter-latin-wght-normal.055ydel_y7o6i.woff2") format("woff2-variations");}
+        @font-face{font-family:"JetBrains Mono";font-weight:100 800;src:url("../assets/fonts/jbmono-latin.woff2") format("woff2");}
+        #s39-root{position:absolute;inset:0;overflow:hidden;background:#000;color:#EDE6D6;font-family:"Inter Variable",sans-serif}
+        #s39-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+      </style>
+      <div id="s39-root" data-composition-id="s39" data-width="1920" data-height="1080" data-duration="1.8">
+        <canvas id="s39-gl" width="1920" height="1080"></canvas>
+      </div>
+      <script src="../assets/glass/glass-kit.js"></script>
+      <script>
+        (function () {
+          var ID = "s39", DUR = 1.5, MG = window.MakoGlass, PI = Math.PI;
+          window.__hf = window.__hf || {};
+          window.__hf.buildReady = window.__hf.buildReady || {};
+          var g2 = document.getElementById(ID + "-gl").getContext("2d");
+          var slab = null, built = false;
+
+          function paintFace(c) {
+            var x = c.getContext("2d"), w = c.width, h = c.height;
+            x.clearRect(0, 0, w, h);
+            // fin tile
+            var tile = 300, tx = w / 2 - tile / 2, ty = h * 0.12;
+            MG.rr(x, tx, ty, tile, tile, 78);
+            x.fillStyle = "rgba(250,204,21,0.97)";
+            x.fill();
+            MG.fin(x, tx + tile * 0.12, ty + tile * 0.2, tile * 0.76, "#000");
+            x.save();
+            x.shadowColor = "rgba(0,0,0,0.45)";
+            x.shadowBlur = 10;
+            x.shadowOffsetY = 5;
+            x.font = "800 230px " + MG.BR;
+            x.textAlign = "center";
+            x.fillStyle = "rgba(240,234,220,0.98)";
+            x.fillText("Mako Market", w / 2, h * 0.63);
+            x.restore();
+            x.textAlign = "center";
+            x.font = "600 64px " + MG.MO;
+            x.fillStyle = "#FACC15";
+            x.fillText("makomarket.xyz", w / 2, h * 0.76);
+            x.font = "500 58px " + MG.IN;
+            x.fillStyle = "rgba(237,230,214,0.78)";
+            x.fillText("Free test USDC. Monad testnet.", w / 2, h * 0.87);
+          }
+
+          var S = { t: 0, ry: 0.16, rx: -0.12, rz: -0.02, cx: -0.35, cy: 0.55, cz: 7.0, sheen: -1.1, gs: 0.2, glow: 0.2 };
+          function frame() {
+            if (!built) return;
+            MG.render({
+              cam: { x: S.cx, y: S.cy, z: S.cz, lx: 0, ly: 0.0, lz: 0, fov: 34 },
+              bg: { t: S.t * 1.6 + 39.0, gx: 0.0, gy: -0.25, gs: S.gs, rib: 2.0, ox: S.cx * 0.06 },
+              rim: [-3, 3, 4, 3.0],
+              phone: null,
+              slabs: [{ mesh: slab, x: 0, y: 0, z: 0, rx: S.rx, ry: S.ry, rz: S.rz, sheen: S.sheen, glow: S.glow }],
+            }, g2);
+          }
+
+          var inner = gsap.timeline({ paused: true });
+          inner.to(S, { t: DUR, duration: DUR, ease: "none" }, 0);
+          inner.to(S, { ry: 0.035, rx: -0.03, rz: 0.0, duration: 1.0, ease: MG.ease.enter }, 0);
+          inner.to(S, { ry: 0.02, rx: -0.02, duration: 0.5, ease: MG.ease.breathe }, 1.0);
+          inner.to(S, { cx: -0.08, cy: 0.2, cz: 6.45, duration: DUR, ease: MG.ease.drift }, 0);
+          inner.to(S, { sheen: 1.2, duration: 1.1, ease: "power1.inOut" }, 0.2);
+          inner.to(S, { gs: 0.28, glow: 0.4, duration: 0.8, ease: "power2.out" }, 0.1);
+
+          var drvT = 0, drv = {};
+          Object.defineProperty(drv, "t", {
+            get: function () { return drvT; },
+            set: function (v) { drvT = v; inner.time(v, true); frame(); },
+          });
+          var tl = gsap.timeline({ paused: true });
+          tl.to(drv, { t: DUR, duration: DUR, ease: "none" }, 0);
+
+          window.__hf.buildReady[ID] = MG.ready.then(MG.fonts).then(function () {
+            var face = MG.faceCanvas(2200, 1560);
+            paintFace(face);
+            slab = MG.slab({ w: 4.4, h: 3.12, r: 0.36, depth: 0.12, bevel: 0.07, face: face, frost: 0.016, lift: 0.95 });
+            built = true;
+            inner.time(drvT, true);
+            frame();
+          });
+          window.__timelines[ID] = window.__hfPre(ID, tl);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

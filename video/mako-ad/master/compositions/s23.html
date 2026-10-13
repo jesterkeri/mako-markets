@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- GLASS s23 (film 29.5-32.0, key 31.2 = local 1.7). Pool page: glass YES and NO bars grow (no values); slow orbit. Wide. -->
+  </head>
+  <body>
+    <template id="s23-template">
+      <style>
+        @font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("../assets/fonts/captured-bricolage-grotesque-latin-wght-normal.0hh3pksc_dt39.woff2") format("woff2-variations");}
+        @font-face{font-family:"Inter Variable";font-style:normal;font-weight:100 900;src:url("../assets/fonts/captured-inter-latin-wght-normal.055ydel_y7o6i.woff2") format("woff2-variations");}
+        @font-face{font-family:"JetBrains Mono";font-weight:100 800;src:url("../assets/fonts/jbmono-latin.woff2") format("woff2");}
+        #s23-root{position:absolute;inset:0;overflow:hidden;background:#000;color:#EDE6D6;font-family:"Inter Variable",sans-serif}
+        #s23-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+        #s23-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.72) 0%,rgba(0,0,0,.3) 38%,rgba(0,0,0,0) 56%)}
+        #s23-brand{position:absolute;left:140px;top:96px;display:flex;align-items:center;gap:14px;font:800 30px "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.01em}
+        #s23-brand svg{width:40px;height:31px;display:block}
+        #s23-copy{position:absolute;left:140px;top:360px;width:900px}
+        #s23-h1{font:800 150px/0.94 "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.045em;color:#EDE6D6}
+        #s23-h1 .ln{display:block;overflow:hidden;padding-bottom:14px}
+        #s23-h1 .ln span{display:block;white-space:nowrap}
+        #s23-h1 .y{color:#FACC15}
+      </style>
+      <div id="s23-root" data-composition-id="s23" data-width="1920" data-height="1080" data-duration="2.8">
+        <canvas id="s23-gl" width="1920" height="1080"></canvas>
+        <div id="s23-shade"></div>
+        <div id="s23-brand"><svg viewBox="-3 -3 406 316"><path fill="#EDE6D6" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg><span>Mako Market</span></div>
+        <div id="s23-copy">
+          <div id="s23-h1"><span class="ln"><span>Settled</span></span><span class="ln"><span class="y">on-chain.</span></span></div>
+        </div>
+      </div>
+      <script src="../assets/glass/glass-kit.js"></script>
+      <script>
+        (function () {
+          var ID = "s23", DUR = 2.5, MG = window.MakoGlass, PI = Math.PI;
+          window.__hf = window.__hf || {};
+          window.__hf.buildReady = window.__hf.buildReady || {};
+          var g2 = document.getElementById(ID + "-gl").getContext("2d");
+          var scr = null, built = false;
+          var SW = MG.SW, SH = MG.SH;
+
+          var S = { t: 0, yes: 0.08, no: 0.06, seal: 0, orbit: -0.62, cy: 0.9, R: 7.0, ry: PI + 0.04 };
+
+          function bar(y, frac, tint, label, dark) {
+            var c = scr.ctx, w = Math.max(120, (SW - 60) * frac);
+            scr.glass(30, y, w, 86, 24, 1, tint);
+            scr.text(label, 52, y + 44, "800 30px " + MG.BR, dark ? "#000" : "#EDE6D6", "left", 1, "middle");
+          }
+
+          function paint() {
+            var c = scr.ctx;
+            scr.wall(S.t + 8.0, 0.9);
+            scr.header();
+            scr.chip("SETTLED", 30, 112, 1, "#FACC15", "#000");
+            scr.chip("CRYPTO", 132, 112, 1);
+            scr.text("Will Bitcoin close", 30, 190, "800 31px " + MG.BR, "#EDE6D6");
+            scr.text("the week higher?", 30, 226, "800 31px " + MG.BR, "#EDE6D6");
+            scr.trend(30, 262, 330, 110, S.t * 0.6, 0.9);
+            // result bars (no values)
+            scr.text("POOL", 30, 418, "600 11px " + MG.MO, "rgba(237,230,214,0.55)");
+            bar(432, S.yes, "yes", "YES", true);
+            bar(530, S.no, "no", "NO", false);
+            // on-chain seal: tick in a yellow ring, outcome side highlighted
+            if (S.seal > 0.01) {
+              c.save();
+              c.globalAlpha = S.seal;
+              MG.rr(c, 26 - 4 * S.seal, 428 - 4 * S.seal, Math.max(120, (SW - 60) * S.yes) + 8 + 8 * S.seal, 94 + 8 * S.seal, 28);
+              c.strokeStyle = "rgba(250,204,21,0.9)";
+              c.lineWidth = 2;
+              c.stroke();
+              c.restore();
+            }
+            scr.glass(14, 660, 362, 120, 28, 1, "clear");
+            c.save();
+            c.translate(64, 720);
+            c.beginPath();
+            c.arc(0, 0, 24, 0, PI * 2);
+            c.strokeStyle = "rgba(250,204,21," + (0.35 + 0.65 * S.seal) + ")";
+            c.lineWidth = 2.5;
+            c.stroke();
+            c.beginPath();
+            var k = MG.clamp(S.seal * 1.4, 0, 1);
+            c.moveTo(-10, 0);
+            c.lineTo(-10 + 7 * Math.min(1, k * 2), 7 * Math.min(1, k * 2));
+            if (k > 0.5) c.lineTo(-3 + 15 * (k - 0.5) * 2, 7 - 16 * (k - 0.5) * 2);
+            c.strokeStyle = "#FACC15";
+            c.lineWidth = 3;
+            c.lineCap = "round";
+            c.stroke();
+            c.restore();
+            scr.text("YES", 108, 712, "800 26px " + MG.BR, "#FACC15", "left", 1, "alphabetic");
+            scr.homeBar();
+          }
+
+          function frame() {
+            if (!built) return;
+            paint();
+            var tx = 0.85, ty = 0.15;
+            MG.render({
+              cam: { x: tx + Math.sin(S.orbit) * S.R, y: S.cy, z: Math.cos(S.orbit) * S.R, lx: tx - 1.3, ly: ty - 0.05, lz: 0, fov: 32 },
+              bg: { t: S.t * 1.6 + 19.0, gx: 0.45, gy: 0.1, gs: 0.08, rib: 1.2, ox: S.orbit * 0.5 },
+              rim: [tx + 3.5, 2.5, 2.0, 3.4],
+              phone: { x: tx, y: ty, z: 0, rx: 0.02, ry: S.ry, rz: 0.0, screen: scr.canvas },
+            }, g2);
+          }
+
+          var inner = gsap.timeline({ paused: true });
+          inner.to(S, { t: DUR, duration: DUR, ease: "none" }, 0);
+          inner.to(S, { orbit: -0.1, cy: 0.35, R: 6.3, duration: DUR, ease: MG.ease.breathe }, 0);
+          inner.to(S, { yes: 0.86, duration: 1.0, ease: MG.ease.enter }, 0.25);
+          inner.to(S, { no: 0.42, duration: 1.0, ease: MG.ease.enter }, 0.4);
+          inner.to(S, { seal: 1, duration: 0.45, ease: "power2.out" }, 1.15);
+
+          var drvT = 0, drv = {};
+          Object.defineProperty(drv, "t", {
+            get: function () { return drvT; },
+            set: function (v) { drvT = v; inner.time(v, true); frame(); },
+          });
+          var tl = gsap.timeline({ paused: true });
+          tl.to(drv, { t: DUR, duration: DUR, ease: "none" }, 0);
+          tl.fromTo("#s23-h1 .ln > span", { yPercent: 108, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.8, ease: "expo.out", stagger: 0.12 }, 0.3);
+          tl.fromTo("#s23-brand", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, 0);
+
+          window.__hf.buildReady[ID] = MG.ready.then(MG.fonts).then(function () {
+            scr = new MG.Screen();
+            built = true;
+            inner.time(drvT, true);
+            frame();
+          });
+          window.__timelines[ID] = window.__hfPre(ID, tl);
+        })();
+      </script>
+    </template>
+  </body>
+</html>

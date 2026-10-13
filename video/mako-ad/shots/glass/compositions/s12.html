@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- GLASS s12 (film 13.0-15.0, key 14.4 = local 1.4). 3D phone, pools list as glass cards scrolling. -->
+  </head>
+  <body>
+    <template id="s12-template">
+      <style>
+        @font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("../assets/fonts/captured-bricolage-grotesque-latin-wght-normal.0hh3pksc_dt39.woff2") format("woff2-variations");}
+        @font-face{font-family:"Inter Variable";font-style:normal;font-weight:100 900;src:url("../assets/fonts/captured-inter-latin-wght-normal.055ydel_y7o6i.woff2") format("woff2-variations");}
+        @font-face{font-family:"JetBrains Mono";font-weight:100 800;src:url("../assets/fonts/jbmono-latin.woff2") format("woff2");}
+        #s12-root{position:absolute;inset:0;overflow:hidden;background:#000;color:#EDE6D6;font-family:"Inter Variable",sans-serif}
+        #s12-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+        #s12-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.72) 0%,rgba(0,0,0,.35) 40%,rgba(0,0,0,0) 62%)}
+        #s12-brand{position:absolute;left:140px;top:96px;display:flex;align-items:center;gap:14px;font:800 30px "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.01em}
+        #s12-brand svg{width:40px;height:31px;display:block}
+        #s12-copy{position:absolute;left:140px;top:300px;width:930px}
+        #s12-h1{font:800 84px/1.02 "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.035em;color:#EDE6D6}
+        #s12-h1 .w{display:inline-block;margin-right:.22em}
+        #s12-h1 .y{color:#FACC15}
+        #s12-h1 .n{color:#D94A3D}
+        #s12-h2{margin-top:40px;font:600 38px/1.1 "Inter Variable",sans-serif;letter-spacing:-.01em;color:rgba(237,230,214,.72)}
+      </style>
+      <div id="s12-root" data-composition-id="s12" data-width="1920" data-height="1080" data-duration="2">
+        <canvas id="s12-gl" width="1920" height="1080"></canvas>
+        <div id="s12-shade"></div>
+        <div id="s12-brand"><svg viewBox="-3 -3 406 316"><path fill="#EDE6D6" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg><span>Mako Market</span></div>
+        <div id="s12-copy">
+          <div id="s12-h1"><span class="w">Bet</span><span class="w y">YES</span><span class="w">or</span><span class="w n">NO</span><span class="w">on</span><span class="w">crypto,</span><span class="w">sport,</span><span class="w">forex,</span><span class="w">commodities</span><span class="w">and</span><span class="w">stocks.</span></div>
+          <div id="s12-h2">Open for hours to days.</div>
+        </div>
+      </div>
+      <script src="../assets/glass/glass-kit.js"></script>
+      <script>
+        (function () {
+          var ID = "s12", DUR = 2.0, MG = window.MakoGlass, PI = Math.PI;
+          window.__hf = window.__hf || {};
+          window.__hf.buildReady = window.__hf.buildReady || {};
+          var g2 = document.getElementById(ID + "-gl").getContext("2d");
+          var scr = null, built = false;
+          var SW = MG.SW, SH = MG.SH;
+          var POOLS = [
+            ["CRYPTO", "Will Bitcoin close", "the week higher?"],
+            ["FOOTBALL", "Will the home side", "win on Saturday?"],
+            ["NBA", "Will the favourites", "win tonight?"],
+            ["FOREX", "Will EUR/USD end", "the day up?"],
+            ["COMMODITIES", "Will gold close", "the week higher?"],
+            ["STOCKS", "Will tech stocks", "close green Friday?"],
+          ];
+          var CATS = ["CRYPTO", "FOOTBALL", "NBA", "FOREX", "COMMODITIES", "STOCKS"];
+
+          var S = { t: 0, scroll: 0, chipX: 0, pick: 0, active: 0,
+            ry: PI + 0.40, rx: 0.06, rz: -0.02, px: 1.5, py: -0.1, cz: 7.3, cy: 0.2, cx: -0.1 };
+
+          function paint() {
+            var c = scr.ctx;
+            scr.wall(S.t * 1.0);
+            // category chips (horizontal scroll)
+            var x = 16 - S.chipX;
+            for (var i = 0; i < CATS.length; i++) {
+              var on = i === Math.round(S.active);
+              x += scr.chip(CATS[i], x, 100, 1, on ? "#FACC15" : null, on ? "#000" : "#EDE6D6") + 8;
+            }
+            // card list
+            c.save();
+            c.beginPath();
+            c.rect(0, 138, SW, SH - 138);
+            c.clip();
+            for (var k = 0; k < POOLS.length; k++) {
+              var y = 146 + k * 170 - S.scroll;
+              if (y > SH || y + 156 < 120) continue;
+              scr.glass(14, y, 362, 156, 26, 1, "clear");
+              scr.chip(POOLS[k][0], 30, y + 16, 1);
+              scr.text(POOLS[k][1], 30, y + 72, "800 23px " + MG.BR, "#EDE6D6");
+              scr.text(POOLS[k][2], 30, y + 99, "800 23px " + MG.BR, "#EDE6D6");
+              // mini YES / NO
+              var hl = k === 1 ? S.pick : 0;
+              MG.rr(c, 30, y + 114, 76, 30, 12);
+              c.fillStyle = "rgba(250,204,21," + (0.85 + 0.15 * hl) + ")";
+              c.fill();
+              MG.rr(c, 114, y + 114, 76, 30, 12);
+              c.fillStyle = "rgba(217,74,61,0.85)";
+              c.fill();
+              if (hl > 0.01) {
+                MG.rr(c, 30 - 3 * hl, y + 114 - 3 * hl, 76 + 6 * hl, 30 + 6 * hl, 14);
+                c.strokeStyle = "rgba(250,204,21," + 0.9 * hl + ")";
+                c.lineWidth = 2;
+                c.stroke();
+              }
+              scr.text("YES", 68, y + 130, "800 14px " + MG.BR, "#000", "center", 1, "middle");
+              scr.text("NO", 152, y + 130, "800 14px " + MG.BR, "#EDE6D6", "center", 1, "middle");
+              scr.trend(214, y + 112, 140, 32, S.t + k, 0.8);
+            }
+            c.restore();
+            var fade = c.createLinearGradient(0, 132, 0, 160);
+            fade.addColorStop(0, "rgba(2,2,2,0.9)");
+            fade.addColorStop(1, "rgba(2,2,2,0)");
+            c.fillStyle = fade;
+            c.fillRect(0, 132, SW, 28);
+            scr.header();
+            scr.homeBar();
+          }
+
+          function frame() {
+            if (!built) return;
+            paint();
+            MG.render({
+              cam: { x: S.cx, y: S.cy, z: S.cz, lx: 0, ly: 0.05, lz: 0, fov: 34 },
+              bg: { t: S.t * 1.6 + 7.0, gx: 0.55, gy: -0.35, gs: 0.07, rib: 1.0, ox: 0 },
+              rim: [4, 2, 3, 3.2],
+              phone: { x: S.px + Math.sin(S.t * 0.5) * 0.015, y: S.py + Math.sin(S.t * 0.7) * 0.012, z: 0.5, rx: S.rx, ry: S.ry, rz: S.rz, screen: scr.canvas },
+            }, g2);
+          }
+
+          var inner = gsap.timeline({ paused: true });
+          inner.to(S, { t: DUR, duration: DUR, ease: "none" }, 0);
+          inner.to(S, { scroll: 360, duration: DUR, ease: MG.ease.drift }, 0);
+          inner.to(S, { chipX: 120, duration: DUR, ease: MG.ease.drift }, 0);
+          inner.to(S, { active: 5, duration: 1.8, ease: "steps(5)" }, 0.1);
+          inner.to(S, { ry: PI + 0.24, rx: 0.0, rz: 0.0, py: 0.02, duration: 1.4, ease: MG.ease.enter }, 0);
+          inner.to(S, { ry: PI + 0.2, duration: 0.6, ease: MG.ease.breathe }, 1.4);
+          inner.to(S, { cz: 6.8, cy: 0.1, cx: 0.05, duration: DUR, ease: MG.ease.drift }, 0);
+          inner.to(S, { pick: 1, duration: 0.3, ease: "power2.out" }, 1.0);
+
+          var drvT = 0, drv = {};
+          Object.defineProperty(drv, "t", {
+            get: function () { return drvT; },
+            set: function (v) { drvT = v; inner.time(v, true); frame(); },
+          });
+          var tl = gsap.timeline({ paused: true });
+          tl.to(drv, { t: DUR, duration: DUR, ease: "none" }, 0);
+          tl.fromTo("#s12-h1 .w", { y: 46, opacity: 0, filter: "blur(10px)" }, { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.55, ease: "expo.out", stagger: 0.035 }, 0.0);
+          tl.fromTo("#s12-h2", { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 0.55);
+          tl.fromTo("#s12-brand", { opacity: 0.6 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, 0);
+
+          window.__hf.buildReady[ID] = MG.ready.then(MG.fonts).then(function () {
+            scr = new MG.Screen();
+            built = true;
+            inner.time(drvT, true);
+            frame();
+          });
+          window.__timelines[ID] = tl;
+        })();
+      </script>
+    </template>
+  </body>
+</html>

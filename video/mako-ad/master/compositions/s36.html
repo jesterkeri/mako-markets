@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- GLASS s36 (film 52.5-54.0, key 53.5 = local 1.0). Glass share sheet rises on the phone. Camera low, from the left. -->
+  </head>
+  <body>
+    <template id="s36-template">
+      <style>
+        @font-face{font-family:"Bricolage Grotesque Variable";font-style:normal;font-weight:200 800;src:url("../assets/fonts/captured-bricolage-grotesque-latin-wght-normal.0hh3pksc_dt39.woff2") format("woff2-variations");}
+        @font-face{font-family:"Inter Variable";font-style:normal;font-weight:100 900;src:url("../assets/fonts/captured-inter-latin-wght-normal.055ydel_y7o6i.woff2") format("woff2-variations");}
+        @font-face{font-family:"JetBrains Mono";font-weight:100 800;src:url("../assets/fonts/jbmono-latin.woff2") format("woff2");}
+        #s36-root{position:absolute;inset:0;overflow:hidden;background:#000;color:#EDE6D6;font-family:"Inter Variable",sans-serif}
+        #s36-gl{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+        #s36-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.72) 0%,rgba(0,0,0,.32) 38%,rgba(0,0,0,0) 58%)}
+        #s36-brand{position:absolute;left:140px;top:96px;display:flex;align-items:center;gap:14px;font:800 30px "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.01em}
+        #s36-brand svg{width:40px;height:31px;display:block}
+        #s36-copy{position:absolute;left:140px;top:360px;width:900px}
+        #s36-h1{font:800 140px/0.95 "Bricolage Grotesque Variable",sans-serif;letter-spacing:-.045em;color:#EDE6D6}
+        #s36-h1 .ln{display:block;overflow:hidden;padding-bottom:12px}
+        #s36-h1 .ln span{display:block;white-space:nowrap}
+        #s36-h1 .y{color:#FACC15}
+        #s36-list{margin-top:44px;display:flex;gap:34px;font:600 22px "JetBrains Mono",monospace;letter-spacing:.2em;text-transform:uppercase;color:rgba(237,230,214,.6)}
+        #s36-list span{display:block}
+      </style>
+      <div id="s36-root" data-composition-id="s36" data-width="1920" data-height="1080" data-duration="1.5">
+        <canvas id="s36-gl" width="1920" height="1080"></canvas>
+        <div id="s36-shade"></div>
+        <div id="s36-brand"><svg viewBox="-3 -3 406 316"><path fill="#EDE6D6" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg><span>Mako Market</span></div>
+        <div id="s36-copy">
+          <div id="s36-h1"><span class="ln"><span>Share any</span></span><span class="ln"><span class="y">pool.</span></span></div>
+          <div id="s36-list"><span>X</span><span>WhatsApp</span><span>Telegram</span></div>
+        </div>
+      </div>
+      <script src="../assets/glass/glass-kit.js"></script>
+      <script>
+        (function () {
+          var ID = "s36", DUR = 1.5, MG = window.MakoGlass, PI = Math.PI;
+          window.__hf = window.__hf || {};
+          window.__hf.buildReady = window.__hf.buildReady || {};
+          var g2 = document.getElementById(ID + "-gl").getContext("2d");
+          var scr = null, built = false;
+          var SW = MG.SW, SH = MG.SH;
+          var ROWS = ["X", "WhatsApp", "Telegram"];
+
+          var S = { t: 0, sheet: 0.3, r0: 0, r1: 0, r2: 0, tap: 0, ry: PI + 0.5, rx: 0.1, cx: -1.5, cy: -1.1, cz: 6.0 };
+
+          // neutral glyphs (no third-party brand colours)
+          function glyph(c, i, x, y) {
+            c.save();
+            c.strokeStyle = "#EDE6D6";
+            c.fillStyle = "#EDE6D6";
+            c.lineWidth = 3;
+            c.lineCap = "round";
+            if (i === 0) {
+              c.beginPath(); c.moveTo(x - 10, y - 11); c.lineTo(x + 10, y + 11); c.stroke();
+              c.beginPath(); c.moveTo(x + 10, y - 11); c.lineTo(x - 10, y + 11); c.stroke();
+            } else if (i === 1) {
+              c.beginPath(); c.arc(x, y, 12, 0.6, PI * 2 + 0.2); c.stroke();
+              c.beginPath(); c.moveTo(x - 8, y + 9); c.lineTo(x - 13, y + 15); c.lineTo(x - 3, y + 12); c.stroke();
+            } else {
+              c.beginPath(); c.moveTo(x - 13, y); c.lineTo(x + 13, y - 11); c.lineTo(x + 6, y + 13); c.closePath(); c.stroke();
+              c.beginPath(); c.moveTo(x - 1, y + 3); c.lineTo(x + 13, y - 11); c.stroke();
+            }
+            c.restore();
+          }
+
+          function paint() {
+            var c = scr.ctx;
+            scr.wall(S.t + 24.0, 0.9);
+            scr.header();
+            // pool page behind
+            scr.glass(14, 110, 362, 330, 30, 1, "clear");
+            scr.chip("FOOTBALL", 32, 132, 1);
+            scr.text("Will the home side", 32, 200, "800 29px " + MG.BR, "#EDE6D6");
+            scr.text("win on Saturday?", 32, 234, "800 29px " + MG.BR, "#EDE6D6");
+            scr.trend(32, 262, 326, 60, S.t, 0.9);
+            scr.glass(32, 340, 158, 80, 22, 1, "yes");
+            scr.glass(200, 340, 158, 80, 22, 1, "no");
+            scr.text("YES", 111, 381, "800 30px " + MG.BR, "#000", "center", 1, "middle");
+            scr.text("NO", 279, 381, "800 30px " + MG.BR, "#EDE6D6", "center", 1, "middle");
+            scr.scrim(0.5 * MG.clamp(S.sheet, 0, 1));
+            var back = scr.freeze();
+            var r = MG.rise(S.sheet, 520);
+            var y0 = 400 + r.dy;
+            scr.glass(8, y0, SW - 16, SH - y0 + 40, 34, 1, "sheet", back);
+            MG.rr(c, SW / 2 - 24, y0 + 12, 48, 5, 3);
+            c.fillStyle = "rgba(237,230,214,0.45)";
+            c.fill();
+            scr.text("SHARE", 30, y0 + 52, "600 11px " + MG.MO, "rgba(237,230,214,0.6)");
+            var rv = [S.r0, S.r1, S.r2];
+            for (var i = 0; i < 3; i++) {
+              var q = MG.ease.enter(MG.clamp(rv[i], 0, 1));
+              var ry = y0 + 70 + i * 92 + (1 - q) * 30;
+              var hot = i === 1 ? S.tap : 0;
+              scr.glass(22, ry, SW - 44, 78, 22, q, hot > 0.5 ? "yes" : "clear", back);
+              if (q < 0.02) continue;
+              c.save();
+              c.globalAlpha = q;
+              MG.rr(c, 36, ry + 13, 52, 52, 14);
+              c.fillStyle = "rgba(10,10,10,0.85)";
+              c.fill();
+              c.strokeStyle = "rgba(237,230,214,0.25)";
+              c.lineWidth = 1;
+              c.stroke();
+              glyph(c, i, 62, ry + 39);
+              c.restore();
+              scr.text(ROWS[i], 104, ry + 40, "700 22px " + MG.IN, hot > 0.5 ? "#000" : "#EDE6D6", "left", q, "middle");
+              scr.text("›", SW - 46, ry + 40, "600 30px " + MG.IN, hot > 0.5 ? "#000" : "rgba(237,230,214,0.5)", "center", q, "middle");
+            }
+            scr.homeBar();
+          }
+
+          function frame() {
+            if (!built) return;
+            paint();
+            MG.render({
+              cam: { x: S.cx, y: S.cy, z: S.cz, lx: 0.1, ly: 0.1, lz: 0, fov: 34 },
+              bg: { t: S.t * 1.6 + 35.0, gx: 0.7, gy: 0.4, gs: 0.08, rib: 1.1, ox: -0.5, oy: -0.3 },
+              rim: [4.5, -1.5, 3, 3.4],
+              phone: { x: 1.3, y: 0.05, z: 0, rx: S.rx, ry: S.ry, rz: -0.03, screen: scr.canvas },
+            }, g2);
+          }
+
+          var inner = gsap.timeline({ paused: true });
+          inner.to(S, { t: DUR, duration: DUR, ease: "none" }, 0);
+          inner.to(S, { sheet: 1, duration: 0.5, ease: "none" }, 0);
+          inner.to(S, { r0: 1, duration: 0.45, ease: "none" }, 0.18);
+          inner.to(S, { r1: 1, duration: 0.45, ease: "none" }, 0.26);
+          inner.to(S, { r2: 1, duration: 0.45, ease: "none" }, 0.34);
+          inner.to(S, { tap: 1, duration: 0.01, ease: "none" }, 1.2);
+          inner.to(S, { ry: PI + 0.34, rx: 0.04, cx: -1.1, cy: -0.85, cz: 5.4, duration: DUR, ease: MG.ease.drift }, 0);
+
+          var drvT = 0, drv = {};
+          Object.defineProperty(drv, "t", {
+            get: function () { return drvT; },
+            set: function (v) { drvT = v; inner.time(v, true); frame(); },
+          });
+          var tl = gsap.timeline({ paused: true });
+          tl.to(drv, { t: DUR, duration: DUR, ease: "none" }, 0);
+          tl.fromTo("#s36-h1 .ln > span", { yPercent: 108, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.7, ease: "expo.out", stagger: 0.1 }, 0.0);
+          tl.fromTo("#s36-list span", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out", stagger: 0.08 }, 0.4);
+          tl.fromTo("#s36-brand", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, 0);
+
+          window.__hf.buildReady[ID] = MG.ready.then(MG.fonts).then(function () {
+            scr = new MG.Screen();
+            built = true;
+            inner.time(drvT, true);
+            frame();
+          });
+          window.__timelines[ID] = window.__hfPre(ID, tl);
+        })();
+      </script>
+    </template>
+  </body>
+</html>
