@@ -77,11 +77,12 @@ function makeWrapper() {
   });
   // The app's own QueryClient defaults (src/components/Providers.tsx: staleTime 30 s, everything else default).
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000 } } });
-  return ({ children }: { children: React.ReactNode }) => (
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <WagmiProvider config={config} reconnectOnMount={false}>
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     </WagmiProvider>
   );
+  return Wrapper;
 }
 const settle = async () => { for (let i = 0; i < 20; i++) await advance(50); };
 /// Seconds since `t0` of each discovery request, and the smallest gap between two of them.
