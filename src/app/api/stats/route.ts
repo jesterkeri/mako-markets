@@ -2,6 +2,7 @@ import { ttlMemo } from '@/lib/ttl-memo';
 import { parseIndexedStats, STATS_QUERY, toWire, type IndexedStats, type StatsWire } from '@/lib/stats';
 import { fetchDbSnapshot } from '@/lib/stats-snapshot';
 import { within } from '@/lib/within';
+import { reserveEnvioCall } from '@/lib/envio-budget';
 
 // GET /api/stats: the figures for /stats, from the Envio indexer of the pools and rounds contracts (ENVIO_GRAPHQL_URL) and Mako
 // Market's own records (sponsored transactions, Mako wallets created). The indexer figures are at most a minute old, so a
@@ -36,6 +37,11 @@ const errorCode = (e: unknown): string => {
 async function fetchIndexer(): Promise<IndexedStats> {
   const url = process.env.ENVIO_GRAPHQL_URL?.trim();
   if (!url) throw new NotConfigured();
+  // The Envio project's 100 queries a minute are shared with rounds in Me, so this call takes a slot in the shared
+  // budget first (src/lib/envio-budget.ts, /stats' share 25 a minute) and is never sent without one; a refusal or an
+  // unreachable budget shows the indexer figures as unavailable (Codex ME_ROUNDS R6). With the answer cached, a busy
+  // instance asks about once a minute.
+  await reserveEnvioCall('stats');
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

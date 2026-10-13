@@ -20,6 +20,10 @@ vi.mock('@/db/client', () => ({
 
 import { parseIndexedStats } from '../stats';
 
+// /stats now reserves a slot in the shared Envio budget before each indexer call (envio-budget.ts, tested on its own
+// and in stats-envio-budget.test.ts); here every call has one, so this file tests the stats logic itself.
+vi.mock('@/lib/envio-budget', async (orig) => ({ ...(await orig<typeof import('@/lib/envio-budget')>()), reserveEnvioCall: async () => {} }));
+
 // The same well-formed answer stats.test.ts uses.
 const data = {
   GlobalStats: [

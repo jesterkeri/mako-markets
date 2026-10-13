@@ -18,7 +18,7 @@ export const ROUNDS_WINDOW = 16;
 
 export const roundsContract = ROUNDS_ADDRESS ? ({ address: ROUNDS_ADDRESS, abi: roundsAbi, chainId: monadTestnet.id } as const) : null;
 
-type RoundTuple = {
+export type RoundTuple = {
   creator: `0x${string}`;
   openTime: bigint;
   startTime: bigint;

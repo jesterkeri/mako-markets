@@ -14,7 +14,11 @@ import { formatAddress } from '@/lib/user-display';
 
 import {
   AvatarFace,
-  claimWhy,
+  claimAmount,
+  claimHref,
+  claimKey,
+  claimReason,
+  claimTitle,
   CopyButton,
   CREATE_HREF,
   display,
@@ -240,26 +244,27 @@ function ReadyToClaim(v: MeView) {
           <span style={{ ...display, fontSize: 22 }}>Ready to claim</span>
           <span style={{ minWidth: 28, height: 28, padding: '0 8px', boxSizing: 'border-box', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800 }}>{v.pendingClaims}</span>
         </div>
-        {v.claimItems.map(({ p, landed }) => {
-          const amount = usdc2(p.claim ?? 0n);
-          const refund = p.state === 'refunded';
+        {v.claimItems.map((c) => {
+          const { landed } = c;
+          const amount = usdc2(claimAmount(c));
+          const refund = c.kind === 'pool' ? c.p.state === 'refunded' : c.r.position.kind === 'refund';
           return (
-            <div key={p.market.id.toString()} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', boxShadow: 'inset 0 -1px 0 var(--m3-inv-2)' }}>
+            <div key={claimKey(c)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', boxShadow: 'inset 0 -1px 0 var(--m3-inv-2)' }}>
               <span aria-hidden="true" style={{ flex: 'none', width: 40, height: 40, borderRadius: 9999, background: refund ? 'var(--mako-cyan)' : 'var(--mako-teal)', color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800 }}>
-                {refund ? 'RF' : CAT_STYLE[p.cat].abbr}
+                {refund ? 'RF' : c.kind === 'pool' ? CAT_STYLE[c.p.cat].abbr : 'RD'}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <Link href={poolHref(p.market.id)} style={{ display: 'block', fontSize: 15, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'inherit', textDecoration: 'none' }}>
-                  {p.market.question}
+                <Link href={claimHref(c)} style={{ display: 'block', fontSize: 15, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'inherit', textDecoration: 'none' }}>
+                  {claimTitle(c)}
                 </Link>
-                <div style={{ fontSize: 13, opacity: 0.65 }}>{claimWhy(p, v.labelsOf(p))}</div>
+                <div style={{ fontSize: 13, opacity: 0.65 }}>{claimReason(c, v.labelsOf)}</div>
               </div>
               {landed ? (
                 <span style={{ flex: 'none', fontSize: 13, fontWeight: 800, opacity: 0.7, whiteSpace: 'nowrap' }}>✓ Claimed</span>
               ) : (
                 <button
                   type="button"
-                  onClick={() => v.openClaim(p)}
+                  onClick={() => v.openClaim(c)}
                   className="m3-press m3-scale96"
                   style={{ flex: 'none', height: 38, padding: '0 14px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
                 >

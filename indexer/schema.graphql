@@ -282,3 +282,16 @@ type GlobalStats {
   updatedAt: Int!
   updatedBlock: Int!
 }
+
+"""
+The Rounds contract this indexer reads and its chain, written from the events themselves (event.srcAddress,
+event.chainId), one row with id "rounds". A reader includes it in every query and refuses any answer whose source is
+not the reviewed deployment (Codex ME_ROUNDS R3). If events ever arrive from a second address, address becomes
+"conflict", so no answer is trusted.
+"""
+type RoundsSource {
+  id: ID!
+  sourceChain: Int!
+  "Lower-case 0x address, or \"conflict\"."
+  address: String!
+}

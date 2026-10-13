@@ -82,6 +82,11 @@ vi.mock('wagmi', async () => {
     useWriteContract: () => ({ writeContractAsync: vi.fn() }),
   };
 });
+/// Rounds for Me (2026-10-13): 'off' by default so the pool cases read as before; the round cases set a ready read.
+type RoundsRead = { status: 'off' } | { status: 'loading' } | { status: 'error' } | { status: 'ready'; rounds: unknown[]; stakes: Map<string, unknown> };
+let roundsRead: RoundsRead = { status: 'off' };
+vi.mock('@/lib/use-me-rounds', () => ({ useMeRounds: () => ({ ...roundsRead, refetch: vi.fn() }) }));
+
 vi.mock('@/lib/hooks', () => ({
   useAllMarkets: () => ({ ...marketsState, refetch: vi.fn() }),
   useUsdcBalance: () => ({ data: 50n * USDC, isError: false, refetch: vi.fn() }),
@@ -126,6 +131,7 @@ function totals(): Record<string, string> {
 }
 
 beforeEach(() => {
+  roundsRead = { status: 'off' };
   signedIn = true;
   betFails = 'none';
   bets = [
@@ -210,5 +216,72 @@ describe('Me page', () => {
     signedIn = false;
     renderMe();
     expect(screen.getAllByRole('link', { name: 'Sign in' }).length).toBeGreaterThan(0);
+  });
+
+  describe('rounds in Me (2026-10-13)', () => {
+    // Round #4 as it settled on Monad testnet 2026-10-12: UP 2.00 / DOWN 1.00, UP won, 2.95 distributable.
+    const round4 = {
+      id: 4n,
+      creator: '0xe490aB83c7f247BEC7d5E04Ce04bc48D6609b550' as const,
+      openTime: NOW - 20_000,
+      startTime: NOW - 10_000,
+      status: 2,
+      outcome: 1,
+      refundReason: 0,
+      anchorPrice: 82_631_697_230_090_010_000_000n,
+      closePrice: 82_803_526_460_810_000_000_000n,
+      upPool: 2n * USDC,
+      downPool: 1n * USDC,
+      upEntrants: 1,
+      downEntrants: 1,
+      protocolFee: 30_000n,
+      creatorFee: 20_000n,
+      distributable: 2_950_000n,
+    };
+    const live = { ...round4, id: 5n, startTime: NOW + 3_000, status: 1, outcome: 0, distributable: 0n, upPool: 1n * USDC, downPool: 1n * USDC };
+
+    it('adds a won round to Ready to claim, In play and Won all time, with its own Claim button', () => {
+      roundsRead = {
+        status: 'ready',
+        rounds: [round4, live],
+        stakes: new Map<string, unknown>([
+          ['4', { stake: { side: 'up', amount: 2n * USDC }, claimed: false }],
+          ['5', { stake: { side: 'down', amount: 1n * USDC }, claimed: false }],
+        ]),
+      };
+      renderMe();
+      expect(totals()).toEqual({
+        BALANCE: '50.00 USDC',
+        'IN PLAY': '5.00 USDC', // 4.00 in the open pool + 1.00 in round #5
+        'READY TO CLAIM': '15.88 USDC', // 12.93 pool + 2.95 round #4
+        'WON ALL TIME': '15.88 USDC',
+      });
+      expect(screen.getAllByText('Round #4 · BTC/USD up or down').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('UP won').length).toBeGreaterThan(0);
+      fireEvent.click(screen.getAllByRole('button', { name: 'Claim 2.95 USDC' })[0]);
+      expect(screen.getAllByRole('button', { name: /Confirm · 2\.95 USDC/ }).length).toBeGreaterThan(0);
+    });
+
+    it('a claimed round leaves Ready to claim but stays in Won all time; a lost round adds nothing', () => {
+      roundsRead = {
+        status: 'ready',
+        rounds: [round4, { ...round4, id: 6n }],
+        stakes: new Map<string, unknown>([
+          ['4', { stake: { side: 'up', amount: 2n * USDC }, claimed: true }],
+          ['6', { stake: { side: 'down', amount: 1n * USDC }, claimed: false }],
+        ]),
+      };
+      renderMe();
+      expect(totals()['READY TO CLAIM']).toBe('12.93 USDC');
+      expect(totals()['WON ALL TIME']).toBe('15.88 USDC');
+      expect(screen.queryAllByRole('button', { name: 'Claim 2.95 USDC' })).toHaveLength(0);
+    });
+
+    it('a failed rounds read shows the error for the totals, never pools-only totals', () => {
+      roundsRead = { status: 'error' };
+      renderMe();
+      expect(totals()['IN PLAY']).toBe('Unavailable');
+      expect(totals()['WON ALL TIME']).toBe('Unavailable');
+    });
   });
 });

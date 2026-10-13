@@ -1,0 +1,168 @@
+// The shared Envio budget for rounds in Me (Codex ME_ROUNDS R5, Joshua 2026-10-13): one log across every app instance,
+// never more than ME_ENVIO_PER_MINUTE calls in ANY rolling 60 s, and every failure to check it refuses the call (fail
+// closed). The token never reaches an error message.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { answerUpstash, fakeUpstash, type FakeUpstash } from './helpers/fake-upstash';
+
+let up: FakeUpstash;
+let t = 0;
+
+beforeEach(() => {
+  vi.resetModules();
+  t = 1_800_000_000_000;
+  up = fakeUpstash(() => t);
+  process.env.UPSTASH_REDIS_REST_URL = up.url;
+  process.env.UPSTASH_REDIS_REST_TOKEN = up.token;
+  vi.spyOn(globalThis, 'fetch').mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url !== up.url) throw new Error(`unscripted fetch ${url}`);
+    return answerUpstash(up, init);
+  }) as typeof fetch);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const k of ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_URL', 'KV_REST_API_TOKEN']) delete process.env[k];
+});
+
+const load = () => import('@/lib/envio-budget');
+
+describe('reserveEnvioCall', () => {
+  it('allows ME_ENVIO_PER_MINUTE calls in a rolling minute, refuses the next, and frees slots exactly 60 s later', async () => {
+    const b = await load();
+    const start = t;
+    for (let i = 0; i < b.ME_ENVIO_PER_MINUTE; i++) {
+      t = start + i;
+      await b.reserveEnvioCall('me');
+    }
+    t = start + 100;
+    await expect(b.reserveEnvioCall('me')).rejects.toBeInstanceOf(b.EnvioBudgetExhausted);
+    t = start + b.WINDOW_MS - 1;
+    await expect(b.reserveEnvioCall('me')).rejects.toBeInstanceOf(b.EnvioBudgetExhausted);
+    t = start + b.WINDOW_MS + 1;
+    await expect(b.reserveEnvioCall('me')).resolves.toBeUndefined();
+  });
+
+  it('two app instances (two module copies) share one log: together they get the budget, not double', async () => {
+    const a = await load();
+    vi.resetModules();
+    const c = await load();
+    expect(a).not.toBe(c);
+    let ok = 0;
+    for (let i = 0; i < 200; i++) {
+      try {
+        t += 1;
+        await (i % 2 ? a : c).reserveEnvioCall('me');
+        ok++;
+      } catch (e) {
+        expect((e as Error).name).toBe('EnvioBudgetExhausted');
+      }
+    }
+    expect(ok).toBe(a.ME_ENVIO_PER_MINUTE);
+  });
+
+  it('a burst of 20 calls every second for 5 minutes: no 60 s span ever gets more than ME_ENVIO_PER_MINUTE through', async () => {
+    const b = await load();
+    const passed: number[] = [];
+    const start = t;
+    for (let s = 0; s < 300; s++) {
+      for (let k = 0; k < 20; k++) {
+        const now = start + s * 1000 + k;
+        t = now;
+        try {
+          await b.reserveEnvioCall('me');
+          passed.push(now);
+        } catch {
+          // refused
+        }
+      }
+    }
+    let worst = 0;
+    for (const from of passed) worst = Math.max(worst, passed.filter((x) => x >= from && x < from + 60_000).length);
+    expect(worst).toBe(b.ME_ENVIO_PER_MINUTE);
+  });
+
+  it.each([
+    ['not configured', () => { delete process.env.UPSTASH_REDIS_REST_URL; }],
+    ['a non-https URL', () => { process.env.UPSTASH_REDIS_REST_URL = 'http://fake-upstash.test'; }],
+    ['unreachable', () => { up.override = () => { throw new TypeError('fetch failed'); }; }],
+    ['HTTP 500', () => { up.override = () => new Response('oops', { status: 500 }); }],
+    ['an error body', () => { up.override = () => Response.json({ error: 'ERR' }); }],
+    ['not JSON', () => { up.override = () => new Response('<html>', { status: 200 }); }],
+    ['a count that is not a number', () => { up.override = () => Response.json({ result: 'many' }); }],
+  ])('%s: the call is refused (fail closed), never allowed', async (_n, setup) => {
+    setup();
+    const b = await load();
+    const err = await b.reserveEnvioCall('me').then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('EnvioBudgetUnavailable');
+    expect(String(err?.message)).not.toContain(up.token);
+  });
+
+  it('uses the Vercel KV-style names when the Upstash ones are absent', async () => {
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    process.env.KV_REST_API_URL = up.url;
+    process.env.KV_REST_API_TOKEN = up.token;
+    const b = await load();
+    await expect(b.reserveEnvioCall('me')).resolves.toBeUndefined();
+  });
+
+  it('the script stamps calls with the store clock (Redis TIME), never an app clock', async () => {
+    const b = await load();
+    await b.reserveEnvioCall('me');
+    const evalCall = up.calls.find((c) => c[0] === 'EVAL')!;
+    expect(evalCall[1]).toContain("redis.call('TIME')");
+    expect(evalCall.slice(3)).toHaveLength(6); // two keys, window, global cap, consumer cap, member: no timestamp from this instance
+  });
+
+  it('session keys hash the session id: the raw id is never stored', async () => {
+    const b = await load();
+    expect(b.sessionKey('abc-session')).toMatch(/^mako:me:sid:[0-9a-f]{64}$/);
+    expect(b.sessionKey('abc-session')).not.toContain('abc-session');
+  });
+
+  it('Me 70 then /stats 31 in one minute: /stats gets its 25, the 26th and later are refused, the project never passes 95', async () => {
+    const a = await load();
+    vi.resetModules();
+    const c = await load(); // a second instance
+    let me = 0;
+    let stats = 0;
+    for (let i = 0; i < 70; i++) {
+      t += 1;
+      await (i % 2 ? a : c).reserveEnvioCall('me');
+      me++;
+    }
+    for (let i = 0; i < 31; i++) {
+      t += 1;
+      try {
+        await (i % 2 ? a : c).reserveEnvioCall('stats');
+        stats++;
+      } catch (e) {
+        expect((e as Error).name).toBe('EnvioBudgetExhausted');
+      }
+    }
+    expect([me, stats]).toEqual([70, 25]);
+    expect(me + stats).toBeLessThanOrEqual(a.ENVIO_PER_MINUTE);
+  });
+
+  it('/stats 30 then Me 71: /stats stops at 25 and Me at 70, and neither is starved', async () => {
+    const b = await load();
+    let stats = 0;
+    let me = 0;
+    for (let i = 0; i < 30; i++) {
+      t += 1;
+      await b.reserveEnvioCall('stats').then(() => stats++, () => undefined);
+    }
+    for (let i = 0; i < 71; i++) {
+      t += 1;
+      await b.reserveEnvioCall('me').then(() => me++, () => undefined);
+    }
+    expect([stats, me]).toEqual([25, 70]);
+  });
+
+  it('the shares add up to the global cap, and the global cap stays under Envio\'s 100', async () => {
+    const b = await load();
+    expect(b.ME_ENVIO_PER_MINUTE + b.STATS_ENVIO_PER_MINUTE).toBe(b.ENVIO_PER_MINUTE);
+    expect(b.ENVIO_PER_MINUTE).toBeLessThan(100);
+  });
+});
