@@ -13,7 +13,11 @@ import { formatAddress } from '@/lib/user-display';
 import {
   AvatarFace,
   BAR,
-  claimWhy,
+  claimAmount,
+  claimHref,
+  claimKey,
+  claimReason,
+  claimTitle,
   CopyButton,
   CREATE_HREF,
   display,
@@ -391,22 +395,23 @@ function ReadyToClaim(v: MeView) {
         <span style={{ ...display, fontSize: 24, letterSpacing: '-0.02em' }}>Ready to claim</span>
         <span style={{ ...mono, fontSize: 12, color: 'var(--dim)' }}>{v.pendingClaims}</span>
       </div>
-      {v.claimItems.map(({ p, landed }) => {
-        const amount = usdc2(p.claim ?? 0n);
+      {v.claimItems.map((c) => {
+        const { landed } = c;
+        const amount = usdc2(claimAmount(c));
         return (
-          <div key={p.market.id.toString()} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', boxShadow: 'inset 0 1px 0 var(--line)' }}>
+          <div key={claimKey(c)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', boxShadow: 'inset 0 1px 0 var(--line)' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Link href={poolHref(p.market.id)} style={{ display: 'block', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'inherit', textDecoration: 'none' }}>
-                {p.market.question}
+              <Link href={claimHref(c)} style={{ display: 'block', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'inherit', textDecoration: 'none' }}>
+                {claimTitle(c)}
               </Link>
-              <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', marginTop: 3 }}>{claimWhy(p, v.labelsOf(p))}</div>
+              <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', marginTop: 3 }}>{claimReason(c, v.labelsOf)}</div>
             </div>
             {landed ? (
               <span style={{ flex: 'none', height: 36, display: 'flex', alignItems: 'center', padding: '0 4px', ...mono, fontSize: 12, fontWeight: 700, color: 'var(--dim)' }}>✓ Claimed {amount}</span>
             ) : (
               <button
                 type="button"
-                onClick={() => v.openClaim(p)}
+                onClick={() => v.openClaim(c)}
                 className="mk-press97"
                 style={{ flex: 'none', height: 36, padding: '0 14px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', ...mono, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}
               >

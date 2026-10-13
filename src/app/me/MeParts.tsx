@@ -2,8 +2,10 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 
+import type { MeRound } from '@/lib/me-rounds';
 import { chartGeometry, type MePosition, type MeRange, type ProfitSeries } from '@/lib/me-stats';
 import { STATE_PILL, type PoolState } from '@/lib/pool-list';
+import { V1_ASSET } from '@/lib/rounds-model';
 import type { AuthedUser } from '@/lib/use-user';
 
 import type { Labels, MeChain } from './use-me-data';
@@ -19,8 +21,23 @@ export type Loadable<T> = { status: 'loading' } | { status: 'error' } | { status
 
 export type MeTab = 'active' | 'settled';
 
-/// One row of "Ready to claim": still claimable, or claimed from this page a moment ago.
-export type ClaimItem = { p: MePosition; landed: boolean };
+/// One row of "Ready to claim": a pool or a round (2026-10-13), still claimable, or claimed from this page a moment
+/// ago.
+export type ClaimItem = { kind: 'pool'; p: MePosition; landed: boolean } | { kind: 'round'; r: MeRound; landed: boolean };
+
+export const claimKey = (c: ClaimItem): string => (c.kind === 'pool' ? `pool-${c.p.market.id}` : `round-${c.r.round.id}`);
+export const claimAmount = (c: ClaimItem): bigint => (c.kind === 'pool' ? (c.p.claim ?? 0n) : (c.r.claim ?? 0n));
+export const claimHref = (c: ClaimItem): string => (c.kind === 'pool' ? poolHref(c.p.market.id) : `/rounds/${c.r.round.id}`);
+export function claimTitle(c: ClaimItem): string {
+  if (c.kind === 'pool') return c.p.market.question;
+  return `Round #${c.r.round.id} · ${V1_ASSET.pair} up or down`;
+}
+export function claimReason(c: ClaimItem, labelsOf: (p: MePosition) => Labels): string {
+  if (c.kind === 'pool') return claimWhy(c.p, labelsOf(c.p));
+  const pos = c.r.position;
+  if (pos.kind === 'refund') return 'Refund · round refunded';
+  return `${pos.kind === 'won' && pos.side === 'up' ? 'UP' : 'DOWN'} won`;
+}
 
 export type MeView = {
   user: AuthedUser;
@@ -46,7 +63,7 @@ export type MeView = {
   setRange: (r: MeRange) => void;
   tab: MeTab;
   setTab: (t: MeTab) => void;
-  openClaim: (p: MePosition) => void;
+  openClaim: (c: ClaimItem) => void;
   retry: () => void;
   explorerHref: string;
   edit: ProfileEdit;

@@ -5,10 +5,13 @@ import { useRef, useState } from 'react';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
+import type { MeRound } from '@/lib/me-rounds';
 import { profitSeries, sumClaims, type MePosition, type MeRange } from '@/lib/me-stats';
 import { usdcExact } from '@/lib/pool-list';
+import { V1_ASSET } from '@/lib/rounds-model';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { usePoolTx } from '@/lib/use-pool-tx';
+import { useRoundTx } from '@/lib/use-round-tx';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
 
@@ -28,6 +31,26 @@ function walletOf(user: AuthedUser): { kind: 'mako' | 'external'; address: strin
 
 /// The confirm sheet's words for one claim, fixed when it opens: after the claim lands the refetch clears the
 /// claimable amount, and the sheet must still describe what was confirmed.
+/// The round claim sheet, as the round page words it (a player's claim: no house fee here).
+function roundClaimSpec(r: MeRound): ConfirmSpec {
+  const amt = usdcExact(r.claim ?? 0n);
+  const refund = r.position.kind === 'refund';
+  return {
+    glyph: '$',
+    glyphColor: 'var(--mako-teal)',
+    title: `${refund ? 'Claim refund' : 'Claim'} · ${amt} USDC`,
+    confirmLabel: `Confirm · ${amt} USDC`,
+    pendingTitle: refund ? 'Claiming your refund' : 'Claiming',
+    rows: [
+      { label: 'Round', value: `#${r.round.id.toString()} · ${V1_ASSET.pair}` },
+      { label: refund ? 'Refund' : 'Payout', value: `${amt} USDC` },
+    ],
+    note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the round settled; the claim pays out the rest.',
+    doneTitle: refund ? 'Refund claimed' : 'Claimed',
+    doneBody: `${amt} USDC is in your balance.`,
+  };
+}
+
 function claimSpec(p: MePosition): ConfirmSpec {
   const amt = usdcExact(p.claim ?? 0n);
   const refund = p.state === 'refunded';
@@ -78,19 +101,43 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     if (p) setLanded((prev) => new Map(prev).set(p.market.id.toString(), p));
     data.refetch();
   });
-  const openClaim = (p: MePosition) => {
-    if (p.claim === null || tx.tx) return;
-    claiming.current = p;
-    setSheetSpec(claimSpec(p));
-    tx.open({ kind: 'claim', marketId: p.market.id });
+  // Rounds claim from Me too (2026-10-13), through the round's own sponsored transaction, one sheet at a time.
+  const [landedRounds, setLandedRounds] = useState<ReadonlyMap<string, MeRound>>(() => new Map());
+  const [roundSheetSpec, setRoundSheetSpec] = useState<ConfirmSpec | null>(null);
+  const claimingRound = useRef<MeRound | null>(null);
+  const roundTx = useRoundTx(() => {
+    const r = claimingRound.current;
+    if (r) setLandedRounds((prev) => new Map(prev).set(r.round.id.toString(), r));
+    data.refetch();
+  });
+  const openClaim = (c: ClaimItem) => {
+    if (tx.tx || roundTx.tx) return;
+    if (c.kind === 'pool') {
+      if (c.p.claim === null) return;
+      claiming.current = c.p;
+      setSheetSpec(claimSpec(c.p));
+      tx.open({ kind: 'claim', marketId: c.p.market.id });
+    } else {
+      if (c.r.claim === null) return;
+      claimingRound.current = c.r;
+      setRoundSheetSpec(roundClaimSpec(c.r));
+      roundTx.open({ kind: 'claim', roundId: c.r.round.id });
+    }
   };
 
   const name = user.displayName?.trim() || null;
   const label = name ?? formatAddress(account);
   const chain = data.chain;
   const pending = chain.status === 'ready' ? chain.stats.claims.filter((p) => !landed.has(p.market.id.toString())) : [];
-  const claimItems: ClaimItem[] = [...pending.map((p) => ({ p, landed: false })), ...[...landed.values()].map((p) => ({ p, landed: true }))];
-  const ready: Loadable<bigint> = chain.status === 'ready' ? { status: 'ready', value: sumClaims(pending) } : chain;
+  const pendingRounds = chain.status === 'ready' ? chain.roundClaims.filter((r) => !landedRounds.has(r.round.id.toString())) : [];
+  const claimItems: ClaimItem[] = [
+    ...pending.map((p): ClaimItem => ({ kind: 'pool', p, landed: false })),
+    ...pendingRounds.map((r): ClaimItem => ({ kind: 'round', r, landed: false })),
+    ...[...landed.values()].map((p): ClaimItem => ({ kind: 'pool', p, landed: true })),
+    ...[...landedRounds.values()].map((r): ClaimItem => ({ kind: 'round', r, landed: true })),
+  ];
+  const ready: Loadable<bigint> =
+    chain.status === 'ready' ? { status: 'ready', value: sumClaims(pending) + pendingRounds.reduce((s, r) => s + (r.claim ?? 0n), 0n) } : chain;
 
   const view: MeView = {
     user,
@@ -103,8 +150,8 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     chain,
     ready,
     claimItems,
-    pendingClaims: pending.length,
-    allClaimed: pending.length === 0 && (landed.size > 0 || (chain.status === 'ready' && chain.stats.claimedBefore)),
+    pendingClaims: pending.length + pendingRounds.length,
+    allClaimed: pending.length + pendingRounds.length === 0 && (landed.size + landedRounds.size > 0 || (chain.status === 'ready' && chain.stats.claimedBefore)),
     series: chain.status === 'ready' && now !== null ? profitSeries(chain.positions, now, range) : null,
     now,
     labelsOf: data.labelsOf,
@@ -144,6 +191,7 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   };
 
   const spec = tx.tx ? sheetSpec : null;
+  const roundSpec = roundTx.tx ? roundSheetSpec : null;
   return (
     <>
       <div className="mk-desk mk-desk-frame">
@@ -153,6 +201,9 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
         <MeMobile {...view} />
       </div>
       {spec && <ConfirmSheet spec={spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} />}
+      {roundSpec && (
+        <ConfirmSheet spec={roundSpec} phase={roundTx.phase} wallet={walletOf(user)} onConfirm={roundTx.confirm} onCancel={roundTx.close} onRetry={roundTx.retry} onClose={roundTx.close} />
+      )}
     </>
   );
 }

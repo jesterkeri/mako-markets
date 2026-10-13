@@ -5,9 +5,11 @@ import { useReadContracts } from 'wagmi';
 
 import { makoContract, MarketType } from '@/lib/contract';
 import { useAllMarkets, useUsdcBalance } from '@/lib/hooks';
+import { meRoundPositions, meRoundTotals, type MeRound } from '@/lib/me-rounds';
 import { createdCount, mePositions, meStats, type MePosition, type MeStats } from '@/lib/me-stats';
 import type { UserBet } from '@/lib/pool-list';
 import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
+import { useMeRounds } from '@/lib/use-me-rounds';
 
 export type Labels = { yes: string; no: string };
 
@@ -16,7 +18,9 @@ export type MeChain =
   /// A read still failed after TanStack Query's retries, with nothing read before: the page shows the error, never
   /// zeros. A refetch that fails keeps showing the last complete reading.
   | { status: 'error' }
-  | { status: 'ready'; positions: MePosition[]; stats: MeStats; created: number };
+  /// `stats.inPlay`, `stats.wonAllTime` and `stats.claimedBefore` count pools AND rounds; `stats.claims` and
+  /// `positions` are pools only, `roundClaims` and `rounds` are rounds only.
+  | { status: 'ready'; positions: MePosition[]; stats: MeStats; created: number; rounds: MeRound[]; roundClaims: MeRound[] };
 
 /// Everything Me reads from the chain for one account: every V4 pool, the account's stake in each (one multicall),
 /// and its USDC balance. The balance is separate, so a failed balance read does not hide the positions. The pool and
@@ -24,6 +28,7 @@ export type MeChain =
 /// the totals.
 export function useMeData(account: `0x${string}`, nowSec: number | null) {
   const marketsQ = useAllMarkets();
+  const roundsQ = useMeRounds(account);
   const { markets } = marketsQ;
   const ids = useMemo(() => markets.map((m) => m.id), [markets]);
   const betsQ = useReadContracts({
@@ -47,11 +52,23 @@ export function useMeData(account: `0x${string}`, nowSec: number | null) {
   let chain: MeChain;
   // Both reads are all-or-nothing, so a failure here is one that outlasted the retries with nothing read before.
   const betsFailed = betsQ.isError && !betsQ.data;
-  if (marketsQ.isError || betsFailed) chain = { status: 'error' };
-  else if (marketsQ.isLoading || nowSec === null || (ids.length > 0 && bets === null)) chain = { status: 'loading' };
+  // Rounds count too (2026-10-13): the totals are never shown from pools alone while the rounds read is pending
+  // or failed. Rounds not configured ('off') counts as no rounds.
+  if (marketsQ.isError || betsFailed || roundsQ.status === 'error') chain = { status: 'error' };
+  else if (marketsQ.isLoading || nowSec === null || (ids.length > 0 && bets === null) || roundsQ.status === 'loading') chain = { status: 'loading' };
   else {
     const positions = mePositions(markets, bets ?? new Map(), nowSec);
-    chain = { status: 'ready', positions, stats: meStats(positions), created: createdCount(markets, account) };
+    const pools = meStats(positions);
+    const rounds = roundsQ.status === 'ready' ? meRoundPositions(roundsQ.rounds, roundsQ.stakes, nowSec) : [];
+    const r = meRoundTotals(rounds);
+    chain = {
+      status: 'ready',
+      positions,
+      stats: { ...pools, inPlay: pools.inPlay + r.inPlay, wonAllTime: pools.wonAllTime + r.wonAllTime, claimedBefore: pools.claimedBefore || r.claimedBefore },
+      created: createdCount(markets, account),
+      rounds,
+      roundClaims: r.claims,
+    };
   }
 
   // Custom outcome names for the house (MAKO) pools the account holds, keyed on the set of held pools so the clock
@@ -69,6 +86,7 @@ export function useMeData(account: `0x${string}`, nowSec: number | null) {
 
   const refetch = () => {
     marketsQ.refetch();
+    roundsQ.refetch();
     void betsQ.refetch();
     void balanceQ.refetch();
   };
