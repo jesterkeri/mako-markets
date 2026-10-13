@@ -12,8 +12,9 @@ import { useSyncExternalStore } from 'react';
 // A pool can carry several holds, one per claim, each named by its transaction (a tx hash, a user-op hash, or the
 // outcome's own label when it has neither), so releasing one claim's hold after Monad reverted it never removes
 // another claim's (adversary r3 on 450c0c6). localStorage is the record every tab reads and writes, re-read before
-// each change and on every storage event, so a hold or a release in one tab reaches the others. If storage is missing
-// or throws (private mode, blocked site data), the record lives in this tab's memory only.
+// each change and on every storage event, so a hold or a release in one tab reaches the others. The holds this tab
+// made are also kept in its memory and always count, whatever storage says: storage that is missing, full, throwing or
+// replaced by an older copy can never drop them (adversary r4 on c2854c0). Only this tab releases its own holds.
 
 export const HOLD_MS = 60 * 60 * 1000;
 const KEY = 'mako.creatorClaimSent.v2';
@@ -22,6 +23,8 @@ type Hold = { ref: string; at: number };
 type HoldRecord = Map<string, Hold[]>;
 
 let memory: HoldRecord = new Map();
+/// The holds this tab made, kept whatever storage does.
+let mine: HoldRecord = new Map();
 /// The pools held now, as React reads them: rebuilt on every change here or in another tab.
 let snapshot: ReadonlySet<string> = new Set();
 const listeners = new Set<() => void>();
@@ -46,21 +49,28 @@ function parse(raw: string | null, now: number): HoldRecord {
   return out;
 }
 
-/// The record as it stands: storage if it can be read (pruned of lapsed holds), else this tab's memory.
+function prune(rec: HoldRecord, now: number): void {
+  for (const [id, list] of rec) {
+    const live = list.filter((h) => now - h.at < HOLD_MS);
+    if (live.length === 0) rec.delete(id);
+    else rec.set(id, live);
+  }
+}
+
+/// The record as it stands: storage if it can be read, else the last record this tab knew, plus every hold this tab
+/// made, pruned of lapsed holds.
 function read(now = Date.now()): HoldRecord {
   try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      memory = parse(window.localStorage.getItem(KEY), now);
-      return memory;
-    }
+    if (typeof window !== 'undefined' && window.localStorage) memory = parse(window.localStorage.getItem(KEY), now);
   } catch {
-    // No storage: memory only.
+    // No storage: the last record this tab knew.
   }
-  for (const [id, list] of memory) {
-    const live = list.filter((h) => now - h.at < HOLD_MS);
-    if (live.length === 0) memory.delete(id);
-    else memory.set(id, live);
+  prune(mine, now);
+  for (const [id, list] of mine) {
+    const have = memory.get(id) ?? [];
+    memory.set(id, [...have, ...list.filter((h) => !have.some((x) => x.ref === h.ref))]);
   }
+  prune(memory, now);
   return memory;
 }
 
@@ -96,6 +106,7 @@ export function markCreatorClaimSent(marketId: bigint, ref = 'sent', now = Date.
   const id = marketId.toString();
   const list = (rec.get(id) ?? []).filter((h) => h.ref !== ref);
   rec.set(id, [...list, { ref, at: now }]);
+  mine.set(id, [...(mine.get(id) ?? []).filter((h) => h.ref !== ref), { ref, at: now }]);
   write(rec);
   publish(rec);
 }
@@ -104,8 +115,11 @@ export function markCreatorClaimSent(marketId: bigint, ref = 'sent', now = Date.
 /// receipt), so its fee is still unclaimed. Any other claim's hold on the pool stays.
 export function clearCreatorClaimSent(marketId: bigint, ref: string): void {
   listen();
-  const rec = read();
   const id = marketId.toString();
+  const own = mine.get(id)?.filter((h) => h.ref !== ref);
+  if (own && own.length > 0) mine.set(id, own);
+  else mine.delete(id);
+  const rec = read();
   const list = rec.get(id);
   if (!list) return;
   const rest = list.filter((h) => h.ref !== ref);
@@ -125,6 +139,7 @@ export function creatorClaimHeld(marketId: bigint, now = Date.now()): boolean {
 /// For tests: forget every hold.
 export function resetCreatorClaimHolds(): void {
   memory = new Map();
+  mine = new Map();
   try {
     window.localStorage.removeItem(KEY);
   } catch {
