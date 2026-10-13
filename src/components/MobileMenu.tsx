@@ -11,6 +11,7 @@ import { AvatarCircle } from '@/components/AvatarCircle';
 import { Logo } from '@/components/Logo';
 import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
 import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
+import { usePageScrollLock } from '@/lib/use-page-scroll-lock';
 
 // ---------------------------------------------------------------------------
 // MobileMenu
@@ -122,16 +123,9 @@ export function MobileMenu({ className }: { className?: string }) {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
-  // Lock body scroll while the drawer is open so the feed beneath doesn't
-  // continue scrolling under the user's finger.
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  // Lock page scroll while the drawer is open so the feed beneath doesn't continue scrolling under the user's finger.
+  // The shared counted lock, so this and any other open dialog unlock in either order.
+  usePageScrollLock(open);
 
   // Escape closes the drawer.
   useEffect(() => {

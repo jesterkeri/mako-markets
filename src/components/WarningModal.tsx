@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { usePageScrollLock } from '@/lib/use-page-scroll-lock';
 
 type WarningModalProps = {
   open: boolean;
@@ -19,18 +20,16 @@ export function WarningModal({
   message,
   confirmLabel,
 }: WarningModalProps) {
+  // The shared counted page scroll lock, so this and any other open dialog unlock in either order.
+  usePageScrollLock(open);
   useEffect(() => {
     if (!open) return;
-    const priorOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
 
     return () => {
-      document.body.style.overflow = priorOverflow;
       document.removeEventListener('keydown', onKey);
     };
   }, [open, onClose]);

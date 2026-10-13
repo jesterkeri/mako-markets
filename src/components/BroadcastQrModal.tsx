@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { humanizeUntil } from '@/lib/time';
+import { usePageScrollLock } from '@/lib/use-page-scroll-lock';
 
 /**
  * Fullscreen broadcast modal. Shows a market's question, a large QR code
@@ -50,14 +51,13 @@ export function BroadcastQrModal({
     return `${origin.replace(/\/$/, '')}/market/${marketId.toString()}`;
   }, [open, marketId]);
 
-  // Tick the clock + manage body scroll lock + ESC listener, all in one
-  // effect so cleanup is atomic. Symmetric: captures the prior overflow
-  // value on open, restores it verbatim on close.
+  // The shared counted page scroll lock, so this and any other open dialog unlock in either order.
+  usePageScrollLock(open);
+
+  // Tick the clock + ESC listener, all in one effect so cleanup is atomic.
   useEffect(() => {
     if (!open) return;
 
-    const priorOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -69,7 +69,6 @@ export function BroadcastQrModal({
     }, 1_000);
 
     return () => {
-      document.body.style.overflow = priorOverflow;
       document.removeEventListener('keydown', onKey);
       clearInterval(tickId);
     };
