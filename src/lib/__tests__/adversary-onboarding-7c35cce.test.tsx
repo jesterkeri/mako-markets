@@ -241,3 +241,15 @@ describe('adversary 7c35cce: email and TOTP paths', () => {
     expect(nav.push).not.toHaveBeenCalled();
   });
 });
+
+describe('the page behind the open sign-in dialog does not scroll (tester recording, 2026-10-13)', () => {
+  it('opening locks the page; closing gives it back', async () => {
+    document.body.style.overflow = '';
+    mount();
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.documentElement.style.overflow).toBe('hidden');
+    act(() => closeSignIn());
+    expect(document.body.style.overflow).toBe('');
+    expect(document.documentElement.style.overflow).toBe('');
+  });
+});

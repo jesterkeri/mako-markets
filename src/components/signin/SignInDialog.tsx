@@ -25,6 +25,7 @@ import { tourHref } from '@/lib/tour';
 import { signInWithWallet } from '@/lib/wallet-auth-client';
 
 import { PrivyEmailBridge, type EmailAuth } from './PrivyEmailBridge';
+import { usePageScrollLock } from '@/lib/use-page-scroll-lock';
 
 // Sign in (14a): a dialog over the current page on desktop, a bottom sheet on mobile. Email first (a 6-digit code
 // through Privy), a second factor for accounts that have one, or a wallet instead. The first time an account ever
@@ -312,6 +313,7 @@ type FlowProps = {
 const CLOSE_ICON = 'M7 7l10 10M17 7L7 17';
 
 function DesktopDialog(p: FlowProps) {
+  usePageScrollLock();
   return (
     <>
       <div onClick={p.close} className="mk-scrim" style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)' }} />
@@ -335,15 +337,16 @@ function DesktopDialog(p: FlowProps) {
 }
 
 function MobileSheet(p: FlowProps) {
+  usePageScrollLock();
   return (
     <>
-      <div onClick={p.close} className="mk-scrim" style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.55)' }} />
+      <div onClick={p.close} className="mk-scrim" style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.55)', touchAction: 'none' }} />
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Sign in"
         className="mk-sheet"
-        style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 61, maxHeight: '92dvh', overflowY: 'auto', borderRadius: '32px 32px 0 0', background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: '0 -1px 0 var(--line), 0 -20px 50px rgba(0,0,0,0.4)', padding: '12px 20px calc(30px + env(safe-area-inset-bottom))' }}
+        style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 61, maxHeight: '92dvh', overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: '32px 32px 0 0', background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: '0 -1px 0 var(--line), 0 -20px 50px rgba(0,0,0,0.4)', padding: '12px 20px calc(30px + env(safe-area-inset-bottom))' }}
       >
         <div aria-hidden="true" style={{ width: 40, height: 4, borderRadius: 9999, background: 'var(--m3-outline)', margin: '0 auto 18px' }} />
         <StepBody {...p} variant="mobile" />
