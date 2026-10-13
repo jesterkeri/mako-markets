@@ -34,9 +34,10 @@ export async function answerUpstash(f: FakeUpstash, init?: RequestInit): Promise
   if (forced) return forced;
   const [name, ...args] = cmd;
   if (name === 'EVAL') {
-    // The sliding-window reserve script: ARGV = now ms, window ms, cap, member.
-    const [, , key, nowS, winS, capS, member] = args;
-    const now = Number(nowS);
+    // The sliding-window reserve script, scored on the STORE's clock (Redis TIME), as the real script is: ARGV = window
+    // ms, cap, member.
+    const [, , key, winS, capS, member] = args;
+    const now = f.now();
     const win = Number(winS);
     const log = (f.zsets.get(key) ?? []).filter((x) => x.score > now - win);
     if (log.length >= Number(capS)) {

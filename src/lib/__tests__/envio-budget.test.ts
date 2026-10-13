@@ -30,10 +30,17 @@ const load = () => import('@/lib/envio-budget');
 describe('reserveEnvioCall', () => {
   it('allows ME_ENVIO_PER_MINUTE calls in a rolling minute, refuses the next, and frees slots exactly 60 s later', async () => {
     const b = await load();
-    for (let i = 0; i < b.ME_ENVIO_PER_MINUTE; i++) await b.reserveEnvioCall(t + i);
-    await expect(b.reserveEnvioCall(t + 100)).rejects.toBeInstanceOf(b.EnvioBudgetExhausted);
-    await expect(b.reserveEnvioCall(t + b.WINDOW_MS - 1)).rejects.toBeInstanceOf(b.EnvioBudgetExhausted);
-    await expect(b.reserveEnvioCall(t + b.WINDOW_MS + 1)).resolves.toBeUndefined();
+    const start = t;
+    for (let i = 0; i < b.ME_ENVIO_PER_MINUTE; i++) {
+      t = start + i;
+      await b.reserveEnvioCall();
+    }
+    t = start + 100;
+    await expect(b.reserveEnvioCall()).rejects.toBeInstanceOf(b.EnvioBudgetExhausted);
+    t = start + b.WINDOW_MS - 1;
+    await expect(b.reserveEnvioCall()).rejects.toBeInstanceOf(b.EnvioBudgetExhausted);
+    t = start + b.WINDOW_MS + 1;
+    await expect(b.reserveEnvioCall()).resolves.toBeUndefined();
   });
 
   it('two app instances (two module copies) share one log: together they get the budget, not double', async () => {
@@ -44,7 +51,8 @@ describe('reserveEnvioCall', () => {
     let ok = 0;
     for (let i = 0; i < 200; i++) {
       try {
-        await (i % 2 ? a : c).reserveEnvioCall(t + i);
+        t += 1;
+        await (i % 2 ? a : c).reserveEnvioCall();
         ok++;
       } catch (e) {
         expect((e as Error).name).toBe('EnvioBudgetExhausted');
@@ -60,8 +68,9 @@ describe('reserveEnvioCall', () => {
     for (let s = 0; s < 300; s++) {
       for (let k = 0; k < 20; k++) {
         const now = start + s * 1000 + k;
+        t = now;
         try {
-          await b.reserveEnvioCall(now);
+          await b.reserveEnvioCall();
           passed.push(now);
         } catch {
           // refused
@@ -84,7 +93,7 @@ describe('reserveEnvioCall', () => {
   ])('%s: the call is refused (fail closed), never allowed', async (_n, setup) => {
     setup();
     const b = await load();
-    const err = await b.reserveEnvioCall(t).then(() => null, (e: Error) => e);
+    const err = await b.reserveEnvioCall().then(() => null, (e: Error) => e);
     expect(err?.name).toBe('EnvioBudgetUnavailable');
     expect(String(err?.message)).not.toContain(up.token);
   });
@@ -95,7 +104,15 @@ describe('reserveEnvioCall', () => {
     process.env.KV_REST_API_URL = up.url;
     process.env.KV_REST_API_TOKEN = up.token;
     const b = await load();
-    await expect(b.reserveEnvioCall(t)).resolves.toBeUndefined();
+    await expect(b.reserveEnvioCall()).resolves.toBeUndefined();
+  });
+
+  it('the script stamps calls with the store clock (Redis TIME), never an app clock', async () => {
+    const b = await load();
+    await b.reserveEnvioCall();
+    const evalCall = up.calls.find((c) => c[0] === 'EVAL')!;
+    expect(evalCall[1]).toContain("redis.call('TIME')");
+    expect(evalCall.slice(3)).toHaveLength(4); // key, window, cap, member: no timestamp from this instance
   });
 
   it('session keys hash the session id: the raw id is never stored', async () => {

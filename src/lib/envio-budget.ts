@@ -12,7 +12,9 @@ import { createHash, randomUUID } from 'node:crypto';
 // 17 people with Me open at once. A paid Envio plan raises the ceiling (TASKS.md #203).
 //
 // The log lives in Upstash Redis as a sorted set of call times (REST API, one EVAL per call, atomic: drop entries older
-// than 60 s, count, add this call if under the cap). Times are this instance's clock (Vercel's are NTP-synced). If Upstash is
+// than 60 s, count, add this call if under the cap). Times come from Redis's own clock (TIME) at the moment the slot is
+// recorded, never from an app instance: instance clocks differ and a request can take a while to arrive, and either
+// would let a slot leave the window early (adversary on 0be93d3). If Upstash is
 // not configured, unreachable or answers anything unexpected, the call is refused: Me shows rounds unavailable rather
 // than risk Envio's limit (fail closed). The same store keeps a short-lived map from a signed-in session to its
 // account (me-rounds-caller.ts), so binding the route to the caller does not wake the database on every poll.
@@ -28,14 +30,15 @@ export class EnvioBudgetUnavailable extends Error {
   override name = 'EnvioBudgetUnavailable';
 }
 
-/// Sliding-window log: drop calls older than the window, refuse (0) at the cap, else record this call and return the
-/// count including it. Atomic in Redis. ARGV: now ms, window ms, cap, a unique member for this call.
+/// Sliding-window log on Redis's clock: drop calls older than the window, refuse (0) at the cap, else record this call
+/// and return the count including it. Atomic in Redis. ARGV: window ms, cap, a unique member for this call.
 const RESERVE_SCRIPT =
-  "local now = tonumber(ARGV[1]) local win = tonumber(ARGV[2]) " +
+  "local t = redis.call('TIME') local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) " +
+  "local win = tonumber(ARGV[1]) " +
   "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - win) " +
   "local n = redis.call('ZCARD', KEYS[1]) " +
-  "if n >= tonumber(ARGV[3]) then return 0 end " +
-  "redis.call('ZADD', KEYS[1], now, ARGV[4]) redis.call('PEXPIRE', KEYS[1], win) return n + 1";
+  "if n >= tonumber(ARGV[2]) then return 0 end " +
+  "redis.call('ZADD', KEYS[1], now, ARGV[3]) redis.call('PEXPIRE', KEYS[1], win) return n + 1";
 const LOG_KEY = 'mako:envio:me:calls';
 
 /// The Upstash REST endpoint and token: the names Upstash's own SDK reads, or the ones the Vercel Marketplace's
@@ -77,9 +80,8 @@ export async function upstashCommand(args: (string | number)[]): Promise<unknown
 }
 
 /// Reserve one Envio call in the rolling minute, or throw. Called immediately before every GraphQL request Me sends.
-export async function reserveEnvioCall(nowMs = Date.now()): Promise<void> {
-  const member = `${nowMs}:${randomUUID()}`;
-  const n = await upstashCommand(['EVAL', RESERVE_SCRIPT, 1, LOG_KEY, nowMs, WINDOW_MS, ME_ENVIO_PER_MINUTE, member]);
+export async function reserveEnvioCall(): Promise<void> {
+  const n = await upstashCommand(['EVAL', RESERVE_SCRIPT, 1, LOG_KEY, WINDOW_MS, ME_ENVIO_PER_MINUTE, randomUUID()]);
   if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0 || n > ME_ENVIO_PER_MINUTE) throw new EnvioBudgetUnavailable('count not usable');
   if (n === 0) throw new EnvioBudgetExhausted('rolling minute at the cap');
 }
