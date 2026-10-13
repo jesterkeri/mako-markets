@@ -20,7 +20,7 @@ import { readReport, reportHeaders, reportPath, type HmacHex } from '../../round
 import { REFUND_REASON, STATUS, WATCH_ABI } from './abi';
 import { send, type HttpResult, type Net } from './net';
 import { aggregate, decodeAggregate } from './multicall';
-import { rpcBatch, type RpcCall } from './rpc';
+import { rpcBatch, type RpcBatch, type RpcCall } from './rpc';
 import type { AlertKind, Evidence, Meta, PendingNoPrice } from './state';
 
 /// N21: a round unsettled this long after close is flagged.
@@ -167,7 +167,7 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     call(encodeFunctionData({ abi: WATCH_ABI, functionName: 'roundCount' })),
     call(encodeFunctionData({ abi: WATCH_ABI, functionName: 'DURATION' })),
   ]);
-  if (!head.ok || !head.items[0].ok || !head.items[1].ok) return { status: 'rpc-error', lines: [], conditions: [] };
+  if (!head.ok || !head.items[0].ok || !head.items[1].ok) return rpcFail('head', head);
   const count = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundCount', data: head.items[0].result as Hex }));
   const duration = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'DURATION', data: head.items[1].result as Hex }));
 
@@ -193,11 +193,11 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     const res = await rpcBatch(deps.net, cfg.rpcUrl, [
       aggregate(ids.map((id) => ({ target: cfg.roundsAddress, data: encodeFunctionData({ abi: WATCH_ABI, functionName: 'roundOf', args: [BigInt(id)] }) }))),
     ]);
-    if (!res.ok || !res.items[0].ok) return { status: 'rpc-error', lines: [], conditions: [] };
+    if (!res.ok || !res.items[0].ok) return rpcFail('rounds', res, ids);
     const results = decodeAggregate(res.items[0].result, ids.length);
-    if (results === null) return { status: 'rpc-error', lines: [], conditions: [] };
+    if (results === null) return rpcFail('rounds-decode', res, ids);
     for (let i = 0; i < ids.length; i++) {
-      if (!results[i].success) return { status: 'rpc-error', lines: [], conditions: [] };
+      if (!results[i].success) return rpcFail(`round-${ids[i]}-failed`, res, ids);
       const r = decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundOf', args: [0n], data: results[i].returnData });
       const start = Number(r.startTime);
       rounds.push({
@@ -389,4 +389,12 @@ export function describeError(e: unknown): string {
     .replace(/0x[0-9a-fA-F]{40,}/g, '<hex>')
     .replace(/[A-Za-z0-9_-]{32,}/g, '<redacted>');
   return `${name}: ${clean}`.slice(0, 160);
+}
+
+/// Diagnostic (2026-10-13): which read failed and how, without any URL or secret (kinds, HTTP status, JSON-RPC
+/// codes and round ids only), then the same rpc-error outcome as before.
+function rpcFail(step: string, b: RpcBatch, ids: readonly number[] = []): WatchOutcome {
+  const detail = b.ok ? b.items.map((it) => (it.ok ? 'ok' : `${it.kind}${it.code !== undefined ? `:${it.code}` : ''}`)) : [`${b.kind}${b.status !== undefined ? `:${b.status}` : ''}`];
+  console.error(JSON.stringify({ watch: 'rpc-fail', step, detail, ids }));
+  return { status: 'rpc-error', lines: [], conditions: [] };
 }
