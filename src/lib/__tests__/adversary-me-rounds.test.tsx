@@ -169,15 +169,6 @@ function makeWrapper() {
   return Wrapper;
 }
 
-/// The desktop totals row: label -> value text.
-function totals(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const label of ['IN PLAY', 'READY TO CLAIM', 'WON ALL TIME']) {
-    const cell = screen.getByText(label).parentElement!;
-    out[label] = cell.textContent!.slice(label.length);
-  }
-  return out;
-}
 
 type Chain = ReturnType<typeof useMeData>['chain'];
 function summarise(c: Chain): string {
@@ -191,15 +182,17 @@ function track() {
   return { ...hook, seen };
 }
 function renderHook2(Wrapper: ReturnType<typeof makeWrapper>, seen: string[]) {
-  let latest: ReturnType<typeof useMeData> | null = null;
+  // A test probe: the box is written from render on purpose, to read the hook's latest value from the test.
+  const box: { latest: ReturnType<typeof useMeData> | null } = { latest: null };
   function Probe() {
     const r = useMeData(A, NOW);
-    latest = r;
+    // eslint-disable-next-line react-hooks/immutability -- test probe: exposes the hook's latest value to the test
+    box.latest = r;
     seen.push(summarise(r.chain));
     return null;
   }
   render(<Wrapper><Probe /></Wrapper>);
-  return { current: () => latest! };
+  return { current: () => box.latest! };
 }
 const pause = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 
