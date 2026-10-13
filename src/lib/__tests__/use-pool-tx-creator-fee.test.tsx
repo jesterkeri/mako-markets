@@ -51,7 +51,7 @@ const FEE = { kind: 'creatorFee' as const, marketId: 7n };
 /// getMarket(7) as viem decodes it: named fields. Resolved YES, 30 / 10 USDC, 2% creator fee, not claimed.
 function chainPool(creator: string, over: Partial<MarketWithId> = {}): Omit<MarketWithId, 'id'> {
   return {
-    creator,
+    creator: creator as `0x${string}`,
     mType: MarketType.CRYPTO,
     oracleRef: `0x${'00'.repeat(32)}`,
     question: 'Will BTC close above $80,000 in 1 day?',
