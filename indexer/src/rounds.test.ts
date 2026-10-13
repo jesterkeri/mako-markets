@@ -315,3 +315,19 @@ describe('contract values', () => {
     await t.expect(indexer.process({ chains: { [CHAIN]: { simulate: [entered(77n, ALICE, UP, USDC, USDC, DAY1)] } } })).rejects.toThrow(/unknown round 77/);
   });
 });
+
+describe('RoundsSource (Codex ME_ROUNDS R3)', () => {
+  const ROUNDS = '0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921' as Address; // config.yaml's MakoRoundsV1
+
+  it('records the address and chain the round events came from, lower-case', async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({ chains: { [CHAIN]: { simulate: [scheduled(1n, DAY1), scheduled(2n, DAY1 + 900)] } } });
+    t.expect(await indexer.RoundsSource.getOrThrow('rounds')).toMatchObject({ sourceChain: CHAIN, address: ROUNDS.toLowerCase() });
+  });
+
+  it('only ever sees the configured address: Envio drops a round event from any other address before the handler', async (t) => {
+    const indexer = createTestIndexer();
+    const other = '0x00000000000000000000000000000000000000d4' as Address;
+    await t.expect(indexer.process({ chains: { [CHAIN]: { simulate: [{ ...scheduled(1n, DAY1), srcAddress: other }] } } })).rejects.toThrow(/never reached a handler/);
+  });
+});

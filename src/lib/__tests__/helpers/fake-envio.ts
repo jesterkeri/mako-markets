@@ -2,6 +2,10 @@
 // (src/lib/me-rounds-indexer.ts), answering from in-memory entities shaped like indexer/schema.graphql: rows are
 // filtered by the query's `where`, ordered by id, cut at `id > after` and `limit`, as Hasura does. `rowCap` stands
 // in for a hosted row cap below the requested limit. Nothing here touches a network.
+//
+// Every query also asks for RoundsSource (Codex ME_ROUNDS R3). The fake adds `source` to every answer that has a
+// `data` object without one, overrides included, so a test of another failure is not turned into a source failure;
+// `sourceFor` lets a test answer a different source on chosen pages.
 
 import { ACTIVE_QUERY, CREATED_QUERY, ENTRIES_QUERY, HEAD_QUERY, HEAD_ROUND_QUERY } from '@/lib/me-rounds-indexer';
 
@@ -24,10 +28,17 @@ export type FakeEnvio = {
   override: ((op: string, variables: Record<string, unknown>) => Response | null) | null;
   /// Runs before each answer, so a test can change the model between pages.
   beforeAnswer: ((op: string, variables: Record<string, unknown>) => void) | null;
+  /// The RoundsSource rows each answer carries: the reviewed deployment on Monad testnet unless changed.
+  source: unknown;
+  /// Per request: the rows to answer instead of `source` (undefined = use `source`).
+  sourceFor: ((op: string, variables: Record<string, unknown>) => unknown) | null;
 };
 
+/// The reviewed Rounds deployment (src/lib/rounds-release-record.ts), as the indexer stores it.
+export const RIGHT_SOURCE = [{ sourceChain: 10143, address: '0x9dc0e0b9e8f1905740d8b98e90fe07288dcc2921' }];
+
 export function fakeEnvio(): FakeEnvio {
-  return { globalRounds: 0, rounds: [], entries: [], rowCap: Infinity, log: [], override: null, beforeAnswer: null };
+  return { globalRounds: 0, rounds: [], entries: [], rowCap: Infinity, log: [], override: null, beforeAnswer: null, source: RIGHT_SOURCE, sourceFor: null };
 }
 
 const OPS: [string, string][] = [
@@ -47,9 +58,24 @@ function page<T extends { id: string }>(rows: T[], variables: Record<string, unk
     .slice(0, Math.min(limit, cap));
 }
 
-export function answerEnvio(env: FakeEnvio, body: string): Response {
+export async function answerEnvio(env: FakeEnvio, body: string): Promise<Response> {
   const { query, variables = {} } = JSON.parse(body) as { query: string; variables?: Record<string, unknown> };
   const op = OPS.find(([q]) => q === query)?.[1];
+  const res = answerModel(env, op, variables);
+  if (!op || !res.ok) return res;
+  // Add the source row to a JSON answer with a data object that has none.
+  let json: { data?: unknown } | null = null;
+  try {
+    json = (await res.clone().json()) as { data?: unknown };
+  } catch {
+    return res;
+  }
+  if (!json || typeof json.data !== 'object' || json.data === null || 'RoundsSource' in json.data) return res;
+  const rows = env.sourceFor?.(op, variables);
+  return Response.json({ ...json, data: { ...json.data, RoundsSource: rows === undefined ? env.source : rows } });
+}
+
+function answerModel(env: FakeEnvio, op: string | undefined, variables: Record<string, unknown>): Response {
   if (!op) return Response.json({ errors: [{ message: 'unscripted query' }] });
   env.log.push({ op, variables });
   env.beforeAnswer?.(op, variables);

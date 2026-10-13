@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { discoverMeRounds, IndexerNotConfigured, TooManyRows } from '@/lib/me-rounds-indexer';
+import { discoverMeRounds, IndexerNotConfigured, TooManyRows, WrongSource } from '@/lib/me-rounds-indexer';
 import type { MeRoundsDiscoveryWire } from '@/lib/me-rounds-discovery';
 import { ttlMemo, type Memoized } from '@/lib/ttl-memo';
 
@@ -21,6 +21,8 @@ import { ttlMemo, type Memoized } from '@/lib/ttl-memo';
  *   502 { error: "indexer_unavailable" } the indexer failed or answered something unusable, including a missing or
  *                                        malformed head round when it has rounds
  *   502 { error: "too_many_rows" }      a list longer than the read cap: refused, never cut short
+ *   502 { error: "wrong_source" }       an answer whose RoundsSource is not the reviewed Rounds deployment on Monad
+ *                                        testnet, on any page of any query (Codex ME_ROUNDS R3)
  */
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -64,7 +66,7 @@ export async function GET(req: Request) {
     }
     // The error's class only: a message can carry the indexer URL.
     console.error('[me/rounds] indexer read failed:', errorName(e));
-    const error = e instanceof TooManyRows ? 'too_many_rows' : 'indexer_unavailable';
+    const error = e instanceof TooManyRows ? 'too_many_rows' : e instanceof WrongSource ? 'wrong_source' : 'indexer_unavailable';
     return NextResponse.json({ error }, { status: 502, headers: { 'Cache-Control': 'no-store' } });
   }
 }

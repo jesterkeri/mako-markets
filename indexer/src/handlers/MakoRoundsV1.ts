@@ -17,7 +17,20 @@ async function getRound(context: HandlerContext, id: string, event: string, tx: 
   return round;
 }
 
+/// The one RoundsSource row: the address and chain these events came from. A second address, or a second chain, turns it
+/// into "conflict" for good, so a reader refuses every answer instead of trusting a mix of two contracts.
+async function noteSource(context: HandlerContext, srcAddress: string, chainId: number): Promise<void> {
+  const address = srcAddress.toLowerCase();
+  const prev = await context.RoundsSource.get('rounds');
+  if (!prev) {
+    context.RoundsSource.set({ id: 'rounds', sourceChain: chainId, address });
+  } else if (prev.address !== address || prev.sourceChain !== chainId) {
+    context.RoundsSource.set({ id: 'rounds', sourceChain: prev.sourceChain, address: 'conflict' });
+  }
+}
+
 indexer.onEvent({ contract: 'MakoRoundsV1', event: 'RoundScheduled' }, async ({ event, context }) => {
+  await noteSource(context, event.srcAddress, event.chainId);
   const ts = event.block.timestamp;
   const p = event.params;
   context.Round.set({

@@ -1,6 +1,8 @@
 import 'server-only';
 
+import { MONAD_TESTNET_ID } from './chain';
 import { parseUint64, type MeRoundsDiscoveryWire, type MeRoundsHeadWire } from './me-rounds-discovery';
+import { ROUNDS_RELEASE_RECORD } from './rounds-release-record';
 
 // The rounds one account takes part in, from the Envio indexer (ENVIO_GRAPHQL_URL, schema in indexer/schema.graphql),
 // for GET /api/me/rounds. See me-rounds-discovery.ts for why the reads below, in this order, leave nothing out, and
@@ -10,6 +12,12 @@ import { parseUint64, type MeRoundsDiscoveryWire, type MeRoundsHeadWire } from '
 // ends only on an EMPTY page: a short page is not trusted as the end, so a server that returns fewer rows than asked
 // (a row cap on the hosted service) still yields the whole list. A list longer than MAX_ROWS is an error, never a
 // partial answer. Any failure throws; the route answers it as an error status, never as an empty list.
+//
+// Every query also asks for the indexer's RoundsSource row (indexer/schema.graphql: the address and chain its round
+// events came from), and every answer, every page, is refused unless that row names exactly the reviewed Rounds
+// deployment (rounds-release-record.ts) on Monad testnet (Codex ME_ROUNDS R3). One GraphQL request is answered from one
+// database, so each page carries its own proof of source: a gateway that sends some queries to another deployment's
+// indexer fails the check on those pages, and nothing it says is used.
 
 export const PAGE_SIZE = 1000;
 /// Rows read per list before the answer is refused as too long.
@@ -25,23 +33,35 @@ export class IndexerFailed extends Error {
 export class TooManyRows extends Error {
   override name = 'TooManyRows';
 }
+/// An answer whose RoundsSource row is missing, malformed or not the reviewed Rounds deployment.
+export class WrongSource extends Error {
+  override name = 'WrongSource';
+}
+
+/// Asked in every query, beside the rows it is about.
+const SOURCE = `RoundsSource(where: { id: { _eq: "rounds" } }) { sourceChain address }`;
 
 export const HEAD_QUERY = `query MeRoundsHead {
   GlobalStats(where: { id: { _eq: "global" } }) { rounds }
+  ${SOURCE}
 }`;
 /// The indexer's newest round (id = GlobalStats.rounds): its fingerprint, which the browser checks against roundOf on
 /// chain before it trusts anything else in the answer (me-rounds-discovery.ts).
 export const HEAD_ROUND_QUERY = `query MeRoundsHeadRound($id: String!) {
   Round(where: { id: { _eq: $id } }) { id openTime startTime creator }
+  ${SOURCE}
 }`;
 export const ACTIVE_QUERY = `query MeRoundsActive($after: String!, $limit: Int!) {
   Round(where: { status: { _eq: "Active" }, id: { _gt: $after } }, order_by: { id: asc }, limit: $limit) { id }
+  ${SOURCE}
 }`;
 export const ENTRIES_QUERY = `query MeRoundsEntries($wallet: String!, $after: String!, $limit: Int!) {
   RoundEntry(where: { wallet_id: { _eq: $wallet }, id: { _gt: $after } }, order_by: { id: asc }, limit: $limit) { id round_id }
+  ${SOURCE}
 }`;
 export const CREATED_QUERY = `query MeRoundsCreated($creator: String!, $after: String!, $limit: Int!) {
   Round(where: { creator: { _eq: $creator }, id: { _gt: $after } }, order_by: { id: asc }, limit: $limit) { id }
+  ${SOURCE}
 }`;
 
 const ROUND_ID = /^[1-9][0-9]{0,77}$/;
@@ -57,7 +77,19 @@ async function gql(url: string, query: string, variables: Record<string, unknown
   if (!res.ok) throw new IndexerFailed(`indexer answered ${res.status}`);
   const body = (await res.json()) as { data?: unknown; errors?: unknown };
   if (body.errors !== undefined || !body.data || typeof body.data !== 'object') throw new IndexerFailed('indexer answer not usable');
-  return body.data as Record<string, unknown>;
+  const data = body.data as Record<string, unknown>;
+  assertSource(data.RoundsSource);
+  return data;
+}
+
+/// The answer's RoundsSource rows: exactly one, on Monad testnet, naming the reviewed Rounds address. Anything else
+/// (no row, two rows, another chain, another address, "conflict", or no reviewed deployment at all) throws.
+export function assertSource(rows: unknown): void {
+  const expected = ROUNDS_RELEASE_RECORD?.address.toLowerCase();
+  if (!expected) throw new WrongSource('no reviewed Rounds deployment');
+  if (!Array.isArray(rows) || rows.length !== 1) throw new WrongSource('source row missing');
+  const r = rows[0] as Record<string, unknown> | null;
+  if (!r || r.sourceChain !== MONAD_TESTNET_ID || r.address !== expected) throw new WrongSource('source is not the reviewed Rounds deployment');
 }
 
 /// Every row of one list, paged by id. `pick` turns a row into its round id, or null if the row is malformed.

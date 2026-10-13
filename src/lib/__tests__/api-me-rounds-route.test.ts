@@ -289,6 +289,6 @@ describe('cache', () => {
 
 // Keep the helper honest: the fake answers as Hasura does for an unknown query.
 it('the fake refuses an unscripted query', async () => {
-  const res = answerEnvio(env, JSON.stringify({ query: 'query X { y }' }));
+  const res = await answerEnvio(env, JSON.stringify({ query: 'query X { y }' }));
   expect(((await res.json()) as { errors?: unknown }).errors).toBeDefined();
 });
