@@ -1328,22 +1328,27 @@ export async function runResolver(env: Env): Promise<void> {
       reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}`;
     } else if (market.mType === MarketType.CRYPTO) {
       if (crypto.source === 'datastreams-shadow' && dsTurn.has(Number(i))) {
-        // Shadow: log what Data Streams would decide beside today's CoinGecko path; nothing is sent from it.
-        const d: DsDecision = dsDeps
-          ? await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps)
-          : { kind: 'wait', reason: 'no_credentials' };
-        const shadowRef = parseCryptoOracleRef(market.oracleRef);
-        const cg = shadowRef ? prices[shadowRef.symbol] : undefined;
-        const cgOutcome = shadowRef && cg !== undefined ? Outcome[deriveCryptoOutcome(shadowRef, cg)] : 'none';
-        console.log(
-          JSON.stringify({
-            event: 'crypto.shadow',
-            market: i,
-            closeTime: Number(market.closeTime),
-            ds: d.kind === 'settle' ? { outcome: d.yes ? 'YES' : 'NO', price: formatPrice18(d.price), strike: formatPrice18(d.strike) } : d,
-            coingecko: { outcome: cgOutcome, price: cg ?? null },
-          }),
-        );
+        // Shadow: log what Data Streams would decide beside today's CoinGecko path; nothing is sent from it. It must never
+        // break a tick (a BigInt in this log line crashed every tick, 2026-10-13), so any failure here is only logged.
+        try {
+          const d: DsDecision = dsDeps
+            ? await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps)
+            : { kind: 'wait', reason: 'no_credentials' };
+          const shadowRef = parseCryptoOracleRef(market.oracleRef);
+          const cg = shadowRef ? prices[shadowRef.symbol] : undefined;
+          const cgOutcome = shadowRef && cg !== undefined ? Outcome[deriveCryptoOutcome(shadowRef, cg)] : 'none';
+          console.log(
+            JSON.stringify({
+              event: 'crypto.shadow',
+              market: Number(i),
+              closeTime: Number(market.closeTime),
+              ds: d.kind === 'settle' ? { outcome: d.yes ? 'YES' : 'NO', price: formatPrice18(d.price), strike: formatPrice18(d.strike) } : d,
+              coingecko: { outcome: cgOutcome, price: cg ?? null },
+            }),
+          );
+        } catch (e) {
+          console.error(`[${ts}] market ${i}: crypto.shadow failed (${shortErrorMessage(e)}) — ignored, tick continues`);
+        }
       }
       const parsed = parseCryptoOracleRef(market.oracleRef);
       if (!parsed) {

@@ -191,4 +191,25 @@ describe('adversary: attacks that held', () => {
     expect(lines.filter((l) => l.includes("datastreams not this tick's turn"))).toHaveLength(2);
     expect(lines.filter((l) => l.includes('datastreams wait (report_report_missing)'))).toHaveLength(2);
   }, 60_000);
+
+  it('shadow mode on a real-sized tick logs the Data Streams decision and the tick completes (BigInt crash, 2026-10-13)', async () => {
+    vi.stubGlobal('fetch', vi.fn(stubFetch));
+    const lines: string[] = [];
+    for (const k of ['log', 'warn', 'error'] as const) vi.spyOn(console, k).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    await runResolver({
+      MAKO_ADDRESS: MAKO,
+      MONAD_RPC_URL: MAKO_RPC,
+      ADMIN_PRIVATE_KEY: key,
+      DRY_RUN: '1',
+      CRYPTO_PRICE_SOURCE: 'datastreams-shadow',
+      DATASTREAMS_API_KEY: 'sentinel-ds-key',
+      DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
+    } as Env);
+    const shadow = lines.filter((l) => l.includes('"event":"crypto.shadow"'));
+    expect(shadow).toHaveLength(1);
+    expect(JSON.parse(shadow[0])).toMatchObject({ event: 'crypto.shadow', market: Number(POOL), closeTime: CLOSE, ds: { outcome: 'YES', price: '75938.791787', strike: '75000.000000' } });
+    expect(lines.some((l) => l.includes('tick error'))).toBe(false);
+    expect(lines.some((l) => l.includes('tick done'))).toBe(true);
+    for (const secret of ['sentinel-ds-key', 'sentinel-ds-secret', key.slice(2)]) expect(lines.join('\n')).not.toContain(secret);
+  }, 60_000);
 });
