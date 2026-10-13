@@ -23,10 +23,11 @@ MAKO_APP_URL = "https://mako-markets.vercel.app"
 # a refund landing first takes the winners' payout. Change only on an
 # explicit decision.
 FORCE_REFUND_TWO_SIDED = "0"
-# Crypto price source (src/crypto-datastreams.ts). "datastreams-shadow": today's CoinGecko behaviour, plus a logged
-# Chainlink Data Streams decision per pool to compare (nothing sent from it). "datastreams" (live: Data Streams only)
-# needs Joshua's go. Secrets DATASTREAMS_API_KEY / DATASTREAMS_API_SECRET via mako-design/scripts/resolver-ds-secrets.sh.
-CRYPTO_PRICE_SOURCE = "datastreams-shadow"
+# Crypto price source (src/crypto-datastreams.ts). "datastreams" = LIVE: crypto pools settle only on the verified
+# Chainlink Data Streams report for their exact close second; no CoinGecko call, no fallback, every settlement logs a
+# crypto.ds.evidence record. Deploying this needs Joshua's go (one-pool canary first). "datastreams-shadow" = log only;
+# "coingecko" = the pre-2026-10-13 behaviour. Secrets via mako-design/scripts/resolver-ds-secrets.sh.
+CRYPTO_PRICE_SOURCE = "datastreams"
 
 # Cron: every minute. CF cron is reliable to the minute (unlike GitHub
 # Actions cron which drifts to 1-2 hours under load). Markets with
