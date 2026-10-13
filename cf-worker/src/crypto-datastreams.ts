@@ -120,8 +120,9 @@ export async function agreedFinalized(fetchImpl: typeof fetch, urls: readonly [s
   const [x, y] = await Promise.all([a.number === n ? a : readBlock(fetchImpl, urls[0], tag), b.number === n ? b : readBlock(fetchImpl, urls[1], tag)]);
   if (!x || !y) return { ok: false, reason: 'block_unavailable' };
   if (x.number !== n || y.number !== n || x.hash !== y.hash || x.timestamp !== y.timestamp) return { ok: false, reason: 'block_disagree' };
-  const nowS = Math.floor(nowMs / 1000);
-  if (x.timestamp < nowS - MAX_FINALIZED_AGE_S || x.timestamp > nowS + MAX_FINALIZED_AHEAD_S) return { ok: false, reason: 'block_stale' };
+  // In milliseconds, so a block 60.999 s old is stale too (adversary on 2c716f6).
+  const blockMs = x.timestamp * 1000;
+  if (nowMs - blockMs > MAX_FINALIZED_AGE_S * 1000 || blockMs - nowMs > MAX_FINALIZED_AHEAD_S * 1000) return { ok: false, reason: 'block_stale' };
   return { ok: true, block: { number: n, timestamp: x.timestamp } };
 }
 
@@ -175,7 +176,11 @@ export async function dataStreamsCryptoDecision(market: { mType: number; oracleR
   if (!verified.ok) return { kind: 'wait', reason: verified.reason };
   const decoded = decodeVerified(verified.verified, 3);
   if (!decoded || decoded.schema !== 3) return { kind: 'final', reason: 'wrong_report' };
-  const d = decideCrypto(ref, fed.feed, decoded, market.closeTime, block.timestamp);
+  // Expiry is judged at the LATER of the agreed block's time and the worker's own clock, so the freshness window can
+  // never push expiry back: a report expired at the real time waits even if the agreed block is a few seconds older
+  // (adversary on 2c716f6). The block number is still where both providers verified the report.
+  const expiryAt = Math.max(block.timestamp, Math.floor(deps.now() / 1000));
+  const d = decideCrypto(ref, fed.feed, decoded, market.closeTime, expiryAt);
   if (d.kind === 'settle') {
     const evidence: DsEvidence = {
       feedId: decoded.feedId,
