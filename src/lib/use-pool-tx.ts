@@ -18,10 +18,10 @@ import { formatAddress } from './user-display';
 import { accountAddress, useUser, type AuthedUser } from './use-user';
 import { isWalletDrifted } from './wallet-drift';
 
-// One on-chain pool action (a bet, a claim, a creator-fee claim or a new pool) driven through the confirm sheet (19a). An email account's action is
-// gas-free: one signature from its embedded wallet, sponsored by Mako Market. A wallet account signs and pays its
-// own gas: an approval first if the allowance is short, then the action, each checked by simulation before the
-// wallet is asked.
+// One on-chain pool action (a bet, a claim, a creator-fee claim or a new pool) driven through the confirm sheet
+// (19a). An email account's action is gas-free: one signature from its embedded wallet, sponsored by Mako Market. A
+// wallet account signs and pays its own gas: an approval first if the allowance is short, then the action, each
+// checked by simulation before the wallet is asked.
 
 export type PoolTx =
   | { kind: 'bet'; marketId: bigint; isYes: boolean; amount: bigint }
