@@ -123,8 +123,10 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
   let outcome: WatchOutcome;
   try {
     outcome = await watchOnce(cfg, deps, meta, Math.floor(now / 1000));
-  } catch {
-    // Reported by kind only: an error's text could carry a URL or the Telegram token.
+  } catch (e) {
+    // Diagnostic (2026-10-13, every run rpc-error in production only): the error's type and a sanitized,
+    // truncated message. URLs, the Telegram token shape, long hex and anything key-like are removed first.
+    console.error(JSON.stringify({ watch: 'run-threw', error: describeError(e) }));
     outcome = { status: 'rpc-error', lines: [], conditions: [] };
   }
 
@@ -375,4 +377,16 @@ export function alertLine(r: RoundView, kind: AlertKind, e: Evidence, nowS: numb
     cause = 'A report is missing for that second; if it never appears, the round cannot settle and refunds NoPrice at its deadline.';
   else cause = 'Report availability could not be checked; the next check repeats it.';
   return `Round ${r.id} is UNSETTLED ${Math.floor((nowS - r.closeTime) / 60)} min after close. ${reports} ${cause}`;
+}
+
+/// An error's type and a sanitized message, safe for logs: no URL, no Telegram token, no long hex, at most 160 chars.
+export function describeError(e: unknown): string {
+  const name = e instanceof Error ? e.name : typeof e;
+  const raw = e instanceof Error ? e.message : String(e);
+  const clean = raw
+    .replace(/https?:\/\/\S+/gi, '<url>')
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, '<token>')
+    .replace(/0x[0-9a-fA-F]{40,}/g, '<hex>')
+    .replace(/[A-Za-z0-9_-]{32,}/g, '<redacted>');
+  return `${name}: ${clean}`.slice(0, 160);
 }
