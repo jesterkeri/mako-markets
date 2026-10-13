@@ -41,6 +41,15 @@ function claimOf(p: Position): bigint | null {
   return null;
 }
 
+/// Whether this account already claimed a creator fee from a round it hosted. Such a round can drop out of
+/// meRoundPositions (nothing left to claim), so Me's "Everything claimed" needs this too (adversary r2 on de5ef9e).
+export function hostFeeClaimedBefore(rounds: readonly Round[], stakes: ReadonlyMap<string, RoundStakeRead>, account: string): boolean {
+  const me = account.toLowerCase();
+  return rounds.some(
+    (r) => r.creator.toLowerCase() === me && r.status === RoundStatus.Settled && r.creatorFee > 0n && stakes.get(r.id.toString())?.creatorFeeClaimed === true,
+  );
+}
+
 export type MeRoundTotals = {
   /// Stakes still riding: rounds without a result, and refunds that qualify but are not marked yet.
   inPlay: bigint;

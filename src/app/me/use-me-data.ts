@@ -5,7 +5,7 @@ import { useReadContracts } from 'wagmi';
 
 import { makoContract, MarketType } from '@/lib/contract';
 import { useAllMarkets, useUsdcBalance } from '@/lib/hooks';
-import { meRoundPositions, meRoundTotals, type MeRound } from '@/lib/me-rounds';
+import { hostFeeClaimedBefore, meRoundPositions, meRoundTotals, type MeRound } from '@/lib/me-rounds';
 import { createdCount, mePositions, meStats, type MePosition, type MeStats } from '@/lib/me-stats';
 import type { UserBet } from '@/lib/pool-list';
 import { useMakoLabelsBatch } from '@/lib/use-mako-labels';
@@ -64,7 +64,13 @@ export function useMeData(account: `0x${string}`, nowSec: number | null) {
     chain = {
       status: 'ready',
       positions,
-      stats: { ...pools, inPlay: pools.inPlay + r.inPlay, wonAllTime: pools.wonAllTime + r.wonAllTime, claimedBefore: pools.claimedBefore || r.claimedBefore },
+      stats: {
+        ...pools,
+        inPlay: pools.inPlay + r.inPlay,
+        wonAllTime: pools.wonAllTime + r.wonAllTime,
+        claimedBefore:
+          pools.claimedBefore || r.claimedBefore || (roundsQ.status === 'ready' && hostFeeClaimedBefore(roundsQ.rounds, roundsQ.stakes, account)),
+      },
       created: createdCount(markets, account),
       rounds,
       roundClaims: r.claims,
