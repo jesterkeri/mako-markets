@@ -25,8 +25,9 @@ type HoldRecord = Map<string, Hold[]>;
 let memory: HoldRecord = new Map();
 /// The holds this tab made, kept whatever storage does.
 let mine: HoldRecord = new Map();
-/// The holds this tab released (id -> ref -> when), kept until they would have lapsed: a release whose storage write
-/// failed must not come back from storage's older copy (adversary r5 on 0162c30).
+/// The holds this tab released (id -> ref -> the released hold's own time), kept until that hold would have lapsed: a
+/// release whose storage write failed must not come back from storage's older copy (adversary r5 on 0162c30). Only
+/// holds made at or before that time are hidden, so a later hold is never mistaken for it (adversary r6 on 44b1487).
 let released = new Map<string, Map<string, number>>();
 /// The pools held now, as React reads them: rebuilt on every change here or in another tab.
 let snapshot: ReadonlySet<string> = new Set();
@@ -74,7 +75,7 @@ function read(now = Date.now()): HoldRecord {
   }
   for (const [id, refs] of released) {
     const list = memory.get(id);
-    if (list) memory.set(id, list.filter((h) => !refs.has(h.ref)));
+    if (list) memory.set(id, list.filter((h) => !(refs.has(h.ref) && h.at <= (refs.get(h.ref) as number))));
   }
   prune(mine, now);
   for (const [id, list] of mine) {
@@ -128,12 +129,17 @@ export function markCreatorClaimSent(marketId: bigint, ref = 'sent', now = Date.
 export function clearCreatorClaimSent(marketId: bigint, ref: string, now = Date.now()): void {
   listen();
   const id = marketId.toString();
+  const before = read(now);
+  // The released hold's own time: the latest hold with this ref on this pool, here or in storage.
+  const times = [...(before.get(id) ?? []), ...(mine.get(id) ?? [])].filter((h) => h.ref === ref).map((h) => h.at);
   const own = mine.get(id)?.filter((h) => h.ref !== ref);
   if (own && own.length > 0) mine.set(id, own);
   else mine.delete(id);
-  const refs = released.get(id) ?? new Map<string, number>();
-  refs.set(ref, now);
-  released.set(id, refs);
+  if (times.length > 0) {
+    const refs = released.get(id) ?? new Map<string, number>();
+    refs.set(ref, Math.max(...times));
+    released.set(id, refs);
+  }
   const rec = read(now);
   const list = rec.get(id);
   if (list) {
