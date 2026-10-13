@@ -168,6 +168,8 @@ export type NotAllowedReason =
   | 'bad_create_oracleref_class_mismatch'
   // claim-magic-parity claim flow:
   | 'bad_claim_args'
+  // Creator earnings: MakoMarketsV4.claimCreatorFee(id), the creator's own fee on a pool it created.
+  | 'bad_claim_creator_fee_args'
   // Phase 2C-1 PM create-market flow:
   | 'pm_bad_create_args'
   | 'pm_bad_create_metadata'
@@ -328,6 +330,22 @@ const CLAIM_ABI = [
   {
     type: 'function',
     name: 'claim',
+    inputs: [{ name: 'id', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// `claimCreatorFee(uint256)` selector, pinned as a literal like CLAIM_SELECTOR. From
+/// `cast sig "claimCreatorFee(uint256)"` (2026-10-13); the selectors test re-derives it with viem and fails on drift.
+export const CLAIM_CREATOR_FEE_SELECTOR = '0xb340da9c' as const;
+
+/// ABI fragment for `claimCreatorFee(uint256)`, used only to decode the inner call at sponsor and send time. Source of
+/// truth is `MakoMarketsV4.sol`'s `function claimCreatorFee(uint256 id) external`.
+const CLAIM_CREATOR_FEE_ABI = [
+  {
+    type: 'function',
+    name: 'claimCreatorFee',
     inputs: [{ name: 'id', type: 'uint256' }],
     outputs: [],
     stateMutability: 'nonpayable',
@@ -731,6 +749,72 @@ export function decodeAndAssertClaimShape(call: {
   data: Hex;
 }): void {
   decodeAndAssertClaim(call);
+}
+
+// ── Creator-fee claim validators (creator earnings) ─────────────────────────
+
+/// `claimCreatorFee(uint256)` is exactly 4 + 32 bytes of calldata.
+const CLAIM_CREATOR_FEE_DATA_HEX_LEN = 2 + 2 * (4 + 32);
+
+/// Decode + structural assertions for `claimCreatorFee(uint256)`, shared by sponsor time and send time. The claim
+/// pattern, one step stricter on the bytes:
+///   - call.to === MAKO_ADDRESS (the V4 Pools contract, nothing else)
+///   - call.value === 0n
+///   - the selector is CLAIM_CREATOR_FEE_SELECTOR and the calldata is exactly one uint256 after it (no trailing bytes)
+///   - it ABI-decodes as `claimCreatorFee(uint256)`
+///
+/// No state reads: the contract enforces resolved, caller == creator, not yet claimed and not REFUND. A forfeited fee
+/// still succeeds on chain and pays 0; the app never builds that call (src/lib/creator-earnings.ts), and if someone
+/// hand-crafts one it spends only their own sponsored-op allowance.
+function decodeAndAssertClaimCreatorFee(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): void {
+  if (call.to.toLowerCase() !== MAKO_ADDRESS.toLowerCase()) {
+    throw new NotAllowedError('bad_claim_creator_fee_args', 'wrong_target');
+  }
+  if (call.value !== 0n) {
+    throw new NotAllowedError('bad_value');
+  }
+  if (call.data.slice(0, 10).toLowerCase() !== CLAIM_CREATOR_FEE_SELECTOR) {
+    throw new NotAllowedError('bad_claim_creator_fee_args', 'wrong_selector');
+  }
+  if (call.data.length !== CLAIM_CREATOR_FEE_DATA_HEX_LEN) {
+    throw new NotAllowedError('bad_claim_creator_fee_args', 'bad_length');
+  }
+  try {
+    const result = decodeFunctionData({ abi: CLAIM_CREATOR_FEE_ABI, data: call.data });
+    if (result.functionName !== 'claimCreatorFee') {
+      throw new NotAllowedError('bad_claim_creator_fee_args', 'wrong_selector');
+    }
+  } catch (e) {
+    if (e instanceof NotAllowedError) throw e;
+    throw new NotAllowedError('bad_claim_creator_fee_args', 'decode_failed');
+  }
+}
+
+/// Validate a single `MakoMarketsV4.claimCreatorFee(id)` call from the Safe (sponsor time,
+/// kind='claim_creator_fee'). Used by /api/aa/sponsor for an email account's creator-earnings claim.
+export function assertClaimCreatorFeeCall(args: {
+  chainId: number;
+  safeAddress: Address;
+  call: { to: Address; value: bigint; data: Hex };
+}): void {
+  if (args.chainId !== MONAD_TESTNET_ID) {
+    throw new NotAllowedError('bad_claim_creator_fee_args', 'wrong_chain');
+  }
+  decodeAndAssertClaimCreatorFee(args.call);
+}
+
+/// Send-time shape-only check for `claimCreatorFee(uint256)`: re-validates the persisted callData independently of
+/// the sponsor route.
+export function decodeAndAssertClaimCreatorFeeShape(call: {
+  to: Address;
+  value: bigint;
+  data: Hex;
+}): void {
+  decodeAndAssertClaimCreatorFee(call);
 }
 
 // ── Create-market validators (Phase 1H) ─────────────────────────────────────
@@ -1972,6 +2056,12 @@ export async function assertSponsoredCallData(args: {
         // relative checks (claim has none); contract enforces
         // resolution + position + has-not-claimed.
         decodeAndAssertClaimShape({ to, value, data });
+        return;
+      }
+      if (innerSelector === CLAIM_CREATOR_FEE_SELECTOR) {
+        // Creator earnings: shape-only at send time, like claim. The contract enforces creator + resolved +
+        // not-claimed + not-REFUND.
+        decodeAndAssertClaimCreatorFeeShape({ to, value, data });
         return;
       }
       throw new NotAllowedError('bad_selector');

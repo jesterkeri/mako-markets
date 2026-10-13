@@ -26,6 +26,7 @@ import {
   assertBetBatchedCalls,
   assertBetSingleCall,
   assertClaimCall,
+  assertClaimCreatorFeeCall,
   assertCreateMarketBatchedCallsShape,
   assertCreateMarketBatchedCallsSponsor,
   assertCreateMarketCall,
@@ -312,6 +313,7 @@ export async function POST(req: Request) {
           | 'send_usdc'
           | 'create_market'
           | 'claim'
+          | 'claim_creator_fee'
           | 'pm_create_market'
           | 'pm_bet'
           | 'pm_stake'
@@ -515,6 +517,19 @@ export async function POST(req: Request) {
         };
         assertClaimCall({ chainId, safeAddress, call });
         buildArgs = { kind: 'claim', call };
+        break;
+      }
+      case 'claim_creator_fee': {
+        // Creator earnings: single-call MakoMarketsV4.claimCreatorFee(id) from the Safe. Shape-only like claim; the
+        // contract enforces creator + resolved + not-claimed + not-REFUND.
+        const c = parsed.data.call;
+        const call: Call = {
+          to: c.to as Address,
+          value: hexToBigInt(c.value as Hex),
+          data: c.data as Hex,
+        };
+        assertClaimCreatorFeeCall({ chainId, safeAddress, call });
+        buildArgs = { kind: 'claim_creator_fee', call };
         break;
       }
       case 'pm_create_market': {
