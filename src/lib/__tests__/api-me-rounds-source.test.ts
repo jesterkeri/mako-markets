@@ -19,7 +19,7 @@ let GET: (req: Request) => Promise<Response>;
 beforeEach(async () => {
   vi.resetModules();
   env = fakeEnvio();
-  process.env.ENVIO_GRAPHQL_URL = URL_;
+  process.env.ENVIO_ROUNDS_GRAPHQL_URL = URL_;
   vi.spyOn(globalThis, 'fetch').mockImplementation(envioFetch(env, URL_) as typeof fetch);
   vi.spyOn(console, 'error').mockImplementation(() => {});
   ({ GET } = await import('@/app/api/me/rounds/route'));
@@ -30,7 +30,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env.ENVIO_GRAPHQL_URL;
+  delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
 });
 
 const call = () => GET(new Request(`http://localhost/api/me/rounds?account=${A}`));
@@ -87,6 +87,26 @@ describe('every answer names the reviewed Rounds deployment', () => {
     ['a row of null', [null]],
   ])('%s: refused', async (_name, rows) => {
     env.source = rows;
+    await refused();
+  });
+
+  it('an indexer that has seen no round yet has no source row: answered as 0 rounds, and nothing else is asked', async () => {
+    env.globalRounds = 0;
+    env.source = [];
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ roundIds: [], indexedThrough: '0', head: null });
+    expect(env.log.map((l) => l.op)).toEqual(['head']);
+  });
+
+  it('no source row while claiming rounds: refused', async () => {
+    env.source = [];
+    await refused();
+  });
+
+  it('0 rounds with a FOREIGN source row: refused (only an absent row is excused, never a wrong one)', async () => {
+    env.globalRounds = 0;
+    env.source = [{ sourceChain: 10143, address: PREVIEW }];
     await refused();
   });
 

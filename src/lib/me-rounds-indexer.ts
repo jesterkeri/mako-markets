@@ -4,7 +4,7 @@ import { MONAD_TESTNET_ID } from './chain';
 import { parseUint64, type MeRoundsDiscoveryWire, type MeRoundsHeadWire } from './me-rounds-discovery';
 import { ROUNDS_RELEASE_RECORD } from './rounds-release-record';
 
-// The rounds one account takes part in, from the Envio indexer (ENVIO_GRAPHQL_URL, schema in indexer/schema.graphql),
+// The rounds one account takes part in, from the Envio indexer (ENVIO_ROUNDS_GRAPHQL_URL, schema in indexer/schema.graphql),
 // for GET /api/me/rounds. See me-rounds-discovery.ts for why the reads below, in this order, leave nothing out, and
 // how the head round's fingerprint binds the answer to the Rounds contract on chain.
 //
@@ -12,6 +12,9 @@ import { ROUNDS_RELEASE_RECORD } from './rounds-release-record';
 // ends only on an EMPTY page: a short page is not trusted as the end, so a server that returns fewer rows than asked
 // (a row cap on the hosted service) still yields the whole list. A list longer than MAX_ROWS is an error, never a
 // partial answer. Any failure throws; the route answers it as an error status, never as an empty list.
+//
+// ENVIO_ROUNDS_GRAPHQL_URL is Me's own setting, apart from /stats' ENVIO_GRAPHQL_URL, so Me can move to an indexer built
+// with RoundsSource while /stats stays on the deployment it has (Joshua, 2026-10-13: /stats untouched through judging).
 //
 // Every query also asks for the indexer's RoundsSource row (indexer/schema.graphql: the address and chain its round
 // events came from), and every answer, every page, is refused unless that row names exactly the reviewed Rounds
@@ -66,7 +69,9 @@ export const CREATED_QUERY = `query MeRoundsCreated($creator: String!, $after: S
 
 const ROUND_ID = /^[1-9][0-9]{0,77}$/;
 
-async function gql(url: string, query: string, variables: Record<string, unknown>): Promise<Record<string, unknown>> {
+/// One query. Its RoundsSource rows are checked unless `sourceMayBeAbsent` and there are none (the head query only: an
+/// indexer that has seen no round yet has no source row, which discoverMeRounds accepts only when it also has 0 rounds).
+async function gql(url: string, query: string, variables: Record<string, unknown>, sourceMayBeAbsent = false): Promise<Record<string, unknown>> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -78,7 +83,7 @@ async function gql(url: string, query: string, variables: Record<string, unknown
   const body = (await res.json()) as { data?: unknown; errors?: unknown };
   if (body.errors !== undefined || !body.data || typeof body.data !== 'object') throw new IndexerFailed('indexer answer not usable');
   const data = body.data as Record<string, unknown>;
-  assertSource(data.RoundsSource);
+  if (!(sourceMayBeAbsent && Array.isArray(data.RoundsSource) && data.RoundsSource.length === 0)) assertSource(data.RoundsSource);
   return data;
 }
 
@@ -151,15 +156,21 @@ async function readHeadRound(url: string, id: string): Promise<MeRoundsHeadWire>
 
 /// The round ids relevant to `account` (a lower-case 0x address), as the route answers them.
 export async function discoverMeRounds(account: string): Promise<MeRoundsDiscoveryWire> {
-  const url = process.env.ENVIO_GRAPHQL_URL?.trim();
+  const url = process.env.ENVIO_ROUNDS_GRAPHQL_URL?.trim();
   if (!url) throw new IndexerNotConfigured();
 
   // 1. The last round the indexer has seen scheduled. Read FIRST: everything read after it is at least as current.
-  const head = await gql(url, HEAD_QUERY, {});
+  const head = await gql(url, HEAD_QUERY, {}, true);
   const rows = head.GlobalStats;
   if (!Array.isArray(rows) || rows.length > 1) throw new IndexerFailed('GlobalStats not usable');
   const rounds = rows.length === 0 ? 0 : (rows[0] as Record<string, unknown>).rounds;
   if (typeof rounds !== 'number' || !Number.isSafeInteger(rounds) || rounds < 0) throw new IndexerFailed('GlobalStats.rounds not usable');
+  // The indexer writes its RoundsSource row with its first round, so before then it has none. That is accepted only at
+  // 0 rounds, and then nothing else is asked: the answer claims no rounds, and the browser reads every round on chain
+  // (me-rounds-discovery.ts), so whichever indexer said it, nothing can be hidden. With any round, the row must be there.
+  const noSource = Array.isArray(head.RoundsSource) && head.RoundsSource.length === 0;
+  if (noSource && rounds > 0) throw new WrongSource('source row missing');
+  if (noSource) return { roundIds: [], indexedThrough: '0', head: null };
   // 1b. That round's fingerprint, which the browser compares with roundOf on chain before trusting anything here
   //     (me-rounds-discovery.ts, step 0). It never changes once scheduled, so reading it after (1) is enough.
   const headRound = rounds === 0 ? null : await readHeadRound(url, String(rounds));
