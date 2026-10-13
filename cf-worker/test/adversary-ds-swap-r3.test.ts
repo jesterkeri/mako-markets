@@ -106,7 +106,7 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   }
   const body = JSON.parse(String(init?.body));
   if (url === MAKO_RPC) return json(Array.isArray(body) ? body.map(makoAnswer) : makoAnswer(body));
-  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
+  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
   throw new Error(`stub: unexpected request to ${url}`);
 }
 
@@ -129,6 +129,7 @@ async function runUntilSettled(target: bigint, maxRuns: number): Promise<{ settl
     CRYPTO_PRICE_SOURCE: 'datastreams',
     DATASTREAMS_API_KEY: 'sentinel-ds-key',
     DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
+      ALCHEMY_RPC_URL: 'https://monad-testnet.g.alchemy.com/v2/sentinel-alchemy-key',
   } as Env;
   const perRun: number[][] = [];
   vi.useFakeTimers({ toFake: ['Date'] });

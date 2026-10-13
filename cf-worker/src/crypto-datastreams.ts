@@ -16,8 +16,27 @@ import { keccak256, type Hex } from 'viem';
 import { decodeVerified, fetchReport, verifyOnBoth, type ReportCredentials, type RpcCall } from './datastreams';
 import { decideCrypto, feedFor, parseCryptoRef, OUTCOME_YES } from './price-decision';
 
-/// The verification pair Joshua approved on 2026-10-10 (RESOLVER_PRICE_PLAN §4.3): Monad's public RPC and Ankr.
-export const VERIFY_RPC_URLS = ['https://testnet-rpc.monad.xyz', 'https://rpc.ankr.com/monad_testnet'] as const;
+export const ANKR_RPC_URL = 'https://rpc.ankr.com/monad_testnet';
+const PUBLIC_RPC_HOST = 'testnet-rpc.monad.xyz';
+
+/// The verification pair (Joshua 2026-10-13): Alchemy + Ankr. The public Monad RPC (the 2026-10-10 pair with Ankr) kept
+/// failing from Cloudflare on 2026-10-13, and a failing provider makes every crypto pool wait. Alchemy's URL carries
+/// its key: it is the worker secret ALCHEMY_RPC_URL, never logged (only hostnames reach the evidence). Null when the
+/// URL is missing, not https, or the public RPC itself (that would not be a second operator).
+export function verifyPair(alchemyUrl: string | undefined): readonly [string, string] | null {
+  const u = alchemyUrl?.trim();
+  if (!u) return null;
+  let host: string;
+  try {
+    const parsed = new URL(u);
+    if (parsed.protocol !== 'https:') return null;
+    host = parsed.hostname;
+  } catch {
+    return null;
+  }
+  if (host === PUBLIC_RPC_HOST || host === new URL(ANKR_RPC_URL).hostname) return null;
+  return [u, ANKR_RPC_URL];
+}
 export const DEFAULT_DATASTREAMS_URL = 'https://api.testnet-dataengine.chain.link';
 export const FINALIZED_TIMEOUT_MS = 8_000;
 /// Data Streams evaluations per tick, shadow and live alike: each costs one Data Streams request and up to five RPC
@@ -107,6 +126,8 @@ export type DsDeps = {
   creds: ReportCredentials;
   providers: readonly [RpcCall, RpcCall];
   finalized: () => Promise<FinalizedBlock | null>;
+  /// The providers' hostnames, for the evidence (never the URLs: Alchemy's carries a key).
+  verifiedBy: readonly string[];
   /// The clock read when the request is signed: Data Streams refuses a signature more than 5 s from its own clock, and
   /// a tick reaches its crypto pools well after it starts (adversary on 3da84d8).
   now: () => number;
@@ -141,7 +162,7 @@ export async function dataStreamsCryptoDecision(market: { mType: number; oracleR
       verifyBlock: block.number.toString(),
       verifyBlockTime: String(block.timestamp),
       // verifyOnBoth returns ok only when both providers answered with identical verified bytes.
-      verifiedBy: VERIFY_RPC_URLS.map((u) => new URL(u).hostname),
+      verifiedBy: deps.verifiedBy,
     };
     return { kind: 'settle', yes: d.outcome === OUTCOME_YES, price: d.price, strike: d.strike, symbol: ref.symbol, evidence };
   }

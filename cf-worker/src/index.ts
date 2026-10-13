@@ -56,7 +56,7 @@ import {
   readCryptoPriceSource,
   readFinalized,
   DS_PER_TICK,
-  VERIFY_RPC_URLS,
+  verifyPair,
   type DsDecision,
   type DsDeps,
 } from './crypto-datastreams';
@@ -111,6 +111,8 @@ export interface Env {
   /// Secrets for Data Streams (wrangler secret put), required by both datastreams modes. NEVER log these.
   DATASTREAMS_API_KEY?: string;
   DATASTREAMS_API_SECRET?: string;
+  /// Alchemy Monad-testnet URL with its key (secret), one of the two Data Streams verification providers. NEVER log.
+  ALCHEMY_RPC_URL?: string;
 }
 
 const RECEIPT_TIMEOUT_MS = 45_000;
@@ -1003,19 +1005,23 @@ export async function runResolver(env: Env): Promise<void> {
   const crypto = readCryptoPriceSource(env.CRYPTO_PRICE_SOURCE);
   const dsKey = env.DATASTREAMS_API_KEY?.trim();
   const dsSecret = env.DATASTREAMS_API_SECRET?.trim();
+  const pair = verifyPair(env.ALCHEMY_RPC_URL);
   const dsDeps: DsDeps | null =
-    crypto.source !== 'coingecko' && dsKey && dsSecret
+    crypto.source !== 'coingecko' && dsKey && dsSecret && pair
       ? {
           fetchImpl: (i, x) => fetch(i, x),
           base: env.DATASTREAMS_URL?.trim() || DEFAULT_DATASTREAMS_URL,
           creds: { apiKey: dsKey, secret: dsSecret },
-          providers: [httpEthCall(VERIFY_RPC_URLS[0]), httpEthCall(VERIFY_RPC_URLS[1])],
-          finalized: () => readFinalized((i, x) => fetch(i, x), VERIFY_RPC_URLS[0]),
+          providers: [httpEthCall(pair[0]), httpEthCall(pair[1])],
+          finalized: () => readFinalized((i, x) => fetch(i, x), pair[0]),
+          verifiedBy: pair.map((u) => new URL(u).hostname),
           now: () => Date.now(),
         }
       : null;
   if (crypto.invalid !== null) console.error(`CRYPTO_PRICE_SOURCE "${crypto.invalid}" is not coingecko, datastreams-shadow or datastreams — using coingecko`);
-  if (crypto.source !== 'coingecko' && !dsDeps) console.error(`CRYPTO_PRICE_SOURCE=${crypto.source} but DATASTREAMS_API_KEY/SECRET are not set`);
+  if (crypto.source !== 'coingecko' && !dsDeps) {
+    console.error(`CRYPTO_PRICE_SOURCE=${crypto.source} but DATASTREAMS_API_KEY/SECRET or a valid ALCHEMY_RPC_URL (https, not the public RPC) are not set`);
+  }
 
   const monadTestnet = {
     id: 10143,
@@ -1312,7 +1318,7 @@ export async function runResolver(env: Env): Promise<void> {
     if (market.mType === MarketType.CRYPTO && crypto.source === 'datastreams') {
       // Live: Chainlink Data Streams only, no CoinGecko and no fallback. Anything but a settle decision waits.
       if (!dsDeps) {
-        console.error(`[${ts}] market ${i}: CRYPTO_PRICE_SOURCE=datastreams but DATASTREAMS_API_KEY/SECRET are not set — waiting`);
+        console.error(`[${ts}] market ${i}: CRYPTO_PRICE_SOURCE=datastreams but the Data Streams or Alchemy secrets are not set — waiting`);
         skipped++;
         continue;
       }

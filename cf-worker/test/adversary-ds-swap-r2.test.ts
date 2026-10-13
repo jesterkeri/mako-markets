@@ -107,7 +107,7 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   }
   const body = JSON.parse(String(init?.body));
   if (url === MAKO_RPC) return json(Array.isArray(body) ? body.map(makoAnswer) : makoAnswer(body));
-  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
+  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
   throw new Error(`stub: unexpected request to ${url}`);
 }
 
@@ -129,6 +129,7 @@ async function ticks(n: number): Promise<string[]> {
     CRYPTO_PRICE_SOURCE: 'datastreams',
     DATASTREAMS_API_KEY: 'sentinel-ds-key',
     DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
+      ALCHEMY_RPC_URL: 'https://monad-testnet.g.alchemy.com/v2/sentinel-alchemy-key',
   } as Env;
   // One run per minute on a driven clock (Date only; the read pacing keeps real timers), starting at a minute whose
   // index is a multiple of 3, so the rotation over 3 eligible pools is deterministic.
@@ -191,7 +192,7 @@ describe('adversary r2: attacks that held', () => {
         if (url.startsWith('https://api.testnet-dataengine.chain.link/')) {
           skews.push(Math.abs(Date.now() - Number(new Headers(init?.headers).get('X-Authorization-Timestamp'))));
         }
-        if (slowOnce && url.startsWith('https://testnet-rpc.monad.xyz') && String(init?.body).includes('eth_getBlockByNumber')) {
+        if (slowOnce && url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') && String(init?.body).includes('eth_getBlockByNumber')) {
           slowOnce = false;
           await new Promise((r) => setTimeout(r, 6_000));
         }
@@ -207,6 +208,7 @@ describe('adversary r2: attacks that held', () => {
       CRYPTO_PRICE_SOURCE: 'datastreams',
       DATASTREAMS_API_KEY: 'sentinel-ds-key',
       DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
+      ALCHEMY_RPC_URL: 'https://monad-testnet.g.alchemy.com/v2/sentinel-alchemy-key',
     } as Env);
     expect(skews).toHaveLength(2);
     expect(Math.max(...skews)).toBeLessThan(1_000);

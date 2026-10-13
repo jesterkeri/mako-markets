@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import verifiedEvidence from './fixtures/btcusd-1789529160-verified.json';
-import { dataStreamsCryptoDecision, dsEligible, dsTurns, formatPrice18, readCryptoPriceSource, readFinalized, type DsDeps, type FinalizedBlock } from '../src/crypto-datastreams';
+import { dataStreamsCryptoDecision, dsEligible, dsTurns, formatPrice18, verifyPair, readCryptoPriceSource, readFinalized, type DsDeps, type FinalizedBlock } from '../src/crypto-datastreams';
 import type { RpcCall } from '../src/datastreams';
 
 const CLOSE = Number(fixture.observationsTimestamp);
@@ -42,6 +42,7 @@ function deps(over: Partial<DsDeps> & { status?: number; body?: string } = {}): 
     creds: { apiKey: 'test-key-id', secret: 'test-secret-value' },
     providers: over.providers ?? [provider(), provider()],
     finalized: over.finalized ?? (async () => BLOCK),
+    verifiedBy: ['monad-testnet.g.alchemy.com', 'rpc.ankr.com'],
     now: () => 1_790_000_000_000,
     urls,
   };
@@ -127,5 +128,14 @@ describe('the per-tick rotation (adversary r2 on d15c3dc)', () => {
     expect(dsEligible(1, ref('BTC:gt:7.5e4'))).toBe(false);
     expect(dsEligible(1, ref('XRP:gt:1'))).toBe(false);
     expect(dsEligible(5, ref('BTC:gt:75000'))).toBe(false);
+  });
+});
+
+describe('verifyPair: Alchemy + Ankr (2026-10-13)', () => {
+  it('takes an https Alchemy URL as the first provider, Ankr second', () => {
+    expect(verifyPair('https://monad-testnet.g.alchemy.com/v2/k')).toEqual(['https://monad-testnet.g.alchemy.com/v2/k', 'https://rpc.ankr.com/monad_testnet']);
+  });
+  it.each([undefined, '', '   ', 'http://monad-testnet.g.alchemy.com/v2/k', 'not a url', 'https://testnet-rpc.monad.xyz/', 'https://rpc.ankr.com/monad_testnet'])('refuses %s', (u) => {
+    expect(verifyPair(u)).toBeNull();
   });
 });

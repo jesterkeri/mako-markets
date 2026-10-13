@@ -107,7 +107,7 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   }
   const body = JSON.parse(String(init?.body));
   if (url === MAKO_RPC) return json(Array.isArray(body) ? body.map(makoAnswer) : makoAnswer(body));
-  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
+  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
   throw new Error(`stub: unexpected request to ${url}`);
 }
 
@@ -133,11 +133,12 @@ describe('adversary: datastreams mode on a real-sized tick', () => {
       CRYPTO_PRICE_SOURCE: 'datastreams',
       DATASTREAMS_API_KEY: 'sentinel-ds-key',
       DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
+      ALCHEMY_RPC_URL: 'https://monad-testnet.g.alchemy.com/v2/sentinel-alchemy-key',
     } as Env;
     await runResolver(env);
 
     // Spec 3: neither Data Streams secret nor the resolver key reaches a log line.
-    for (const secret of ['sentinel-ds-key', 'sentinel-ds-secret', key.slice(2)]) expect(lines.join('\n')).not.toContain(secret);
+    for (const secret of ['sentinel-ds-key', 'sentinel-ds-secret', 'sentinel-alchemy-key', key.slice(2)]) expect(lines.join('\n')).not.toContain(secret);
     const pool = lines.filter((l) => l.includes(`market ${POOL}:`));
     // Spec 1: the pool settles on the Data Streams report for its exact close second (price 75,938.79 > 75,000: YES).
     expect({ skewsMs: dsSkews.map((s) => Math.round(s / 1000) * 1000), pool }).toEqual({
@@ -164,7 +165,7 @@ describe('adversary: datastreams mode on a real-sized tick', () => {
       ask: '75944083700820000000000',
       verifyBlock: String(0x4337013),
       verifyBlockTime: String(CLOSE + 3600),
-      verifiedBy: ['testnet-rpc.monad.xyz', 'rpc.ankr.com'],
+      verifiedBy: ['monad-testnet.g.alchemy.com', 'rpc.ankr.com'],
     });
     expect(e.fullReportKeccak).toMatch(/^0x[0-9a-f]{64}$/);
     expect(e.verifiedKeccak).toMatch(/^0x[0-9a-f]{64}$/);
@@ -209,6 +210,7 @@ describe('adversary: attacks that held', () => {
       CRYPTO_PRICE_SOURCE: 'datastreams',
       DATASTREAMS_API_KEY: 'sentinel-ds-key',
       DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
+      ALCHEMY_RPC_URL: 'https://monad-testnet.g.alchemy.com/v2/sentinel-alchemy-key',
     } as Env);
     expect(dsSkews).toHaveLength(2);
     expect(lines.filter((l) => l.includes("datastreams not this tick's turn"))).toHaveLength(2);
@@ -227,12 +229,13 @@ describe('adversary: attacks that held', () => {
       CRYPTO_PRICE_SOURCE: 'datastreams-shadow',
       DATASTREAMS_API_KEY: 'sentinel-ds-key',
       DATASTREAMS_API_SECRET: 'sentinel-ds-secret',
+      ALCHEMY_RPC_URL: 'https://monad-testnet.g.alchemy.com/v2/sentinel-alchemy-key',
     } as Env);
     const shadow = lines.filter((l) => l.includes('"event":"crypto.shadow"'));
     expect(shadow).toHaveLength(1);
     expect(JSON.parse(shadow[0])).toMatchObject({ event: 'crypto.shadow', market: Number(POOL), closeTime: CLOSE, ds: { outcome: 'YES', price: '75938.791787', strike: '75000.000000' } });
     expect(lines.some((l) => l.includes('tick error'))).toBe(false);
     expect(lines.some((l) => l.includes('tick done'))).toBe(true);
-    for (const secret of ['sentinel-ds-key', 'sentinel-ds-secret', key.slice(2)]) expect(lines.join('\n')).not.toContain(secret);
+    for (const secret of ['sentinel-ds-key', 'sentinel-ds-secret', 'sentinel-alchemy-key', key.slice(2)]) expect(lines.join('\n')).not.toContain(secret);
   }, 60_000);
 });

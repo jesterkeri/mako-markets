@@ -39,6 +39,7 @@ const CHAIN_ID = 10143;
 const FINAL_BLOCK = 0x4400000n;
 const DS_KEY = 'sentinel-ds-key-7f3a';
 const DS_SECRET = 'sentinel-ds-secret-91c2';
+const ALCHEMY_KEY = 'sentinel-alchemy-key-5d1e';
 
 const payload = decodeAbiParameters(
   [{ type: 'bytes32[3]' }, { type: 'bytes' }, { type: 'bytes32[]' }, { type: 'bytes32[]' }, { type: 'bytes32' }],
@@ -208,7 +209,7 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   }
   const body = JSON.parse(String(init?.body));
   if (url === MAKO_RPC) return json(Array.isArray(body) ? body.map(makoAnswer) : makoAnswer(body));
-  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
+  if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') || url.startsWith('https://rpc.ankr.com/monad_testnet')) return json(verifyAnswer(body));
   throw new Error(`stub: unexpected request to ${url}`);
 }
 
@@ -220,6 +221,7 @@ const env = (): Env =>
     CRYPTO_PRICE_SOURCE: 'datastreams',
     DATASTREAMS_API_KEY: DS_KEY,
     DATASTREAMS_API_SECRET: DS_SECRET,
+    ALCHEMY_RPC_URL: `https://monad-testnet.g.alchemy.com/v2/${ALCHEMY_KEY}`,
   }) as Env;
 
 async function tick(): Promise<string[]> {
@@ -251,7 +253,7 @@ async function sent() {
 const evidence = (lines: string[]) => lines.filter((l) => l.includes('"event":"crypto.ds.evidence"')).map((l) => JSON.parse(l));
 const dsRequests = () => urls.filter((u) => u.startsWith('https://api.testnet-dataengine.chain.link/')).length;
 const noSecrets = (lines: string[]) => {
-  for (const s of [DS_KEY, DS_SECRET, key.slice(2), key.slice(2, 34)]) expect(lines.join('\n')).not.toContain(s);
+  for (const s of [DS_KEY, DS_SECRET, ALCHEMY_KEY, key.slice(2), key.slice(2, 34)]) expect(lines.join('\n')).not.toContain(s);
 };
 
 const BTC_YES = 'BTC:gt:75000'; // 75,938.79 > 75,000: YES
