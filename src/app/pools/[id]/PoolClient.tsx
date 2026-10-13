@@ -7,11 +7,13 @@ import { useReadContract, useReadContracts } from 'wagmi';
 
 import { PoolCommentsDesktop, PoolCommentsMobile } from '@/components/comments/PoolComments';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { CreatorEarningsCard, creatorFeeConfirmSpec } from '@/components/CreatorEarnings';
 import { PoolShareSheet } from '@/components/PoolShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
 import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
+import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/creator-earnings';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
@@ -135,6 +137,13 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     setSheetSpec(confirmSpec('claim', market, row, labels, amount, side, estimate, claimAmount));
     tx.open({ kind: 'claim', marketId: id });
   };
+  // Creator earnings: only the pool's creator sees them, from the pool's own on-chain state.
+  const creatorEarning = isPoolCreator(market, account) ? creatorEarningOf(market) : null;
+  const openCreatorClaim = () => {
+    if (creatorEarning?.state !== 'claimable' || tx.tx) return;
+    setSheetSpec(creatorFeeConfirmSpec(creatorEarning));
+    tx.open({ kind: 'creatorFee', marketId: id });
+  };
 
   const view: ViewProps = {
     market,
@@ -159,6 +168,9 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     claimAmount,
     openClaim,
     lastClaimTx: tx.tx?.kind === 'claim' && tx.phase.step === 'done' ? tx.phase.txHash : undefined,
+    creatorEarning,
+    openCreatorClaim,
+    lastCreatorClaimTx: tx.tx?.kind === 'creatorFee' && tx.phase.step === 'done' ? tx.phase.txHash : undefined,
     rulesOpen,
     setRulesOpen,
     openShare: () => setShareOpen(true),
@@ -263,6 +275,10 @@ type ViewProps = {
   claimAmount: bigint | null;
   openClaim: () => void;
   lastClaimTx: string | undefined;
+  /// The signed-in account's creator earnings on this pool, or null when it is not the creator or there is no fee.
+  creatorEarning: CreatorEarning | null;
+  openCreatorClaim: () => void;
+  lastCreatorClaimTx: string | undefined;
   rulesOpen: boolean;
   setRulesOpen: (b: boolean) => void;
   openShare: () => void;
@@ -418,6 +434,7 @@ function PoolDesktop(v: ViewProps) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {row.position && <PositionDesktop {...v} />}
+          {v.creatorEarning && <CreatorEarningsCard earning={v.creatorEarning} onClaim={v.openCreatorClaim} lastTx={v.lastCreatorClaimTx} variant="desktop" />}
           {open && <BetFormDesktop {...v} />}
           {(row.state === 'betting_closed' || row.state === 'resolving') && (
             <div style={{ borderTop: '1px solid var(--line)', padding: '14px 4px 0', fontSize: 14, lineHeight: 1.5, color: 'var(--dim)' }}>{closedNote(row.state, m, v.now)}</div>
@@ -883,6 +900,7 @@ function PoolMobile(v: ViewProps) {
             <div style={{ fontSize: 14, lineHeight: 1.4, fontWeight: 600 }}>This pool was refunded, so everyone claims their full stake back. No fee.</div>
           </div>
         )}
+        {v.creatorEarning && <CreatorEarningsCard earning={v.creatorEarning} onClaim={v.openCreatorClaim} lastTx={v.lastCreatorClaimTx} variant="mobile" />}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 24, background: 'var(--raise)', padding: '14px 16px', marginTop: 10 }}>
           <span aria-hidden="true" style={{ width: 40, height: 40, borderRadius: 9999, background: 'var(--mako-teal)', color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 16 }}>
