@@ -160,6 +160,11 @@ export const SUBMITTED_SETTLE_S = 600;
 /// from the chain's own time): well inside SUBMITTED_SETTLE_S, so when the repeat window reopens the old op can no
 /// longer land, whatever the server recorded (Codex CREATOR_EARNINGS R3). The margin covers database/chain clock skew.
 export const CREATOR_FEE_OP_TTL_S = 300;
+/// The least signing time a freshly built creator-fee op must have left on the server's clock. The op's validUntil
+/// comes from the chain head the sponsor route read; a head this far behind would also be a stale read of
+/// creatorFeeClaimed, so such a read is refused (fail closed) before the daily count or the Pimlico sponsorship is spent
+/// on an op that is dead, or nearly, on arrival (adversary on 379949f).
+export const CREATOR_FEE_MIN_SIGNING_S = 60;
 export async function creatorFeeOpMayHaveLanded(args: { chainId: number; safeAddress: Address; callData: Hex }): Promise<boolean> {
   const rows = await db
     .select({ id: aaPendingUserOps.id })

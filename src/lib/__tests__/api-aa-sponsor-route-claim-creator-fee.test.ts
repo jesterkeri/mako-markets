@@ -37,6 +37,7 @@ vi.mock('@/db/client', () => ({
 }));
 vi.mock('@/lib/aa-pending-user-ops', () => ({
   CREATOR_FEE_OP_TTL_S: 300,
+  CREATOR_FEE_MIN_SIGNING_S: 60,
   SUBMITTED_SETTLE_S: 600,
   loadInFlightForSafe: (args: unknown) => mocks.loadInFlightForSafe(args),
   creatorFeeOpMayHaveLanded: (args: unknown) => mocks.creatorFeeOpMayHaveLanded(args),

@@ -27,6 +27,8 @@ const state = vi.hoisted(() => ({
   db: null as unknown,
   chainNow: 0n,
   bundlerSends: [] as Array<{ userOp: unknown; signature: Hex }>,
+  dailyOps: 0,
+  sponsorships: 0,
 }));
 
 vi.mock('server-only', () => ({}));
@@ -40,7 +42,7 @@ vi.mock('@/lib/user-session', () => ({
   getUserSession: async () => ({ userId: USER, email: 'a@b.com', magicEoa: account.address, sessionId: 's-1' }),
 }));
 vi.mock('@/lib/aa-sponsor-limits', () => ({
-  incrementOrReject: async () => ({ kind: 'within_cap', count: 1 }),
+  incrementOrReject: async () => ({ kind: 'within_cap', count: ++state.dailyOps }),
   decrementForRefund: async () => undefined,
 }));
 vi.mock('@/lib/aa-public-client', () => ({
@@ -64,15 +66,18 @@ vi.mock('@/lib/aa-rpc', async (importActual) => {
   return {
     ...actual,
     getUserOperationGasPrice: async () => ({ standard: { maxFeePerGas: 100n, maxPriorityFeePerGas: 2n } }),
-    sponsorUserOperation: async () => ({
-      paymaster: PAYMASTER,
-      paymasterVerificationGasLimit: 60_000n,
-      paymasterPostOpGasLimit: 1n,
-      paymasterData: '0xabcd',
-      callGasLimit: 120_000n,
-      verificationGasLimit: 300_000n,
-      preVerificationGas: 50_000n,
-    }),
+    sponsorUserOperation: async () => {
+      state.sponsorships += 1;
+      return {
+        paymaster: PAYMASTER,
+        paymasterVerificationGasLimit: 60_000n,
+        paymasterPostOpGasLimit: 1n,
+        paymasterData: '0xabcd',
+        callGasLimit: 120_000n,
+        verificationGasLimit: 300_000n,
+        preVerificationGas: 50_000n,
+      };
+    },
     sendUserOperation: async (a: { chainId: number; userOp: Parameters<typeof storedToPacked>[0]; signature: Hex }) => {
       state.bundlerSends.push({ userOp: a.userOp, signature: a.signature });
       return computeUserOpHash({ userOp: storedToPacked(a.userOp), chainId: a.chainId });
@@ -85,7 +90,7 @@ import { POST as sponsor } from '../../app/api/aa/sponsor/route';
 import { POST as send } from '../../app/api/aa/send/route';
 import { buildClaimCreatorFeeBody, runSponsoredRequest } from '../aa-client';
 import { VALIDITY_WINDOW_MAX_UINT48 } from '../aa-constants';
-import { CREATOR_FEE_OP_TTL_S } from '../aa-pending-user-ops';
+import { CREATOR_FEE_MIN_SIGNING_S, CREATOR_FEE_OP_TTL_S } from '../aa-pending-user-ops';
 import { parseSafeOpEnvelope } from '../aa-signature';
 import { MONAD_TESTNET_ID } from '../chain';
 import { MAKO_ADDRESS } from '../contract';
@@ -139,6 +144,8 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   state.bundlerSends = [];
+  state.dailyOps = 0;
+  state.sponsorships = 0;
   await pg.exec(`DELETE FROM aa_pending_user_ops`);
 });
 
@@ -226,16 +233,21 @@ describe('creator-fee claim: the finite SafeOp window travels sponsor -> sign ->
   });
 
   it('a signed claim whose validUntil has passed is expired by send (410) and never reaches the bundler', async () => {
-    // Built 400 s ago on the chain's clock: validUntil was 100 s ago, while the row's own 5-minute TTL (app clock) has
-    // not run out, so only the SafeOp window can stop it.
-    state.chainNow = nowS() - 400n;
+    // Built from a chain head 100 s behind: validUntil = now + 200, while the row's own 5-minute TTL (app clock) ends
+    // at now + 300. The signature is sent at validUntil + 1 s, so only the SafeOp window can stop it.
+    state.chainNow = nowS() - 100n;
     const r1 = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
     expect(r1.status).toBe(200);
     const sponsored = (await r1.json()) as SponsorBody;
     const signature = await signFor(sponsored);
 
-    const s = await send(req('http://localhost/api/aa/send', { pendingUserOpId: sponsored.pendingUserOpId, signature }));
-    expect(s.status).toBe(410);
+    const late = vi.spyOn(Date, 'now').mockReturnValue((Number(BigInt(sponsored.validUntil)) + 1) * 1000);
+    try {
+      const s = await send(req('http://localhost/api/aa/send', { pendingUserOpId: sponsored.pendingUserOpId, signature }));
+      expect(s.status).toBe(410);
+    } finally {
+      late.mockRestore();
+    }
     expect(state.bundlerSends).toHaveLength(0);
     expect(await rowWindow(sponsored.pendingUserOpId)).toMatchObject({ status: 'expired' });
 
@@ -244,6 +256,32 @@ describe('creator-fee claim: the finite SafeOp window travels sponsor -> sign ->
     const outcome = await runSponsoredRequest(claim(), account.address);
     expect(outcome.kind).toBe('sent');
     expect(parseSafeOpEnvelope(state.bundlerSends[0].signature).validUntil).toBe(state.chainNow + BigInt(CREATOR_FEE_OP_TTL_S));
+  });
+
+  it('a chain head too stale to leave a minute of signing is refused before the daily count or a sponsorship is spent', async () => {
+    const t = nowS();
+    const lagLimit = BigInt(CREATOR_FEE_OP_TTL_S - CREATOR_FEE_MIN_SIGNING_S); // 240 s
+    const at = vi.spyOn(Date, 'now').mockReturnValue(Number(t) * 1000 + 999);
+    try {
+      // One second past the limit: refused, nothing counted, nothing sponsored, no row.
+      state.chainNow = t - lagLimit - 1n;
+      const stale = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
+      expect({ status: stale.status, body: await stale.json() }).toEqual({
+        status: 502,
+        body: { error: 'VALIDATE_FAILED', reason: 'chain_head_stale' },
+      });
+      expect({ dailyOps: state.dailyOps, sponsorships: state.sponsorships }).toEqual({ dailyOps: 0, sponsorships: 0 });
+      expect((await pg.query(`SELECT 1 FROM aa_pending_user_ops`)).rows).toHaveLength(0);
+
+      // Exactly at the limit (60 s left to sign): built.
+      state.chainNow = t - lagLimit;
+      const ok = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
+      expect(ok.status).toBe(200);
+      expect(BigInt(((await ok.json()) as SponsorBody).validUntil)).toBe(t + BigInt(CREATOR_FEE_MIN_SIGNING_S));
+      expect({ dailyOps: state.dailyOps, sponsorships: state.sponsorships }).toEqual({ dailyOps: 1, sponsorships: 1 });
+    } finally {
+      at.mockRestore();
+    }
   });
 
   it('send refuses a signature over the default max window for a finite-window row (no window substitution)', async () => {

@@ -63,6 +63,7 @@ import { summarizeAaErrorWithCause } from '@/lib/aa-errors';
 import {
   insertPending,
   CREATOR_FEE_OP_TTL_S,
+  CREATOR_FEE_MIN_SIGNING_S,
   creatorFeeOpMayHaveLanded,
   loadInFlightForSafe,
   transitionPendingToExpired,
@@ -1054,6 +1055,12 @@ export async function POST(req: Request) {
       return Response.json({ error: 'VALIDATE_FAILED' }, { status: 502 });
     }
     if (claimedOnChain) return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
+    // A chain head so far behind that the op would leave under CREATOR_FEE_MIN_SIGNING_S to sign is a stale read:
+    // refuse before the daily count and the sponsorship are spent on an op that cannot land.
+    if (creatorFeeValidUntil! - BigInt(Math.floor(Date.now() / 1000)) < BigInt(CREATOR_FEE_MIN_SIGNING_S)) {
+      console.error('[aa.sponsor.creator_fee_chain_head_stale]', { validUntil: creatorFeeValidUntil!.toString() });
+      return Response.json({ error: 'VALIDATE_FAILED', reason: 'chain_head_stale' }, { status: 502 });
+    }
   }
 
   // Step 7: atomic rate-limit increment.
