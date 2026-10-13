@@ -135,7 +135,25 @@ describe('verifyPair: Alchemy + Ankr (2026-10-13)', () => {
   it('takes an https Alchemy URL as the first provider, Ankr second', () => {
     expect(verifyPair('https://monad-testnet.g.alchemy.com/v2/k')).toEqual(['https://monad-testnet.g.alchemy.com/v2/k', 'https://rpc.ankr.com/monad_testnet']);
   });
-  it.each([undefined, '', '   ', 'http://monad-testnet.g.alchemy.com/v2/k', 'not a url', 'https://testnet-rpc.monad.xyz/', 'https://rpc.ankr.com/monad_testnet'])('refuses %s', (u) => {
+  it('accepts a trailing DNS-root dot on the Alchemy host only', () => {
+    expect(verifyPair('https://monad-testnet.g.alchemy.com./v2/k')?.[1]).toBe('https://rpc.ankr.com/monad_testnet');
+  });
+  it.each([
+    undefined,
+    '',
+    '   ',
+    'http://monad-testnet.g.alchemy.com/v2/k',
+    'not a url',
+    'https://testnet-rpc.monad.xyz/',
+    'https://testnet-rpc.monad.xyz./',
+    'https://rpc.ankr.com/monad_testnet',
+    'https://rpc.ankr.com./monad_testnet',
+    'https://evil.example/v2/k',
+    'https://monad-testnet.g.alchemy.com.evil.example/v2/k',
+    'https://eth-mainnet.g.alchemy.com/v2/k',
+    'https://user:pass@monad-testnet.g.alchemy.com/v2/k',
+    'https://monad-testnet.g.alchemy.com:8443/v2/k',
+  ])('refuses %s (allowlist: only Alchemy Monad testnet)', (u) => {
     expect(verifyPair(u)).toBeNull();
   });
 });

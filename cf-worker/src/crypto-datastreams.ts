@@ -17,24 +17,24 @@ import { decodeVerified, fetchReport, verifyOnBoth, type ReportCredentials, type
 import { decideCrypto, feedFor, parseCryptoRef, OUTCOME_YES } from './price-decision';
 
 export const ANKR_RPC_URL = 'https://rpc.ankr.com/monad_testnet';
-const PUBLIC_RPC_HOST = 'testnet-rpc.monad.xyz';
+/// The only host ALCHEMY_RPC_URL may name: Alchemy's Monad testnet endpoint.
+export const ALCHEMY_MONAD_HOST = 'monad-testnet.g.alchemy.com';
 
 /// The verification pair (Joshua 2026-10-13): Alchemy + Ankr. The public Monad RPC (the 2026-10-10 pair with Ankr) kept
 /// failing from Cloudflare on 2026-10-13, and a failing provider makes every crypto pool wait. Alchemy's URL carries
-/// its key: it is the worker secret ALCHEMY_RPC_URL, never logged (only hostnames reach the evidence). Null when the
-/// URL is missing, not https, or the public RPC itself (that would not be a second operator).
+/// its key: it is the worker secret ALCHEMY_RPC_URL, never logged (only hostnames reach the evidence). An ALLOWLIST:
+/// null unless the URL is https on exactly Alchemy's Monad host (a trailing DNS-root dot is ignored), so a wrong secret
+/// can never make Ankr, the public RPC or an unknown host the second verifier (adversary on 6875a42).
 export function verifyPair(alchemyUrl: string | undefined): readonly [string, string] | null {
   const u = alchemyUrl?.trim();
   if (!u) return null;
-  let host: string;
   try {
     const parsed = new URL(u);
-    if (parsed.protocol !== 'https:') return null;
-    host = parsed.hostname;
+    if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.port !== '') return null;
+    if (parsed.hostname.replace(/\.$/, '') !== ALCHEMY_MONAD_HOST) return null;
   } catch {
     return null;
   }
-  if (host === PUBLIC_RPC_HOST || host === new URL(ANKR_RPC_URL).hostname) return null;
   return [u, ANKR_RPC_URL];
 }
 export const DEFAULT_DATASTREAMS_URL = 'https://api.testnet-dataengine.chain.link';
