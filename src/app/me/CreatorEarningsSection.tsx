@@ -5,6 +5,7 @@ import { useState } from 'react';
 
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { CREATOR_EARNING_LABEL, creatorEarningAmount, creatorEarningPill, creatorFeeConfirmSpec } from '@/components/CreatorEarnings';
+import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningNote, creatorEarningsFor, type CreatorEarning } from '@/lib/creator-earnings';
 import { useAllMarkets } from '@/lib/hooks';
 import { usdcExact } from '@/lib/pool-list';
@@ -27,6 +28,7 @@ function walletOf(user: AuthedUser): { kind: 'mako' | 'external'; address: strin
 
 export function CreatorEarningsSection({ user, account, variant }: { user: AuthedUser; account: `0x${string}`; variant: 'desktop' | 'mobile' }) {
   const marketsQ = useAllMarkets();
+  const holds = useCreatorClaimHolds();
   const [spec, setSpec] = useState<ConfirmSpec | null>(null);
   /// After a claim lands, the refetch flips the pool's creatorFeeClaimed on chain and its row moves to Claimed.
   const tx = usePoolTx(() => marketsQ.refetch());
@@ -83,9 +85,9 @@ export function CreatorEarningsSection({ user, account, variant }: { user: Authe
     );
   }
 
-  const { rows, claimableTotal, claimable } = creatorEarningsFor(marketsQ.markets, account);
+  const { rows, claimableTotal, claimable } = creatorEarningsFor(marketsQ.markets, account, (id) => holds.has(id.toString()));
   if (rows.length === 0) return sheet;
-  const listed = rows.filter((e) => e.state === 'claimable' || e.state === 'claimed' || e.state === 'forfeited');
+  const listed = rows.filter((e) => e.state === 'claimable' || e.state === 'confirming' || e.state === 'claimed' || e.state === 'forfeited');
   const refunded = rows.filter((e) => e.state === 'refunded').length;
   const unresolved = rows.filter((e) => e.state === 'unresolved').length;
   const rest = [unresolved > 0 && `${unresolved} not resolved yet`, refunded > 0 && `${refunded} refunded, no fee`].filter(Boolean).join(' · ');

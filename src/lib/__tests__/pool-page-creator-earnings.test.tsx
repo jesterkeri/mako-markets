@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import * as React from 'react';
 
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
+import { resetCreatorClaimHolds } from '@/lib/creator-claim-pending';
 
 vi.mock('@/components/MarketChart', () => ({ MarketChart: () => null }));
 vi.mock('next/link', () => ({
@@ -62,7 +63,11 @@ vi.mock('wagmi', async () => ({
   useReadContracts: () => ({ data: undefined, refetch: vi.fn() }),
   useAccount: () => ({ address: undefined }),
   // The claim's pre-send check reads getMarket: the pool as the chain has it.
-  usePublicClient: () => ({ readContract: vi.fn(async () => s.market) }),
+  usePublicClient: () => ({
+    readContract: vi.fn(async () => s.market),
+    // The browser's RPC has the claim's receipt (the creator-fee claim waits for it before it reads as done).
+    waitForTransactionReceipt: vi.fn(async () => ({ status: 'success', logs: [] })),
+  }),
   useWriteContract: () => ({ writeContractAsync: vi.fn() }),
 }));
 vi.mock('@/lib/hooks', async (orig) => {
@@ -90,6 +95,8 @@ const creator = { authed: true, authType: 'magic', safeAddress: SAFE, magicEoa: 
 const stranger = { authed: true, authType: 'wallet', walletAddress: STRANGER, displayName: null, avatarUrl: null, lastSignInAt: null };
 
 beforeEach(() => {
+  // Claims sent in one test must not hold the same pool in the next (src/lib/creator-claim-pending.ts).
+  resetCreatorClaimHolds();
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
   s.market = settled();
 });
@@ -142,6 +149,15 @@ describe('pool page: creator earnings are for the creator only', () => {
     render(<PoolClient id={7n} initialSide={null} />);
     expect(regions()).toHaveLength(2);
     expect(screen.getAllByText('Forfeited').length).toBe(2);
+    expect(screen.queryByRole('button', { name: /Claim creator earnings/ })).toBeNull();
+  });
+  it('a claim this browser already sent (still unconfirmed here) shows Confirming, with no Claim button (Codex R1)', async () => {
+    const { markCreatorClaimSent } = await import('@/lib/creator-claim-pending');
+    s.user = creator;
+    markCreatorClaimSent(7n);
+    render(<PoolClient id={7n} initialSide={null} />);
+    expect(regions()).toHaveLength(2);
+    expect(screen.getAllByText('Confirming').length).toBe(2);
     expect(screen.queryByRole('button', { name: /Claim creator earnings/ })).toBeNull();
   });
 });

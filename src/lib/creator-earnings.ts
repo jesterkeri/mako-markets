@@ -36,6 +36,9 @@ export function creatorFeeAmount(totalYes: bigint, totalNo: bigint, snapBps: big
 export type CreatorEarningState =
   /// Resolved YES or NO, not forfeited, not yet claimed: the creator can collect `fee`.
   | 'claimable'
+  /// Claimable as far as the chain read shows, but this browser already sent the claim and the read has not caught up
+  /// (src/lib/creator-claim-pending.ts). No Claim button: a second one would only revert.
+  | 'confirming'
   /// Collected: the contract paid `fee`.
   | 'claimed'
   /// Too one-sided at the close: the fee went to the winners. Pays 0 whether or not anyone called claim.
@@ -57,7 +60,7 @@ export type CreatorEarning = {
 
 /// The creator-fee state of one pool, or null when the pool has no creator fee to speak of: a MAKO (house) pool,
 /// a 0 snapshot, or a fee that rounds to 0.
-export function creatorEarningOf(m: MarketWithId): CreatorEarning | null {
+export function creatorEarningOf(m: MarketWithId, claimSent = false): CreatorEarning | null {
   if (m.mType === MarketType.MAKO) return null;
   const snap = BigInt(m.creatorFeeBpsSnapshot);
   if (snap <= 0n) return null;
@@ -69,7 +72,7 @@ export function creatorEarningOf(m: MarketWithId): CreatorEarning | null {
   // Order matters: a forfeited fee is also marked claimed once someone calls claimCreatorFee, and it paid 0.
   if (creatorFeeForfeited(m.totalYes, m.totalNo, snap)) return { ...base, state: 'forfeited' };
   if (m.creatorFeeClaimed) return { ...base, state: 'claimed' };
-  return { ...base, state: 'claimable' };
+  return { ...base, state: claimSent ? 'confirming' : 'claimable' };
 }
 
 /// True when `account` created pool `m` (addresses compared case-insensitively).
@@ -77,7 +80,7 @@ export function isPoolCreator(m: MarketWithId, account: string | null | undefine
   return !!account && m.creator.toLowerCase() === account.toLowerCase();
 }
 
-const ORDER: Record<CreatorEarningState, number> = { claimable: 0, claimed: 1, forfeited: 2, refunded: 3, unresolved: 4 };
+const ORDER: Record<CreatorEarningState, number> = { claimable: 0, confirming: 1, claimed: 2, forfeited: 3, refunded: 4, unresolved: 5 };
 
 export type CreatorEarnings = {
   /// Every pool `account` created that carries a creator fee: claimable first, then claimed, forfeited, refunded,
@@ -88,10 +91,11 @@ export type CreatorEarnings = {
   claimable: number;
 };
 
-export function creatorEarningsFor(markets: readonly MarketWithId[], account: string): CreatorEarnings {
+/// `claimSent(id)`: whether this browser already sent a claim for that pool and is waiting for the read to show it.
+export function creatorEarningsFor(markets: readonly MarketWithId[], account: string, claimSent: (id: bigint) => boolean = () => false): CreatorEarnings {
   const rows = markets
     .filter((m) => isPoolCreator(m, account))
-    .map(creatorEarningOf)
+    .map((m) => creatorEarningOf(m, claimSent(m.id)))
     .filter((e): e is CreatorEarning => e !== null)
     .sort((a, b) => ORDER[a.state] - ORDER[b.state] || (a.market.id < b.market.id ? 1 : a.market.id > b.market.id ? -1 : 0));
   const claimableRows = rows.filter((e) => e.state === 'claimable');
@@ -111,6 +115,8 @@ export function creatorEarningNote(e: CreatorEarning): string {
   switch (e.state) {
     case 'claimable':
       return `${ratioPct(BigInt(m.creatorFeeBpsSnapshot))}% of the ${usdcExact(m.totalYes + m.totalNo)} USDC pool, yours to claim.`;
+    case 'confirming':
+      return `Claim sent for ${usdcExact(e.fee)} USDC. Waiting for Monad to show it here; check back in a minute.`;
     case 'claimed':
       return `${usdcExact(e.fee)} USDC claimed. It is in your balance.`;
     case 'forfeited': {

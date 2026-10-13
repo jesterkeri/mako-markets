@@ -43,6 +43,7 @@ vi.mock('@/lib/use-user', () => ({
 vi.mock('@/lib/aa-client', async (orig) => ({ ...(await orig<typeof import('@/lib/aa-client')>()), runSponsoredRequest: (...a: unknown[]) => m.runSponsoredRequest(...a) }));
 
 import { usePoolTx } from '@/lib/use-pool-tx';
+import { resetCreatorClaimHolds } from '@/lib/creator-claim-pending';
 
 const magicUser = { authed: true, authType: 'magic', safeAddress: SAFE, magicEoa: EOA, displayName: null, avatarUrl: null, lastSignInAt: null };
 const walletUser = { authed: true, authType: 'wallet', walletAddress: WALLET, displayName: null, avatarUrl: null, lastSignInAt: null };
@@ -85,6 +86,8 @@ function run() {
 }
 
 beforeEach(() => {
+  // Claims sent in one test must not hold the same pool in the next (src/lib/creator-claim-pending.ts).
+  resetCreatorClaimHolds();
   m.runSponsoredRequest.mockResolvedValue({ kind: 'sent', pendingUserOpId: 'p1', txHash: TX, userOpHash: TX });
   m.simulateContract.mockResolvedValue({});
   m.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [] });

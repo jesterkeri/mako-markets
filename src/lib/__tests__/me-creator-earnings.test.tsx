@@ -9,6 +9,7 @@ import * as React from 'react';
 
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import type { AuthedUser } from '@/lib/use-user';
+import { resetCreatorClaimHolds } from '@/lib/creator-claim-pending';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
@@ -51,7 +52,11 @@ function pool(id: bigint, over: Partial<MarketWithId> = {}): MarketWithId {
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: undefined }),
-  usePublicClient: () => ({ readContract: vi.fn(async ({ args }: { args: [bigint] }) => s.q.markets.find((m) => m.id === args[0])) }),
+  usePublicClient: () => ({
+    readContract: vi.fn(async ({ args }: { args: [bigint] }) => s.q.markets.find((m) => m.id === args[0])),
+    // The browser's RPC has the claim's receipt (the creator-fee claim waits for it before it reads as done).
+    waitForTransactionReceipt: vi.fn(async () => ({ status: 'success', logs: [] })),
+  }),
   useWriteContract: () => ({ writeContractAsync: vi.fn() }),
 }));
 vi.mock('@/lib/hooks', async (orig) => {
@@ -84,6 +89,8 @@ const MINE = [
 ];
 
 beforeEach(() => {
+  // Claims sent in one test must not hold the same pool in the next (src/lib/creator-claim-pending.ts).
+  resetCreatorClaimHolds();
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
   s.q = { markets: [...MINE], isLoading: false, isError: false };
 });

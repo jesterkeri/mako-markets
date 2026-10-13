@@ -15,6 +15,7 @@ const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', f
 
 export const CREATOR_EARNING_LABEL: Record<CreatorEarningState, string> = {
   claimable: 'Ready to claim',
+  confirming: 'Confirming',
   claimed: 'Claimed',
   forfeited: 'Forfeited',
   refunded: 'Refunded, no fee',
@@ -25,6 +26,7 @@ export const CREATOR_EARNING_LABEL: Record<CreatorEarningState, string> = {
 export function creatorEarningPill(state: CreatorEarningState, onInverse = false): React.CSSProperties {
   const bg: Record<CreatorEarningState, string> = {
     claimable: 'var(--mako-signal)',
+    confirming: onInverse ? 'var(--m3-inv-2)' : 'var(--raise2)',
     claimed: 'var(--mako-teal)',
     forfeited: 'var(--mako-red)',
     refunded: 'var(--mako-cyan)',
@@ -37,7 +39,7 @@ export function creatorEarningPill(state: CreatorEarningState, onInverse = false
     padding: '0 10px',
     borderRadius: 9999,
     background: bg[state],
-    color: state === 'unresolved' ? 'inherit' : 'var(--mako-ink)',
+    color: state === 'unresolved' || state === 'confirming' ? 'inherit' : 'var(--mako-ink)',
     fontSize: 11,
     fontWeight: 800,
     letterSpacing: '0.06em',
@@ -50,7 +52,7 @@ export function creatorEarningPill(state: CreatorEarningState, onInverse = false
 /// pays 0 and its note names the share that went to the winners; a refunded pool pays no fee; an unresolved pool's
 /// fee is not final.
 export function creatorEarningAmount(e: CreatorEarning): string | null {
-  if (e.state === 'claimable' || e.state === 'claimed') return `${usdcExact(e.fee)} USDC`;
+  if (e.state === 'claimable' || e.state === 'confirming' || e.state === 'claimed') return `${usdcExact(e.fee)} USDC`;
   return null;
 }
 

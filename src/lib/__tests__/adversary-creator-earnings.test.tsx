@@ -15,6 +15,7 @@ import { encodeFunctionData, type Address, type Hex } from 'viem';
 
 import { MarketType, Outcome, MAKO_ADDRESS, type MarketWithId } from '@/lib/contract';
 import type { AuthedUser } from '@/lib/use-user';
+import { resetCreatorClaimHolds } from '@/lib/creator-claim-pending';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
@@ -90,6 +91,8 @@ const user = { authed: true, authType: 'magic', safeAddress: SAFE, magicEoa: EOA
 const { CreatorEarningsSection } = await import('@/app/me/CreatorEarningsSection');
 
 beforeEach(() => {
+  // Claims sent in one test must not hold the same pool in the next (src/lib/creator-claim-pending.ts).
+  resetCreatorClaimHolds();
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
   s.chain = [pool(1n)];
   s.rpcSeenClaim = false;

@@ -9,6 +9,7 @@ import { buildBetBody, buildClaimBody, buildClaimCreatorFeeBody, buildCreateBody
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
 import { createdMarketIdFor, MAKO_ADDRESS, makoContract } from './contract';
+import { creatorClaimHeld, markCreatorClaimSent } from './creator-claim-pending';
 import { creatorEarningNote, creatorEarningOf, isPoolCreator } from './creator-earnings';
 import { toBytes32 } from './oracle';
 import { buildPool, type CreateDraft } from './pool-create';
@@ -119,11 +120,13 @@ async function creatorFeeRefusal(client: Client, marketId: bigint, account: stri
   }
   const refuse = (title: string, body: string): ConfirmPhase => ({ step: 'failed', title, body, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } });
   if (!isPoolCreator(market, account)) return refuse(...w.refusals!.NotAuthorized);
-  const e = creatorEarningOf(market);
+  const e = creatorEarningOf(market, creatorClaimHeld(marketId));
   if (!e) return refuse('No creator fee', 'This pool pays no creator fee.');
   switch (e.state) {
     case 'claimable':
       return null;
+    case 'confirming':
+      return refuse('Claim already sent', 'This browser already sent the claim for these creator earnings, and Monad has not shown it here yet. Check Me in a minute.');
     case 'forfeited':
       return refuse('Creator earnings forfeited', creatorEarningNote(e));
     case 'claimed':
@@ -247,14 +250,25 @@ export function usePoolTx(onLanded?: () => void) {
       }
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
       if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
-      // A creator-fee claim is done only once this browser's RPC has the receipt too: the refetch that follows reads
-      // from that node, and a node still behind would show the Claim button again and let a second op go out.
+      // A creator-fee claim is held from the moment it is sent (src/lib/creator-claim-pending.ts): no Claim button and
+      // no second send in this browser until a read shows the fee claimed. It is done only once this browser's RPC has
+      // the receipt too, since the refetch that follows reads from that node. If the node is still behind after 30 s,
+      // the result is not done: it says the claim was sent and is still confirming, and the hold stays (Codex
+      // CREATOR_EARNINGS R1).
       if (t.kind === 'creatorFee' && outcome.kind === 'sent') {
+        markCreatorClaimSent(t.marketId);
         try {
           await publicClient.waitForTransactionReceipt({ hash: outcome.txHash, timeout: 30_000 });
         } catch {
-          // Still behind after 30 s: the claim has landed (the bundler said so); the 5 s poll catches up, and the
-          // pre-send re-read refuses a second claim once the node shows it.
+          return {
+            step: 'failed',
+            title: 'Claim sent, still confirming',
+            body: 'Monad accepted the claim, but this page has not seen it land yet. Check Me in a minute. The Claim button stays off until it shows as claimed.',
+            nothingMoved: false,
+            primary: { label: 'Check Me', href: '/me' },
+            secondary: { label: 'Close' },
+            txHash: outcome.txHash,
+          };
         }
       }
       return phaseFromOutcome(outcome, w);
@@ -353,6 +367,7 @@ export function usePoolTx(onLanded?: () => void) {
           }
           sent = true;
           const hash = await write({ ...makoContract, functionName: fn, args: [t.marketId], chainId: monadTestnet.id });
+          if (t.kind === 'creatorFee') markCreatorClaimSent(t.marketId);
           setPhase({ step: 'pending', stage: 'confirming', txHash: hash });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           return receipt.status === 'success' ? { step: 'done', txHash: hash } : undone(w);

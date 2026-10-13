@@ -13,6 +13,7 @@ import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
 import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
+import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/creator-earnings';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
@@ -84,6 +85,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const labelsQ = useMakoLabels(market?.mType === MarketType.MAKO ? id.toString() : null);
   const names = useAddressNames(useMemo(() => (market ? [market.creator] : []), [market]));
   const { markets } = useMarkets();
+  const claimHolds = useCreatorClaimHolds();
 
   const tx = usePoolTx(() => {
     void refetch();
@@ -138,7 +140,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     tx.open({ kind: 'claim', marketId: id });
   };
   // Creator earnings: only the pool's creator sees them, from the pool's own on-chain state.
-  const creatorEarning = isPoolCreator(market, account) ? creatorEarningOf(market) : null;
+  const creatorEarning = isPoolCreator(market, account) ? creatorEarningOf(market, claimHolds.has(id.toString())) : null;
   const openCreatorClaim = () => {
     if (creatorEarning?.state !== 'claimable' || tx.tx) return;
     setSheetSpec(creatorFeeConfirmSpec(creatorEarning));
