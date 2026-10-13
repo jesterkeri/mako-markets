@@ -53,7 +53,7 @@ vi.mock('@/lib/aa-sponsor-limits', () => ({
 // The lagging node of this scenario: the sponsor route's own chain read still shows the fee unclaimed, so only the
 // server's record can stop the second claim.
 vi.mock('@/lib/aa-public-client', () => ({
-  getAaPublicClient: () => ({ readContract: async () => ({ creatorFeeClaimed: false }) }),
+  getAaPublicClient: () => ({ readContract: async () => ({ creatorFeeClaimed: false }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) }),
 }));
 vi.mock('@/lib/user-op', async (importActual) => ({
   ...(await importActual<typeof import('../user-op')>()),

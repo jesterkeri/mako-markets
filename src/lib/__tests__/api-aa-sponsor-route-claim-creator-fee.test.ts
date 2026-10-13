@@ -14,6 +14,7 @@ import { MONAD_TESTNET_ID } from '../chain';
 import { MAKO_ADDRESS } from '../contract';
 import { USDC_ADDRESS } from '../usdc';
 
+const CHAIN_NOW = 1_800_000_000n;
 const SAFE: Address = '0x000000000000000000000000000000000000bEEF';
 const MAGIC_EOA: Address = '0x2222222222222222222222222222222222222222';
 
@@ -35,6 +36,8 @@ vi.mock('@/db/client', () => ({
   db: { select: () => ({ from: () => ({ where: () => ({ limit: () => mocks.selectFromUserSafes() }) }) }) },
 }));
 vi.mock('@/lib/aa-pending-user-ops', () => ({
+  CREATOR_FEE_OP_TTL_S: 300,
+  SUBMITTED_SETTLE_S: 600,
   loadInFlightForSafe: (args: unknown) => mocks.loadInFlightForSafe(args),
   creatorFeeOpMayHaveLanded: (args: unknown) => mocks.creatorFeeOpMayHaveLanded(args),
   insertPending: (args: unknown) => mocks.insertPending(args),
@@ -51,6 +54,7 @@ vi.mock('@/lib/user-op', async (importActual) => ({
 vi.mock('@/lib/aa-public-client', () => ({
   getAaPublicClient: () => ({
     readContract: (a: { functionName: string; args: unknown[] }) => mocks.readContract(a),
+    getBlock: async () => ({ timestamp: CHAIN_NOW }),
   }),
 }));
 
@@ -152,6 +156,39 @@ describe('/api/aa/sponsor, claim_creator_fee: one landed claim per pool (Codex C
     expect(res.status).toBe(502);
     expect(mocks.incrementOrReject).not.toHaveBeenCalled();
     expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+  });
+
+  it('the op it builds expires on chain 5 minutes after the chain time read, well inside the 10-minute repeat window (Codex R3)', async () => {
+    happy();
+    const { CREATOR_FEE_OP_TTL_S, SUBMITTED_SETTLE_S } = await vi.importActual<typeof import('../aa-pending-user-ops')>('../aa-pending-user-ops');
+    const res = await POST(mkReq(body(41n)));
+    expect(res.status).toBe(200);
+    const args = mocks.buildSponsoredUserOp.mock.calls[0][0] as { validUntil?: bigint };
+    expect(args.validUntil).toBe(CHAIN_NOW + BigInt(CREATOR_FEE_OP_TTL_S));
+    // The old op is dead on chain at least SUBMITTED_SETTLE_S - CREATOR_FEE_OP_TTL_S before the window reopens.
+    expect(SUBMITTED_SETTLE_S - CREATOR_FEE_OP_TTL_S).toBeGreaterThanOrEqual(300);
+  });
+
+  it("Codex R3's replay cannot happen: when the record releases a retry (>= 600 s on), the first op is already dead on chain, so it cannot land between the chain read and the nonce read", async () => {
+    happy();
+    const { CREATOR_FEE_OP_TTL_S, SUBMITTED_SETTLE_S } = await vi.importActual<typeof import('../aa-pending-user-ops')>('../aa-pending-user-ops');
+    await POST(mkReq(body(41n)));
+    const a = mocks.buildSponsoredUserOp.mock.calls[0][0] as { validUntil: bigint };
+    // EntryPoint v0.7 rejects a UserOp whose validUntil is before the block timestamp (AA22 expired or not due).
+    const canLandAt = (chainTime: bigint) => chainTime <= a.validUntil;
+    // The record releases at the earliest SUBMITTED_SETTLE_S after A's row last changed, and that change is after A was
+    // built; allow up to 4 minutes of chain/database clock skew in A's favour.
+    const earliestRelease = CHAIN_NOW + BigInt(SUBMITTED_SETTLE_S) - 240n;
+    expect(canLandAt(earliestRelease)).toBe(false);
+    expect(canLandAt(CHAIN_NOW + BigInt(CREATOR_FEE_OP_TTL_S))).toBe(true); // and it is executable while it is meant to be
+  });
+
+  it('other kinds keep their default validity (only the creator-fee claim is time-bounded)', async () => {
+    happy();
+    const { buildClaimBody } = await import('../aa-client');
+    await POST(mkReq(buildClaimBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: 41n })));
+    const args = mocks.buildSponsoredUserOp.mock.calls.at(-1)?.[0] as { validUntil?: bigint } | undefined;
+    expect(args?.validUntil).toBeUndefined();
   });
 
   it('the shown words for that refusal say it was already claimed, nothing moved', async () => {

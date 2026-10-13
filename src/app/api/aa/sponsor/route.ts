@@ -65,6 +65,7 @@ import { getAaPublicClient } from '@/lib/aa-public-client';
 import { summarizeAaErrorWithCause } from '@/lib/aa-errors';
 import {
   insertPending,
+  CREATOR_FEE_OP_TTL_S,
   creatorFeeOpMayHaveLanded,
   loadInFlightForSafe,
   transitionPendingToExpired,
@@ -1032,6 +1033,7 @@ export async function POST(req: Request) {
   // contract pays it once, so a repeat could only revert and use up one of the user's daily ops. Two checks, before
   // the daily count is touched: the server's own record of this Safe's ops (creatorFeeOpMayHaveLanded), and the chain,
   // read here, which also covers a claim made from a wallet or another device. A failed chain read refuses (fail closed).
+  let creatorFeeValidUntil: bigint | undefined;
   if (buildArgs.kind === 'claim_creator_fee') {
     if (await creatorFeeOpMayHaveLanded({ chainId, safeAddress, callData: expectedCallData })) {
       return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
@@ -1039,9 +1041,17 @@ export async function POST(req: Request) {
     let claimedOnChain: boolean;
     try {
       const { args: [marketId] } = decodeFunctionData({ abi: makoAbi, data: buildArgs.call.data });
-      const m = (await getAaPublicClient(chainId).readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket', args: [marketId as bigint] })) as { creatorFeeClaimed?: unknown };
+      const aaClient = getAaPublicClient(chainId);
+      const [m, block] = await Promise.all([
+        aaClient.readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket', args: [marketId as bigint] }) as Promise<{ creatorFeeClaimed?: unknown }>,
+        aaClient.getBlock({ blockTag: 'latest' }),
+      ]);
       if (typeof m?.creatorFeeClaimed !== 'boolean') throw new Error('getMarket shape');
       claimedOnChain = m.creatorFeeClaimed;
+      // The op this request builds can execute only until CREATOR_FEE_OP_TTL_S after the chain's current time
+      // (Codex CREATOR_EARNINGS R3): a claim the server lost track of is dead on chain well before the repeat window
+      // (SUBMITTED_SETTLE_S) reopens, so a released retry can never run behind it at the next nonce.
+      creatorFeeValidUntil = block.timestamp + BigInt(CREATOR_FEE_OP_TTL_S);
     } catch (e) {
       console.error('[aa.sponsor.creator_fee_read_failed]', summarizeAaErrorWithCause(e));
       return Response.json({ error: 'VALIDATE_FAILED' }, { status: 502 });
@@ -1078,6 +1088,7 @@ export async function POST(req: Request) {
         safeAddress,
         magicEoa: session.magicEoa as Address,
         call: buildArgs.call,
+        ...(creatorFeeValidUntil !== undefined ? { validUntil: creatorFeeValidUntil } : {}),
       });
     }
   } catch (e) {

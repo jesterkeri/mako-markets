@@ -146,9 +146,14 @@ export async function loadInFlightForSafe(args: {
 ///     the window's start and end come from the same clock (adversary on 1e2f041). Such a row can
 ///     say `expired` while its signed op still lands, when a lagging node made the resolver give up early.
 /// After that window a claim is allowed again if the chain read in the sponsor route shows the fee unclaimed: a dropped op
-/// must not block a creator for good, and the Safe's nonce lets only one of two ops with the same nonce ever land.
+/// must not block a creator for good, and every creator-fee op expires on chain CREATOR_FEE_OP_TTL_S after it is built,
+/// so by then the old op cannot land at all.
 /// In-flight ops are refused earlier anyway (loadInFlightForSafe).
 export const SUBMITTED_SETTLE_S = 600;
+/// How long a sponsored creator-fee claim op stays executable on chain (its SafeOp validUntil, set by the sponsor route
+/// from the chain's own time): well inside SUBMITTED_SETTLE_S, so when the repeat window reopens the old op can no
+/// longer land, whatever the server recorded (Codex CREATOR_EARNINGS R3). The margin covers database/chain clock skew.
+export const CREATOR_FEE_OP_TTL_S = 300;
 export async function creatorFeeOpMayHaveLanded(args: { chainId: number; safeAddress: Address; callData: Hex }): Promise<boolean> {
   const rows = await db
     .select({ id: aaPendingUserOps.id })
