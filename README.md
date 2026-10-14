@@ -18,7 +18,7 @@ A prediction market on Monad where anyone can create a market, and the person wh
 | MakoMarketsV4 (pools) | [`0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195`](https://testnet.monadvision.com/address/0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195) |
 | MakoRoundsV1 (rounds) | [`0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921`](https://testnet.monadvision.com/address/0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921) |
 
-Solidity source: [jesterkeri/mako-contracts](https://github.com/jesterkeri/mako-contracts), branches [`feat/t15-deploy-rounds`](https://github.com/jesterkeri/mako-contracts/tree/feat/t15-deploy-rounds) (rounds, Data Streams settlement rule) and [`v4`](https://github.com/jesterkeri/mako-contracts/tree/v4) (pools).
+Solidity source and tests: [jesterkeri/mako-contracts](https://github.com/jesterkeri/mako-contracts).
 
 ## Where things live
 
@@ -28,7 +28,9 @@ Solidity source: [jesterkeri/mako-contracts](https://github.com/jesterkeri/mako-
 | Chainlink CRE workflow that settles rounds from Data Streams | [`cre/`](cre) |
 | Envio indexer (`/stats`, rounds in Me) | [`indexer/`](indexer) |
 | Pool resolver (Cloudflare Worker) | [`cf-worker/`](cf-worker) |
-| Rounds keeper, scheduler and watch (Cloudflare Workers, deployed from their branches) | [`feat/rounds-keeper`](https://github.com/jesterkeri/mako-markets/tree/feat/rounds-keeper), [`feat/rounds-scheduler`](https://github.com/jesterkeri/mako-markets/tree/feat/rounds-scheduler), [`feat/rounds-watch`](https://github.com/jesterkeri/mako-markets/tree/feat/rounds-watch) |
+| Rounds scheduler: creates a round every two hours (Cloudflare Worker) | [`rounds-scheduler/`](rounds-scheduler) |
+| Settlement keeper: settles rounds and refunds anything unsettled after 24 hours (Cloudflare Worker) | [`keeper/`](keeper) |
+| Rounds watch and the market watchdog: alerting (Cloudflare Workers) | [`rounds-watch/`](rounds-watch), [`watchdog/`](watchdog) |
 
 A round settled end to end through the CRE workflow on 2026-10-12: [tx `0x5b3c…8778`](https://testnet.monadvision.com/tx/0x5b3c20601cc89c6bef20b29ee1e54c2e7b4ca0a5372e9f71952b8146791c8778).
 
