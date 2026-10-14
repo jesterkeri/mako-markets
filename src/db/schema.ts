@@ -562,6 +562,10 @@ export const aaPendingUserOps = pgTable(
     statusUpdatedAt: timestamp('status_updated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // The SafeOp validity window the op was built with (unix seconds, uint48); part of the signed SafeOp hash, so the
+    // sponsor, recovery and send paths all read it from here. Defaults = the default window (0, max uint48). 0016.
+    validAfter: bigint('valid_after', { mode: 'bigint' }).notNull().default(0n),
+    validUntil: bigint('valid_until', { mode: 'bigint' }).notNull().default(0xffffffffffffn),
   },
   (t) => ({
     userIdx: index('aa_pending_user_id').on(t.userId),

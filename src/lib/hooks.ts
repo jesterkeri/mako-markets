@@ -68,7 +68,7 @@ export function useEnsureMonadChain() {
 // Reads — markets
 // ---------------------------------------------------------------
 
-function decodeMarket(raw: unknown, id: bigint): MarketWithId {
+export function decodeMarket(raw: unknown, id: bigint): MarketWithId {
   // wagmi decodes the v4 Market struct into a named-field object because
   // MakoMarkets.abi.ts has `as const` typing. Cast to our Market type and
   // copy each field by name — positional destructure would silently misread

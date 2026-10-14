@@ -34,6 +34,7 @@ import {
   type Loadable,
   type MeView,
 } from './MeParts';
+import { CreatorEarningsSection } from './CreatorEarningsSection';
 import { validateDisplayName } from './profile-rules';
 
 // Me on mobile (11a), in the expressive look: identity, the balance tiles, test USDC, create and settings rows,
@@ -71,6 +72,7 @@ export function MeMobile(v: MeView) {
       {v.chain.status === 'ready' ? (
         <>
           {v.claimItems.length > 0 && <ReadyToClaim {...v} />}
+          <CreatorEarningsSection user={v.user} account={v.account} variant="mobile" />
           <Profit {...v} />
           <Badges />
           <Positions {...v} />

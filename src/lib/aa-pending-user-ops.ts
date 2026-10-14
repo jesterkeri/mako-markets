@@ -52,6 +52,10 @@ export type InsertPendingArgs = {
   nonceHex: Hex;
   safeOpHash: Hex;
   expiresAt: Date;
+  /// The SafeOp validity window the op was built with (`buildSponsoredUserOp`'s `validAfter`/`validUntil`). Stored so
+  /// a recovered response and the send route use the window the user's signature covers.
+  validAfter: bigint;
+  validUntil: bigint;
 };
 
 export type InsertPendingResult =
@@ -83,6 +87,8 @@ export async function insertPending(
       safeOpHash: args.safeOpHash.toLowerCase() as Hex,
       status: 'pending',
       expiresAt: args.expiresAt,
+      validAfter: args.validAfter,
+      validUntil: args.validUntil,
     })
     .onConflictDoNothing()
     .returning({
@@ -135,6 +141,46 @@ export async function loadInFlightForSafe(args: {
   return rows[0] ?? null;
 }
 
+/// True when an op from this Safe with exactly this wrapper callData may already be on chain (Codex CREATOR_EARNINGS R2
+/// and the adversary on 48c6c5b). Used for creator-fee claims: `claimCreatorFee(id)` pays once, so a second sponsored
+/// op for the same pool could only revert AlreadyClaimed and use up one of the user's daily ops. This is the server's
+/// own record, so no browser clock, tab or lagging RPC can get around it. Counts:
+///   - an op that LANDED (`sent`), for good;
+///   - an op handed to the bundler (it has a user-op hash) whose row ended any way other than `reverted` or
+///     `failed_pre_submit`, for SUBMITTED_SETTLE_S after its last status change, on the database's clock: every
+///     transition in this file stamps `status_updated_at` with the database's `now()`, never an app server's clock, so
+///     the window's start and end come from the same clock (adversary on 1e2f041). Such a row can
+///     say `expired` while its signed op still lands, when a lagging node made the resolver give up early.
+/// After that window a claim is allowed again if the chain read in the sponsor route shows the fee unclaimed: a dropped op
+/// must not block a creator for good, and every creator-fee op expires on chain CREATOR_FEE_OP_TTL_S after it is built,
+/// so by then the old op cannot land at all.
+/// In-flight ops are refused earlier anyway (loadInFlightForSafe).
+export const SUBMITTED_SETTLE_S = 600;
+/// How long a sponsored creator-fee claim op stays executable on chain (its SafeOp validUntil, set by the sponsor route
+/// from the chain's own time): well inside SUBMITTED_SETTLE_S, so when the repeat window reopens the old op can no
+/// longer land, whatever the server recorded (Codex CREATOR_EARNINGS R3). The margin covers database/chain clock skew.
+export const CREATOR_FEE_OP_TTL_S = 300;
+/// The least signing time a freshly built creator-fee op must have left on the server's clock. The op's validUntil
+/// comes from the chain head the sponsor route read; a head this far behind would also be a stale read of
+/// creatorFeeClaimed, so such a read is refused (fail closed) before the daily count or the Pimlico sponsorship is spent
+/// on an op that is dead, or nearly, on arrival (adversary on 379949f).
+export const CREATOR_FEE_MIN_SIGNING_S = 60;
+export async function creatorFeeOpMayHaveLanded(args: { chainId: number; safeAddress: Address; callData: Hex }): Promise<boolean> {
+  const rows = await db
+    .select({ id: aaPendingUserOps.id })
+    .from(aaPendingUserOps)
+    .where(
+      and(
+        eq(aaPendingUserOps.chainId, args.chainId),
+        eq(aaPendingUserOps.safeAddress, args.safeAddress.toLowerCase()),
+        sql`lower(${aaPendingUserOps.userOp}->>'callData') = ${args.callData.toLowerCase()}`,
+        sql`(${aaPendingUserOps.status} = 'sent' OR (${aaPendingUserOps.userOpHash} IS NOT NULL AND ${aaPendingUserOps.status} NOT IN ('reverted', 'failed_pre_submit') AND ${aaPendingUserOps.statusUpdatedAt} > now() - make_interval(secs => ${SUBMITTED_SETTLE_S})))`,
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 // ── transitions (each is a status-gated single-statement UPDATE) ────────────
 
 /// `pending` → `expired`. Used by /api/aa/send when the loaded row's
@@ -147,7 +193,7 @@ export async function transitionPendingToExpired(args: {
 }): Promise<'transitioned' | 'already_claimed'> {
   const result = await db
     .update(aaPendingUserOps)
-    .set({ status: 'expired', statusUpdatedAt: new Date() })
+    .set({ status: 'expired', statusUpdatedAt: sql`now()` })
     .where(
       and(
         eq(aaPendingUserOps.id, args.rowId),
@@ -174,7 +220,7 @@ export async function transitionToSending(args: {
       status: 'sending',
       userOpHash: args.userOpHash.toLowerCase() as Hex,
       sendingStartedAt: new Date(),
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -199,7 +245,7 @@ export async function transitionToSent(args: {
     .set({
       status: 'sent',
       txHash: args.txHash.toLowerCase() as Hex,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -224,7 +270,7 @@ export async function transitionToReverted(args: {
       status: 'reverted',
       txHash: args.txHash.toLowerCase() as Hex,
       failureReason: args.failureReason,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -247,7 +293,7 @@ export async function transitionToFailedPreSubmit(args: {
     .set({
       status: 'failed_pre_submit',
       failureReason: args.failureReason,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -270,7 +316,7 @@ export async function transitionToSubmitted(args: {
     .set({
       status: 'submitted',
       userOpHash: args.userOpHash.toLowerCase() as Hex,
-      statusUpdatedAt: new Date(),
+      statusUpdatedAt: sql`now()`,
     })
     .where(
       and(
@@ -307,7 +353,7 @@ export async function transitionFromSubmitted(args: {
         .set({
           status: 'sent',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -326,7 +372,7 @@ export async function transitionFromSubmitted(args: {
           status: 'reverted',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
           failureReason: args.resolution.failureReason,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -341,7 +387,7 @@ export async function transitionFromSubmitted(args: {
     case 'expired': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'expired', statusUpdatedAt: new Date() })
+        .set({ status: 'expired', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -355,7 +401,7 @@ export async function transitionFromSubmitted(args: {
     case 'ambiguous': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'ambiguous', statusUpdatedAt: new Date() })
+        .set({ status: 'ambiguous', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -384,7 +430,7 @@ export async function transitionFromSendingViaResolver(args: {
         .set({
           status: 'sent',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -403,7 +449,7 @@ export async function transitionFromSendingViaResolver(args: {
           status: 'reverted',
           txHash: args.resolution.txHash.toLowerCase() as Hex,
           failureReason: args.resolution.failureReason,
-          statusUpdatedAt: new Date(),
+          statusUpdatedAt: sql`now()`,
         })
         .where(
           and(
@@ -418,7 +464,7 @@ export async function transitionFromSendingViaResolver(args: {
     case 'expired': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'expired', statusUpdatedAt: new Date() })
+        .set({ status: 'expired', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -432,7 +478,7 @@ export async function transitionFromSendingViaResolver(args: {
     case 'ambiguous': {
       const r = await db
         .update(aaPendingUserOps)
-        .set({ status: 'ambiguous', statusUpdatedAt: new Date() })
+        .set({ status: 'ambiguous', statusUpdatedAt: sql`now()` })
         .where(
           and(
             eq(aaPendingUserOps.id, args.rowId),
@@ -451,7 +497,7 @@ export async function transitionFromSendingViaResolver(args: {
 export async function expirePastDueRows(): Promise<number> {
   const result = await db
     .update(aaPendingUserOps)
-    .set({ status: 'expired', statusUpdatedAt: new Date() })
+    .set({ status: 'expired', statusUpdatedAt: sql`now()` })
     .where(
       and(
         eq(aaPendingUserOps.status, 'pending'),

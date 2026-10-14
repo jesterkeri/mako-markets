@@ -78,6 +78,8 @@ const pendingRow = (callData: Hex, over: Record<string, unknown> = {}) => ({
   safeOpHash: ('0x' + 'cc'.repeat(32)) as Hex,
   expiresAt: new Date(Date.now() + 60_000),
   statusUpdatedAt: new Date(),
+  validAfter: 0n,
+  validUntil: 0xffffffffffffn,
   ...over,
 });
 

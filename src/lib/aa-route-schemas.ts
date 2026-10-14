@@ -25,6 +25,7 @@ import { z } from 'zod';
 //     - CreateMarketRequest         (kind='create_market')         MakoMarketsV4 create
 //     - CreateMarketBatchedRequest  (kind='create_market_batched') [approve, createMarket]
 //     - ClaimRequest                (kind='claim')                 MakoMarketsV4 claim
+//     - ClaimCreatorFeeRequest      (kind='claim_creator_fee')     MakoMarketsV4 claimCreatorFee
 //   PM single-call actions (Phase 2C-1 + 2E-1):
 //     - PmCreateMarketRequest    (kind='pm_create_market')
 //     - PmBetRequest             (kind='pm_bet')
@@ -130,6 +131,17 @@ const ClaimRequest = z
     ///   - decoded id ≥ 0 (uint256, viem already enforces upper bound)
     /// No clock-relative checks — contract enforces resolution +
     /// position + has-not-claimed.
+    call: CallShape,
+  })
+  .strict();
+
+const ClaimCreatorFeeRequest = z
+  .object({
+    kind: z.literal('claim_creator_fee'),
+    chainId: z.literal(MONAD_TESTNET_ID),
+    /// Creator earnings: single-call `MakoMarketsV4.claimCreatorFee(id)` from the Safe. The allowlist enforces
+    /// inner.to === MAKO_ADDRESS, inner.value === 0n, selector === claimCreatorFee (0xb340da9c) and exactly one
+    /// uint256 argument. The contract enforces creator + resolved + not-claimed + not-REFUND.
     call: CallShape,
   })
   .strict();
@@ -417,6 +429,7 @@ export const SponsorRequest = z.discriminatedUnion('kind', [
   CreateMarketRequest,
   CreateMarketBatchedRequest,
   ClaimRequest,
+  ClaimCreatorFeeRequest,
   PmCreateMarketRequest,
   PmBetRequest,
   PmBetBatchedRequest,
@@ -445,6 +458,7 @@ export type SendUsdcRequest = z.infer<typeof SendUsdcRequest>;
 export type CreateMarketRequest = z.infer<typeof CreateMarketRequest>;
 export type CreateMarketBatchedRequest = z.infer<typeof CreateMarketBatchedRequest>;
 export type ClaimRequest = z.infer<typeof ClaimRequest>;
+export type ClaimCreatorFeeRequest = z.infer<typeof ClaimCreatorFeeRequest>;
 export type RoundEnterRequest = z.infer<typeof RoundEnterRequest>;
 export type RoundEnterBatchedRequest = z.infer<typeof RoundEnterBatchedRequest>;
 export type RoundClaimRequest = z.infer<typeof RoundClaimRequest>;

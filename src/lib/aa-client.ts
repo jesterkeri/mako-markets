@@ -62,6 +62,7 @@ export type SponsorRequestBody =
   | { kind: 'create_market'; chainId: number; call: Call }
   | { kind: 'create_market_batched'; chainId: number; calls: [Call, Call] }
   | { kind: 'claim'; chainId: number; call: Call }
+  | { kind: 'claim_creator_fee'; chainId: number; call: Call }
   | { kind: 'pm_create_market'; chainId: number; call: Call }
   // Phase 2E-1 slice 1D-1: 10 PM action kinds.
   | { kind: 'pm_bet'; chainId: number; call: Call }
@@ -1079,6 +1080,30 @@ export function buildClaimBody(args: Omit<RunClaimArgs, 'magicEoa'>): SponsorReq
 
 export async function runClaim(args: RunClaimArgs): Promise<RunOutcome> {
   return runSponsoredRequest(buildClaimBody(args), args.magicEoa);
+}
+
+const CLAIM_CREATOR_FEE_ABI = [
+  {
+    type: 'function',
+    name: 'claimCreatorFee',
+    inputs: [{ name: 'id', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const;
+
+/// The sponsor request for a creator's earnings on a pool it created (`claimCreatorFee(id)` from the Safe). Sent
+/// through `runSponsoredRequest`, the same sponsor -> sign -> send path as a winnings claim.
+export function buildClaimCreatorFeeBody(args: Omit<RunClaimArgs, 'magicEoa'>): SponsorRequestBody {
+  return {
+    kind: 'claim_creator_fee',
+    chainId: args.chainId,
+    call: {
+      to: args.makoAddress,
+      value: '0x0' as Hex,
+      data: encodeFunctionData({ abi: CLAIM_CREATOR_FEE_ABI, functionName: 'claimCreatorFee', args: [args.marketId] }),
+    },
+  };
 }
 
 /// The sponsor -> sign -> send sequence, with its full outcome mapping, shared by claims and the Rounds actions

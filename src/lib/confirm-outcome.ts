@@ -11,7 +11,14 @@ type Failed = Extract<ConfirmPhase, { step: 'failed' }>;
 
 /// `noun` names the action in sentences ("bet", "claim"); `failTitle` heads a plain failure ("Bet didn't go
 /// through"); `afterRevert` is what to do after Monad rolled it back (default: the pool may have changed).
-export type OutcomeWords = { noun: string; failTitle: string; afterRevert?: string };
+export type OutcomeWords = {
+  noun: string;
+  failTitle: string;
+  afterRevert?: string;
+  /// Action-specific words for a contract refusal found in pre-flight, keyed by the contract error, checked before
+  /// the shared ones (a creator-fee claim's NotAuthorized means "not your pool", not something generic).
+  refusals?: Record<string, [string, string]>;
+};
 
 const close = { label: 'Close' } as const;
 const retry = { label: 'Try again', retry: true } as const;
@@ -37,6 +44,8 @@ const SPONSOR_CREATE_REFUSALS: Record<string, [string, string]> = {
   bad_create_timestamps: CREATE_REFUSALS.BadCloseTime,
   bad_create_question: CREATE_REFUSALS.BadQuestion,
   bad_create_blocked_wallet: ['Account blocked', 'This account is blocked from creating Mako Market pools.'],
+  // The server's record shows this creator-fee claim already landed from this account (Codex CREATOR_EARNINGS R2).
+  creator_fee_already_sent: ['Already claimed', 'These creator earnings were already claimed from this account. Check your balance.'],
 };
 
 /// A contract refusal found before sending (a wallet account's pre-flight simulation), in the pool page's words.
@@ -55,7 +64,7 @@ export function refusalPhase(errorName: string | undefined, w: OutcomeWords): Co
     NoPosition: ['Nothing to claim', 'This wallet has no stake to claim in this pool.'],
     ...CREATE_REFUSALS,
   };
-  const [title, body] = (errorName && words[errorName]) ?? [w.failTitle, `Monad would turn the ${w.noun} down${errorName ? ` (${errorName})` : ''}.`];
+  const [title, body] = (errorName && (w.refusals?.[errorName] ?? words[errorName])) ?? [w.failTitle, `Monad would turn the ${w.noun} down${errorName ? ` (${errorName})` : ''}.`];
   return failed(title, body, true, close);
 }
 

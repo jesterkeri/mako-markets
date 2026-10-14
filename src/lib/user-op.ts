@@ -124,7 +124,27 @@ type BuildSponsoredUserOpBase = {
   /// `expires_at` column is the real shelf life — this 48-bit field is
   /// only the SafeOp's signature validity window.
   validUntil?: bigint;
+  /// Wall-clock deadline (ms) by which the finished op must be handed back with enough signing time left (creator-fee
+  /// claims, whose validUntil is finite). Checked before the Pimlico sponsorship is requested and before returning:
+  /// past it the build throws SigningWindowExhaustedError, so no sponsorship is requested for an op that is dead, or
+  /// nearly, on arrival (Codex CREATOR_EARNINGS R5). Undefined = no deadline (every other kind).
+  signableUntilMs?: number;
 };
+
+/// Thrown when a build with `signableUntilMs` runs past that deadline. The sponsor route refunds the daily count and
+/// stores nothing.
+export class SigningWindowExhaustedError extends Error {
+  constructor(stage: string) {
+    super(`user-op: signing window exhausted (${stage})`);
+    this.name = 'SigningWindowExhaustedError';
+  }
+}
+
+function assertSignableStill(args: { signableUntilMs?: number }, stage: string): void {
+  if (args.signableUntilMs !== undefined && Date.now() > args.signableUntilMs) {
+    throw new SigningWindowExhaustedError(stage);
+  }
+}
 
 /// `BuildSponsoredUserOpArgs` is a discriminated union — exactly ONE of
 /// `call` (single inner call: Phase 1B smoke, Phase 1D bet_single) or
@@ -248,6 +268,7 @@ export async function buildSponsoredUserOp(
   // 6. Sponsor. Returns paymaster fields and (Pimlico-specific) gas
   //    estimates. The probe order matters: sponsor BEFORE estimate so
   //    Monad's prefund-aware simulation sees the paymaster.
+  assertSignableStill(args, 'before sponsorship');
   const sponsor: SponsorResult = await sponsorUserOperation({
     chainId: args.chainId,
     userOp: baseUserOp,
@@ -297,6 +318,8 @@ export async function buildSponsoredUserOp(
     paymasterPostOpGasLimit: sponsor.paymasterPostOpGasLimit,
     paymasterData: sponsor.paymasterData,
   };
+
+  assertSignableStill(args, 'after sponsorship');
 
   // 8. Compute hashes.
   const safeOpHash = computeSafeOpHash({

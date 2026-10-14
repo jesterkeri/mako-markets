@@ -14,6 +14,8 @@ import { toFunctionSelector } from 'viem';
 import {
   PLACEBET_SELECTOR,
   CREATEMARKET_SELECTOR,
+  CLAIM_SELECTOR,
+  CLAIM_CREATOR_FEE_SELECTOR,
 } from '../aa-call-allowlist';
 import { PM_CREATE_MARKET_SELECTOR } from '../private-markets/abi-fragments';
 
@@ -36,6 +38,19 @@ describe('aa-call-allowlist selector pinning', () => {
 
   it('selectors are distinct (no collision)', () => {
     expect(PLACEBET_SELECTOR).not.toBe(CREATEMARKET_SELECTOR);
+  });
+
+  // Creator earnings. Pinned against a literal from `cast sig "claimCreatorFee(uint256)"` (2026-10-13) AND against
+  // viem, so a drift in either the constant or the signature fails here.
+  it('CLAIM_CREATOR_FEE_SELECTOR matches claimCreatorFee(uint256) = 0xb340da9c', () => {
+    expect(CLAIM_CREATOR_FEE_SELECTOR).toBe('0xb340da9c');
+    expect(CLAIM_CREATOR_FEE_SELECTOR).toBe(toFunctionSelector('claimCreatorFee(uint256)'));
+  });
+
+  it('CLAIM_CREATOR_FEE_SELECTOR collides with no other Pools selector', () => {
+    for (const other of [PLACEBET_SELECTOR, CREATEMARKET_SELECTOR, CLAIM_SELECTOR]) {
+      expect(CLAIM_CREATOR_FEE_SELECTOR).not.toBe(other);
+    }
   });
 });
 

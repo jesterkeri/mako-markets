@@ -113,6 +113,13 @@
       "when": 1791417600000,
       "tag": "0015_start_over_fence",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791504000000,
+      "tag": "0016_aa_pending_validity_window",
+      "breakpoints": true
     }
   ]
 }

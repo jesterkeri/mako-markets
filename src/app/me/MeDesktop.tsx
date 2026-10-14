@@ -33,6 +33,7 @@ import {
   type Loadable,
   type MeView,
 } from './MeParts';
+import { CreatorEarningsSection } from './CreatorEarningsSection';
 import { validateDisplayName } from './profile-rules';
 
 // Me on desktop (11a), in the terminal look: identity and test USDC, the four totals, profit and badges, then the
@@ -59,6 +60,7 @@ export function MeDesktop(v: MeView) {
             <div>
               <ReadyToClaim {...v} />
               <Creator created={v.chain.created} />
+              <CreatorEarningsSection user={v.user} account={v.account} variant="desktop" />
             </div>
           </div>
         </>
