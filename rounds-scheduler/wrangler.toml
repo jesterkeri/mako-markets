@@ -1,0 +1,37 @@
+name = "mako-rounds-scheduler"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Keeps Mako's own BTC rounds on the calendar (Joshua, 2026-10-06: one round every 2 hours, two house creators
+# alternating). Every 5 minutes: if an upcoming slot has no round, its house creator schedules one. Holds only the
+# two house creator keys (secrets HOUSE_1_PRIVATE_KEY, HOUSE_2_PRIVATE_KEY); never enters, settles or moves USDC.
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[limits]
+cpu_ms = 5000
+# Every fetch and every Durable Object call counts; must stay >= WORST_CASE_SUBREQUESTS in src/constants.ts (23).
+subrequests = 30
+
+[observability]
+enabled = true
+
+[vars]
+RPC_URL = "https://testnet-rpc.monad.xyz/"
+# MakoRoundsV1, deployed 2026-10-06 (mako-contracts 1d787f6 receipt), and the two house creators (house-keys.sh).
+ROUNDS_ADDRESS = "0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921"
+HOUSE_1_ADDRESS = "0xe490aB83c7f247BEC7d5E04Ce04bc48D6609b550"
+HOUSE_2_ADDRESS = "0xf301DdF76efb3F342e8c6b3b9Eb52B6D9851d801"
+INTERVAL_S = "7200"
+DRY_RUN = "false"
+
+# The run lease (src/state.ts): one run at a time may read, plan and send.
+[[durable_objects.bindings]]
+name = "SCHEDULER_STATE"
+class_name = "SchedulerState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SchedulerState"]

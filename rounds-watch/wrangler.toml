@@ -1,0 +1,39 @@
+name = "mako-rounds-watch"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Alert-only liveness watch for MakoRoundsV1 (TASKS T2.0d, INVARIANTS N21): flags every two-sided round
+# unsettled 30 minutes after close, and every NoPrice refund, saying whether Chainlink reports existed for
+# both seconds. No wallet key; sends nothing on-chain; separate from the keeper so it fails independently.
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[limits]
+cpu_ms = 5000
+subrequests = 20
+
+[[durable_objects.bindings]]
+name = "WATCH_STATE"
+class_name = "WatchState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WatchState"]
+
+# rounds-delivery/ sits outside this package and imports viem; bundle it against the copy here.
+[alias]
+"viem" = "./node_modules/viem"
+
+[observability]
+enabled = true
+
+# ROUNDS_ADDRESS is set once the contract is deployed; the Worker refuses to run without it.
+[vars]
+RPC_URL = "https://testnet-rpc.monad.xyz/"
+DATASTREAMS_URL = "https://api.testnet-dataengine.chain.link"
+
+# Secrets, via `wrangler secret put`, from Bitwarden, never in this file:
+#   DATASTREAMS_API_KEY, DATASTREAMS_API_SECRET   (read-only report access)
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID          (the watchdog's bot)
+#   HEALTHCHECKS_PING_URL                         (its own check: period 5 min, grace 15 min)

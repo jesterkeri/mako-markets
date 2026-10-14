@@ -25,6 +25,10 @@ const eslintConfig = defineConfig([
     // Rounds keeper Worker build output (gitignored; wrangler writes it locally).
     "keeper/dist/**",
     "keeper/.wrangler/**",
+    "rounds-watch/dist/**",
+    "rounds-watch/.wrangler/**",
+    "rounds-scheduler/dist/**",
+    "rounds-scheduler/.wrangler/**",
   ]),
 ]);
 
