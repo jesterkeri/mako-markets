@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": { "viem": ["node_modules/viem"], "viem/*": ["node_modules/viem/*"] }
+  },
+  "include": ["src/**/*", "../rounds-delivery/src/**/*"]
+}

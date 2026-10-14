@@ -22,6 +22,9 @@ const eslintConfig = defineConfig([
     "indexer/envio-env.d.ts",
     // The CRE workflow and its adapter: their own Bun and Foundry projects, checked there.
     "cre/**",
+    // Rounds keeper Worker build output (gitignored; wrangler writes it locally).
+    "keeper/dist/**",
+    "keeper/.wrangler/**",
   ]),
 ]);
 

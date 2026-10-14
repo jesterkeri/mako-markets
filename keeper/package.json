@@ -1,0 +1,32 @@
+{
+  "name": "mako-settlement-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mako Settlement Keeper: a Cloudflare Worker that settles MakoRoundsV1 rounds from Chainlink Data Streams reports, and after the 24-hour window refunds overdue rounds and overdue V4 pools automatically, from a gas-only key.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail --format pretty",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "vitest run",
+    "bundle": "wrangler deploy --dry-run --outdir dist"
+  },
+  "dependencies": {
+    "viem": "2.56.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.13",
+    "@cloudflare/workers-types": "5.20260919.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.135.0"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}
