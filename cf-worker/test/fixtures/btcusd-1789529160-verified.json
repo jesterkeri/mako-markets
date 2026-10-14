@@ -1,0 +1,34 @@
+{
+  "verifiedAt": {
+    "block": 62922075,
+    "hash": "0x73f54743b7db644c8f010e74f422107337b586b59fed5a91916f98b384a722d6",
+    "timestamp": 1789529160
+  },
+  "provider": "testnet-rpc.monad.xyz",
+  "rawReturnBytes": 352,
+  "decodedPayloadBytes": 288,
+  "feedId": "0x00037da06d56d083fe599397a4769a042d63aa73dc4ef57709d31e9971a5b439",
+  "validFromTimestamp": 1789529157,
+  "observationsTimestamp": 1789529160,
+  "windowSeconds": 3,
+  "nativeFee": 132915204253287,
+  "linkFee": 29384890485513791,
+  "expiresAt": 1792121160,
+  "price": "75938791787880000000000",
+  "bid": "75935199000000000000000",
+  "ask": "75944083700820000000000",
+  "spreadBps": 1.17,
+  "sevenChecks": {
+    "1 s_feeManager == 0": true,
+    "2 verify returned": true,
+    "3 288 bytes and prefix 0x0003": true,
+    "4 feedId == FEED_ID": true,
+    "5a observationsTimestamp == B": true,
+    "5b validFrom <= observations": true,
+    "6a price > 0": true,
+    "6b bid <= price <= ask": true,
+    "6c spread <= 50 bps": true,
+    "7 blockTimestamp <= expiresAt": true
+  },
+  "allPass": true
+}

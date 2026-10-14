@@ -48,6 +48,20 @@ import {
   PYTH_ID_TO_SYMBOL,
 } from './price-feed-assets';
 import {
+  dataStreamsCryptoDecision,
+  dsEligible,
+  dsTurns,
+  DEFAULT_DATASTREAMS_URL,
+  formatPrice18,
+  readCryptoPriceSource,
+  agreedFinalized,
+  DS_PER_TICK,
+  verifyPair,
+  type DsDecision,
+  type DsDeps,
+} from './crypto-datastreams';
+import { httpEthCall } from './datastreams';
+import {
   canSend,
   decideAction,
   deferReason,
@@ -88,6 +102,17 @@ export interface Env {
   /// closeTime + 24h; anything else keeps the keeper to one-sided pools.
   /// See src/settlement.ts for why two-sided is off by default.
   FORCE_REFUND_TWO_SIDED?: string;
+
+  /// Crypto price source (src/crypto-datastreams.ts): unset or "coingecko" = today's behaviour; "datastreams-shadow" =
+  /// today's behaviour plus a logged Chainlink Data Streams decision per pool; "datastreams" = crypto pools settle only
+  /// on verified Data Streams reports for their exact close second.
+  CRYPTO_PRICE_SOURCE?: string;
+  DATASTREAMS_URL?: string;
+  /// Secrets for Data Streams (wrangler secret put), required by both datastreams modes. NEVER log these.
+  DATASTREAMS_API_KEY?: string;
+  DATASTREAMS_API_SECRET?: string;
+  /// Alchemy Monad-testnet URL with its key (secret), one of the two Data Streams verification providers. NEVER log.
+  ALCHEMY_RPC_URL?: string;
 }
 
 const RECEIPT_TIMEOUT_MS = 45_000;
@@ -976,6 +1001,27 @@ function validateEnv(env: Env): {
 
 export async function runResolver(env: Env): Promise<void> {
   const cfg = validateEnv(env);
+  // Crypto price source (src/crypto-datastreams.ts). Data Streams credentials are read here and never logged.
+  const crypto = readCryptoPriceSource(env.CRYPTO_PRICE_SOURCE);
+  const dsKey = env.DATASTREAMS_API_KEY?.trim();
+  const dsSecret = env.DATASTREAMS_API_SECRET?.trim();
+  const pair = verifyPair(env.ALCHEMY_RPC_URL);
+  const dsDeps: DsDeps | null =
+    crypto.source !== 'coingecko' && dsKey && dsSecret && pair
+      ? {
+          fetchImpl: (i, x) => fetch(i, x),
+          base: env.DATASTREAMS_URL?.trim() || DEFAULT_DATASTREAMS_URL,
+          creds: { apiKey: dsKey, secret: dsSecret },
+          providers: [httpEthCall(pair[0]), httpEthCall(pair[1])],
+          finalized: () => agreedFinalized((i, x) => fetch(i, x), pair, Date.now()),
+          verifiedBy: pair.map((u) => new URL(u).hostname),
+          now: () => Date.now(),
+        }
+      : null;
+  if (crypto.invalid !== null) console.error(`CRYPTO_PRICE_SOURCE "${crypto.invalid}" is not coingecko, datastreams-shadow or datastreams — using coingecko`);
+  if (crypto.source !== 'coingecko' && !dsDeps) {
+    console.error(`CRYPTO_PRICE_SOURCE=${crypto.source} but DATASTREAMS_API_KEY/SECRET or a valid ALCHEMY_RPC_URL (https, not the public RPC) are not set`);
+  }
 
   const monadTestnet = {
     id: 10143,
@@ -1120,7 +1166,16 @@ export async function runResolver(env: Env): Promise<void> {
         r.status === 'fulfilled' &&
         types.includes(r.value.mType),
     );
-  const needsCoinGecko = needsData([MarketType.CRYPTO]);
+  const needsCoinGecko = crypto.source !== 'datastreams' && needsData([MarketType.CRYPTO]);
+  // This tick's Data Streams evaluations: DS_PER_TICK slots rotating through the eligible crypto pools by the minute.
+  const dsTurn = dsTurns(
+    crypto.source === 'coingecko'
+      ? []
+      : marketResults.flatMap((r, idx) =>
+          actions[idx] === 'fetch_and_resolve' && r.status === 'fulfilled' && r.value.mType === MarketType.CRYPTO && dsEligible(r.value.mType, r.value.oracleRef) ? [idx] : [],
+        ),
+    Date.now(),
+  );
   const needsPyth = needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
 
   // No-data settlement (one-sided REFUND + 24h forceRefund keeper). Sends
@@ -1255,8 +1310,59 @@ export async function runResolver(env: Env): Promise<void> {
     // price or result exactly as before.
     let outcome: Outcome | null = null;
     let reason = '';
+    let dsEvidence: Record<string, unknown> | null = null;
+    const logEvidence = (sent: Record<string, string>) => {
+      if (dsEvidence) console.log(JSON.stringify({ ...dsEvidence, ...sent }));
+    };
 
-    if (market.mType === MarketType.CRYPTO) {
+    if (market.mType === MarketType.CRYPTO && crypto.source === 'datastreams') {
+      // Live: Chainlink Data Streams only, no CoinGecko and no fallback. Anything but a settle decision waits.
+      if (!dsDeps) {
+        console.error(`[${ts}] market ${i}: CRYPTO_PRICE_SOURCE=datastreams but the Data Streams or Alchemy secrets are not set — waiting`);
+        skipped++;
+        continue;
+      }
+      if (dsEligible(market.mType, market.oracleRef) && !dsTurn.has(Number(i))) {
+        console.log(`[${ts}] market ${i}: datastreams not this tick's turn (${DS_PER_TICK} a tick, rotating) — later tick`);
+        skipped++;
+        continue;
+      }
+      const d = await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps);
+      if (d.kind !== 'settle') {
+        const say = d.kind === 'final' ? console.error : console.log;
+        say(`[${ts}] market ${i}: datastreams ${d.kind} (${d.reason})${d.kind === 'final' ? ' — needs a human: resolve from admin' : ' — retry next tick'}`);
+        skipped++;
+        continue;
+      }
+      // Logged only once a transaction for it went out (or in dry run), with the send's outcome and hash: an evidence
+      // line describes a transaction, never a decision that was deferred or refused (adversary on 167d774).
+      dsEvidence = { event: 'crypto.ds.evidence', market: Number(i), closeTime: Number(market.closeTime), outcome: d.yes ? 'YES' : 'NO', strike: formatPrice18(d.strike), ...d.evidence };
+      outcome = d.yes ? Outcome.YES : Outcome.NO;
+      reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}`;
+    } else if (market.mType === MarketType.CRYPTO) {
+      if (crypto.source === 'datastreams-shadow' && dsTurn.has(Number(i))) {
+        // Shadow: log what Data Streams would decide beside today's CoinGecko path; nothing is sent from it. It must never
+        // break a tick (a BigInt in this log line crashed every tick, 2026-10-13), so any failure here is only logged.
+        try {
+          const d: DsDecision = dsDeps
+            ? await dataStreamsCryptoDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps)
+            : { kind: 'wait', reason: 'no_credentials' };
+          const shadowRef = parseCryptoOracleRef(market.oracleRef);
+          const cg = shadowRef ? prices[shadowRef.symbol] : undefined;
+          const cgOutcome = shadowRef && cg !== undefined ? Outcome[deriveCryptoOutcome(shadowRef, cg)] : 'none';
+          console.log(
+            JSON.stringify({
+              event: 'crypto.shadow',
+              market: Number(i),
+              closeTime: Number(market.closeTime),
+              ds: d.kind === 'settle' ? { outcome: d.yes ? 'YES' : 'NO', price: formatPrice18(d.price), strike: formatPrice18(d.strike) } : d,
+              coingecko: { outcome: cgOutcome, price: cg ?? null },
+            }),
+          );
+        } catch (e) {
+          console.error(`[${ts}] market ${i}: crypto.shadow failed (${shortErrorMessage(e)}) — ignored, tick continues`);
+        }
+      }
       const parsed = parseCryptoOracleRef(market.oracleRef);
       if (!parsed) {
         console.warn(`[${ts}] market ${i}: unparseable crypto oracleRef "${market.oracleRef}" — skip`);
@@ -1443,6 +1549,7 @@ export async function runResolver(env: Env): Promise<void> {
 
     if (cfg.dryRun) {
       console.log(`[${ts}] market ${i}: ${reason} · ${label} · [DRY RUN — not written]`);
+      logEvidence({ send: 'dry-run' });
       resolvedCount++;
       continue;
     }
@@ -1459,6 +1566,7 @@ export async function runResolver(env: Env): Promise<void> {
     });
     if (sent.kind === 'landed') {
       console.log(`[${ts}] market ${i}: RESOLVED ${label} · block ${sent.blockNumber} · tx ${sent.hash} · nonce ${sent.nonce}`);
+      logEvidence({ send: 'landed', tx: sent.hash, txBlock: String(sent.blockNumber), nonce: String(sent.nonce) });
       resolvedCount++;
     } else if (sent.kind === 'out_of_funds') {
       console.warn(`[${ts}] market ${i}: resolver wallet out of MON — stopping tick`);
@@ -1478,8 +1586,10 @@ export async function runResolver(env: Env): Promise<void> {
       console.warn(
         `[${ts}] market ${i}: tx ${sent.hash} (nonce ${sent.nonce}) has no receipt yet; a later send reuses this nonce, so it cannot be paid twice`,
       );
+      logEvidence({ send: 'receipt_timeout', tx: sent.hash, nonce: String(sent.nonce) });
     } else if (sent.kind === 'reverted') {
       console.warn(`[${ts}] market ${i}: tx reverted (hash ${sent.hash})`);
+      logEvidence({ send: 'reverted', tx: sent.hash });
     } else if (sent.kind === 'not_yet') {
       console.warn(`[${ts}] market ${i}: resolveMarket reverted ${sent.errorName}, retry next tick`);
     } else if (sent.kind === 'nonce_unreadable') {
