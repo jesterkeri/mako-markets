@@ -7,9 +7,9 @@ tells Joshua, once per round:
 - a round that **refunded NoPrice**;
 
 and, for each, what the Data Streams API returned for **both** of the round's seconds, with the time it
-asked. For a round still unsettled, both present means a delivery failure (the keeper and CRE are not
-settling; anyone with Data Streams access can settle it), and one missing means it cannot settle unless the
-report appears. For a NoPrice refund the alert states only what the API returned at the check: a check made
+asked. For a round still unsettled, both present says only that the API returned them: the watch does not
+verify them on chain or simulate a settlement, so the alert points at the keeper and CRE first and the verifier
+configuration second; one missing means it cannot settle unless the report appears. For a NoPrice refund the alert states only what the API returned at the check: a check made
 after the refund cannot say why the refund happened.
 
 **How it finds rounds.** Every active round is re-read each run (the contract caps non-terminal rounds at

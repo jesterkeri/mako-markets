@@ -20,7 +20,7 @@ import { readReport, reportHeaders, reportPath, type HmacHex } from '../../round
 import { REFUND_REASON, STATUS, WATCH_ABI } from './abi';
 import { send, type HttpResult, type Net } from './net';
 import { aggregate, decodeAggregate } from './multicall';
-import { rpcBatch, type RpcCall } from './rpc';
+import { rpcBatch, type RpcBatch, type RpcCall } from './rpc';
 import type { AlertKind, Evidence, Meta, PendingNoPrice } from './state';
 
 /// N21: a round unsettled this long after close is flagged.
@@ -123,8 +123,10 @@ export async function runWatch(cfg: WatchConfig, deps: WatchDeps): Promise<Watch
   let outcome: WatchOutcome;
   try {
     outcome = await watchOnce(cfg, deps, meta, Math.floor(now / 1000));
-  } catch {
-    // Reported by kind only: an error's text could carry a URL or the Telegram token.
+  } catch (e) {
+    // Diagnostic (2026-10-13, every run rpc-error in production only): the error's type and a sanitized,
+    // truncated message. URLs, the Telegram token shape, long hex and anything key-like are removed first.
+    console.error(JSON.stringify({ watch: 'run-threw', error: describeError(e) }));
     outcome = { status: 'rpc-error', lines: [], conditions: [] };
   }
 
@@ -165,7 +167,7 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     call(encodeFunctionData({ abi: WATCH_ABI, functionName: 'roundCount' })),
     call(encodeFunctionData({ abi: WATCH_ABI, functionName: 'DURATION' })),
   ]);
-  if (!head.ok || !head.items[0].ok || !head.items[1].ok) return { status: 'rpc-error', lines: [], conditions: [] };
+  if (!head.ok || !head.items[0].ok || !head.items[1].ok) return rpcFail('head', head);
   const count = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundCount', data: head.items[0].result as Hex }));
   const duration = Number(decodeFunctionResult({ abi: WATCH_ABI, functionName: 'DURATION', data: head.items[1].result as Hex }));
 
@@ -191,11 +193,11 @@ async function watchOnce(cfg: WatchConfig, deps: WatchDeps, meta: Meta, nowS: nu
     const res = await rpcBatch(deps.net, cfg.rpcUrl, [
       aggregate(ids.map((id) => ({ target: cfg.roundsAddress, data: encodeFunctionData({ abi: WATCH_ABI, functionName: 'roundOf', args: [BigInt(id)] }) }))),
     ]);
-    if (!res.ok || !res.items[0].ok) return { status: 'rpc-error', lines: [], conditions: [] };
+    if (!res.ok || !res.items[0].ok) return rpcFail('rounds', res, ids);
     const results = decodeAggregate(res.items[0].result, ids.length);
-    if (results === null) return { status: 'rpc-error', lines: [], conditions: [] };
+    if (results === null) return rpcFail('rounds-decode', res, ids);
     for (let i = 0; i < ids.length; i++) {
-      if (!results[i].success) return { status: 'rpc-error', lines: [], conditions: [] };
+      if (!results[i].success) return rpcFail(`round-${ids[i]}-failed`, res, ids);
       const r = decodeFunctionResult({ abi: WATCH_ABI, functionName: 'roundOf', args: [0n], data: results[i].returnData });
       const start = Number(r.startTime);
       rounds.push({
@@ -367,9 +369,32 @@ export function alertLine(r: RoundView, kind: AlertKind, e: Evidence, nowS: numb
   }
   let cause: string;
   if (e.start === 'exists' && e.close === 'exists')
-    cause = 'Both reports exist inside the settlement window, so this is a DELIVERY failure: the keeper and CRE are not settling. Anyone with Data Streams access can settle it.';
+    // Only what the API said (Codex T2.0d r5): reports existing does not mean they verify on chain or that the
+    // round can settle (a fee manager or a changed verifier configuration would stop it), and this watch checks
+    // neither.
+    cause = 'The API returned reports for both seconds. This watch did not verify them on chain or try to settle. Check the keeper and CRE first, then the verifier: a fee manager or a changed signing configuration would also stop settlement, and the round then refunds NoPrice at its deadline.';
   else if (e.start === 'missing' || e.close === 'missing')
     cause = 'A report is missing for that second; if it never appears, the round cannot settle and refunds NoPrice at its deadline.';
   else cause = 'Report availability could not be checked; the next check repeats it.';
   return `Round ${r.id} is UNSETTLED ${Math.floor((nowS - r.closeTime) / 60)} min after close. ${reports} ${cause}`;
+}
+
+/// An error's type and a sanitized message, safe for logs: no URL, no Telegram token, no long hex, at most 160 chars.
+export function describeError(e: unknown): string {
+  const name = e instanceof Error ? e.name : typeof e;
+  const raw = e instanceof Error ? e.message : String(e);
+  const clean = raw
+    .replace(/https?:\/\/\S+/gi, '<url>')
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, '<token>')
+    .replace(/0x[0-9a-fA-F]{40,}/g, '<hex>')
+    .replace(/[A-Za-z0-9_-]{32,}/g, '<redacted>');
+  return `${name}: ${clean}`.slice(0, 160);
+}
+
+/// Diagnostic (2026-10-13): which read failed and how, without any URL or secret (kinds, HTTP status, JSON-RPC
+/// codes and round ids only), then the same rpc-error outcome as before.
+function rpcFail(step: string, b: RpcBatch, ids: readonly number[] = []): WatchOutcome {
+  const detail = b.ok ? b.items.map((it) => (it.ok ? 'ok' : `${it.kind}${it.code !== undefined ? `:${it.code}` : ''}`)) : [`${b.kind}${b.status !== undefined ? `:${b.status}` : ''}`];
+  console.error(JSON.stringify({ watch: 'rpc-fail', step, detail, ids }));
+  return { status: 'rpc-error', lines: [], conditions: [] };
 }
