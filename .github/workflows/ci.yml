@@ -46,6 +46,7 @@ on:
       - 'feat/rounds-keeper'
       - 'feat/rounds-watch'
       - 'feat/rounds-scheduler'
+      - 'feat/watchdog-*'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
@@ -354,3 +355,48 @@ jobs:
 
       - name: Build the deploy bundle
         run: pnpm bundle
+
+  # Alert-only watchdog Worker: watchdog/ is its own package like cf-worker/
+  # (own lockfile, installed with --ignore-workspace, own vitest major).
+  # Wrangler 4 needs Node 22. The last step builds the deploy bundle and fails
+  # if it contains any signing, transaction-sending or Data Streams code. The
+  # design it implements (WATCHDOG_PLAN.md r15 §8, I9) lives outside this repo,
+  # in the sibling mako-design checkout, so it is not linkable from here.
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: watchdog
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Test the dependency assertion and the feed-status check
+        run: pnpm test:scripts
+
+      - name: Feed-status table matches the vendored feed map (fails, never skips)
+        run: pnpm check:feed-status
+
+      - name: Build bundle and assert no signing capability
+        run: pnpm bundle && pnpm assert-bundle

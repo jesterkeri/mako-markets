@@ -13,6 +13,11 @@
  *   - scripts/auto-resolver.mts (CryptoSymbol type + parseCryptoOracleRef whitelist + CoinGecko ids)
  *   - scripts/seed-crypto.mts   (PRICE_ROWS)
  *
+ * Two Cloudflare Workers also carry the list and cannot import from here:
+ *   - cf-worker/src/index.ts     (CRYPTO_SYMBOLS + COINGECKO_ID_BY_SYMBOL)
+ *   - watchdog/src/assets.ts     (CRYPTO_SYMBOLS; its assets-drift test
+ *                                 fails if this file and that copy differ)
+ *
  * Grep for `MIRROR_CRYPTO_ASSETS` to find every site that must stay in sync.
  */
 

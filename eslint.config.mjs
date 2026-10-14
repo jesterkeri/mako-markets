@@ -29,6 +29,14 @@ const eslintConfig = defineConfig([
     "rounds-watch/.wrangler/**",
     "rounds-scheduler/dist/**",
     "rounds-scheduler/.wrangler/**",
+    // Agent worktrees: a full second copy of the repo, which would otherwise
+    // be linted twice and report duplicate findings.
+    ".claude/worktrees/**",
+    // Worker build output (gitignored; wrangler writes it locally).
+    "watchdog/dist/**",
+    "watchdog/.wrangler/**",
+    "cf-worker/dist/**",
+    "cf-worker/.wrangler/**",
   ]),
 ]);
 

@@ -739,7 +739,9 @@ export function decodeAndAssertClaimShape(call: {
 /// STOCKS). Tagged-union so the caller can surface the specific
 /// NotAllowedReason code rather than collapsing everything into a
 /// generic "bad oracleRef". Local to this module; cf-worker has its
-/// own mirror parser for resolution (chunk C of #180).
+/// own mirror parser for resolution (chunk C of #180), and
+/// watchdog/src/oracle-ref.ts has a third copy that decides whether the
+/// resolver could settle a market at all (MIRROR_ORACLE_REF_PARSERS).
 type PriceFeedOracleRefResult =
   | { kind: 'ok'; symbol: string; op: 'gt' | 'lt'; strike: number }
   | { kind: 'bad_format' }
@@ -755,7 +757,11 @@ type PriceFeedOracleRefResult =
 /// Returns a tagged union so the caller can map each failure mode to
 /// a distinct NotAllowedReason. Production caller is
 /// `decodeCreateMarketArgs` (#180 chunk B).
-function parsePriceFeedOracleRef(
+/// Exported for watchdog/test/mirror-differential.test.ts, which runs one
+/// shared vector table through this copy, the resolver's and the watchdog's,
+/// so the mirror is checked by behaviour rather than by the marker above
+/// (watchdog slice-1 review r8). Nothing else imports it.
+export function parsePriceFeedOracleRef(
   ref: Hex,
   expectedClass: 'forex' | 'commodities' | 'stocks',
 ): PriceFeedOracleRefResult {
