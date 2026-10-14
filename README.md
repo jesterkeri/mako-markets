@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mako Market
 
-## Getting Started
+A prediction market on Monad where anyone can create a market, and the person who brings the crowd gets paid.
 
-First, run the development server:
+**Live (Monad testnet):** https://makomarket.xyz
+
+## How it works
+
+1. **Pools.** Anyone can open a YES/NO pool on crypto, stocks, forex, commodities or sports. Bets go into a shared pot and winners split it, so there is no house taking the other side. The creator earns 2% of the pot, but only if both sides have real money in it.
+2. **Rounds.** 15-minute Up or Down rounds scheduled by Mako Market every two hours, starting with BTC/USD. Entries close when the round starts. Open and close prices come from Chainlink Data Streams, verified on chain. Winners split the pot; a one-sided round, or one with no valid price, refunds everyone.
+3. **Settlement you can trust.** Anything not settled within 24 hours of closing is refunded automatically, so money never sits stuck.
+4. **No crypto knowledge needed.** Sign in with email (Privy): no wallet to install, no seed phrase, no gas. Every bet, entry and claim from an email account is gas-sponsored (ERC-4337 Safe accounts, Pimlico paymaster).
+
+## Contracts (Monad testnet, chain 10143)
+
+| Contract | Address |
+|---|---|
+| MakoMarketsV4 (pools) | [`0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195`](https://testnet.monadvision.com/address/0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195) |
+| MakoRoundsV1 (rounds) | [`0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921`](https://testnet.monadvision.com/address/0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921) |
+
+Solidity source: [jesterkeri/mako-contracts](https://github.com/jesterkeri/mako-contracts), branches [`feat/t15-deploy-rounds`](https://github.com/jesterkeri/mako-contracts/tree/feat/t15-deploy-rounds) (rounds, Data Streams settlement rule) and [`v4`](https://github.com/jesterkeri/mako-contracts/tree/v4) (pools).
+
+## Where things live
+
+| Part | Path |
+|---|---|
+| Web app (Next.js) | [`src/`](src) |
+| Chainlink CRE workflow that settles rounds from Data Streams | [`cre/`](cre) |
+| Envio indexer (`/stats`, rounds in Me) | [`indexer/`](indexer) |
+| Pool resolver (Cloudflare Worker) | [`cf-worker/`](cf-worker) |
+| Rounds keeper, scheduler and watch (Cloudflare Workers, deployed from their branches) | [`feat/rounds-keeper`](https://github.com/jesterkeri/mako-markets/tree/feat/rounds-keeper), [`feat/rounds-scheduler`](https://github.com/jesterkeri/mako-markets/tree/feat/rounds-scheduler), [`feat/rounds-watch`](https://github.com/jesterkeri/mako-markets/tree/feat/rounds-watch) |
+
+A round settled end to end through the CRE workflow on 2026-10-12: [tx `0x5b3c…8778`](https://testnet.monadvision.com/tx/0x5b3c20601cc89c6bef20b29ee1e54c2e7b4ca0a5372e9f71952b8146791c8778).
+
+## Run locally
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+corepack pnpm@10.32.1 install
+cp .env.local.example .env.local   # fill in your own values
+corepack pnpm@10.32.1 dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Tests: `corepack pnpm@10.32.1 test`.
