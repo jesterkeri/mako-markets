@@ -77,7 +77,7 @@ import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { checkSameOrigin } from '@/lib/csrf';
 import { isJsonRpcReject } from '@/lib/aa-rpc';
 import { getUserSession } from '@/lib/user-session';
-import { buildSponsoredUserOp, wrapperCallDataFor } from '@/lib/user-op';
+import { buildSponsoredUserOp, SigningWindowExhaustedError, wrapperCallDataFor } from '@/lib/user-op';
 import { computeUserOpHash } from '@/lib/user-op-hash';
 import { storedToPacked } from '@/lib/user-op-types';
 import { PM_CONTRACT_ADDRESS } from '@/lib/contract';
@@ -138,6 +138,27 @@ type ServerError =
 /// Error with the message prefix below on a Path X invariant violation. A
 /// typed `PathXMismatchError` class is tracked as a sub-phase B follow-up;
 /// when that ships, swap the regex for `instanceof`. See plan §Risks.
+/// The wall-clock moment (ms) after which a creator-fee op with this validUntil leaves under CREATOR_FEE_MIN_SIGNING_S to
+/// sign. One definition for the pre-build check and the post-build deadline, so they cannot disagree at a boundary.
+function creatorFeeSignableUntilMs(validUntil: bigint): number {
+  return Number(validUntil - BigInt(CREATOR_FEE_MIN_SIGNING_S)) * 1000;
+}
+
+/// Resolves with the build, or rejects with SigningWindowExhaustedError once `deadlineMs` passes first. The build
+/// itself is not cancelled (its RPCs take no signal), but it checks the same deadline before requesting a sponsorship.
+async function withinSigningDeadline<T>(building: Promise<T>, deadlineMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new SigningWindowExhaustedError('route deadline')), Math.max(0, deadlineMs - Date.now()));
+  });
+  try {
+    return await Promise.race([building, late]);
+  } finally {
+    clearTimeout(timer);
+    building.catch(() => {}); // a build that loses the race and later fails is not an unhandled rejection
+  }
+}
+
 function isPathXMismatch(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   return /user-op:\s*safeAddress mismatch/i.test(e.message);
@@ -1057,7 +1078,7 @@ export async function POST(req: Request) {
     if (claimedOnChain) return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
     // A chain head so far behind that the op would leave under CREATOR_FEE_MIN_SIGNING_S to sign is a stale read:
     // refuse before the daily count and the sponsorship are spent on an op that cannot land.
-    if (creatorFeeValidUntil! - BigInt(Math.floor(Date.now() / 1000)) < BigInt(CREATOR_FEE_MIN_SIGNING_S)) {
+    if (Date.now() > creatorFeeSignableUntilMs(creatorFeeValidUntil!)) {
       console.error('[aa.sponsor.creator_fee_chain_head_stale]', { validUntil: creatorFeeValidUntil!.toString() });
       return Response.json({ error: 'VALIDATE_FAILED', reason: 'chain_head_stale' }, { status: 502 });
     }
@@ -1077,6 +1098,11 @@ export async function POST(req: Request) {
 
   // Step 8: buildSponsoredUserOp. Branch on the discriminated buildArgs
   // so TypeScript's discriminated-union arg type narrows correctly.
+  // A creator-fee op must still leave CREATOR_FEE_MIN_SIGNING_S to sign when it is handed back, not only when the
+  // build starts: the builder's RPCs (gas price, nonce, Safe lookup, Pimlico) have no timeout of their own (Codex
+  // CREATOR_EARNINGS R5). The builder refuses to request a sponsorship past this deadline, and the route stops
+  // waiting at it; either way the daily count is refunded and nothing is stored.
+  const signableUntilMs = creatorFeeValidUntil !== undefined ? creatorFeeSignableUntilMs(creatorFeeValidUntil) : undefined;
   let built: Awaited<ReturnType<typeof buildSponsoredUserOp>>;
   try {
     if ('calls' in buildArgs) {
@@ -1087,15 +1113,24 @@ export async function POST(req: Request) {
         calls: buildArgs.calls,
       });
     } else {
-      built = await buildSponsoredUserOp({
+      const building = buildSponsoredUserOp({
         chainId,
         safeAddress,
         magicEoa: session.magicEoa as Address,
         call: buildArgs.call,
-        ...(creatorFeeValidUntil !== undefined ? { validUntil: creatorFeeValidUntil } : {}),
+        ...(creatorFeeValidUntil !== undefined ? { validUntil: creatorFeeValidUntil, signableUntilMs } : {}),
       });
+      built = signableUntilMs === undefined ? await building : await withinSigningDeadline(building, signableUntilMs);
+    }
+    if (signableUntilMs !== undefined && Date.now() > signableUntilMs) {
+      throw new SigningWindowExhaustedError('built');
     }
   } catch (e) {
+    if (e instanceof SigningWindowExhaustedError) {
+      await decrementForRefund({ userId: session.userId, chainId });
+      console.error('[aa.sponsor.creator_fee_signing_window_exhausted]', { stage: e.message });
+      return Response.json({ error: 'VALIDATE_FAILED', reason: 'signing_window_exhausted' }, { status: 502 });
+    }
     // Refund policy: PathXMismatch (pre-RPC code-side bug) refunds. All
     // Pimlico-side failures preserve the count (the user's attempt counted
     // against the local cap; Pimlico enforces dollar caps independently).

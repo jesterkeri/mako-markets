@@ -28,7 +28,10 @@ const state = vi.hoisted(() => ({
   chainNow: 0n,
   bundlerSends: [] as Array<{ userOp: unknown; signature: Hex }>,
   dailyOps: 0,
+  refunds: 0,
   sponsorships: 0,
+  gasPriceDelayMs: 0,
+  sponsorDelayMs: 0,
 }));
 
 vi.mock('server-only', () => ({}));
@@ -43,7 +46,9 @@ vi.mock('@/lib/user-session', () => ({
 }));
 vi.mock('@/lib/aa-sponsor-limits', () => ({
   incrementOrReject: async () => ({ kind: 'within_cap', count: ++state.dailyOps }),
-  decrementForRefund: async () => undefined,
+  decrementForRefund: async () => {
+    state.refunds += 1;
+  },
 }));
 vi.mock('@/lib/aa-public-client', () => ({
   getAaPublicClient: () => ({
@@ -65,9 +70,13 @@ vi.mock('@/lib/aa-rpc', async (importActual) => {
   const { storedToPacked } = await import('../user-op-types');
   return {
     ...actual,
-    getUserOperationGasPrice: async () => ({ standard: { maxFeePerGas: 100n, maxPriorityFeePerGas: 2n } }),
+    getUserOperationGasPrice: async () => {
+      if (state.gasPriceDelayMs) await new Promise((r) => setTimeout(r, state.gasPriceDelayMs));
+      return { standard: { maxFeePerGas: 100n, maxPriorityFeePerGas: 2n } };
+    },
     sponsorUserOperation: async () => {
       state.sponsorships += 1;
+      if (state.sponsorDelayMs) await new Promise((r) => setTimeout(r, state.sponsorDelayMs));
       return {
         paymaster: PAYMASTER,
         paymasterVerificationGasLimit: 60_000n,
@@ -145,7 +154,10 @@ afterAll(async () => {
 beforeEach(async () => {
   state.bundlerSends = [];
   state.dailyOps = 0;
+  state.refunds = 0;
   state.sponsorships = 0;
+  state.gasPriceDelayMs = 0;
+  state.sponsorDelayMs = 0;
   await pg.exec(`DELETE FROM aa_pending_user_ops`);
 });
 
@@ -261,7 +273,7 @@ describe('creator-fee claim: the finite SafeOp window travels sponsor -> sign ->
   it('a chain head too stale to leave a minute of signing is refused before the daily count or a sponsorship is spent', async () => {
     const t = nowS();
     const lagLimit = BigInt(CREATOR_FEE_OP_TTL_S - CREATOR_FEE_MIN_SIGNING_S); // 240 s
-    const at = vi.spyOn(Date, 'now').mockReturnValue(Number(t) * 1000 + 999);
+    const at = vi.spyOn(Date, 'now').mockReturnValue(Number(t) * 1000);
     try {
       // One second past the limit: refused, nothing counted, nothing sponsored, no row.
       state.chainNow = t - lagLimit - 1n;
@@ -279,9 +291,52 @@ describe('creator-fee claim: the finite SafeOp window travels sponsor -> sign ->
       expect(ok.status).toBe(200);
       expect(BigInt(((await ok.json()) as SponsorBody).validUntil)).toBe(t + BigInt(CREATOR_FEE_MIN_SIGNING_S));
       expect({ dailyOps: state.dailyOps, sponsorships: state.sponsorships }).toEqual({ dailyOps: 1, sponsorships: 1 });
+
+      // One millisecond past that moment: refused before the daily count.
+      await pg.exec(`DELETE FROM aa_pending_user_ops`);
+      at.mockReturnValue(Number(t) * 1000 + 1);
+      const late = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
+      expect(late.status).toBe(502);
+      expect({ dailyOps: state.dailyOps, refunds: state.refunds }).toEqual({ dailyOps: 1, refunds: 0 });
     } finally {
       at.mockRestore();
     }
+  });
+
+  // Codex CREATOR_EARNINGS R5: the floor must hold when the op is handed back, not only when the build starts. The head
+  // is 238 s behind, so validUntil = now + 62 and the op must be back within ~2 s to leave 60 s to sign.
+  it('a builder RPC slower than the remaining signing time: 502, daily count refunded, no row, no sponsorship requested', async () => {
+    state.chainNow = nowS() - BigInt(CREATOR_FEE_OP_TTL_S - CREATOR_FEE_MIN_SIGNING_S) + 2n;
+    state.gasPriceDelayMs = 3_500;
+    const r = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
+    expect({ status: r.status, body: await r.json() }).toEqual({
+      status: 502,
+      body: { error: 'VALIDATE_FAILED', reason: 'signing_window_exhausted' },
+    });
+    expect({ net: state.dailyOps - state.refunds, rows: (await pg.query(`SELECT 1 FROM aa_pending_user_ops`)).rows.length }).toEqual({ net: 0, rows: 0 });
+    // The abandoned build finishes its slow RPC later; it must still not ask Pimlico to sponsor the dead op.
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(state.sponsorships).toBe(0);
+    expect((await pg.query(`SELECT 1 FROM aa_pending_user_ops`)).rows).toHaveLength(0);
+  }, 15_000);
+
+  it('a Pimlico sponsorship slower than the remaining signing time: 502 at the deadline, refunded, no row', async () => {
+    state.chainNow = nowS() - BigInt(CREATOR_FEE_OP_TTL_S - CREATOR_FEE_MIN_SIGNING_S) + 2n;
+    state.sponsorDelayMs = 3_500;
+    const started = Date.now();
+    const r = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
+    expect(r.status).toBe(502);
+    expect(Date.now() - started).toBeLessThan(3_500); // answered at the deadline, not after the slow call
+    expect({ net: state.dailyOps - state.refunds, sponsorships: state.sponsorships }).toEqual({ net: 0, sponsorships: 1 });
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect((await pg.query(`SELECT 1 FROM aa_pending_user_ops`)).rows).toHaveLength(0);
+  }, 15_000);
+
+  it('a normal claim is untouched by the deadline: fast build, 200, nothing refunded', async () => {
+    state.chainNow = nowS();
+    const r = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
+    expect(r.status).toBe(200);
+    expect({ dailyOps: state.dailyOps, refunds: state.refunds, sponsorships: state.sponsorships }).toEqual({ dailyOps: 1, refunds: 0, sponsorships: 1 });
   });
 
   it('send refuses a signature over the default max window for a finite-window row (no window substitution)', async () => {
