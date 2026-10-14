@@ -14,7 +14,9 @@ import { MONAD_TESTNET_ID } from '../chain';
 import { MAKO_ADDRESS } from '../contract';
 import { USDC_ADDRESS } from '../usdc';
 
-const CHAIN_NOW = 1_800_000_000n;
+// The chain head read in step 6b: the real current second, since the route refuses a head stamped well ahead of its
+// clock (chain_head_invalid) or too far behind it (chain_head_stale).
+const CHAIN_NOW = BigInt(Math.floor(Date.now() / 1000));
 const SAFE: Address = '0x000000000000000000000000000000000000bEEF';
 const MAGIC_EOA: Address = '0x2222222222222222222222222222222222222222';
 

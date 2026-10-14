@@ -16,7 +16,7 @@ import {
   assertRoundScheduleShape,
   assertRoundScheduler,
 } from '@/lib/rounds-call-allowlist';
-import { PENDING_TTL_MS } from '@/lib/aa-constants';
+import { PENDING_TTL_MS, VALIDITY_WINDOW_MAX_UINT48 } from '@/lib/aa-constants';
 import { isSupportedAaChainId } from '@/lib/aa-config';
 import { isPmEnabled } from '@/lib/pm-enabled';
 import {
@@ -144,12 +144,17 @@ function creatorFeeSignableUntilMs(validUntil: bigint): number {
   return Number(validUntil - BigInt(CREATOR_FEE_MIN_SIGNING_S)) * 1000;
 }
 
+/// setTimeout's largest delay; a longer one fires at once (step 6b already refuses heads far enough ahead to need it).
+const MAX_TIMER_MS = 2 ** 31 - 1;
+/// How far ahead of the server clock a chain head may be stamped before step 6b treats the read as faulty.
+const CREATOR_FEE_MAX_HEAD_AHEAD_S = 60;
+
 /// Resolves with the build, or rejects with SigningWindowExhaustedError once `deadlineMs` passes first. The build
 /// itself is not cancelled (its RPCs take no signal), but it checks the same deadline before requesting a sponsorship.
 async function withinSigningDeadline<T>(building: Promise<T>, deadlineMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new SigningWindowExhaustedError('route deadline')), Math.max(0, deadlineMs - Date.now()));
+    timer = setTimeout(() => reject(new SigningWindowExhaustedError('route deadline')), Math.min(MAX_TIMER_MS, Math.max(0, deadlineMs - Date.now())));
   });
   try {
     return await Promise.race([building, late]);
@@ -1034,7 +1039,11 @@ export async function POST(req: Request) {
     if (
       preExisting.userId === session.userId &&
       preExisting.status === 'pending' &&
-      preExisting.userOp.callData.toLowerCase() !== expectedCallData.toLowerCase()
+      (preExisting.userOp.callData.toLowerCase() !== expectedCallData.toLowerCase() ||
+        // A finite-window (creator-fee) op with under CREATOR_FEE_MIN_SIGNING_S left to sign is replaced rather than
+        // handed back, like a fresh build past its deadline would be (adversary on 5233406).
+        (preExisting.validUntil < VALIDITY_WINDOW_MAX_UINT48 &&
+          Date.now() > creatorFeeSignableUntilMs(preExisting.validUntil)))
     ) {
       supersede = preExisting;
     } else {
@@ -1078,6 +1087,11 @@ export async function POST(req: Request) {
     if (claimedOnChain) return Response.json({ error: 'NOT_ALLOWED', reason: 'creator_fee_already_sent' }, { status: 403 });
     // A chain head so far behind that the op would leave under CREATOR_FEE_MIN_SIGNING_S to sign is a stale read:
     // refuse before the daily count and the sponsorship are spent on an op that cannot land.
+    // A head stamped well in the future is a faulty read too (and would put the signing deadline beyond any timer).
+    if (Number(creatorFeeValidUntil!) * 1000 - Date.now() > (CREATOR_FEE_OP_TTL_S + CREATOR_FEE_MAX_HEAD_AHEAD_S) * 1000) {
+      console.error('[aa.sponsor.creator_fee_chain_head_ahead]', { validUntil: creatorFeeValidUntil!.toString() });
+      return Response.json({ error: 'VALIDATE_FAILED', reason: 'chain_head_invalid' }, { status: 502 });
+    }
     if (Date.now() > creatorFeeSignableUntilMs(creatorFeeValidUntil!)) {
       console.error('[aa.sponsor.creator_fee_chain_head_stale]', { validUntil: creatorFeeValidUntil!.toString() });
       return Response.json({ error: 'VALIDATE_FAILED', reason: 'chain_head_stale' }, { status: 502 });
@@ -1192,6 +1206,20 @@ export async function POST(req: Request) {
       expectedCallData,
     });
     return Response.json(result.body, { status: result.status });
+  }
+
+  // Step 9b: the writes above have no deadline of their own (a cold database can take seconds). A creator-fee op that
+  // no longer leaves CREATOR_FEE_MIN_SIGNING_S to sign is retired and refunded instead of handed back (adversary on
+  // 5233406). If another tab already began sending it (it could have recovered it), the retire misses and that send
+  // owns the op: no refund, and this request answers IN_FLIGHT.
+  if (signableUntilMs !== undefined && Date.now() > signableUntilMs) {
+    const retired = await transitionPendingToExpired({ rowId: inserted.id, sessionUserId: session.userId });
+    console.error('[aa.sponsor.creator_fee_signing_window_exhausted]', { stage: 'stored', retired });
+    if (retired === 'already_claimed') {
+      return Response.json({ error: 'IN_FLIGHT', message: 'the claim is already being sent' }, { status: 409 });
+    }
+    await decrementForRefund({ userId: session.userId, chainId });
+    return Response.json({ error: 'VALIDATE_FAILED', reason: 'signing_window_exhausted' }, { status: 502 });
   }
 
   // Step 10: success — return the freshly-built signing payload.
