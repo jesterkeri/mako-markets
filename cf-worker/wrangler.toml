@@ -29,6 +29,14 @@ FORCE_REFUND_TWO_SIDED = "0"
 # "coingecko" = the pre-2026-10-13 behaviour. Secrets via mako-design/scripts/resolver-ds-secrets.sh.
 CRYPTO_PRICE_SOURCE = "datastreams"
 
+# Forex / metals / stocks price source (src/rwa-datastreams.ts). "datastreams" = these pools settle only on the verified
+# Chainlink Data Streams v8 report for their exact close second (open market: its mid price; closed: the last traded
+# price it carries; unknown status: wait); no Pyth call, no fallback; every settlement logs an rwa.ds.evidence record.
+# No such pool is open today (creation has been paused since 2026-10-08), so this changes nothing until the app reopens
+# creation; the first pools created afterwards are the canary. "datastreams-shadow" = log only; "pyth" = before.
+# Same secrets as crypto. Deploying this needs Joshua's go.
+RWA_PRICE_SOURCE = "datastreams"
+
 # Cron: every minute. CF cron is reliable to the minute (unlike GitHub
 # Actions cron which drifts to 1-2 hours under load). Markets with
 # closeTime ≥ 60s will resolve within ~1 tick of close. Each tick also

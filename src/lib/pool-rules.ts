@@ -1,11 +1,14 @@
-// What the pool page (9a) says about how a pool resolves and where it is in its life. Every line mirrors the
-// resolver (cf-worker/src/index.ts: parse*OracleRef, derive*Outcome) and the Pools contract (forceRefund after
-// RESOLUTION_GRACE), so the page never promises a rule the settlement does not follow.
+// What the pool page (9a) says about how a pool resolves and where it is in its life. Every line mirrors the live
+// resolver and the Pools contract (forceRefund after RESOLUTION_GRACE), so the page never promises a rule the
+// settlement does not follow. Price pools mirror the Chainlink Data Streams parsers the resolver runs live:
+// crypto cf-worker/src/price-decision.ts (feedFor(parseCryptoRef)), forex/metals/stocks cf-worker/src/rwa-decision.ts
+// (rwaFeedFor(parseRwaRef)); src/lib/__tests__/pool-ref-resolver-parity.test.ts runs both on the same refs.
 
 import { hexToString } from 'viem';
 
 import { MarketType, type MarketWithId } from './contract';
 import { CRYPTO_SYMBOLS } from './crypto-assets';
+import { PAUSED_PRICE_FEED_SYMBOLS } from './market-availability';
 import { PRICE_FEED_BY_SYMBOL } from './price-feed-assets';
 import { formatCountdown } from './countdown';
 import type { PoolState } from './pool-list';
@@ -17,8 +20,12 @@ type PriceRef = { kind: 'price'; symbol: string; op: 'gt' | 'lt'; strike: string
 type SportRef = { kind: 'football' | 'basketball'; type: 'home_win' | 'away_win' | 'draw' | 'over' | 'under'; param: string };
 export type OracleRef = PriceRef | SportRef;
 
-/// The forex/commodities/stocks strike grammar (cf-worker parsePriceFeedOracleRef).
-const FEED_STRIKE = /^\+?(\d+\.\d+|\d+|\.\d+)$/;
+/// The forex/commodities/stocks strike grammar of the live resolver (cf-worker/src/rwa-decision.ts parseRwaRef): at
+/// most 18 decimal places, since it parses the strike exactly at 10^18 (Codex DS_RWA R1).
+const FEED_STRIKE = /^\+?(\d+\.\d{1,18}|\d+|\.\d{1,18})$/;
+/// The whole crypto ref as the live resolver reads it (cf-worker/src/price-decision.ts parseCryptoRef): the raw text
+/// before the NUL padding, no whitespace anywhere, a plain decimal strike with at most 18 places.
+const CRYPTO_REF = /^([A-Z0-9]{2,10}):(gt|lt):(\d{1,30}(?:\.\d{1,18})?)$/;
 const FEED_CLASS: Partial<Record<number, 'forex' | 'commodities' | 'stocks'>> = {
   [MarketType.FOREX]: 'forex',
   [MarketType.COMMODITIES]: 'commodities',
@@ -31,28 +38,32 @@ const FEED_CLASS: Partial<Record<number, 'forex' | 'commodities' | 'stocks'>> = 
 /// contract stores any reference a direct `createMarket` call passes, so a null here is a pool the resolver will
 /// never settle by price or result (Codex S3 r1).
 export function parseOracleRef(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): OracleRef | null {
-  let text: string;
+  let raw: string;
   try {
-    text = hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '').trim();
+    raw = hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '');
   } catch {
     return null;
   }
+  if (m.mType === MarketType.CRYPTO) {
+    // The live crypto resolver reads the untrimmed text strictly: a space, '+', '.5' or '1e3' never settles.
+    const cm = CRYPTO_REF.exec(raw);
+    if (!cm || !(CRYPTO_SYMBOLS as readonly string[]).includes(cm[1])) return null;
+    if (!/[1-9]/.test(cm[3])) return null; // a zero strike
+    return { kind: 'price', symbol: cm[1], op: cm[2] as 'gt' | 'lt', strike: cm[3] };
+  }
+  const text = raw.trim();
   const parts = text.split(':').map((p) => p.trim());
   if (parts.length !== 3) return null;
   const [a, b, c] = parts;
-  if (m.mType === MarketType.CRYPTO) {
-    // Symbols are case-sensitive in the resolver; the strike is anything Number() reads as finite and positive.
-    if (!(CRYPTO_SYMBOLS as readonly string[]).includes(a) || (b !== 'gt' && b !== 'lt')) return null;
-    const n = Number(c);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return { kind: 'price', symbol: a, op: b, strike: FEED_STRIKE.test(c) ? c.replace(/^\+/, '') : String(n) };
-  }
   const feedClass = FEED_CLASS[m.mType];
   if (feedClass) {
     if ((b !== 'gt' && b !== 'lt') || !FEED_STRIKE.test(c)) return null;
     const n = Number(c);
     if (!Number.isFinite(n) || n <= 0) return null;
     if (PRICE_FEED_BY_SYMBOL.get(a)?.class !== feedClass) return null;
+    // A symbol with no usable Data Streams feed is never settled (market-availability.ts; mirror-tested against
+    // cf-worker/src/rwa-feeds.json), however the pool was created (Codex DS_RWA R1).
+    if (PAUSED_PRICE_FEED_SYMBOLS.has(a)) return null;
     return { kind: 'price', symbol: a, op: b, strike: c.replace(/^\+/, '') };
   }
   const n = Number(c);
@@ -100,9 +111,9 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
     const s = `${unit(m)}${ref.strike}`;
     lines.push(
       ref.op === 'gt'
-        ? { k: 'YES', v: `${ref.symbol} is above ${s} at the first price check after ${close}.` }
-        : { k: 'YES', v: `${ref.symbol} is below ${s} at the first price check after ${close}.` },
-      ref.op === 'gt' ? { k: 'NO', v: `${ref.symbol} is at ${s} or below at that check.` } : { k: 'NO', v: `${ref.symbol} is at ${s} or above at that check.` },
+        ? { k: 'YES', v: `${ref.symbol} is above ${s} at ${close}, the close.` }
+        : { k: 'YES', v: `${ref.symbol} is below ${s} at ${close}, the close.` },
+      ref.op === 'gt' ? { k: 'NO', v: `${ref.symbol} is at ${s} or below at the close.` } : { k: 'NO', v: `${ref.symbol} is at ${s} or above at the close.` },
     );
   } else {
     const what = ref.kind === 'football' ? 'goals' : 'points';
@@ -146,8 +157,8 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
           : !ref
             ? 'None the resolver can read.'
             : m.mType === MarketType.CRYPTO
-            ? 'The CoinGecko spot price in USD, checked every minute.'
-            : 'The latest Pyth price, checked every minute. A price Pyth marks as uncertain is skipped.';
+            ? 'The Chainlink Data Streams price for the close second, verified on chain.'
+            : 'The Chainlink Data Streams price for the close second, verified on chain. If the market is closed then, its last traded price.';
   lines.push({ k: 'SOURCE', v: source });
   return lines;
 }

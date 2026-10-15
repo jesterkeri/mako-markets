@@ -205,29 +205,30 @@ describe('assertCreateMarketCall', () => {
     }
   });
 
-  it('refuses FOREX / COMMODITIES / STOCKS (mType 3/4/5) as paused: no price source can settle them today (2026-10-08)', async () => {
-    for (const mType of [3, 4, 5]) {
-      let reason: string | undefined;
+  it('FOREX / COMMODITIES / STOCKS (mType 3/4/5) are open again (Data Streams v8, 2026-10-15), except the 9 symbols with no usable feed', async () => {
+    const tryCreate = async (mType: number, oracleRef: Hex) => {
       try {
         await assertCreateMarketCall({
           chainId: MONAD_TESTNET_ID,
           safeAddress: SAFE,
-          call: {
-            to: MAKO_ADDRESS,
-            value: 0n,
-            // A symbol the #180 gate would accept: the pause, not the symbol, refuses it.
-            data: encodeCreateMarket({ mType, oracleRef: oracleRefForMType(mType), bettingCloseTime: NOW_SEC + 1800n, closeTime: NOW_SEC + 3600n, question: 'q' }),
-          },
+          call: { to: MAKO_ADDRESS, value: 0n, data: encodeCreateMarket({ mType, oracleRef, bettingCloseTime: NOW_SEC + 1800n, closeTime: NOW_SEC + 3600n, question: 'q' }) },
           nowSec: NOW_SEC,
           readBlocked: async () => false,
           readCreatorCreatesToday: async () => ({ count: 0n, remaining: 10n }),
         });
+        return 'ok';
       } catch (e) {
-        reason = (e as NotAllowedError).reason;
+        return (e as NotAllowedError).reason;
       }
-      expect(reason, `mType ${mType}`).toBe('bad_create_mtype_paused');
-    }
+    };
+    for (const mType of [3, 4, 5]) expect(await tryCreate(mType, oracleRefForMType(mType)), `mType ${mType}`).toBe('ok');
+    expect(await tryCreate(3, stringToHex('EURGBP:gt:0.85', { size: 32 }))).toBe('bad_create_symbol_paused');
+    expect(await tryCreate(5, stringToHex('DIS:gt:100', { size: 32 }))).toBe('bad_create_symbol_paused');
+    // A strike the resolver could not read exactly (more than 18 decimals) is refused at create.
+    expect(await tryCreate(3, stringToHex('EURUSD:gt:1.1234567890123456789', { size: 32 }))).toBe('bad_create_oracleref_format');
+    expect(await tryCreate(3, stringToHex('EURUSD:gt:1.123456789012345678', { size: 32 }))).toBe('ok');
   });
+
 
   it('rejects mType = 7 (out of range) with bad_create_mtype_out_of_range', async () => {
     // mType=3..6 are now valid (FOREX/COMMODITIES/STOCKS/MAKO). mType=7+ is

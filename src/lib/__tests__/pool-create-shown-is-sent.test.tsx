@@ -105,17 +105,18 @@ describe('rule 3: the first bet the confirm sheet shows is the one sent', () => 
   });
 });
 
-describe('paused categories (market-availability.ts, 2026-10-08)', () => {
-  it('Forex, Commodities and Stocks show as Coming soon and cannot be chosen; the rest can', () => {
+describe('price categories (market-availability.ts, reopened 2026-10-15)', () => {
+  it('every category can be chosen; the 9 symbols with no usable price feed are not offered', () => {
     render(<CreatePoolClient />);
-    for (const name of ['Forex', 'Commodities', 'Stocks']) {
-      const b = screen.getAllByRole('button', { name: `${name} · Coming soon` })[0] as HTMLButtonElement;
-      expect(b.disabled, name).toBe(true);
-      fireEvent.click(b);
-      expect(b.getAttribute('aria-pressed'), name).toBe('false');
-    }
-    for (const name of ['Crypto', 'Football', 'NBA']) {
+    for (const name of ['Crypto', 'Football', 'NBA', 'Forex', 'Commodities', 'Stocks']) {
       expect((screen.getAllByRole('button', { name })[0] as HTMLButtonElement).disabled, name).toBe(false);
     }
+    expect(screen.queryAllByRole('button', { name: /Coming soon/ })).toHaveLength(0);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Forex' })[0]);
+    expect(screen.queryAllByRole('button', { name: 'EURUSD' }).length).toBeGreaterThan(0);
+    for (const s of ['EURGBP', 'EURJPY', 'GBPJPY']) expect(screen.queryAllByRole('button', { name: s }), s).toHaveLength(0);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Stocks' })[0]);
+    expect(screen.queryAllByRole('button', { name: 'AAPL' }).length).toBeGreaterThan(0);
+    for (const s of ['AMD', 'DIS', 'KO', 'PEP', 'BA', 'GS']) expect(screen.queryAllByRole('button', { name: s }), s).toHaveLength(0);
   });
 });

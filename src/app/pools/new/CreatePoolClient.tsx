@@ -8,7 +8,7 @@ import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
 import { MarketType, type MarketWithId } from '@/lib/contract';
-import { PAUSED_CREATE_MTYPES } from '@/lib/market-availability';
+import { PAUSED_CREATE_MTYPES, PAUSED_PRICE_FEED_SYMBOLS } from '@/lib/market-availability';
 import { CRYPTO_ASSETS, formatStrikeForDisplay, roundStrike } from '@/lib/crypto-assets';
 import { useCreatorCreatesToday, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { MAX_DURATION_SEC, sportsTimestamps } from '@/lib/market-timing';
@@ -65,7 +65,12 @@ const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', f
 const label: React.CSSProperties = { ...mono, fontSize: 11, color: 'var(--dim)', letterSpacing: '0.04em' };
 
 function assetsFor(kind: PriceKind): { symbol: string; label: string }[] {
-  return kind === 'crypto' ? CRYPTO_ASSETS.map((a) => ({ symbol: a.symbol, label: a.label })) : getAssetsByClass(kind).map((a) => ({ symbol: a.symbol, label: a.label }));
+  // A symbol with no usable price feed is not offered: its pool could never be settled (market-availability.ts).
+  return kind === 'crypto'
+    ? CRYPTO_ASSETS.map((a) => ({ symbol: a.symbol, label: a.label }))
+    : getAssetsByClass(kind)
+        .filter((a) => !PAUSED_PRICE_FEED_SYMBOLS.has(a.symbol))
+        .map((a) => ({ symbol: a.symbol, label: a.label }));
 }
 
 /// A match time with its date: fixtures run up to weeks out, so a weekday alone is ambiguous.
