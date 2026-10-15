@@ -320,9 +320,10 @@ type ViewProps = {
 // Pieces
 
 function Pill({ on, onClick, children, tone, tourPoint, disabled }: { on: boolean; onClick: () => void; children: React.ReactNode; tone?: 'yes' | 'no'; tourPoint?: string; disabled?: boolean }) {
-  const bg = on ? (tone === 'no' ? 'var(--mako-red)' : tone === 'yes' ? 'var(--mako-signal)' : 'var(--mako-signal)') : 'var(--raise)';
+  const bg = on ? (tone === 'no' ? 'var(--mako-no)' : tone === 'yes' ? 'var(--mako-yes)' : 'var(--mako-signal)') : 'var(--raise)';
+  const fg = tone ? 'var(--mako-on-side)' : '#000';
   return (
-    <button type="button" onClick={onClick} disabled={disabled} aria-pressed={on} data-tour-point={tourPoint} className={disabled ? undefined : 'mk-press96'} style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: bg, color: disabled ? 'var(--dim)' : on ? '#000' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', cursor: disabled ? 'not-allowed' : undefined, ...mono, fontSize: 12, fontWeight: 700 }}>
+    <button type="button" onClick={onClick} disabled={disabled} aria-pressed={on} data-tour-point={tourPoint} className={disabled ? undefined : 'mk-press96'} style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: bg, color: disabled ? 'var(--dim)' : on ? fg : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', cursor: disabled ? 'not-allowed' : undefined, ...mono, fontSize: 12, fontWeight: 700 }}>
       {children}
     </button>
   );
@@ -528,8 +529,8 @@ function YesNo({ market }: { market: MarketWithId }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 18 }}>
       {[
-        ['YES MEANS', yes, 'var(--up-text)'],
-        ['NO MEANS', no, 'var(--mako-red)'],
+        ['YES MEANS', yes, 'var(--yes-text)'],
+        ['NO MEANS', no, 'var(--no-text)'],
       ].map(([k, text, c]) => (
         <div key={k}>
           <div style={{ ...mono, fontSize: 11, fontWeight: 700, color: c }}>{k}</div>
@@ -689,11 +690,11 @@ function Preview({ market }: { market: MarketWithId | null }) {
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', ...mono, fontSize: 12, fontWeight: 700, marginTop: 14 }}>
-          <span style={{ color: 'var(--up-text)' }}>YES {yesPct}%</span>
-          <span style={{ color: 'var(--mako-red)' }}>{market ? 100 - yesPct : 0}% NO</span>
+          <span style={{ color: 'var(--yes-text)' }}>YES {yesPct}%</span>
+          <span style={{ color: 'var(--no-text)' }}>{market ? 100 - yesPct : 0}% NO</span>
         </div>
-        <div style={{ display: 'flex', height: 4, borderRadius: 9999, overflow: 'hidden', background: market ? 'var(--mako-red)' : 'var(--line)', marginTop: 7 }}>
-          <div style={{ width: `${yesPct}%`, background: 'var(--mako-signal)' }} />
+        <div style={{ display: 'flex', height: 4, borderRadius: 9999, overflow: 'hidden', background: market ? 'var(--mako-no)' : 'var(--line)', marginTop: 7 }}>
+          <div style={{ width: `${yesPct}%`, background: 'var(--mako-yes)' }} />
         </div>
         <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', marginTop: 12, textAlign: 'center' }}>Payouts show once both sides have bets.</div>
       </div>

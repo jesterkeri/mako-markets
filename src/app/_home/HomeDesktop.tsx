@@ -160,7 +160,7 @@ function PoolRowDesk({ row: r, labels }: { row: PoolRow; labels: SideLabels }) {
         href={`${poolHref(r.id)}?side=${q}`}
         aria-label={figure ? `${label}, pays ${figure} per 1 USDC` : `${label}, no stake on this side yet`}
         className="mk-press96 mk-over"
-        style={{ minWidth: 0, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '0 10px', borderRadius: 9999, background: bg, color: '#000', boxShadow: 'var(--edge)', ...mono, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textDecoration: 'none' }}
+        style={{ minWidth: 0, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '0 10px', borderRadius: 9999, background: bg, color: 'var(--mako-on-side)', boxShadow: 'var(--edge)', ...mono, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', textDecoration: 'none' }}
       >
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
         <span style={{ flex: 'none' }}>{figure || 'No bets'}</span>
@@ -182,8 +182,8 @@ function PoolRowDesk({ row: r, labels }: { row: PoolRow; labels: SideLabels }) {
           </div>
         </div>
       </div>
-      {side(labels.yes, r.yesPays, 'var(--mako-signal)', 'yes')}
-      {side(labels.no, r.noPays, 'var(--mako-red)', 'no')}
+      {side(labels.yes, r.yesPays, 'var(--mako-yes)', 'yes')}
+      {side(labels.no, r.noPays, 'var(--mako-no)', 'no')}
       <span style={{ textAlign: 'right', ...mono, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>{usdc2(r.pool)} USDC</span>
       <span style={{ textAlign: 'right', ...mono, fontSize: 13, color: 'var(--mako-red)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{r.closes}</span>
     </div>

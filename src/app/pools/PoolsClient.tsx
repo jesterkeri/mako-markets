@@ -218,9 +218,9 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
   const cat = CAT_STYLE[r.cat];
   const open = r.state === 'open';
   const pos = r.position;
-  const posFg = !open ? 'var(--dim)' : pos?.kind === 'staked' && pos.no > 0n && pos.yes === 0n ? 'var(--mako-red)' : pos?.kind === 'staked' && pos.yes > 0n && pos.no > 0n ? 'var(--mako-canvas-fg)' : 'var(--up-text)';
+  const posFg = !open ? 'var(--dim)' : pos?.kind === 'staked' && pos.no > 0n && pos.yes === 0n ? 'var(--no-text)' : pos?.kind === 'staked' && pos.yes > 0n && pos.no > 0n ? 'var(--mako-canvas-fg)' : pos?.kind === 'staked' && pos.yes > 0n ? 'var(--yes-text)' : 'var(--up-text)';
   const claim = claimable(pos);
-  const sideBtn: React.CSSProperties = { flex: 1, minWidth: 0, height: 40, borderRadius: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, ...mono, fontSize: 13, fontWeight: 700, color: '#000', boxShadow: 'var(--edge)', textDecoration: 'none' };
+  const sideBtn: React.CSSProperties = { flex: 1, minWidth: 0, height: 40, borderRadius: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, ...mono, fontSize: 13, fontWeight: 700, color: 'var(--mako-on-side)', boxShadow: 'var(--edge)', textDecoration: 'none' };
   return (
     <div className="mk-row" style={{ display: 'grid', gridTemplateColumns: COLS, gap: 20, alignItems: 'center', padding: '16px 4px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
       <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -245,30 +245,30 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, ...mono, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
-          <span style={{ color: 'var(--up-text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span style={{ color: 'var(--yes-text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {labels.yes} {r.yesPct}%
           </span>
-          <span style={{ color: 'var(--mako-red)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span style={{ color: 'var(--no-text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {r.noPct}% {labels.no}
           </span>
         </div>
-        <div style={{ display: 'flex', height: 4, borderRadius: 9999, overflow: 'hidden', background: 'var(--mako-red)', marginTop: 7 }}>
-          <div style={{ width: `${r.yesPct}%`, background: 'var(--mako-signal)' }} />
+        <div style={{ display: 'flex', height: 4, borderRadius: 9999, overflow: 'hidden', background: 'var(--mako-no)', marginTop: 7 }}>
+          <div style={{ width: `${r.yesPct}%`, background: 'var(--mako-yes)' }} />
         </div>
       </div>
       <div className="mk-over" style={{ display: 'flex', gap: 6 }}>
         {open ? (
           <>
-            <Link href={`${poolHref(r.id)}?side=yes`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-signal)' }}>
+            <Link href={`${poolHref(r.id)}?side=yes`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-yes)' }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.yes}</span> <span style={{ fontWeight: 500 }}>{formatPays(r.yesPays)}</span>
             </Link>
-            <Link href={`${poolHref(r.id)}?side=no`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-red)' }}>
+            <Link href={`${poolHref(r.id)}?side=no`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-no)' }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.no}</span> <span style={{ fontWeight: 500 }}>{formatPays(r.noPays)}</span>
             </Link>
           </>
         ) : (
           <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ flex: 'none', height: 24, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, background: STATE_PILL[r.state as ClosedState].bg, color: '#000', boxShadow: 'var(--edge)', fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+            <span style={{ flex: 'none', height: 24, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, background: STATE_PILL[r.state as ClosedState].bg, color: STATE_PILL[r.state as ClosedState].fg, boxShadow: 'var(--edge)', fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
               {STATE_PILL[r.state as ClosedState].label}
             </span>
             {claim !== null && (

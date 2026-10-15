@@ -430,7 +430,7 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ ...chip, background: side.bg, color: side.fg }}>{side.text}</span>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>Pool</span>
-        <span style={{ ...chip, marginLeft: 'auto', background: pill.bg }}>{pill.label}</span>
+        <span style={{ ...chip, marginLeft: 'auto', background: pill.bg, color: pill.fg }}>{pill.label}</span>
       </div>
       <div style={{ ...display, fontSize: 18, lineHeight: 1.22, marginTop: 10 }}>{p.market.question}</div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 10, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>

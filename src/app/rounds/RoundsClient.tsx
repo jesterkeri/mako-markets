@@ -169,8 +169,8 @@ function RoundRow({ round: r, phase, now, narrow }: { round: Round; phase: Round
       <div style={{ display: 'flex', height: 10, borderRadius: 9999, overflow: 'hidden', marginTop: 12, background: 'var(--raise2)' }}>
         {total > 0n && (
           <>
-            <div style={{ width: `${upPct}%`, background: 'var(--mako-signal)' }} />
-            <div style={{ flex: 1, background: 'var(--mako-red)' }} />
+            <div style={{ width: `${upPct}%`, background: 'var(--mako-yes)' }} />
+            <div style={{ flex: 1, background: 'var(--mako-no)' }} />
           </>
         )}
       </div>

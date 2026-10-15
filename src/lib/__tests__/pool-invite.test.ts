@@ -144,27 +144,28 @@ describe('the card', () => {
     const m = pool();
     const card = poolInviteCard(m, NOW, LABELS);
     expect(card.open).toBe(true);
-    expect(card.pill).toEqual({ label: 'OPEN', colour: 'var(--mako-signal)' });
+    expect(card.pill).toEqual({ label: 'OPEN', colour: 'var(--mako-signal)', fg: '#000' });
     expect(card.clock).toEqual({ label: 'Closes in', value: '6H 11M' });
     expect(card.scanTitle).toBe('Scan to join');
     expect(card.minLine).toBe('Min 0.10 USDC · gas-free with email');
     expect(card.cat).toBe('CRYPTO');
   });
 
-  const closed: [string, Partial<MarketWithId>, string, string][] = [
-    ['betting closed', { bettingCloseTime: BigInt(NOW - 60), closeTime: BigInt(NOW + 3_600) }, 'BETTING CLOSED', 'var(--mako-gold)'],
-    ['resolving', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60) }, 'RESOLVING', 'var(--mako-violet)'],
-    ['YES won', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60), resolved: true, outcome: Outcome.YES }, 'YES WON', 'var(--mako-teal)'],
-    ['NO won', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60), resolved: true, outcome: Outcome.NO }, 'NO WON', 'var(--mako-red)'],
-    ['refunded', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60), resolved: true, outcome: Outcome.REFUND }, 'REFUNDED', 'var(--mako-cyan)'],
+  // A settled pool takes its winning side's colour with paper text (Joshua, 2026-10-15); the rest keep black text.
+  const closed: [string, Partial<MarketWithId>, string, string, string][] = [
+    ['betting closed', { bettingCloseTime: BigInt(NOW - 60), closeTime: BigInt(NOW + 3_600) }, 'BETTING CLOSED', 'var(--mako-gold)', '#000'],
+    ['resolving', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60) }, 'RESOLVING', 'var(--mako-violet)', '#000'],
+    ['YES won', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60), resolved: true, outcome: Outcome.YES }, 'YES WON', 'var(--mako-yes)', 'var(--mako-on-side)'],
+    ['NO won', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60), resolved: true, outcome: Outcome.NO }, 'NO WON', 'var(--mako-no)', 'var(--mako-on-side)'],
+    ['refunded', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60), resolved: true, outcome: Outcome.REFUND }, 'REFUNDED', 'var(--mako-cyan)', '#000'],
   ];
 
-  it.each(closed)('once %s, shows the state and no call to bet', (_, over, label, colour) => {
+  it.each(closed)('once %s, shows the state and no call to bet', (_, over, label, colour, fg) => {
     const m = pool(over);
     const card = poolInviteCard(m, NOW, LABELS);
     const clock = poolClock(m, card.state, NOW);
     expect(card.open).toBe(false);
-    expect(card.pill).toEqual({ label, colour });
+    expect(card.pill).toEqual({ label, colour, fg });
     expect(card.sub).toBe(clock.sub);
     expect(card.sub).not.toMatch(/^Bet /);
     expect(card.clock).toEqual({ label: clock.label, value: clock.value });

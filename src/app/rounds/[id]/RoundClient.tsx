@@ -202,7 +202,8 @@ function enterSpec(r: Round, side: RoundSide, amount: bigint, estimate: bigint |
   const amt = usdcExact(amount);
   return {
     glyph: side === 'up' ? '↑' : '↓',
-    glyphColor: side === 'up' ? 'var(--mako-signal)' : 'var(--mako-red)',
+    glyphColor: side === 'up' ? 'var(--mako-yes)' : 'var(--mako-no)',
+    glyphFg: 'var(--mako-on-side)',
     title: `${sideName(side)} · ${amt} USDC`,
     confirmLabel: `Confirm · ${amt} USDC`,
     pendingTitle: 'Placing your prediction',
@@ -359,7 +360,7 @@ function Pots({ round: r, phase }: View) {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: s === 'up' ? 'flex-start' : 'flex-end', gap: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexDirection: s === 'up' ? 'row' : 'row-reverse' }}>
           <span style={{ ...display, fontSize: 22 }}>{s === 'up' ? '↑ UP' : 'DOWN ↓'}</span>
-          {won && <span style={{ ...mono, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 9999, background: s === 'up' ? 'var(--mako-signal)' : 'var(--mako-red)', color: '#000', boxShadow: 'var(--edge)' }}>WON</span>}
+          {won && <span style={{ ...mono, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 9999, background: s === 'up' ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', boxShadow: 'var(--edge)' }}>WON</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexDirection: s === 'up' ? 'row' : 'row-reverse' }}>
           {x === null ? (
@@ -383,8 +384,8 @@ function Pots({ round: r, phase }: View) {
       <div style={{ display: 'flex', height: 30, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)', background: 'var(--raise2)' }}>
         {total > 0n && (
           <>
-            <div style={{ width: `${upPct}%`, background: 'var(--mako-signal)', color: '#000', display: 'flex', alignItems: 'center', padding: '0 12px', ...mono, fontSize: 12, fontWeight: 700, minWidth: 52, transition: 'width 700ms cubic-bezier(0.23,1,0.32,1)' }}>{upPct}%</div>
-            <div style={{ flex: 1, background: 'var(--mako-red)', borderLeft: '1.5px solid var(--edge-c)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 12px', ...mono, fontSize: 12, fontWeight: 700, minWidth: 52 }}>{100 - upPct}%</div>
+            <div style={{ width: `${upPct}%`, background: 'var(--mako-yes)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', padding: '0 12px', ...mono, fontSize: 12, fontWeight: 700, minWidth: 52, transition: 'width 700ms cubic-bezier(0.23,1,0.32,1)' }}>{upPct}%</div>
+            <div style={{ flex: 1, background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 12px', ...mono, fontSize: 12, fontWeight: 700, minWidth: 52 }}>{100 - upPct}%</div>
           </>
         )}
       </div>
@@ -459,7 +460,7 @@ function HowItWorks() {
 
 function SidePill({ side }: { side: RoundSide }) {
   return (
-    <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: side === 'up' ? 'var(--mako-signal)' : 'var(--mako-red)', color: '#000', boxShadow: 'var(--edge)', ...display, fontSize: 14, whiteSpace: 'nowrap' }}>
+    <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: side === 'up' ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', boxShadow: 'var(--edge)', ...display, fontSize: 14, whiteSpace: 'nowrap' }}>
       {sideName(side)}
     </span>
   );
@@ -532,7 +533,7 @@ function EnterForm(v: View) {
               disabled={disabled}
               aria-pressed={on}
               title={disabled ? 'One wallet, one side: you are already on the other side.' : undefined}
-              style={{ height: 44, borderRadius: 9999, background: on ? (s === 'up' ? 'var(--mako-signal)' : 'var(--mako-red)') : 'transparent', color: on ? '#000' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...display, fontSize: 16, opacity: disabled ? 0.4 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
+              style={{ height: 44, borderRadius: 9999, background: on ? (s === 'up' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'transparent', color: on ? 'var(--mako-on-side)' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...display, fontSize: 16, opacity: disabled ? 0.4 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
             >
               {s === 'up' ? '↑ UP' : '↓ DOWN'}
             </button>
@@ -580,7 +581,7 @@ function EnterForm(v: View) {
           onClick={openEnter}
           disabled={!ready}
           className="mk-press96"
-          style={{ ...button, background: ready ? (side === 'up' ? 'var(--mako-signal)' : 'var(--mako-red)') : 'var(--raise2)', color: ready ? '#000' : 'var(--dim)', boxShadow: ready ? 'var(--edge)' : 'none', cursor: ready ? 'pointer' : 'not-allowed' }}
+          style={{ ...button, background: ready ? (side === 'up' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'var(--raise2)', color: ready ? 'var(--mako-on-side)' : 'var(--dim)', boxShadow: ready ? 'var(--edge)' : 'none', cursor: ready ? 'pointer' : 'not-allowed' }}
         >
           {ready ? `${sideName(side)} · ${usdc2(amount!)} USDC` : "Can't place this prediction"}
         </button>

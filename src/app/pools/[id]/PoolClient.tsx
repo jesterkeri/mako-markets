@@ -17,7 +17,7 @@ import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/creator-earnings';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
-import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
+import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
@@ -240,7 +240,8 @@ function confirmSpec(
   const amt = usdcExact(amount ?? 0n);
   return {
     glyph: isYes ? 'Y' : 'N',
-    glyphColor: isYes ? 'var(--mako-signal)' : 'var(--mako-red)',
+    glyphColor: isYes ? 'var(--mako-yes)' : 'var(--mako-no)',
+    glyphFg: 'var(--mako-on-side)',
     title: `Bet ${name} · ${amt} USDC`,
     confirmLabel: `Confirm · ${amt} USDC`,
     pendingTitle: 'Placing your bet',
@@ -377,7 +378,7 @@ function PoolDesktop(v: ViewProps) {
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 32, padding: '10px 4px 22px' }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, background: STATE_COLOUR[row.state], color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+            <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, background: STATE_COLOUR[row.state], color: STATE_FG(row.state), boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
               {stateLabel(row.state)}
             </span>
             <span aria-hidden="true" style={{ flex: 'none', width: 26, height: 26, borderRadius: 9999, background: cat.bg, color: cat.fg, boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...mono, fontSize: 9, fontWeight: 700 }}>
@@ -425,7 +426,7 @@ function PoolDesktop(v: ViewProps) {
             <div style={{ marginTop: 8 }}>
               {poolRules(m).map((r) => (
                 <div key={r.k} style={{ display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: 16, padding: '11px 4px', boxShadow: 'inset 0 -1px 0 var(--line)', fontSize: 14, lineHeight: 1.45 }}>
-                  <span style={{ ...mono, fontSize: 12, fontWeight: 700, color: r.k === 'YES' ? 'var(--up-text)' : r.k === 'NO' || r.k === 'WARNING' ? 'var(--mako-red)' : 'var(--mako-canvas-fg)' }}>{r.k}</span>
+                  <span style={{ ...mono, fontSize: 12, fontWeight: 700, color: r.k === 'YES' ? 'var(--yes-text)' : r.k === 'NO' ? 'var(--no-text)' : r.k === 'WARNING' ? 'var(--mako-red)' : 'var(--mako-canvas-fg)' }}>{r.k}</span>
                   <span>{r.v}</span>
                 </div>
               ))}
@@ -510,14 +511,14 @@ function Odds({ market: m, row, labels }: ViewProps) {
     ) : (
       <span style={{ ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' }}>{s}</span>
     );
-  const won = (bg: string) => <span style={{ ...mono, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 9999, background: bg, color: '#000', boxShadow: 'var(--edge)' }}>WON</span>;
+  const won = (bg: string) => <span style={{ ...mono, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 9999, background: bg, color: 'var(--mako-on-side)', boxShadow: 'var(--edge)' }}>WON</span>;
   return (
     <div style={{ borderTop: '1px solid var(--line)', paddingTop: 16 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, padding: '0 4px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ ...display, fontSize: 22 }}>{labels.yes}</span>
-            {yesWon && won('var(--mako-teal)')}
+            {yesWon && won('var(--mako-yes)')}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             {big(perOne(row.yesPays))}
@@ -527,7 +528,7 @@ function Odds({ market: m, row, labels }: ViewProps) {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexDirection: 'row-reverse' }}>
             <span style={{ ...display, fontSize: 22 }}>{labels.no}</span>
-            {noWon && won('var(--mako-red)')}
+            {noWon && won('var(--mako-no)')}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexDirection: 'row-reverse' }}>
             {big(perOne(row.noPays))}
@@ -536,8 +537,8 @@ function Odds({ market: m, row, labels }: ViewProps) {
         </div>
       </div>
       <div style={{ display: 'flex', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)' }}>
-        <div style={{ width: `${row.yesPct}%`, transition: 'width 700ms cubic-bezier(0.23,1,0.32,1)', background: 'var(--mako-signal)', color: '#000', display: 'flex', alignItems: 'center', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.yesPct}%</div>
-        <div style={{ flex: 1, background: 'var(--mako-red)', borderLeft: '1.5px solid var(--edge-c)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.noPct}%</div>
+        <div style={{ width: `${row.yesPct}%`, transition: 'width 700ms cubic-bezier(0.23,1,0.32,1)', background: 'var(--mako-yes)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.yesPct}%</div>
+        <div style={{ flex: 1, background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.noPct}%</div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 4px 0', ...mono, fontSize: 13 }}>
         <span>
@@ -591,7 +592,7 @@ function estPayoutIf(m: MarketWithId, side: Side, stake: bigint): bigint {
 
 function SidePill({ side, labels, small }: { side: Side; labels: { yes: string; no: string }; small?: boolean }) {
   return (
-    <span style={{ height: small ? 22 : 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: side === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)', color: '#000', boxShadow: 'var(--edge)', ...display, fontSize: small ? 12 : 14, whiteSpace: 'nowrap' }}>
+    <span style={{ height: small ? 22 : 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', boxShadow: 'var(--edge)', ...display, fontSize: small ? 12 : 14, whiteSpace: 'nowrap' }}>
       {side === 'yes' ? labels.yes : labels.no}
     </span>
   );
@@ -716,7 +717,7 @@ function BetFormDesktop(v: ViewProps) {
           onClick={openBet}
           disabled={!ready}
           className="mk-press96"
-          style={{ ...button, background: ready ? (side === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)') : 'var(--raise2)', color: ready ? '#000' : 'var(--dim)', boxShadow: ready ? 'var(--edge)' : 'none', cursor: ready ? 'pointer' : 'not-allowed' }}
+          style={{ ...button, background: ready ? (side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'var(--raise2)', color: ready ? 'var(--mako-on-side)' : 'var(--dim)', boxShadow: ready ? 'var(--edge)' : 'none', cursor: ready ? 'pointer' : 'not-allowed' }}
         >
           {ready ? `Bet ${usdc2(amount!)} USDC on ${name}` : "Can't place this bet"}
         </button>
@@ -736,7 +737,7 @@ function SideToggle({ side, setSide, labels, height, fontSize, background = 'var
             key={s}
             onClick={() => setSide(s)}
             aria-pressed={on}
-            style={{ height, borderRadius: 9999, background: on ? (s === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)') : 'transparent', color: on ? '#000' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...display, fontSize, transition: 'background-color 200ms ease', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 8px' }}
+            style={{ height, borderRadius: 9999, background: on ? (s === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'transparent', color: on ? 'var(--mako-on-side)' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...display, fontSize, transition: 'background-color 200ms ease', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 8px' }}
           >
             {s === 'yes' ? labels.yes : labels.no}
           </button>
@@ -810,7 +811,7 @@ function PoolMobile(v: ViewProps) {
       <div style={{ padding: `4px 12px calc(${panelRoom}px + env(safe-area-inset-bottom))` }}>
         <div style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: STATE_COLOUR[row.state], color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{stateLabel(row.state)}</span>
+            <span style={{ height: 26, display: 'flex', alignItems: 'center', padding: '0 11px', borderRadius: 9999, background: STATE_COLOUR[row.state], color: STATE_FG(row.state), boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{stateLabel(row.state)}</span>
             <span style={{ height: 26, display: 'flex', alignItems: 'center', gap: 6, padding: '0 11px 0 3px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontSize: 12, fontWeight: 800 }}>
               <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: 9999, background: cat.bg, color: cat.fg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8 }}>
                 {cat.abbr}
@@ -849,12 +850,12 @@ function PoolMobile(v: ViewProps) {
             const pays = perOne(yes ? row.yesPays : row.noPays);
             const won = (yes && row.state === 'yes_won') || (!yes && row.state === 'no_won');
             return (
-              <div key={s} style={{ borderRadius: yes ? '28px 28px 28px 10px' : '28px 28px 10px 28px', background: yes ? 'var(--mako-signal)' : 'var(--mako-red)', color: '#000', boxShadow: 'var(--edge)', padding: 16, minWidth: 0 }}>
+              <div key={s} style={{ borderRadius: yes ? '28px 28px 28px 10px' : '28px 28px 10px 28px', background: yes ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', boxShadow: 'var(--edge)', padding: 16, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
                   <span style={{ ...display, fontSize: 24, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{yes ? labels.yes : labels.no}</span>
-                  {won && <span style={{ height: 24, display: 'flex', alignItems: 'center', padding: '0 9px', borderRadius: 9999, background: '#000', color: yes ? 'var(--mako-signal)' : 'var(--mako-red)', fontSize: 11, fontWeight: 800 }}>WON</span>}
+                  {won && <span style={{ height: 24, display: 'flex', alignItems: 'center', padding: '0 9px', borderRadius: 9999, background: 'var(--mako-on-side)', color: yes ? 'var(--mako-yes)' : 'var(--mako-no)', fontSize: 11, fontWeight: 800 }}>WON</span>}
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.65, marginTop: 14 }}>Pays per 1</div>
+                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, marginTop: 14 }}>Pays per 1</div>
                 <div style={{ ...display, fontSize: pays ? 32 : 18, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>{pays ?? 'No stake yet'}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>
                   {usdc2(yes ? m.totalYes : m.totalNo)} · {yes ? m.yesBettorCount : m.noBettorCount} {(yes ? m.yesBettorCount : m.noBettorCount) === 1 ? 'bettor' : 'bettors'}
@@ -866,7 +867,7 @@ function PoolMobile(v: ViewProps) {
 
         {lines.map((l) => (
           <div key={l.side} style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 24, background: 'var(--raise)', padding: '14px 16px', marginTop: 10 }}>
-            <span style={{ width: 40, height: 40, borderRadius: 9999, background: l.side === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)', color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>{l.side === 'yes' ? 'YES' : 'NO'}</span>
+            <span style={{ width: 40, height: 40, borderRadius: 9999, background: l.side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>{l.side === 'yes' ? 'YES' : 'NO'}</span>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, color: 'var(--dim)' }}>Your position</div>
               <div style={{ fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{usdc2(l.stake)} USDC</div>
@@ -1012,8 +1013,8 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
     padding: '0 14px',
     borderRadius: 9999,
     border: 0,
-    background: s === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)',
-    color: '#000',
+    background: s === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)',
+    color: 'var(--mako-on-side)',
     boxShadow: 'var(--edge)',
     fontSize: 13,
     fontWeight: 800,
@@ -1118,7 +1119,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
               onClick={openBet}
               disabled={!ready}
               className="m3-press m3-scale96"
-              style={{ ...big, background: ready ? (side === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)') : 'var(--raise2)', color: ready ? '#000' : 'var(--dim)', boxShadow: ready ? 'var(--edge)' : 'none' }}
+              style={{ ...big, background: ready ? (side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'var(--raise2)', color: ready ? 'var(--mako-on-side)' : 'var(--dim)', boxShadow: ready ? 'var(--edge)' : 'none' }}
             >
               {ready ? `Bet ${usdc2(amount!)} USDC on ${name}` : "Can't place this bet"}
             </button>

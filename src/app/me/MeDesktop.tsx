@@ -426,7 +426,7 @@ function PositionRow({ p, v }: { p: MePosition; v: MeView }) {
           ))}
         </span>
       )}
-      <span style={{ ...pillStyle, background: pill.bg, fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{pill.label}</span>
+      <span style={{ ...pillStyle, background: pill.bg, color: pill.fg, fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{pill.label}</span>
       <span aria-hidden="true" style={{ ...display }}>
         →
       </span>

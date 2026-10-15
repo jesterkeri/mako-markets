@@ -52,12 +52,13 @@ export function noOpenPoolsTitle(filter: PoolFilter): string {
 /// Where a pool is in its life. The pill colours follow 9a (and 18a for resolving).
 export type PoolState = 'open' | 'betting_closed' | 'resolving' | 'yes_won' | 'no_won' | 'refunded';
 
-export const STATE_PILL: Record<Exclude<PoolState, 'open'>, { label: string; bg: string }> = {
-  betting_closed: { label: 'Betting closed', bg: 'var(--mako-gold)' },
-  resolving: { label: 'Resolving', bg: 'var(--mako-violet)' },
-  yes_won: { label: 'YES won', bg: 'var(--mako-teal)' },
-  no_won: { label: 'NO won', bg: 'var(--mako-red)' },
-  refunded: { label: 'Refunded', bg: 'var(--mako-cyan)' },
+/// A settled pool takes its winning side's own colour, which carries paper text; every other pill has black text.
+export const STATE_PILL: Record<Exclude<PoolState, 'open'>, { label: string; bg: string; fg: string }> = {
+  betting_closed: { label: 'Betting closed', bg: 'var(--mako-gold)', fg: '#000' },
+  resolving: { label: 'Resolving', bg: 'var(--mako-violet)', fg: '#000' },
+  yes_won: { label: 'YES won', bg: 'var(--mako-yes)', fg: 'var(--mako-on-side)' },
+  no_won: { label: 'NO won', bg: 'var(--mako-no)', fg: 'var(--mako-on-side)' },
+  refunded: { label: 'Refunded', bg: 'var(--mako-cyan)', fg: '#000' },
 };
 
 /// The pool page's state colour and words, open included (yellow, "Open"); the share card uses the same.
@@ -69,6 +70,8 @@ export const STATE_COLOUR: Record<PoolState, string> = {
   no_won: STATE_PILL.no_won.bg,
   refunded: STATE_PILL.refunded.bg,
 };
+/// The text colour on STATE_COLOUR.
+export const STATE_FG = (s: PoolState): string => (s === 'open' ? '#000' : STATE_PILL[s].fg);
 export const stateLabel = (s: PoolState) => (s === 'open' ? 'Open' : STATE_PILL[s].label);
 
 export function poolState(m: MarketWithId, nowSec: number): PoolState {

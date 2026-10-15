@@ -170,11 +170,11 @@ export function sideOf(p: MePosition, labels: Labels): { text: string; bg: strin
   const yes = p.bet.yes > 0n;
   const no = p.bet.no > 0n;
   if (yes && no) return { text: 'Both', bg: 'var(--raise2)', fg: 'var(--mako-canvas-fg)' };
-  return yes ? { text: labels.yes, bg: 'var(--mako-signal)', fg: '#000' } : { text: labels.no, bg: 'var(--mako-red)', fg: '#000' };
+  return yes ? { text: labels.yes, bg: 'var(--mako-yes)', fg: 'var(--mako-on-side)' } : { text: labels.no, bg: 'var(--mako-no)', fg: 'var(--mako-on-side)' };
 }
 
-export function statePill(s: PoolState): { label: string; bg: string } {
-  return s === 'open' ? { label: 'Open', bg: 'var(--mako-signal)' } : STATE_PILL[s];
+export function statePill(s: PoolState): { label: string; bg: string; fg: string } {
+  return s === 'open' ? { label: 'Open', bg: 'var(--mako-signal)', fg: '#000' } : STATE_PILL[s];
 }
 
 /// Why a pool is in Ready to claim: "YES won" (or the house pool's own name), or a refund.

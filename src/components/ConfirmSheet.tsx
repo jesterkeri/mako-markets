@@ -17,6 +17,8 @@ export type ConfirmSpec = {
   /// The round glyph and its colour: ▲ / ▼ for rounds, Y / N for pools, $ for claims, + for create.
   glyph: string;
   glyphColor: string;
+  /// The glyph's own colour on that fill; black unless the fill is a side's (--mako-on-side).
+  glyphFg?: string;
   title: string;
   confirmLabel: string;
   pendingTitle: string;
@@ -149,7 +151,7 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
       {phase.step === 'review' && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ flex: 'none', width: 56, height: 56, borderRadius: 9999, background: spec.glyphColor, color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ flex: 'none', width: 56, height: 56, borderRadius: 9999, background: spec.glyphColor, color: spec.glyphFg ?? '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span className="mk-onsig" style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 22 }}>{spec.glyph}</span>
             </span>
             <div style={{ minWidth: 0 }}>
@@ -171,7 +173,7 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
                     minWidth: 0,
                     overflowWrap: 'anywhere',
                     fontVariantNumeric: 'tabular-nums',
-                    color: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv-fg)' : r.tone === 'up' ? 'var(--up-text)' : r.tone === 'no' ? 'var(--mako-red)' : 'var(--mako-canvas-fg)',
+                    color: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv-fg)' : r.tone === 'up' ? 'var(--yes-text)' : r.tone === 'no' ? 'var(--no-text)' : 'var(--mako-canvas-fg)',
                     background: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv)' : 'transparent',
                     padding: r.fee && wallet.kind === 'mako' ? '5px 12px' : 0,
                     borderRadius: 9999,

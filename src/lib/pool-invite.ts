@@ -7,7 +7,7 @@
 
 import type { MarketWithId } from './contract';
 import { MIN_BET } from './pool-bet-rules';
-import { formatPays, poolRow, STATE_COLOUR, stateLabel, usdc2, type PoolCat, type PoolState } from './pool-list';
+import { formatPays, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, type PoolCat, type PoolState } from './pool-list';
 import { poolClock, unsettleable } from './pool-rules';
 import { parseRefTag } from './ref-tag';
 
@@ -68,7 +68,7 @@ export type InviteSide = {
 export type InviteCard = {
   state: PoolState;
   open: boolean;
-  pill: { label: string; colour: string };
+  pill: { label: string; colour: string; fg: string };
   cat: PoolCat;
   /// Under the title: how to bet while the pool is open, otherwise where the pool stands.
   sub: string;
@@ -99,7 +99,7 @@ export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: s
   return {
     state: row.state,
     open,
-    pill: { label: stateLabel(row.state).toUpperCase(), colour: STATE_COLOUR[row.state] },
+    pill: { label: stateLabel(row.state).toUpperCase(), colour: STATE_COLOUR[row.state], fg: STATE_FG(row.state) },
     cat: row.cat,
     // A pool the resolver cannot read takes no bets and is not settled automatically (adversary on b4f4a5d).
     sub: !open ? clock.sub : manual ? 'Not settled automatically · takes no bets' : `Bet ${labels.yes} or ${labels.no} · settled by Mako Market`,
