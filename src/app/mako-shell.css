@@ -27,8 +27,8 @@
   --wick-up: var(--mako-signal);
   --wick-dn: var(--mako-red);
   --up-text: var(--mako-signal);
-  --yes-text: #2EB89A;
-  --no-text: #E06C79;
+  --yes-text: #16A34A;
+  --no-text: #EF5350;
   --tb-bg: var(--mako-paper);
   --tb-fg: rgba(0, 0, 0, 0.5);
   --tb-sh: inset 0 0 0 1px rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.55);
@@ -44,8 +44,8 @@
   --wick-up: #000;
   --wick-dn: #000;
   --up-text: var(--mako-ink);
-  --yes-text: #065C49;
-  --no-text: #962B3A;
+  --yes-text: #14532D;
+  --no-text: #991B1B;
   --tb-bg: var(--mako-ink);
   --tb-fg: rgba(235, 229, 217, 0.55);
   --tb-sh: 0 10px 24px rgba(40, 30, 10, 0.22);
@@ -193,8 +193,8 @@ body {
   --line: rgba(0, 0, 0, 0.16);
   --dim: rgba(0, 0, 0, 0.62);
   --up-text: #000;
-  --yes-text: #055947;
-  --no-text: #8A2735;
+  --yes-text: #14532D;
+  --no-text: #991B1B;
   --m3-inv: #000;
   --m3-inv-fg: #facc15;
   --m3-outline: rgba(0, 0, 0, 0.3);

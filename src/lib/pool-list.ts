@@ -52,7 +52,7 @@ export function noOpenPoolsTitle(filter: PoolFilter): string {
 /// Where a pool is in its life. The pill colours follow 9a (and 18a for resolving).
 export type PoolState = 'open' | 'betting_closed' | 'resolving' | 'yes_won' | 'no_won' | 'refunded';
 
-/// A settled pool takes its winning side's own colour, which carries paper text; every other pill has black text.
+/// A settled pool takes its winning side's own colour; every pill has black text (fg kept so a side fill can differ).
 export const STATE_PILL: Record<Exclude<PoolState, 'open'>, { label: string; bg: string; fg: string }> = {
   betting_closed: { label: 'Betting closed', bg: 'var(--mako-gold)', fg: '#000' },
   resolving: { label: 'Resolving', bg: 'var(--mako-violet)', fg: '#000' },

@@ -1,4 +1,4 @@
-// Adversary on 30201b3 (YES teal / NO crimson, Joshua 2026-10-15). The rule: a side fill carries --mako-on-side text,
+// Adversary on 30201b3 (YES/NO side colours, Joshua 2026-10-15; now flat green / red). The rule: a side fill carries --mako-on-side text,
 // and a side written as text (--yes-text / --no-text) reaches at least 4.5:1 against the background it actually sits
 // on (mako-shell.css comment on the per-theme variables). These tests render the real confirm sheet, find what each
 // element actually sits on, and resolve the colours from the shipped CSS files, so a token change is picked up.

@@ -151,7 +151,7 @@ describe('the card', () => {
     expect(card.cat).toBe('CRYPTO');
   });
 
-  // A settled pool takes its winning side's colour with paper text (Joshua, 2026-10-15); the rest keep black text.
+  // A settled pool takes its winning side's colour and that side's text colour (Joshua, 2026-10-15).
   const closed: [string, Partial<MarketWithId>, string, string, string][] = [
     ['betting closed', { bettingCloseTime: BigInt(NOW - 60), closeTime: BigInt(NOW + 3_600) }, 'BETTING CLOSED', 'var(--mako-gold)', '#000'],
     ['resolving', { bettingCloseTime: BigInt(NOW - 7_200), closeTime: BigInt(NOW - 60) }, 'RESOLVING', 'var(--mako-violet)', '#000'],

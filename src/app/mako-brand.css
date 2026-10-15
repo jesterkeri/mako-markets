@@ -12,12 +12,12 @@
   --mako-surface-elevated: #E1DBCB;
   --mako-red: #D94A3D;
   --mako-signal: #FACC15;
-  /* The two sides of a pool or round (Joshua, 2026-10-15: yellow YES and red NO read as one colour). A deep
-   * teal leaning green for YES and a muted dark crimson for NO, kept apart from the brand red, both carrying
-   * paper text (4.6:1). Fixed in both themes, like signal and red. */
-  --mako-yes: #09735C;
-  --mako-no: #B23A48;
-  --mako-on-side: var(--mako-paper);
+  /* The two sides of a pool or round (Joshua, 2026-10-15: yellow YES and red NO read as one colour). Flat green
+   * for YES and flat red for NO, as markets usually show them, both carrying black text (6.4:1 and 5.0:1). Fixed
+   * in both themes, like signal and red. */
+  --mako-yes: #16A34A;
+  --mako-no: #E53935;
+  --mako-on-side: var(--mako-ink);
   --mako-muted: #79797A;
   --mako-subtle: #A3A19C;
 

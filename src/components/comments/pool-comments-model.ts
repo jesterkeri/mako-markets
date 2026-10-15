@@ -29,8 +29,8 @@ export function postErrorCopy(e: unknown): string {
 
 export type HeldSide = Exclude<CommentPosition, null>;
 
-/// The holder badge beside a name. Teal is YES and crimson is NO across the app (--mako-yes / --mako-no, both with
-/// paper text); the design has no BOTH, so a holder of both sides gets a pill split between the two colours.
+/// The holder badge beside a name. Green is YES and red is NO across the app (--mako-yes / --mako-no, both with
+/// black text); the design has no BOTH, so a holder of both sides gets a pill split between the two colours.
 export const SIDE_BADGE: Record<HeldSide, { label: string; bg: string }> = {
   yes: { label: 'HOLDS YES', bg: 'var(--mako-yes)' },
   no: { label: 'HOLDS NO', bg: 'var(--mako-no)' },

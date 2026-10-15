@@ -47,8 +47,8 @@ function postErrorCopy(e: unknown): string {
 function BadgeChip({ position }: { position: CommentPosition }) {
   if (!position) return null;
   const map: Record<'yes' | 'no' | 'both', { label: string; cls: string }> = {
-    yes: { label: 'HOLDS YES', cls: 'bg-yes text-paper' },
-    no: { label: 'HOLDS NO', cls: 'bg-no text-paper' },
+    yes: { label: 'HOLDS YES', cls: 'bg-yes text-ink' },
+    no: { label: 'HOLDS NO', cls: 'bg-no text-ink' },
     both: { label: 'HOLDS BOTH', cls: 'bg-ink text-paper' },
   };
   const b = map[position];
