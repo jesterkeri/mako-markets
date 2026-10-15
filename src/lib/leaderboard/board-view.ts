@@ -26,6 +26,9 @@ export interface BoardWireRow {
   bets: number;
   creatorFees: string;
   displayName: string | null;
+  /// The player's profile photo (only one this app uploaded for them), or null for the letter avatar. Optional on the
+  /// wire so a response from before the field existed still reads.
+  avatarUrl?: string | null;
 }
 
 export interface BoardWireViewer extends BoardWireRow {
@@ -189,6 +192,8 @@ export interface PlayerView {
   name: string;
   initial: string;
   colour: string;
+  /// The profile photo shown in the avatar circle, or null for the letter.
+  avatarUrl: string | null;
   profit: { text: string; tone: Tone };
   volume: string;
   bets: number;
@@ -265,6 +270,7 @@ function toPlayer(row: BoardWireRow, rank: number, sort: BoardSort, names: Map<s
     name: names.get(row.actor) ?? formatAddress(row.actor),
     initial: initialOf(row.displayName, row.actor),
     colour: avatarColour(row.actor),
+    avatarUrl: row.avatarUrl ?? null,
     profit,
     volume,
     bets: row.bets,

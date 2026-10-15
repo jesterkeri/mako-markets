@@ -82,7 +82,8 @@ async function freshDb(): Promise<TestDb> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       email text,
       wallet_address text,
-      display_name text
+      display_name text,
+      avatar_url text
     );
     CREATE TABLE user_safes (
       user_id uuid NOT NULL,
@@ -232,6 +233,34 @@ describe('GET /api/leaderboard', () => {
     expect(body.syncing).toBe(false); // caught-up cursor
     expect(typeof body.generatedAt).toBe('string');
     expect(body.viewer).toBeUndefined(); // no me param
+  });
+
+  it("carries a player's profile photo only when this app uploaded it for them; others get null", async () => {
+    const saved = process.env.BLOB_READ_WRITE_TOKEN;
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_store123_testsecret';
+    try {
+      const t = await freshDb();
+      const res = await t.client.query<{ id: string }>(`INSERT INTO users (display_name) VALUES ('satoshi') RETURNING id`);
+      const id = res.rows[0].id;
+      const owned = `https://store123.public.blob.vercel-storage.com/avatars/${id}/1.webp`;
+      await t.client.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [owned, id]);
+      await t.client.query(`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES ($1, $2, $3)`, [id, CHAIN, SAFE_CHECKSUMMED]);
+      const res2 = await t.client.query<{ id: string }>(`INSERT INTO users (wallet_address, display_name, avatar_url) VALUES ($1, 'pasted', 'https://example.com/x.png') RETURNING id`, [ANON]);
+      expect(res2.rows).toHaveLength(1);
+      await insertEvent(t, { actor: SAFE_LOWER, kind: 'bet', amount: '10000000' });
+      await insertEvent(t, { actor: SAFE_LOWER, kind: 'claim', amount: '25000000' });
+      await insertEvent(t, { actor: ANON, kind: 'bet', amount: '5000000' });
+      await t.db.insert(makoLeaderboardIndexerState).values({ chainId: CHAIN, contractAddress: CONTRACT as `0x${string}`, lastScannedBlock: 32700000, lastScanTarget: 32700000 });
+
+      const body = await (await GET(request('?window=all'))).json();
+      expect(body.rows.map((r: { actor: string; avatarUrl: string | null }) => [r.actor, r.avatarUrl])).toEqual([
+        [SAFE_LOWER, owned],
+        [ANON, null], // a legacy pasted URL is never served
+      ]);
+    } finally {
+      if (saved === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+      else process.env.BLOB_READ_WRITE_TOKEN = saved;
+    }
   });
 
   it('reports syncing through every mid-backfill state, not just pre-cursor (review MAJOR-1)', async () => {

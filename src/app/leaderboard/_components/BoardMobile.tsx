@@ -3,6 +3,7 @@
 import { BOARD_COPY } from '@/lib/leaderboard/board-copy';
 import { betsText, NEXT_SORT, PERIODS, SCOPES, SORTS } from '@/lib/leaderboard/board-view';
 
+import { AvatarFill } from './AvatarFill';
 import { BoardStateMobile } from './BoardState';
 import type { BoardProps } from './props';
 
@@ -67,8 +68,8 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, alignItems: 'end', height: 250, padding: '0 16px' }}>
             {view.bars.map(({ player: p, heightPx, bg }) => (
               <div key={p.actor} style={{ height: heightPx, borderRadius: 9999, background: bg, color: '#000', boxShadow: 'var(--edge)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0 14px' }}>
-                <span aria-hidden="true" style={{ width: 48, height: 48, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: `0 0 0 3px ${bg}`, display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 18 }}>
-                  {p.initial}
+                <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', width: 48, height: 48, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: `0 0 0 3px ${bg}`, display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 18 }}>
+                  <AvatarFill initial={p.initial} avatarUrl={p.avatarUrl} />
                 </span>
                 <span style={{ marginTop: 'auto', ...display, fontSize: 22 }}>{p.rank}</span>
               </div>
@@ -87,8 +88,8 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
             <div style={{ padding: '16px 12px 0' }}>
               <div style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '16px 18px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span aria-hidden="true" style={{ flex: 'none', width: 48, height: 48, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 20 }}>
-                    {me.player.initial}
+                  <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 48, height: 48, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 20 }}>
+                    <AvatarFill initial={me.player.initial} avatarUrl={me.player.avatarUrl} />
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 800, ...ellipsis }}>
@@ -130,8 +131,8 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
               {view.restMobile.map((p) => (
                 <div key={p.actor} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', borderRadius: 24, background: 'var(--raise)', padding: '10px 16px 10px 12px' }}>
                   <span style={{ flex: 'none', width: 28, textAlign: 'center', ...display, fontSize: 16, color: 'var(--dim)' }}>{p.rank}</span>
-                  <span aria-hidden="true" style={{ flex: 'none', width: 44, height: 44, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 17 }}>
-                    {p.initial}
+                  <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 44, height: 44, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 17 }}>
+                    <AvatarFill initial={p.initial} avatarUrl={p.avatarUrl} />
                   </span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: 'block', fontSize: 15, fontWeight: 800, ...ellipsis }}>{p.name}</span>

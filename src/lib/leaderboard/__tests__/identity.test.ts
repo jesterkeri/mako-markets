@@ -16,7 +16,7 @@
 // mirror. Real constraints live in the real migrations.
 // ----------------------------------------------------------------------------
 
-import { describe, expect, it, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { resolveLabels } from '@/lib/leaderboard/identity';
 import { createTestDb, type TestDb } from './test-db';
@@ -47,7 +47,8 @@ async function freshDb(): Promise<TestDb> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       email text,
       wallet_address text,
-      display_name text
+      display_name text,
+      avatar_url text
     );
     CREATE TABLE user_safes (
       user_id uuid NOT NULL,
@@ -96,6 +97,7 @@ describe('resolveLabels', () => {
     const labels = await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN);
     expect(labels.get(SAFE_LOWER)).toEqual({
       displayName: 'satoshi',
+      avatarUrl: null,
       branch: 'safe',
     });
   });
@@ -160,6 +162,7 @@ describe('resolveLabels', () => {
     const labels = await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN);
     expect(labels.get(SAFE_LOWER)).toEqual({
       displayName: 'safeguy',
+      avatarUrl: null,
       branch: 'safe',
     });
   });
@@ -178,6 +181,7 @@ describe('resolveLabels', () => {
     const labels = await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN);
     expect(labels.get(SAFE_LOWER)).toEqual({
       displayName: 'named',
+      avatarUrl: null,
       branch: 'wallet',
     });
   });
@@ -203,7 +207,7 @@ describe('resolveLabels', () => {
 
     const labels = await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN);
     const entry = labels.get(SAFE_LOWER)!;
-    expect(Object.keys(entry).sort()).toEqual(['branch', 'displayName']);
+    expect(Object.keys(entry).sort()).toEqual(['avatarUrl', 'branch', 'displayName']);
   });
 
   it('handles an empty input without touching the DB', async () => {
@@ -211,4 +215,60 @@ describe('resolveLabels', () => {
     const labels = await resolveLabels(t.db as never, [], CHAIN);
     expect(labels.size).toBe(0);
   });
+
+describe('resolveLabels: profile photos are served only when this app uploaded them for that user', () => {
+  const HOST = 'store123.public.blob.vercel-storage.com';
+  const saved = process.env.BLOB_READ_WRITE_TOKEN;
+  beforeEach(() => {
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_store123_testsecret';
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+    else process.env.BLOB_READ_WRITE_TOKEN = saved;
+  });
+  const setAvatar = (t: TestDb, id: string, url: string | null) => t.client.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [url, id]);
+
+  it("returns the app's own upload for that user", async () => {
+    const t = await freshDb();
+    const id = await insertMagicUser(t, { displayName: 'kemi', safeAddress: SAFE_CHECKSUMMED });
+    const url = `https://${HOST}/avatars/${id}/1790000000000.webp`;
+    await setAvatar(t, id, url);
+    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)).toEqual({ displayName: 'kemi', avatarUrl: url, branch: 'safe' });
+  });
+
+  it('a user with a photo but no display name is still returned (name null), so the board can show the photo', async () => {
+    const t = await freshDb();
+    const id = await insertMagicUser(t, { displayName: null, safeAddress: SAFE_CHECKSUMMED });
+    const url = `https://${HOST}/avatars/${id}/1.webp`;
+    await setAvatar(t, id, url);
+    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)).toEqual({ displayName: null, avatarUrl: url, branch: 'safe' });
+  });
+
+  it.each([
+    ['a legacy pasted URL on any host', (id: string) => `https://example.com/avatars/${id}/x.webp`],
+    ["another Blob store (anyone can create one)", (id: string) => `https://attacker.public.blob.vercel-storage.com/avatars/${id}/x.webp`],
+    ["this store, but another user's path", () => `https://${HOST}/avatars/00000000-0000-0000-0000-000000000000/x.webp`],
+    ['plain http', (id: string) => `http://${HOST}/avatars/${id}/x.webp`],
+  ])('never serves %s', async (_name, urlFor) => {
+    const t = await freshDb();
+    const id = await insertMagicUser(t, { displayName: 'kemi', safeAddress: SAFE_CHECKSUMMED });
+    await setAvatar(t, id, urlFor(id));
+    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)?.avatarUrl).toBeNull();
+  });
+
+  it("fails closed with no Blob token (the app's own host is unknown): no photo, the name still resolves", async () => {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const t = await freshDb();
+    const id = await insertMagicUser(t, { displayName: 'kemi', safeAddress: SAFE_CHECKSUMMED });
+    await setAvatar(t, id, `https://${HOST}/avatars/${id}/1.webp`);
+    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)).toEqual({ displayName: 'kemi', avatarUrl: null, branch: 'safe' });
+  });
+
+  it('a user with neither a name nor an owned photo is absent (the board falls back to the address and letter)', async () => {
+    const t = await freshDb();
+    const id = await insertMagicUser(t, { displayName: null, safeAddress: SAFE_CHECKSUMMED });
+    await setAvatar(t, id, 'https://example.com/x.png');
+    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).has(SAFE_LOWER)).toBe(false);
+  });
+});
 });

@@ -69,6 +69,9 @@ export interface LeaderboardBoardRow extends LeaderboardRow {
   /// Resolved display name (safe-account or wallet identity), or null
   /// → UI renders the truncated address.
   displayName: string | null;
+  /// The player's profile photo, only if this app uploaded it for them (strictly checked in
+  /// lib/leaderboard/identity.ts), or null -> the UI draws the letter avatar.
+  avatarUrl: string | null;
 }
 
 export interface LeaderboardViewer extends LeaderboardBoardRow {
@@ -116,6 +119,7 @@ async function buildBoard(
   const boardRows: LeaderboardBoardRow[] = rows.map((r) => ({
     ...r,
     displayName: labels.get(r.actor)?.displayName ?? null,
+    avatarUrl: labels.get(r.actor)?.avatarUrl ?? null,
   }));
 
   // Scope cursor rows to the CONFIGURED contract set on the active
@@ -198,6 +202,7 @@ export async function GET(req: Request) {
           viewer = {
             ...rank.row,
             displayName: labels.get(meLower)?.displayName ?? null,
+            avatarUrl: labels.get(meLower)?.avatarUrl ?? null,
             rank: rank.rank,
           };
         }
