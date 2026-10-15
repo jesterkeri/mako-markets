@@ -197,7 +197,7 @@ describe('phaseFromOutcome', () => {
 
   it('names the daily gas-free limit', () => {
     const p = phase({ kind: 'sponsor_failed', status: 429, error: 'CAP_EXCEEDED' });
-    expect(p.step === 'failed' && p.body).toBe('An email account gets 10 gas-free transactions a day. Try again tomorrow.');
+    expect(p.step === 'failed' && p.body).toBe('An email account gets 20 gas-free transactions a day. Try again tomorrow.');
   });
 
   it('names why the gas sponsor refused a new pool, and keeps the generic wording otherwise', () => {

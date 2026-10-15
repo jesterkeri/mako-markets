@@ -6,6 +6,7 @@
 import type { RunOutcome } from './aa-client';
 import type { ConfirmPhase } from '@/components/ConfirmSheet';
 import { SIGN_IN_HREF } from './shell-nav';
+import { SPONSOR_CAP_PER_USER_PER_DAY } from './aa-constants';
 
 type Failed = Extract<ConfirmPhase, { step: 'failed' }>;
 
@@ -85,7 +86,7 @@ export function phaseFromOutcome(o: RunOutcome, w: OutcomeWords): ConfirmPhase {
     case 'manual_review':
       return failed('Waiting for a check', `This ${w.noun} is held for a manual check. Don't send it again; check Me later.`, false, checkMe);
     case 'sponsor_failed':
-      if (o.status === 429) return failed('Daily limit reached', 'An email account gets 10 gas-free transactions a day. Try again tomorrow.', true, close);
+      if (o.status === 429) return failed('Daily limit reached', `An email account gets ${SPONSOR_CAP_PER_USER_PER_DAY} gas-free transactions a day. Try again tomorrow.`, true, close);
       if (o.status === 409) return failed('Another transaction is still going', 'Wait for your last transaction to finish, then try again.', true);
       if (o.status === 401) return failed('Signed out', 'Sign in again, then try again.', true, { label: 'Sign in', href: SIGN_IN_HREF });
       if (o.status === 403) {

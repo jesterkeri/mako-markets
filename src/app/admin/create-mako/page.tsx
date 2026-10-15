@@ -375,7 +375,7 @@ export default function AdminCreateMakoPage() {
     /// Auto-generated oracleRef: `manual:mako:<timestamp_sec>`. Format
     /// is 22-25 ASCII chars (well under the 32-byte bytes32 cap),
     /// deterministic per submit, unique enough for admin log grepping
-    /// (the daily per-user cap is 10/day so timestamp collisions are
+    /// (the daily per-user cap is SPONSOR_CAP_PER_USER_PER_DAY so timestamp collisions are
     /// impossible). The field is dead metadata on chain — MAKO's
     /// resolveMarket() is a direct admin call and never reads it.
     /// See task #178.

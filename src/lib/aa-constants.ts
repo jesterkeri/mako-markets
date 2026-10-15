@@ -80,8 +80,9 @@ export const PENDING_TTL_MS = 5 * 60_000;
 /// and exists so a single user can't burn the global monthly budget through
 /// repeated retries on the same day. Tunable. Bumped from 5 → 10 alongside
 /// the wallet-createmarket-parity fix to accommodate users who routinely
-/// hit cap during a single create + bet + claim session.
-export const SPONSOR_CAP_PER_USER_PER_DAY = 10;
+/// hit cap during a single create + bet + claim session, then 10 → 20
+/// (Joshua, 2026-10-15). Every user-facing count reads this constant.
+export const SPONSOR_CAP_PER_USER_PER_DAY = 20;
 
 /// Phase 1E send-USDC per-op cap, in USDC base units (6 decimals).
 /// 100 USDC for testnet. Defends Pimlico's per-op sponsorship budget
