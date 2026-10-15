@@ -34,7 +34,7 @@ import {
   type MeView,
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
-import { CREATOR_EARNINGS_ANCHOR, useCreatorTotals } from './use-creator-totals';
+import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from './use-creator-totals';
 import { validateDisplayName } from './profile-rules';
 
 // Me on desktop (11a), in the terminal look: identity and test USDC, the four totals, profit and badges, then the
@@ -68,6 +68,11 @@ export function MeDesktop(v: MeView) {
       ) : (
         <div style={{ marginTop: 26 }}>
           <ListStateDesktop kind="me" state={v.chain.status} onRetry={v.retry} explorerHref={v.explorerHref} />
+          {/* The creator list reads only the pools, so it stays here when the stake or rounds read failed: the
+              Creator earnings card in the totals row always has its list to lead to (adversary on 03bbb76). */}
+          <div style={{ maxWidth: 380, marginLeft: 'auto', padding: '0 4px' }}>
+            <CreatorEarningsSection user={v.user} account={v.account} variant="desktop" />
+          </div>
         </div>
       )}
     </div>
@@ -278,14 +283,14 @@ function CreatorTotalsCell({ account, style }: { account: string; style: React.C
   const linkStyle: React.CSSProperties = { ...style, display: 'block', color: 'inherit', textDecoration: 'none' };
   if (hasPools) {
     return (
-      <a href={`#${CREATOR_EARNINGS_ANCHOR.desktop}`} aria-label="Creator earnings, see the list" className="mk-press97" style={linkStyle}>
+      <a href={`#${CREATOR_EARNINGS_ANCHOR.desktop}`} aria-label={creatorTotalsLabel(t.value)} className="mk-press97" style={linkStyle}>
         {body}
       </a>
     );
   }
   if (t.status === 'ready') {
     return (
-      <Link href={CREATE_HREF} aria-label="Creator earnings, create a pool to earn" className="mk-press97" style={linkStyle}>
+      <Link href={CREATE_HREF} aria-label={creatorTotalsLabel(t.value)} className="mk-press97" style={linkStyle}>
         {body}
       </Link>
     );

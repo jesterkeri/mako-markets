@@ -3,6 +3,7 @@
 import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningsFor } from '@/lib/creator-earnings';
 import { useAllMarkets } from '@/lib/hooks';
+import { usdc2 } from '@/lib/pool-list';
 
 import type { Loadable } from './MeParts';
 
@@ -31,3 +32,10 @@ export function useCreatorTotals(account: string): Loadable<CreatorTotals> {
 /// layouts (CSS shows one), so each has its own anchor; one shared id would send the mobile tile to the hidden desktop
 /// list.
 export const CREATOR_EARNINGS_ANCHOR = { desktop: 'creator-earnings', mobile: 'creator-earnings-mobile' } as const;
+
+/// The card's accessible name, with its figures (an aria-label replaces the visible text for screen readers).
+export function creatorTotalsLabel(t: CreatorTotals): string {
+  return t.pools > 0
+    ? `Creator earnings: ${usdc2(t.unclaimed)} USDC to claim, ${usdc2(t.claimed)} USDC claimed. See the list`
+    : 'Creator earnings: none yet. Create a pool to earn';
+}

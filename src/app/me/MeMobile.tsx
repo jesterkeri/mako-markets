@@ -35,7 +35,7 @@ import {
   type MeView,
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
-import { CREATOR_EARNINGS_ANCHOR, useCreatorTotals } from './use-creator-totals';
+import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from './use-creator-totals';
 import { validateDisplayName } from './profile-rules';
 
 // Me on mobile (11a), in the expressive look: identity, the balance tiles, test USDC, create and settings rows,
@@ -70,10 +70,12 @@ export function MeMobile(v: MeView) {
       <div style={{ padding: '8px 16px 0' }}>
         <FeedbackRow />
       </div>
+      {v.chain.status === 'ready' && v.claimItems.length > 0 && <ReadyToClaim {...v} />}
+      {/* The creator list reads only the pools, so it stays when the stake or rounds read failed: the Creator earnings
+          tile always has its list to lead to (adversary on 03bbb76). */}
+      <CreatorEarningsSection user={v.user} account={v.account} variant="mobile" />
       {v.chain.status === 'ready' ? (
         <>
-          {v.claimItems.length > 0 && <ReadyToClaim {...v} />}
-          <CreatorEarningsSection user={v.user} account={v.account} variant="mobile" />
           <Profit {...v} />
           <Badges />
           <Positions {...v} />
@@ -202,14 +204,14 @@ function CreatorTotalsTile({ account }: { account: string }) {
   );
   if (hasPools) {
     return (
-      <a href={`#${CREATOR_EARNINGS_ANCHOR.mobile}`} aria-label="Creator earnings, see the list" className="m3-press" style={tile}>
+      <a href={`#${CREATOR_EARNINGS_ANCHOR.mobile}`} aria-label={creatorTotalsLabel(t.value)} className="m3-press" style={tile}>
         {body}
       </a>
     );
   }
   if (t.status === 'ready') {
     return (
-      <Link href={CREATE_HREF} aria-label="Creator earnings, create a pool to earn" className="m3-press" style={tile}>
+      <Link href={CREATE_HREF} aria-label={creatorTotalsLabel(t.value)} className="m3-press" style={tile}>
         {body}
       </Link>
     );

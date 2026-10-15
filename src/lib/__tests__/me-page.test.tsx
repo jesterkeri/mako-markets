@@ -171,9 +171,9 @@ describe('Me page', () => {
     expect(t['WON ALL TIME']).toBe('Unavailable');
     // No stake-derived zero anywhere. The Creator earnings card reads the pools, not the stakes, and that read worked:
     // this account's one pool has not settled, so its 0.00 is the real figure, not a stand-in.
-    const creatorCard = (el: Element) => el.closest('a[aria-label^="Creator earnings"]') !== null;
+    const creatorCard = (el: Element) => el.closest('a[aria-label^="Creator earnings:"]') !== null;
     expect(screen.queryAllByText(/^0\.00/).filter((el) => !creatorCard(el))).toHaveLength(0);
-    expect(screen.getAllByRole('link', { name: /^Creator earnings, see the list$/ })).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: /^Creator earnings: .*See the list$/ })).toHaveLength(2);
   });
 
   it('shows the error when the pool read failed every retry with nothing read', () => {

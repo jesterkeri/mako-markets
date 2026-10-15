@@ -129,7 +129,7 @@ function renderMe() {
 
 /// Me renders both layouts and CSS shows one: each query is scoped to its layout.
 const layout = (which: 'desk' | 'mob') => document.querySelector<HTMLElement>(which === 'desk' ? '.mk-desk' : '.mk-mob')!;
-const card = (which: 'desk' | 'mob' = 'desk') => within(layout(which)).getByRole('link', { name: /Creator earnings, (see the list|create a pool to earn)/ });
+const card = (which: 'desk' | 'mob' = 'desk') => within(layout(which)).getByRole('link', { name: /^Creator earnings: / });
 
 beforeEach(() => {
   roundsRead = { status: 'off' };
@@ -164,6 +164,12 @@ describe('Me: Creator earnings card', () => {
     ]);
   });
 
+  it('screen readers hear the figures: the accessible name carries them (it replaces the visible text)', () => {
+    renderMe();
+    expect(card().getAttribute('aria-label')).toBe('Creator earnings: 0.80 USDC to claim, 2.00 USDC claimed. See the list');
+    expect(card('mob').getAttribute('aria-label')).toBe('Creator earnings: 0.80 USDC to claim, 2.00 USDC claimed. See the list');
+  });
+
   it('a claim this browser sent and the read has not caught up with counts in neither total', () => {
     markCreatorClaimSent(10n);
     renderMe();
@@ -187,7 +193,7 @@ describe('Me: Creator earnings card', () => {
   it('a failed pool read is Unavailable, never zeros, and leads nowhere', () => {
     marketsState = { markets: [], count: 0, isLoading: false, isError: true };
     renderMe();
-    expect(screen.queryAllByRole('link', { name: /Creator earnings,/ })).toHaveLength(0);
+    expect(screen.queryAllByRole('link', { name: /^Creator earnings: / })).toHaveLength(0);
     expect(within(layout('desk')).getByText('CREATOR EARNINGS', { selector: 'div' }).parentElement!.textContent).toBe('CREATOR EARNINGSUnavailable');
   });
 
