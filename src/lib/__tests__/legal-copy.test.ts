@@ -79,7 +79,7 @@ describe('legal copy makes no promise the product cannot keep', () => {
 
   it('ties the gas and creator-seed numbers to the constants the app enforces', () => {
     expect(body('terms')).toContain(`for up to ${SPONSOR_CAP_PER_USER_PER_DAY} of these a day`);
-    expect(SPONSOR_CAP_PER_USER_PER_DAY).toBe(10);
+    expect(SPONSOR_CAP_PER_USER_PER_DAY).toBe(20);
     expect(body('terms')).toContain(`at least ${Number(MIN_CREATOR_SEED_USDC_BASE / 1_000_000n)} USDC`);
     expect(body('terms')).toMatch(/Wallet accounts pay their own gas/);
   });

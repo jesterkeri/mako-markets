@@ -16,6 +16,7 @@ import { tourHref } from '@/lib/tour';
 import { formatAddress } from '@/lib/user-display';
 import { useTheme, type ThemePreference } from '@/lib/use-theme';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
+import { SPONSOR_CAP_PER_USER_PER_DAY } from '@/lib/aa-constants';
 
 // Settings (21a). Account, security, appearance, network and sign out. What the product does not do yet
 // (notifications) is shown as coming soon, never as a working switch. Security follows the
@@ -233,7 +234,7 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
         v: email ? (
           <>
             <strong>Covered by Mako Market</strong>
-            <span style={note}>Up to 10 transactions a day.</span>
+            <span style={note}>Up to {SPONSOR_CAP_PER_USER_PER_DAY} transactions a day.</span>
           </>
         ) : (
           <strong>Paid by your wallet, in MON</strong>
