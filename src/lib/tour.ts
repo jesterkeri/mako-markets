@@ -143,7 +143,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     motion: 'bob',
     title: 'Grab test USDC',
     body: `Copy your address on Me, open Circle’s faucet, choose ${FAUCET_NETWORK} and paste it. Test USDC is free, and email accounts pay no gas, up to ${SPONSOR_CAP_PER_USER_PER_DAY} transactions a day.`,
-    bodyMobile: `Copy your address, open Circle’s faucet, choose ${FAUCET_NETWORK} and paste it. Email accounts pay no gas, up to 10 a day.`,
+    bodyMobile: `Copy your address, open Circle’s faucet, choose ${FAUCET_NETWORK} and paste it. Email accounts pay no gas, up to ${SPONSOR_CAP_PER_USER_PER_DAY} a day.`,
     anchor: { key: 'test-usdc', gap: 20, gapMobile: 12, caret: 310 },
     mobile: { dir: 'row-reverse', width: 120 },
   },
