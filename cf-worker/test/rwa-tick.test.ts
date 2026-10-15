@@ -235,12 +235,13 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
 }
 
 let rwaSource = 'datastreams';
+let cryptoSource = 'datastreams';
 const env = (): Env =>
   ({
     MAKO_ADDRESS: MAKO,
     MONAD_RPC_URL: MAKO_RPC,
     ADMIN_PRIVATE_KEY: key,
-    CRYPTO_PRICE_SOURCE: 'datastreams',
+    CRYPTO_PRICE_SOURCE: cryptoSource,
     RWA_PRICE_SOURCE: rwaSource,
     DATASTREAMS_API_KEY: DS_KEY,
     DATASTREAMS_API_SECRET: DS_SECRET,
@@ -295,6 +296,7 @@ afterEach(() => {
   nonceFinal = 7;
   estimateRevertsFor = new Set();
   rwaSource = 'datastreams';
+  cryptoSource = 'datastreams';
   raws.length = 0;
   urls.length = 0;
   sentHashes.clear();
@@ -355,5 +357,20 @@ describe('forex / metals / stocks on Data Streams v8, whole tick (DRY_RUN unset)
     expect(await sent()).toEqual([{ from: resolverAddr, to: MAKO.toLowerCase(), chainId: CHAIN_ID, nonce: 7, fn: 'resolveMarket', args: [0, 1] }]);
     // The forex pool was only logged (its own slot), never sent from Data Streams.
     expect(evidence(lines)).toEqual([]);
+  }, 60_000);
+
+  it('reverse: crypto in shadow, forex live: crypto logging never takes the forex pool\'s live slot (Codex DS_RWA R1)', async () => {
+    cryptoSource = 'datastreams-shadow';
+    pools = [
+      { mType: CRYPTO, ref: 'BTC:gt:75000', close: CLOSE },
+      { mType: CRYPTO, ref: 'BTC:gt:76000', close: CLOSE },
+      { mType: CRYPTO, ref: 'BTC:lt:76000', close: CLOSE },
+      { mType: FOREX, ref: 'EURUSD:gt:1.14', close: EUR_OPEN },
+    ];
+    const lines = await tick();
+    expect(lines.some((l) => l.includes("market 3: datastreams not this tick's turn"))).toBe(false);
+    // Crypto pools follow CoinGecko (answering 500 here), so nothing settles them; the forex pool settles on Data Streams.
+    expect(await sent()).toEqual([{ from: resolverAddr, to: MAKO.toLowerCase(), chainId: CHAIN_ID, nonce: 7, fn: 'resolveMarket', args: [3, 1] }]);
+    expect(evidence(lines)).toHaveLength(1);
   }, 60_000);
 });

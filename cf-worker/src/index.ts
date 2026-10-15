@@ -1196,22 +1196,21 @@ export async function runResolver(env: Env): Promise<void> {
     );
   const needsCoinGecko = crypto.source !== 'datastreams' && needsData([MarketType.CRYPTO]);
   // This tick's Data Streams evaluations: DS_PER_TICK slots rotating through the eligible crypto pools by the minute.
-  // Forex / metals / stocks pools join the same rotation only when they settle on Data Streams (live): one shared
-  // budget for real settlements. In shadow mode they get one separate logging slot a tick instead, so logging-only
-  // evaluations never take a live crypto settlement's slot (adversary on 67a1cbe).
+  // The shared Data Streams slots (DS_PER_TICK) go only to pools that SETTLE on Data Streams: crypto and forex/metals/
+  // stocks in live mode. A class in shadow mode only logs, so it gets its own separate logging rotation and can never
+  // take a live settlement's slot, in either direction (adversary on 67a1cbe; Codex DS_RWA R1 for crypto shadow).
+  const fetchable = (r: PromiseSettledResult<Market>, idx: number): r is PromiseFulfilledResult<Market> => actions[idx] === 'fetch_and_resolve' && r.status === 'fulfilled';
+  const cryptoEligibleIdx = (r: PromiseSettledResult<Market>, idx: number): boolean =>
+    fetchable(r, idx) && r.value.mType === MarketType.CRYPTO && dsEligible(r.value.mType, r.value.oracleRef);
   const rwaEligibleIdx = (r: PromiseSettledResult<Market>, idx: number): boolean =>
-    actions[idx] === 'fetch_and_resolve' && r.status === 'fulfilled' && isRwaType(r.value.mType) && rwaDsEligible(r.value.mType, r.value.oracleRef);
+    fetchable(r, idx) && isRwaType(r.value.mType) && rwaDsEligible(r.value.mType, r.value.oracleRef);
+  const indicesWhere = (pred: (r: PromiseSettledResult<Market>, idx: number) => boolean) => marketResults.flatMap((r, idx) => (pred(r, idx) ? [idx] : []));
   const dsTurn = dsTurns(
-    marketResults.flatMap((r, idx) => {
-      if (actions[idx] !== 'fetch_and_resolve' || r.status !== 'fulfilled') return [];
-      const m = r.value;
-      const cryptoTurn = crypto.source !== 'coingecko' && m.mType === MarketType.CRYPTO && dsEligible(m.mType, m.oracleRef);
-      const rwaTurn = rwa.source === 'datastreams' && rwaEligibleIdx(r, idx);
-      return cryptoTurn || rwaTurn ? [idx] : [];
-    }),
+    indicesWhere((r, idx) => (crypto.source === 'datastreams' && cryptoEligibleIdx(r, idx)) || (rwa.source === 'datastreams' && rwaEligibleIdx(r, idx))),
     Date.now(),
   );
-  const rwaShadowTurn = dsTurns(rwa.source === 'datastreams-shadow' ? marketResults.flatMap((r, idx) => (rwaEligibleIdx(r, idx) ? [idx] : [])) : [], Date.now(), 1);
+  const cryptoShadowTurn = dsTurns(crypto.source === 'datastreams-shadow' ? indicesWhere(cryptoEligibleIdx) : [], Date.now());
+  const rwaShadowTurn = dsTurns(rwa.source === 'datastreams-shadow' ? indicesWhere(rwaEligibleIdx) : [], Date.now(), 1);
   const needsPyth = rwa.source !== 'datastreams' && needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
 
   // No-data settlement (one-sided REFUND + 24h forceRefund keeper). Sends
@@ -1376,7 +1375,7 @@ export async function runResolver(env: Env): Promise<void> {
       outcome = d.yes ? Outcome.YES : Outcome.NO;
       reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}`;
     } else if (market.mType === MarketType.CRYPTO) {
-      if (crypto.source === 'datastreams-shadow' && dsTurn.has(Number(i))) {
+      if (crypto.source === 'datastreams-shadow' && cryptoShadowTurn.has(Number(i))) {
         // Shadow: log what Data Streams would decide beside today's CoinGecko path; nothing is sent from it. It must never
         // break a tick (a BigInt in this log line crashed every tick, 2026-10-13), so any failure here is only logged.
         try {

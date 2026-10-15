@@ -1,8 +1,10 @@
 // The pool page reads a settlement reference exactly as the resolver does (Codex S3 r1 MAJOR 2). The contract
 // stores any reference a direct createMarket call passes, so for one the resolver rejects the page states no YES/NO
 // rule or price source, says plainly that the pool cannot be settled by price or result, and takes no in-app bet.
-// Expected verdicts are from cf-worker/src/index.ts (parseCryptoOracleRef, parsePriceFeedOracleRef,
-// parseFootballOracleRef, parseBasketballOracleRef) as deployed at 46c5777.
+// Expected verdicts follow the LIVE resolver: price pools settle on Chainlink Data Streams since 2026-10-13 (crypto,
+// cf-worker/src/price-decision.ts parseCryptoRef) and 2026-10-15 (forex/metals/stocks, rwa-decision.ts parseRwaRef);
+// sports from cf-worker/src/index.ts parseFootballOracleRef / parseBasketballOracleRef. The exhaustive page-versus-
+// resolver comparison is pool-ref-resolver-parity.test.ts.
 
 import { describe, expect, it } from 'vitest';
 import { stringToHex } from 'viem';
@@ -34,7 +36,6 @@ const pool = (mType: number, ref: string): MarketWithId => ({
 
 const READ: [string, number, string][] = [
   ['listed crypto', MarketType.CRYPTO, 'BTC:gt:80000'],
-  ['crypto, exponent strike (Number() reads it, as the resolver does)', MarketType.CRYPTO, 'ETH:lt:1e3'],
   ['forex in its class', MarketType.FOREX, 'EURUSD:gt:1.08'],
   ['stock in its class', MarketType.STOCKS, 'TSLA:gt:250'],
   ['football', MarketType.FOOTBALL, '12345:home_win:0'],
@@ -48,6 +49,11 @@ const REJECTED: [string, number, string][] = [
   ['made-up stock', MarketType.STOCKS, 'MADEUP:gt:1'],
   ['a forex symbol on a STOCKS pool (wrong class)', MarketType.STOCKS, 'EURUSD:gt:1'],
   ['stock, exponent strike (the feed grammar refuses it)', MarketType.STOCKS, 'TSLA:gt:1e3'],
+  // The CoinGecko resolver read this through Number(); the live Data Streams parser does not, so it never settles.
+  ['crypto, exponent strike (the live Data Streams parser refuses it)', MarketType.CRYPTO, 'ETH:lt:1e3'],
+  ['crypto, a strike with a space (the live parser reads the raw text)', MarketType.CRYPTO, 'ETH:lt:1000 '],
+  ['a paused symbol with no Data Streams feed', MarketType.FOREX, 'EURGBP:gt:0.85'],
+  ['a forex strike with 19 decimals', MarketType.FOREX, 'EURUSD:gt:1.1234567890123456789'],
   ['stock, hex strike', MarketType.STOCKS, 'TSLA:gt:0x10'],
   ['football, non-numeric match id', MarketType.FOOTBALL, 'abc:home_win:0'],
   ['basketball cannot be a draw', MarketType.BASKETBALL, '678:draw:0'],
@@ -63,8 +69,8 @@ describe('parseOracleRef mirrors the resolver', () => {
     expect(parseOracleRef(pool(mType, ref))).toBeNull();
     expect(unsettleable(pool(mType, ref))).toBe(true);
   });
-  it('shows a crypto exponent strike as the number it is', () => {
-    expect(parseOracleRef(pool(MarketType.CRYPTO, 'ETH:lt:1e3'))).toMatchObject({ symbol: 'ETH', strike: '1000' });
+  it('shows a crypto strike exactly as written', () => {
+    expect(parseOracleRef(pool(MarketType.CRYPTO, 'ETH:lt:1000.25'))).toMatchObject({ symbol: 'ETH', strike: '1000.25' });
   });
   it('a house pool is settled by hand and is never unsettleable', () => {
     expect(unsettleable(pool(MarketType.MAKO, 'anything'))).toBe(false);
