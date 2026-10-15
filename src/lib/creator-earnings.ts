@@ -89,6 +89,9 @@ export type CreatorEarnings = {
   /// Sum of the claimable fees.
   claimableTotal: bigint;
   claimable: number;
+  /// Sum of the fees the chain shows as collected (creatorFeeClaimed, not forfeited). A claim this browser sent that
+  /// the read has not caught up with ('confirming') is in neither total until it does.
+  claimedTotal: bigint;
 };
 
 /// `claimSent(id)`: whether this browser already sent a claim for that pool and is waiting for the read to show it.
@@ -99,7 +102,8 @@ export function creatorEarningsFor(markets: readonly MarketWithId[], account: st
     .filter((e): e is CreatorEarning => e !== null)
     .sort((a, b) => ORDER[a.state] - ORDER[b.state] || (a.market.id < b.market.id ? 1 : a.market.id > b.market.id ? -1 : 0));
   const claimableRows = rows.filter((e) => e.state === 'claimable');
-  return { rows, claimableTotal: claimableRows.reduce((s, e) => s + e.fee, 0n), claimable: claimableRows.length };
+  const claimedTotal = rows.filter((e) => e.state === 'claimed').reduce((s, e) => s + e.fee, 0n);
+  return { rows, claimableTotal: claimableRows.reduce((s, e) => s + e.fee, 0n), claimable: claimableRows.length, claimedTotal };
 }
 
 /// The ratio as a percentage for people: 408 bps -> "4.08".

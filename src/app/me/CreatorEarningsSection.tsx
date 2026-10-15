@@ -12,6 +12,8 @@ import { usdcExact } from '@/lib/pool-list';
 import { usePoolTx } from '@/lib/use-pool-tx';
 import type { AuthedUser } from '@/lib/use-user';
 
+import { CREATOR_EARNINGS_ANCHOR } from './use-creator-totals';
+
 // Me: Creator earnings. Every V4 pool this account created that carries a creator fee, with what it pays: claimable
 // rows (and their total) with a Claim button each, then claimed and forfeited rows, then a count of pools that are
 // refunded or not resolved yet. Self-contained, so Me mounts it with one line: it reads the same every-pool chain read
@@ -43,12 +45,12 @@ export function CreatorEarningsSection({ user, account, variant }: { user: Authe
   const frame = (children: React.ReactNode) =>
     mobile ? (
       <div style={{ padding: '12px 12px 0' }}>
-        <section aria-label="Creator earnings" style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
+        <section id={CREATOR_EARNINGS_ANCHOR.mobile} aria-label="Creator earnings" style={{ scrollMarginTop: 80, borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
           {children}
         </section>
       </div>
     ) : (
-      <section aria-label="Creator earnings" style={{ marginTop: 22, paddingTop: 14, boxShadow: 'inset 0 1px 0 var(--line)' }}>
+      <section id={CREATOR_EARNINGS_ANCHOR.desktop} aria-label="Creator earnings" style={{ scrollMarginTop: 80, marginTop: 22, paddingTop: 14, boxShadow: 'inset 0 1px 0 var(--line)' }}>
         {children}
       </section>
     );

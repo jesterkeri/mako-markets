@@ -35,6 +35,7 @@ import {
   type MeView,
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
+import { CREATOR_EARNINGS_ANCHOR, useCreatorTotals } from './use-creator-totals';
 import { validateDisplayName } from './profile-rules';
 
 // Me on mobile (11a), in the expressive look: identity, the balance tiles, test USDC, create and settings rows,
@@ -170,8 +171,50 @@ function Tiles(v: MeView) {
           <Figure value={won} size={24} />
         </div>
       </div>
+      <CreatorTotalsTile account={v.account} />
     </div>
   );
+}
+
+/// Creator earnings, full width under the other tiles: unclaimed fees as the figure, what was already collected beside
+/// it. It leads to the Creator earnings list, or to creating a first pool when there is none.
+function CreatorTotalsTile({ account }: { account: string }) {
+  const t = useCreatorTotals(account);
+  const unclaimed: Loadable<bigint> = t.status === 'ready' ? { status: 'ready', value: t.value.unclaimed } : t;
+  const hasPools = t.status === 'ready' && t.value.pools > 0;
+  const sub = t.status !== 'ready' ? null : hasPools ? `${usdc2(t.value.claimed)} USDC claimed` : 'Create a pool to earn';
+  const tile: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 12, borderRadius: 24, background: 'var(--raise)', padding: '14px 16px', color: 'inherit', textDecoration: 'none' };
+  const body = (
+    <>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--dim)' }}>Creator earnings · to claim</div>
+        <div style={{ marginTop: 4 }}>
+          <Figure value={unclaimed} size={24} colour={t.status === 'ready' && t.value.unclaimed > 0n ? 'var(--up-text)' : undefined} />
+        </div>
+      </div>
+      {sub && <div style={{ flex: 'none', fontSize: 13, fontWeight: 700, color: 'var(--dim)', fontVariantNumeric: 'tabular-nums' }}>{sub}</div>}
+      {t.status === 'ready' && (
+        <span aria-hidden="true" style={{ ...display, flex: 'none' }}>
+          →
+        </span>
+      )}
+    </>
+  );
+  if (hasPools) {
+    return (
+      <a href={`#${CREATOR_EARNINGS_ANCHOR.mobile}`} aria-label="Creator earnings, see the list" className="m3-press" style={tile}>
+        {body}
+      </a>
+    );
+  }
+  if (t.status === 'ready') {
+    return (
+      <Link href={CREATE_HREF} aria-label="Creator earnings, create a pool to earn" className="m3-press" style={tile}>
+        {body}
+      </Link>
+    );
+  }
+  return <div style={tile}>{body}</div>;
 }
 
 /// Test USDC from Circle's faucet, with the address it asks for and a Copy beside it.

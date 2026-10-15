@@ -159,7 +159,18 @@ describe('creatorEarningsFor: the account\'s own pools', () => {
     expect(r.claimableTotal).toBe(1_000_000n);
   });
   it('an account that created nothing gets nothing', () => {
-    expect(creatorEarningsFor(markets, '0x00000000000000000000000000000000000000ff')).toEqual({ rows: [], claimableTotal: 0n, claimable: 0 });
+    expect(creatorEarningsFor(markets, '0x00000000000000000000000000000000000000ff')).toEqual({ rows: [], claimableTotal: 0n, claimable: 0, claimedTotal: 0n });
+  });
+  it('totals what the chain shows collected: claimed pools only, never a forfeited one someone called claim on (it paid 0)', () => {
+    const withForfeitCalled = [...markets, pool({ id: 10n, totalNo: 1n, creatorFeeClaimed: true }), pool({ id: 11n, totalYes: 60n * USDC, totalNo: 40n * USDC, creatorFeeClaimed: true })];
+    const r = creatorEarningsFor(withForfeitCalled, CREATOR);
+    expect(r.rows.find((e) => e.market.id === 10n)?.state).toBe('forfeited');
+    expect(r.claimedTotal).toBe(800_000n + 2_000_000n); // pool 3 (40 * 2%) + pool 11 (100 * 2%)
+  });
+  it('a claim this browser sent but the read has not shown (confirming) is in neither total', () => {
+    const r = creatorEarningsFor(markets, CREATOR, (id) => id === 1n);
+    expect(r.rows.find((e) => e.market.id === 1n)?.state).toBe('confirming');
+    expect({ claimable: r.claimableTotal, claimed: r.claimedTotal }).toEqual({ claimable: 200_000n, claimed: 800_000n });
   });
   it('isPoolCreator needs an account', () => {
     expect(isPoolCreator(pool(), null)).toBe(false);

@@ -34,6 +34,7 @@ import {
   type MeView,
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
+import { CREATOR_EARNINGS_ANCHOR, useCreatorTotals } from './use-creator-totals';
 import { validateDisplayName } from './profile-rules';
 
 // Me on desktop (11a), in the terminal look: identity and test USDC, the four totals, profit and badges, then the
@@ -240,18 +241,56 @@ function Totals(v: MeView) {
     ['BALANCE', v.balance],
     ['IN PLAY', from((s) => s.inPlay)],
     ['READY TO CLAIM', v.ready, 'var(--up-text)'],
-    ['WON ALL TIME', from((s) => s.wonAllTime)],
   ];
+  const cell: React.CSSProperties = { padding: '14px 18px', boxShadow: 'inset 1px 0 0 var(--line)' };
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', boxShadow: 'inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line)' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', boxShadow: 'inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line)' }}>
       {cells.map(([label, value, colour]) => (
-        <div key={label} style={{ padding: '14px 18px', boxShadow: 'inset 1px 0 0 var(--line)' }}>
+        <div key={label} style={cell}>
           <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>{label}</div>
           <Amount value={value} colour={colour} />
         </div>
       ))}
+      <CreatorTotalsCell account={v.account} style={cell} />
+      <div style={cell}>
+        <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>WON ALL TIME</div>
+        <Amount value={from((s) => s.wonAllTime)} />
+      </div>
     </div>
   );
+}
+
+/// Creator earnings beside the other totals: unclaimed fees as the figure, what was already collected under it. It
+/// leads to the Creator earnings list, or to creating a first pool when there is none.
+function CreatorTotalsCell({ account, style }: { account: string; style: React.CSSProperties }) {
+  const t = useCreatorTotals(account);
+  const unclaimed: Loadable<bigint> = t.status === 'ready' ? { status: 'ready', value: t.value.unclaimed } : t;
+  const hasPools = t.status === 'ready' && t.value.pools > 0;
+  const sub =
+    t.status !== 'ready' ? null : hasPools ? `${usdc2(t.value.claimed)} USDC CLAIMED` : 'CREATE A POOL TO EARN';
+  const body = (
+    <>
+      <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>CREATOR EARNINGS</div>
+      <Amount value={unclaimed} colour={t.status === 'ready' && t.value.unclaimed > 0n ? 'var(--up-text)' : undefined} />
+      {sub && <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', marginTop: 4 }}>{sub}</div>}
+    </>
+  );
+  const linkStyle: React.CSSProperties = { ...style, display: 'block', color: 'inherit', textDecoration: 'none' };
+  if (hasPools) {
+    return (
+      <a href={`#${CREATOR_EARNINGS_ANCHOR.desktop}`} aria-label="Creator earnings, see the list" className="mk-press97" style={linkStyle}>
+        {body}
+      </a>
+    );
+  }
+  if (t.status === 'ready') {
+    return (
+      <Link href={CREATE_HREF} aria-label="Creator earnings, create a pool to earn" className="mk-press97" style={linkStyle}>
+        {body}
+      </Link>
+    );
+  }
+  return <div style={style}>{body}</div>;
 }
 
 function Profit(v: MeView) {
