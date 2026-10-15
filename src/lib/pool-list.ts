@@ -315,8 +315,8 @@ export function closingSoon(
   return { rows, openCount: open.length };
 }
 
-/// Trending's length. Mako Market's own pools always show and are never cut, but they do take places in it: the other
-/// pools fill what is left of the 20 (all 20, or more, if that many Mako Market pools are open).
+/// Trending's length. Every pool competes for these places on the same order; a Mako Market pool that ranks below
+/// them still shows, after them, because Mako Market's own pools are never cut (so the list can run past 20).
 /// Twenty is a shortlist, about two phone screens of cards: past that a list stops saying what is popular and becomes
 /// the All tab, which is one tap away and holds every open pool. Raise it only if the open count grows well past it.
 export const TRENDING_LIMIT = 20;
@@ -334,8 +334,9 @@ function byTrending(a: MarketWithId, b: MarketWithId): number {
 }
 
 /// The Pools page's Trending tab (Joshua, 2026-10-15): open pools only (betting not closed, not resolved), ranked by
-/// byTrending, capped at `limit`. Mako Market's own pools (MAKO, admin-curated) are pinned at the top in the same
-/// order and are never cut by the cap. Read from the one every-pool chain read the page already makes; `bets` only
+/// byTrending, capped at `limit`. Mako Market's own pools (MAKO, admin-curated) are ranked with every other pool, not
+/// pinned (Joshua, 2026-10-15: "it just needs to be there"), and are never cut by the cap: one that ranks below it
+/// still shows, in its ranked place after the capped rows. Read from the one every-pool chain read the page already makes; `bets` only
 /// fills each row's position.
 export function trendingPools(
   markets: readonly MarketWithId[],
@@ -344,9 +345,10 @@ export function trendingPools(
   limit: number = TRENDING_LIMIT,
 ): PoolRow[] {
   const ranked = markets.filter((m) => m.mType in CAT_OF && poolState(m, nowSec) === 'open').sort(byTrending);
-  const mako = ranked.filter((m) => m.mType === MarketType.MAKO);
-  const rest = ranked.filter((m) => m.mType !== MarketType.MAKO).slice(0, Math.max(0, Math.floor(limit) - mako.length));
-  return [...mako, ...rest].map((m) => poolRow(m, nowSec, bets?.get(m.id.toString())));
+  const cap = Math.max(0, Math.floor(limit));
+  return ranked
+    .filter((m, i) => i < cap || m.mType === MarketType.MAKO)
+    .map((m) => poolRow(m, nowSec, bets?.get(m.id.toString())));
 }
 
 /// The groups the Pools page shows: open pools only, on desktop and mobile. Closed pools, and anything to claim from
