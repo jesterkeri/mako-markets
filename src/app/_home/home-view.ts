@@ -12,5 +12,5 @@ export const DESK_ROWS = 6;
 export type MakoView = { status: 'loading' } | { status: 'error' } | { status: 'ready'; rows: PoolRow[]; total: number };
 
 /// Four rows: the height of the Rounds list it replaces beside the pools table. The rest are on Pools, whose
-/// Trending tab lists every open Mako Market pool first.
+/// Trending tab ranks every open Mako Market pool among the others and never cuts one.
 export const HOME_MAKO_ROWS = 4;

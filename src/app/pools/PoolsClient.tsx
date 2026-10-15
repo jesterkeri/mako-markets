@@ -36,7 +36,7 @@ import { formatAddress } from '@/lib/user-display';
 // Pools (8a): every V4 pool that is open, grouped by when it closes, plus the ones that closed in the last week.
 // Desktop is a table, mobile a stack of cards; both render, and the shell's width switch shows one.
 // The first tab, and the one the page opens on, is Trending (Joshua, 2026-10-15): open pools by players, then pot,
-// with Mako Market's own pools pinned at the top (trendingPools in pool-list.ts). It reads the same chain read as the
+// with Mako Market's own pools ranked among them and never cut (trendingPools in pool-list.ts). It reads the same chain read as the
 // rest of the page, so it costs no request of its own.
 
 const SORTS: readonly { key: PoolSort; label: string }[] = [

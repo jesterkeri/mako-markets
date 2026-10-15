@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Home's column beside Pools (Joshua, 2026-10-15): Mako Market's own open pools in the Trending order (players, then
-// pot, then newest), each a link to its pool, up to HOME_MAKO_ROWS, with ALL -> /pools (which opens on Trending, Mako
-// markets first) and an honest empty line with no rows. The Rounds list it replaced is gone; the next-round hero above
+// pot, then newest), each a link to its pool, up to HOME_MAKO_ROWS, with ALL -> /pools (which opens on Trending, where Mako
+// markets are ranked among the rest) and an honest empty line with no rows. The Rounds list it replaced is gone; the next-round hero above
 // it is unchanged. The chain reads are mocked (Rounds live, one round open), so nothing here touches a network.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

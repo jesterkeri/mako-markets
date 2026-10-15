@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // Pools' Trending tab (Joshua, 2026-10-15): open pools only, most players first, then the bigger pot, then the newer
-// pool; Mako Market's own pools pinned at the top and never cut by the cap. The page opens on it, it is the first tab
+// pool; Mako Market's own pools ranked among them by the same rule (not pinned, Joshua 2026-10-15) and never cut by
+// the cap. The page opens on it, it is the first tab
 // in both layouts, and with nothing open the page shows its honest empty state, no rows. The ranking is pure
 // (trendingPools); the page is rendered with the chain read mocked, so nothing here touches a network.
 
@@ -91,7 +92,7 @@ describe('trendingPools: the ranking', () => {
     expect(ids(rows)).toEqual([2, 1, 4, 3]);
   });
 
-  it('pins Mako Market pools at the top, ranked among themselves by the same rule', () => {
+  it('ranks Mako Market pools among the others by the same rule, never pinned to the top', () => {
     const rows = trendingPools(
       [
         pool(1n, { yesBettorCount: 40, noBettorCount: 40 }),
@@ -101,8 +102,8 @@ describe('trendingPools: the ranking', () => {
       ],
       NOW,
     );
-    expect(ids(rows)).toEqual([3, 2, 1, 4]);
-    expect(rows.slice(0, 2).every((r) => r.cat === 'MAKO')).toBe(true);
+    // 80 players, 18, then the Mako pools with 3 and 1: a quiet Mako pool sits where its players put it.
+    expect(ids(rows)).toEqual([1, 4, 3, 2]);
   });
 
   it('shows only open pools: betting closed, resolving, settled and refunded pools are out, Mako ones too', () => {
@@ -123,16 +124,17 @@ describe('trendingPools: the ranking', () => {
   });
 
   it(`caps the list at ${TRENDING_LIMIT}, cutting the least popular, never a Mako Market pool`, () => {
-    // 30 ordinary pools with 1..30 players, and 3 Mako pools with fewer players than any of them.
+    // 30 ordinary pools with 1..30 players, and 3 Mako pools with fewer players than any of them: the 20 most popular
+    // fill the cap, and the Mako pools that rank below it still show, after them, in their ranked order.
     const markets = [
       ...Array.from({ length: 30 }, (_, i) => pool(BigInt(i + 10), { yesBettorCount: i + 1, noBettorCount: 0, totalNo: 0n })),
       ...[1n, 2n, 3n].map((id) => pool(id, { mType: MarketType.MAKO, yesBettorCount: 0, noBettorCount: 0 })),
     ];
     const rows = trendingPools(markets, NOW);
-    expect(rows).toHaveLength(TRENDING_LIMIT);
-    expect(ids(rows.slice(0, 3))).toEqual([3, 2, 1]);
-    // The 17 most popular ordinary pools fill the rest: 30 players down to 14.
-    expect(rows.slice(3).map((r) => r.bettors)).toEqual(Array.from({ length: 17 }, (_, i) => 30 - i));
+    expect(rows).toHaveLength(TRENDING_LIMIT + 3);
+    expect(rows.slice(0, TRENDING_LIMIT).map((r) => r.bettors)).toEqual(Array.from({ length: TRENDING_LIMIT }, (_, i) => 30 - i));
+    expect(rows.slice(0, TRENDING_LIMIT).some((r) => r.cat === 'MAKO')).toBe(false);
+    expect(ids(rows.slice(TRENDING_LIMIT))).toEqual([3, 2, 1]);
   });
 
   it('keeps every open Mako Market pool even past the cap', () => {
@@ -141,8 +143,10 @@ describe('trendingPools: the ranking', () => {
       pool(100n, { yesBettorCount: 50 }),
     ];
     const rows = trendingPools(markets, NOW);
-    expect(rows).toHaveLength(25);
-    expect(rows.every((r) => r.cat === 'MAKO')).toBe(true);
+    // The busy ordinary pool ranks first; all 25 Mako pools follow, none cut, so the list runs past the cap.
+    expect(rows).toHaveLength(26);
+    expect(ids(rows.slice(0, 1))).toEqual([100]);
+    expect(rows.slice(1).every((r) => r.cat === 'MAKO')).toBe(true);
   });
 
   it('is empty when nothing is open', () => {
@@ -201,11 +205,12 @@ describe('the Pools page opens on Trending', () => {
     }
   });
 
-  it('lists the Mako Market pool first, then open pools by players; never the settled pool', () => {
+  it('lists open pools by players, the Mako Market pool where it ranks (here last), never the settled pool', () => {
     const { desk, mob } = renderPools(MARKETS);
     for (const layout of [desk, mob]) {
       const section = within(layout).getByRole('region', { name: 'Trending' });
-      expect(questionsIn(section)).toEqual(['Mako house pool?', 'Busy pool?', 'Football pool?', 'Quiet pool?']);
+      // Mako house pool and Quiet pool both have 1 player; Quiet's pot (3 USDC) beats the Mako pool's (1 USDC).
+      expect(questionsIn(section)).toEqual(['Busy pool?', 'Football pool?', 'Quiet pool?', 'Mako house pool?']);
       expect(layout.textContent).not.toContain('Settled pool?');
     }
   });
