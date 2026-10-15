@@ -4,14 +4,14 @@ import Link from 'next/link';
 
 import { ListActionButton, ListStateDesktop } from '@/components/ListState';
 import { Mascot } from '@/components/Mascot';
-import { HomeRoundsBand, HomeRoundsColumn } from '@/components/rounds/HomeRounds';
+import { HomeRoundsBand } from '@/components/rounds/HomeRounds';
 import { poolHref } from '@/components/pools/PoolMobileCard';
 import { listStateCopy } from '@/lib/list-states';
 import { newsAge } from '@/lib/news-intel';
 import { CAT_STYLE, formatPays, noOpenPoolsTitle, POOL_FILTERS, usdc2, type PoolFilter, type PoolRow } from '@/lib/pool-list';
 import type { SideLabels } from '@/lib/use-pool-labels';
 
-import { DESK_ROWS, type PoolsView } from './home-view';
+import { DESK_ROWS, HOME_MAKO_ROWS, type MakoView, type PoolsView } from './home-view';
 import { INTEL_COUNT, type NewsView } from './use-news';
 
 // Home desktop (2a): terminal look, hairline rules, mono numbers, pill controls, no card panels.
@@ -19,7 +19,7 @@ import { INTEL_COUNT, type NewsView } from './use-news';
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const h2: React.CSSProperties = { margin: 0, ...display, fontSize: 24, letterSpacing: '-0.02em' };
-/// The Rounds and Pools column headers share one box, so their titles and the rules under them form one line
+/// The Mako markets and Pools column headers share one box, so their titles and the rules under them form one line
 /// (Joshua, 2026-10-07).
 const colHead: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 18, minHeight: 32, padding: '14px 14px 12px 20px' };
 const BAR = 'color-mix(in srgb, var(--mako-canvas-fg) 16%, transparent)';
@@ -28,6 +28,7 @@ const COLS = 'minmax(0,1fr) 96px 96px 120px 90px';
 
 type Props = {
   pools: PoolsView;
+  mako: MakoView;
   filter: PoolFilter;
   setFilter: (f: PoolFilter) => void;
   labelsOf: (r: PoolRow) => SideLabels;
@@ -36,12 +37,12 @@ type Props = {
   nowMs: number | null;
 };
 
-export function HomeDesktop({ pools, filter, setFilter, labelsOf, retry, news, nowMs }: Props) {
+export function HomeDesktop({ pools, mako, filter, setFilter, labelsOf, retry, news, nowMs }: Props) {
   return (
     <div style={{ paddingBottom: 8 }}>
       <HomeRoundsBand fallback={<RoundsNotOpenBand />} />
       <div style={{ display: 'grid', gridTemplateColumns: '360px minmax(0,1fr)', marginTop: 22 }}>
-        <HomeRoundsColumn fallback={<RoundsColumn />} />
+        <MakoColumn mako={mako} />
         <PoolsColumn pools={pools} filter={filter} setFilter={setFilter} labelsOf={labelsOf} retry={retry} />
       </div>
       <MarketIntel news={news} nowMs={nowMs} />
@@ -71,16 +72,56 @@ function RoundsNotOpenBand() {
   );
 }
 
-/// 2a's Rounds column. Nothing is scheduled, so it says so rather than drawing rows.
-function RoundsColumn() {
+/// The column beside Pools (Joshua, 2026-10-15; it was 2a's Rounds list): Mako Market's own open pools, most players
+/// first, then the bigger pot, then the newest. A failed read leaves the retry to the pools table beside it.
+function MakoColumn({ mako }: { mako: MakoView }) {
+  const note: React.CSSProperties = { margin: 0, padding: '14px 20px', boxShadow: 'inset 0 1px 0 var(--line)', fontSize: 14, lineHeight: 1.5, color: 'var(--dim)' };
   return (
-    <section aria-labelledby="home-rounds-col" style={{ borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column' }}>
+    <section aria-labelledby="home-mako-col" style={{ borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column' }}>
       <div style={colHead}>
-        <h2 id="home-rounds-col" style={h2}>
-          Rounds
+        <h2 id="home-mako-col" style={h2}>
+          Mako markets
         </h2>
+        {mako.status === 'ready' && mako.total > 0 && <span style={{ ...mono, fontSize: 12, color: 'var(--dim)' }}>{mako.total}</span>}
+        <Link href="/pools" style={{ marginLeft: 'auto', ...mono, fontSize: 11, fontWeight: 700, color: 'var(--dim)', textDecoration: 'none' }}>
+          ALL →
+        </Link>
       </div>
-      <p style={{ margin: 0, padding: '14px 20px', boxShadow: 'inset 0 1px 0 var(--line)', fontSize: 14, lineHeight: 1.5, color: 'var(--dim)' }}>No rounds are scheduled yet.</p>
+      {mako.status === 'error' ? (
+        <p style={note}>Mako markets can’t be loaded right now.</p>
+      ) : mako.status === 'loading' ? (
+        <div aria-busy="true" aria-label="Loading Mako markets">
+          {Array.from({ length: HOME_MAKO_ROWS }, (_, i) => (
+            <div key={i} style={{ padding: '12px 20px', boxShadow: 'inset 0 1px 0 var(--line)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ width: '55%', height: 10, borderRadius: 8, background: BAR }} />
+              <div style={{ width: '85%', height: 14, borderRadius: 8, background: BAR }} />
+            </div>
+          ))}
+        </div>
+      ) : mako.rows.length === 0 ? (
+        <p style={note}>
+          No Mako market is open right now.{' '}
+          <Link href="/pools" style={{ color: 'var(--mako-canvas-fg)', fontWeight: 700 }}>
+            Go to Pools
+          </Link>
+        </p>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          {mako.rows.map((r) => (
+            <li key={r.id.toString()}>
+              <Link href={poolHref(r.id)} className="mk-row" style={{ display: 'block', padding: '12px 20px', boxShadow: 'inset 0 1px 0 var(--line)', color: 'inherit', textDecoration: 'none' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, ...mono, fontSize: 11, color: 'var(--dim)' }}>
+                  <span>
+                    #{r.id.toString()} · {r.bettors} {r.bettors === 1 ? 'PLAYER' : 'PLAYERS'} · CLOSES {r.closes}
+                  </span>
+                  <span style={{ whiteSpace: 'nowrap' }}>{usdc2(r.pool)} USDC</span>
+                </div>
+                <div style={{ ...display, fontSize: 17, marginTop: 4 }}>{r.question}</div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

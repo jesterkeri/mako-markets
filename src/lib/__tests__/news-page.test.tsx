@@ -148,7 +148,7 @@ describe('helpers', () => {
 describe('Home', () => {
   it('Market intel on the desktop Home page links to /news (mobile has no Home page)', () => {
     act(() => {
-      render(<HomeDesktop pools={{ status: 'loading' }} filter="ALL" setFilter={() => {}} labelsOf={() => ({ yes: 'YES', no: 'NO' })} retry={() => {}} news={{ status: 'unavailable' }} nowMs={NOW} />);
+      render(<HomeDesktop pools={{ status: 'loading' }} mako={{ status: 'loading' }} filter="ALL" setFilter={() => {}} labelsOf={() => ({ yes: 'YES', no: 'NO' })} retry={() => {}} news={{ status: 'unavailable' }} nowMs={NOW} />);
     });
     expect(screen.getByRole('link', { name: 'All news →' }).getAttribute('href')).toBe('/news');
   });

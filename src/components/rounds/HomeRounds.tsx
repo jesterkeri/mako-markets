@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 
-import { usdc2 } from '@/lib/pool-list';
 import { closeTimeOf, commentary, entryCloseOf, mmss, phaseAt, V1_ASSET, type Round, type RoundPhase } from '@/lib/rounds-model';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { roundsContract, useRounds } from '@/lib/use-rounds';
@@ -73,51 +72,6 @@ function HomeRoundsBandLive({ fallback }: { fallback: React.ReactNode }) {
       <Link href={f ? `/rounds/${f.round.id.toString()}` : '/rounds'} className="mk-press96" style={{ ...button, flex: 'none', background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>
         {f ? (f.phase === 'open' ? 'Predict' : 'Watch') : 'See rounds'}
       </Link>
-    </section>
-  );
-}
-
-/// Desktop: the Rounds column beside Pools, up to four rounds that are open or live.
-/// Rounds not configured: the fallback, with no chain reads at all.
-export function HomeRoundsColumn({ fallback }: { fallback: React.ReactNode }) {
-  return roundsContract ? <HomeRoundsColumnLive fallback={fallback} /> : <>{fallback}</>;
-}
-
-function HomeRoundsColumnLive({ fallback }: { fallback: React.ReactNode }) {
-  const data = useHomeRounds();
-  if (!data) return <>{fallback}</>;
-  const active = data.rounds
-    .map((r) => ({ round: r, phase: phaseAt(r, data.now) }))
-    .filter((x) => x.phase === 'open' || x.phase === 'starting' || x.phase === 'live')
-    .sort((a, b) => a.round.startTime - b.round.startTime)
-    .slice(0, 4);
-  return (
-    <section aria-labelledby="home-rounds-col" style={{ borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', padding: '18px 20px 12px' }}>
-        <h2 id="home-rounds-col" style={{ margin: 0, ...display, fontSize: 24, letterSpacing: '-0.02em' }}>
-          Rounds
-        </h2>
-        <Link href="/rounds" style={{ marginLeft: 'auto', ...mono, fontSize: 11, fontWeight: 700, color: 'var(--dim)', textDecoration: 'none' }}>
-          ALL →
-        </Link>
-      </div>
-      {active.length === 0 ? (
-        <p style={{ margin: 0, padding: '14px 20px', boxShadow: 'inset 0 1px 0 var(--line)', fontSize: 14, lineHeight: 1.5, color: 'var(--dim)' }}>No round is open or live right now.</p>
-      ) : (
-        active.map(({ round: r, phase }) => (
-          <Link key={r.id.toString()} href={`/rounds/${r.id.toString()}`} style={{ display: 'block', padding: '12px 20px', boxShadow: 'inset 0 1px 0 var(--line)', color: 'inherit', textDecoration: 'none' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, ...mono, fontSize: 11, color: 'var(--dim)' }}>
-              <span>
-                {phase === 'open' ? 'OPEN' : 'LIVE'} · #{r.id.toString()} · {clock(r.startTime)}
-              </span>
-              <span>{usdc2(r.upPool + r.downPool)} USDC</span>
-            </div>
-            <div style={{ ...display, fontSize: 17, marginTop: 4 }}>
-              {V1_ASSET.symbol} up or down by {clock(closeTimeOf(r))}?
-            </div>
-          </Link>
-        ))
-      )}
     </section>
   );
 }

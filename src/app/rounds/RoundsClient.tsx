@@ -13,7 +13,8 @@ const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', f
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 
 /// The Rounds tab: what is open for predictions, what is live, and the latest results, from MakoRoundsV1 itself.
-export function RoundsClient() {
+/// `allResults` (/rounds?results=all) lists every result instead of the latest RESULTS_SHOWN.
+export function RoundsClient({ allResults = false }: { allResults?: boolean }) {
   const state = useRounds();
   const now = useLiveNowSec();
   const { user } = useUser();
@@ -24,7 +25,7 @@ export function RoundsClient() {
     if (state.kind === 'loading' || now === null) return narrow ? <ListStateMobile kind="rounds" state="loading" /> : <ListStateDesktop kind="rounds" state="loading" />;
     if (state.kind === 'error') return narrow ? <ListStateMobile kind="rounds" state="error" onRetry={state.retry} /> : <ListStateDesktop kind="rounds" state="error" onRetry={state.retry} />;
     if (state.rounds.length === 0) return narrow ? <ListStateMobile kind="rounds" state="empty" /> : <ListStateDesktop kind="rounds" state="empty" />;
-    return <RoundSections rounds={state.rounds} now={now} narrow={narrow} />;
+    return <RoundSections rounds={state.rounds} now={now} narrow={narrow} allResults={allResults} />;
   };
 
   return (
@@ -68,7 +69,17 @@ const SECTIONS: { title: string; phases: RoundPhase[] }[] = [
   { title: 'Results', phases: ['settled', 'refunded'] },
 ];
 
-export function RoundSections({ rounds, now, narrow }: { rounds: Round[]; now: number; narrow: boolean }) {
+/// Results under the open and live rounds: the RESULTS_SHOWN finished rounds with the latest SCHEDULED start, newest
+/// first (Joshua, 2026-10-15: old results crowded the page). Ordered by start time because the Rounds contract records
+/// no time a round settled or was refunded: a round refunded late (at its no-price deadline) can sit below rounds that
+/// started after it, and a one-sided round refunded just before its start sorts by that start. The page says "by
+/// start time" so it never claims an order it cannot know (Codex TRENDING R1). The rest are one link away at
+/// /rounds?results=all, every round keeps its own page, and nothing to claim is lost by hiding them: a row here is
+/// only a link to its round, and Me lists every claimable round (me-rounds.ts).
+export const RESULTS_SHOWN = 3;
+export const ALL_RESULTS_HREF = '/rounds?results=all';
+
+export function RoundSections({ rounds, now, narrow, allResults = false }: { rounds: Round[]; now: number; narrow: boolean; allResults?: boolean }) {
   const withPhase = rounds.map((r) => ({ r, phase: phaseAt(r, now) }));
   const open = withPhase.filter((x) => x.phase === 'open');
   return (
@@ -80,17 +91,40 @@ export function RoundSections({ rounds, now, narrow }: { rounds: Round[]; now: n
           // Open and live: soonest first. Results: newest first.
           .sort((a, b) => (s.title === 'Results' ? b.r.startTime - a.r.startTime : a.r.startTime - b.r.startTime));
         if (list.length === 0) return null;
+        const results = s.title === 'Results';
+        const shown = results && !allResults ? list.slice(0, RESULTS_SHOWN) : list;
         return (
           <section key={s.title} aria-label={s.title}>
             <h2 style={{ margin: '0 0 6px', padding: '0 4px', ...mono, fontSize: 11, fontWeight: 700, color: 'var(--dim)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               {s.title} · {list.length}
+              {results && !allResults && list.length > RESULTS_SHOWN && ` · latest ${RESULTS_SHOWN} by start time`}
             </h2>
-            {list.map(({ r, phase }) => (
+            {shown.map(({ r, phase }) => (
               <RoundRow key={r.id.toString()} round={r} phase={phase} now={now} narrow={narrow} />
             ))}
+            {results && list.length > RESULTS_SHOWN && (
+              <ResultsToggle all={allResults} total={list.length} />
+            )}
           </section>
         );
       })}
+    </div>
+  );
+}
+
+/// The control under Results: every result, or back to the latest few. A link, so the full history has an address and
+/// the back button returns to where it was; scroll={false} keeps the reader at the list.
+function ResultsToggle({ all, total }: { all: boolean; total: number }) {
+  return (
+    <div style={{ padding: '12px 4px 0', boxShadow: 'inset 0 1px 0 var(--line)' }}>
+      <Link
+        href={all ? '/rounds' : ALL_RESULTS_HREF}
+        scroll={false}
+        className="mk-press96"
+        style={{ display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 16px', borderRadius: 9999, background: 'var(--raise)', color: 'var(--mako-canvas-fg)', boxShadow: 'var(--edge)', textDecoration: 'none', ...mono, fontSize: 12, fontWeight: 700 }}
+      >
+        {all ? `Show the latest ${RESULTS_SHOWN} only` : `See all results (${total})`}
+      </Link>
     </div>
   );
 }

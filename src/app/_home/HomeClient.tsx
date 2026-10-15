@@ -4,18 +4,19 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 import { useMarkets } from '@/lib/hooks';
-import { closingSoon, type ClosingSoon, type PoolFilter } from '@/lib/pool-list';
+import { closingSoon, trendingPools, type ClosingSoon, type PoolFilter } from '@/lib/pool-list';
 import { DESKTOP_QUERY } from '@/lib/use-is-desktop';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { usePoolLabels } from '@/lib/use-pool-labels';
 
-import { DESK_ROWS, type PoolsView } from './home-view';
+import { DESK_ROWS, HOME_MAKO_ROWS, type MakoView, type PoolsView } from './home-view';
 import { HomeDesktop } from './HomeDesktop';
 import { useNews } from './use-news';
 
 // Home (2a). The Rounds contract is not live, so where 2a draws the next round, its chart and its entries, Home
 // says rounds are not open yet; nothing about a round is drawn. The rest is real: the open pools that close
 // soonest, read from the Pools contract (V4), and the newest headlines from /api/news.
+// Beside the pools, Mako Market's own open pools in the Trending order (Joshua, 2026-10-15), from the same read.
 
 /// Mobile has no Home page (Joshua, 2026-10-07): / goes to Pools, keeping the query (the tour's ?tour=1 opens on /).
 /// Checked against the window itself after mount, never a server guess, so a desktop is never sent away; and again
@@ -42,6 +43,8 @@ export function HomeClient() {
   const news = useNews();
 
   const desk = now === null ? null : closingSoon(markets, now, filter, DESK_ROWS);
+  // trendingPools never cuts a Mako Market pool, so this is every open one, in order.
+  const mako = now === null ? null : trendingPools(markets, now).filter((r) => r.cat === 'MAKO');
 
   const makoKey = [...(desk?.rows ?? [])]
     .filter((r) => r.cat === 'MAKO')
@@ -56,12 +59,15 @@ export function HomeClient() {
   const view = (sel: ClosingSoon | null): PoolsView =>
     failed ? { status: 'error' } : isLoading || sel === null ? { status: 'loading' } : sel.openCount === 0 ? { status: 'empty' } : { status: 'ready', rows: sel.rows };
 
+  const makoView: MakoView =
+    failed ? { status: 'error' } : isLoading || mako === null ? { status: 'loading' } : { status: 'ready', rows: mako.slice(0, HOME_MAKO_ROWS), total: mako.length };
+
   const nowMs = now === null ? null : now * 1000;
   return (
     <>
       <h1 className="sr-only">Mako Market</h1>
       <div className="mk-desk mk-desk-frame">
-        <HomeDesktop pools={view(desk)} filter={filter} setFilter={setFilter} labelsOf={labelsOf} retry={refetch} news={news} nowMs={nowMs} />
+        <HomeDesktop pools={view(desk)} mako={makoView} filter={filter} setFilter={setFilter} labelsOf={labelsOf} retry={refetch} news={news} nowMs={nowMs} />
       </div>
       <div className="mk-mob mk-m">
         <MobileGoesToPools />
