@@ -40,13 +40,13 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
         {r.question}
       </Link>
       <div className="mk-over" style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-        <Link href={`${poolHref(r.id)}?side=yes`} className="m3-press m3-scale96" style={{ ...side, background: 'var(--mako-yes)' }}>
+        <Link href={`${poolHref(r.id)}?side=yes`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-yes)' }}>
           <span style={sideName}>
             {cap(labels.yes)} {r.yesPct}%
           </span>
           <span style={sidePays}>{formatPays(r.yesPays) || 'No bets'}</span>
         </Link>
-        <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96" style={{ ...side, background: 'var(--mako-no)' }}>
+        <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-no)' }}>
           <span style={sideName}>
             {cap(labels.no)} {r.noPct}%
           </span>

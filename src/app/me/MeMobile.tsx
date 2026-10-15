@@ -424,7 +424,8 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
   const side = sideOf(p, labels);
   const pill = statePill(p.state);
   const pays = estPayouts(p.market, p.bet);
-  const chip: React.CSSProperties = { height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%' };
+  // Positioned above the card's own press tint (.m3-press::after), so a darkening card never dims a chip's small text.
+  const chip: React.CSSProperties = { position: 'relative', zIndex: 1, height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%' };
   return (
     <Link href={poolHref(p.market.id)} className="m3-press" style={{ display: 'block', borderRadius: 26, background: 'var(--raise)', padding: '14px 16px', color: 'inherit', textDecoration: 'none' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -38,7 +38,8 @@ export const SIDE_BADGE: Record<HeldSide, { label: string; bg: string }> = {
 };
 
 /// Avatar colours for other people, picked by the author's avatar seed so one person keeps one colour. Yellow is
-/// kept for the viewer's own avatar (as in the design), red for NO, and gold is left out because it reads as yellow.
+/// kept for the viewer's own avatar (as in the design), the side green and red are not used (they belong to the HOLDS
+/// badges), and gold is left out because it reads as yellow.
 export const AVATAR_COLOURS = [
   'var(--mako-teal)',
   'var(--mako-blue)',

@@ -1064,7 +1064,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
             <button
               key={s}
               type="button"
-              className="m3-press"
+              className="m3-press mk-side"
               onClick={() => {
                 setSide(s);
                 setOpen(true);
