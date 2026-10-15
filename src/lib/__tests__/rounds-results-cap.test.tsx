@@ -68,10 +68,28 @@ for (const narrow of [false, true]) {
       const { container } = render(<RoundSections rounds={ROUNDS} now={NOW} narrow={narrow} />);
       const results = section(container, 'Results');
       expect(roundLinks(results)).toEqual(['/rounds/6', '/rounds/5', '/rounds/4']);
-      expect(results.textContent).toContain('Results · 6');
+      expect(results.textContent).toContain(`Results · 6 · latest ${RESULTS_SHOWN} by start time`);
       const seeAll = within(results).getByRole('link', { name: 'See all results (6)' });
       expect(seeAll.getAttribute('href')).toBe(ALL_RESULTS_HREF);
       expect(ALL_RESULTS_HREF).toBe('/rounds?results=all');
+    });
+
+    it('orders by scheduled start (the contract records no end time): a late refund of an earlier round stays under See all, and says so', () => {
+      // Round 3 started before 4, 5 and 6 but was refunded only at its no-price deadline, after they settled: it is the
+      // newest END, yet the capped list is the latest three STARTS, and the heading says that is the rule.
+      const late = RESULTS.map((r) => (r.id === 3n ? { ...r, status: RoundStatus.Refunded, outcome: RoundOutcome.None, refundReason: RefundReason.NoPrice } : r));
+      const { container } = render(<RoundSections rounds={[...late, OPEN, WAITING]} now={NOW} narrow={narrow} />);
+      const results = section(container, 'Results');
+      expect(roundLinks(results)).toEqual(['/rounds/6', '/rounds/5', '/rounds/4']);
+      expect(results.textContent).toContain('by start time');
+      const all = render(<RoundSections rounds={[...late, OPEN, WAITING]} now={NOW} narrow={narrow} allResults />);
+      expect(roundLinks(section(all.container, 'Results'))).toContain('/rounds/3');
+    });
+
+    it('a one-sided round refunded just before its start sorts by that start (first), as the rule says', () => {
+      const early = round(9, NOW + 30, { status: RoundStatus.Refunded, outcome: RoundOutcome.None, refundReason: RefundReason.OneSided, downPool: 0n, downEntrants: 0 });
+      const { container } = render(<RoundSections rounds={[...ROUNDS, early]} now={NOW} narrow={narrow} />);
+      expect(roundLinks(section(container, 'Results'))).toEqual(['/rounds/9', '/rounds/6', '/rounds/5']);
     });
 
     it('lists every result with ?results=all, with a way back to the latest few', () => {

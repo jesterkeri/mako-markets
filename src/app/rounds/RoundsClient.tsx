@@ -69,9 +69,13 @@ const SECTIONS: { title: string; phases: RoundPhase[] }[] = [
   { title: 'Results', phases: ['settled', 'refunded'] },
 ];
 
-/// Results under the open and live rounds: the latest few, newest first (Joshua, 2026-10-15: old results crowded the
-/// page). The rest are one link away at /rounds?results=all, and every round keeps its own page. Nothing to claim is
-/// lost by hiding them: a row here is only a link to its round, and Me lists every claimable round (me-rounds.ts).
+/// Results under the open and live rounds: the RESULTS_SHOWN finished rounds with the latest SCHEDULED start, newest
+/// first (Joshua, 2026-10-15: old results crowded the page). Ordered by start time because the Rounds contract records
+/// no time a round settled or was refunded: a round refunded late (at its no-price deadline) can sit below rounds that
+/// started after it, and a one-sided round refunded just before its start sorts by that start. The page says "by
+/// start time" so it never claims an order it cannot know (Codex TRENDING R1). The rest are one link away at
+/// /rounds?results=all, every round keeps its own page, and nothing to claim is lost by hiding them: a row here is
+/// only a link to its round, and Me lists every claimable round (me-rounds.ts).
 export const RESULTS_SHOWN = 3;
 export const ALL_RESULTS_HREF = '/rounds?results=all';
 
@@ -93,6 +97,7 @@ export function RoundSections({ rounds, now, narrow, allResults = false }: { rou
           <section key={s.title} aria-label={s.title}>
             <h2 style={{ margin: '0 0 6px', padding: '0 4px', ...mono, fontSize: 11, fontWeight: 700, color: 'var(--dim)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               {s.title} · {list.length}
+              {results && !allResults && list.length > RESULTS_SHOWN && ` · latest ${RESULTS_SHOWN} by start time`}
             </h2>
             {shown.map(({ r, phase }) => (
               <RoundRow key={r.id.toString()} round={r} phase={phase} now={now} narrow={narrow} />
