@@ -29,16 +29,17 @@ export function postErrorCopy(e: unknown): string {
 
 export type HeldSide = Exclude<CommentPosition, null>;
 
-/// The holder badge beside a name. Yellow is YES and red is NO across the redesign; the design has no BOTH, so a
-/// holder of both sides gets a pill split between the two colours (black text reads on either half).
+/// The holder badge beside a name. Green is YES and red is NO across the app (--mako-yes / --mako-no, both with
+/// black text); the design has no BOTH, so a holder of both sides gets a pill split between the two colours.
 export const SIDE_BADGE: Record<HeldSide, { label: string; bg: string }> = {
-  yes: { label: 'HOLDS YES', bg: 'var(--mako-signal)' },
-  no: { label: 'HOLDS NO', bg: 'var(--mako-red)' },
-  both: { label: 'HOLDS BOTH', bg: 'linear-gradient(90deg, var(--mako-signal) 50%, var(--mako-red) 50%)' },
+  yes: { label: 'HOLDS YES', bg: 'var(--mako-yes)' },
+  no: { label: 'HOLDS NO', bg: 'var(--mako-no)' },
+  both: { label: 'HOLDS BOTH', bg: 'linear-gradient(90deg, var(--mako-yes) 50%, var(--mako-no) 50%)' },
 };
 
 /// Avatar colours for other people, picked by the author's avatar seed so one person keeps one colour. Yellow is
-/// kept for the viewer's own avatar (as in the design), red for NO, and gold is left out because it reads as yellow.
+/// kept for the viewer's own avatar (as in the design), the side green and red are not used (they belong to the HOLDS
+/// badges), and gold is left out because it reads as yellow.
 export const AVATAR_COLOURS = [
   'var(--mako-teal)',
   'var(--mako-blue)',

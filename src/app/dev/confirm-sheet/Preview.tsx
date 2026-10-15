@@ -6,7 +6,8 @@ import { ConfirmSheet, type ConfirmPhase, type ConfirmSpec } from '@/components/
 // in production (the page 404s unless MAKO_STAGE=dev).
 const SPEC: ConfirmSpec = {
   glyph: 'N',
-  glyphColor: 'var(--mako-red)',
+  glyphColor: 'var(--mako-no)',
+  glyphFg: 'var(--mako-on-side)',
   title: 'Bet NO · 10.00 USDC',
   confirmLabel: 'Confirm · 10.00 USDC',
   pendingTitle: 'Placing your bet',

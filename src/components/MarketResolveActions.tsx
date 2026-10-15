@@ -98,7 +98,7 @@ export function MarketResolveActions({
         <div
           className={`px-6 py-2 border-t border-canvas-divider text-[10px] font-black uppercase tracking-widest text-center break-words ${
             isSuccess
-              ? 'bg-yes/15 text-yes'
+              ? 'bg-ink/15 text-ink'
               : error
                 ? 'bg-warning/15 text-warning'
                 : 'text-muted'

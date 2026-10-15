@@ -110,7 +110,7 @@ function InviteCardView({ card, question, by, link, variant }: { card: InviteCar
             <Logo size={24} />
           </span>
           <span style={{ ...display, fontSize: 15 }}>Mako Market</span>
-          <span style={{ marginLeft: 'auto', height: 26, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderRadius: 9999, background: card.pill.colour, color: '#000', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>
+          <span style={{ marginLeft: 'auto', height: 26, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderRadius: 9999, background: card.pill.colour, color: card.pill.fg, fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>
             {card.open && <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: '#000' }} />}
             {card.pill.label}
           </span>
@@ -127,10 +127,10 @@ function InviteCardView({ card, question, by, link, variant }: { card: InviteCar
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '14px 14px 0' }}>
         {card.sides.map((s) => (
-          <div key={s.side} style={{ minWidth: 0, borderRadius: 22, background: s.side === 'yes' ? 'var(--mako-signal)' : 'var(--mako-red)', color: '#000', padding: 14 }}>
+          <div key={s.side} style={{ minWidth: 0, borderRadius: 22, background: s.side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', padding: 14 }}>
             <div style={{ ...display, fontSize: 20, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
             <div style={{ ...display, fontSize: s.pays ? 26 : 18, lineHeight: s.pays ? undefined : '31px', marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{s.pays ?? 'No stake yet'}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
               {s.amount} · {s.bettors} in
             </div>
           </div>

@@ -257,7 +257,7 @@ export function BetSheet({
   return (
     <div className="w-full bg-paper border-t-2 lg:border-2 border-ink lg:shadow-[8px_8px_0_0_var(--mako-shadow)] lg:rounded-none flex flex-col relative overflow-hidden transition-all duration-300 lg:rotate-2 lg:scale-95 transform-gpu origin-center pb-safe lg:pb-0">
       {/* Top thin accent line indicating side */}
-      <div className={`h-2 w-full transition-colors ${side === 'yes' ? 'bg-signal' : 'bg-mako-red'}`} />
+      <div className={`h-2 w-full transition-colors ${side === 'yes' ? 'bg-yes' : 'bg-no'}`} />
       
       <div className={`p-4 md:p-6 flex flex-col ${collapsed ? 'pb-4 lg:pb-6' : ''}`}>
         {/* Header */}

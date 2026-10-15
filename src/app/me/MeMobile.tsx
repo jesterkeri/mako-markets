@@ -424,13 +424,14 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
   const side = sideOf(p, labels);
   const pill = statePill(p.state);
   const pays = estPayouts(p.market, p.bet);
-  const chip: React.CSSProperties = { height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%' };
+  // Positioned above the card's own press tint (.m3-press::after), so a darkening card never dims a chip's small text.
+  const chip: React.CSSProperties = { position: 'relative', zIndex: 1, height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%' };
   return (
     <Link href={poolHref(p.market.id)} className="m3-press" style={{ display: 'block', borderRadius: 26, background: 'var(--raise)', padding: '14px 16px', color: 'inherit', textDecoration: 'none' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ ...chip, background: side.bg, color: side.fg }}>{side.text}</span>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>Pool</span>
-        <span style={{ ...chip, marginLeft: 'auto', background: pill.bg }}>{pill.label}</span>
+        <span style={{ ...chip, marginLeft: 'auto', background: pill.bg, color: pill.fg }}>{pill.label}</span>
       </div>
       <div style={{ ...display, fontSize: 18, lineHeight: 1.22, marginTop: 10 }}>{p.market.question}</div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 10, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>

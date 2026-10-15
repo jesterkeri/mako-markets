@@ -15,8 +15,8 @@ const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', f
 export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideLabels }) {
   const cat = CAT_STYLE[r.cat];
   const pos = r.position;
-  const side: React.CSSProperties = { flex: 1, minWidth: 0, height: 56, borderRadius: 20, color: '#000', boxShadow: 'var(--m3-btn-edge)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' };
-  const sideName: React.CSSProperties = { maxWidth: '90%', fontSize: 12, fontWeight: 700, opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+  const side: React.CSSProperties = { flex: 1, minWidth: 0, height: 56, borderRadius: 20, color: 'var(--mako-on-side)', boxShadow: 'var(--m3-btn-edge)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' };
+  const sideName: React.CSSProperties = { maxWidth: '90%', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
   const sidePays: React.CSSProperties = { ...display, fontSize: 20, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' };
   const cap = (s: string) => (s === 'YES' ? 'Yes' : s === 'NO' ? 'No' : s);
   return (
@@ -40,13 +40,13 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
         {r.question}
       </Link>
       <div className="mk-over" style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-        <Link href={`${poolHref(r.id)}?side=yes`} className="m3-press m3-scale96" style={{ ...side, background: 'var(--mako-signal)' }}>
+        <Link href={`${poolHref(r.id)}?side=yes`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-yes)' }}>
           <span style={sideName}>
             {cap(labels.yes)} {r.yesPct}%
           </span>
           <span style={sidePays}>{formatPays(r.yesPays) || 'No bets'}</span>
         </Link>
-        <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96" style={{ ...side, background: 'var(--mako-red)' }}>
+        <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-no)' }}>
           <span style={sideName}>
             {cap(labels.no)} {r.noPct}%
           </span>

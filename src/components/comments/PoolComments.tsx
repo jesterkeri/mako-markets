@@ -89,7 +89,7 @@ function Badge({ position, mobile }: { position: CommentPosition; mobile?: boole
   const style: React.CSSProperties = mobile
     ? { height: 20, padding: '0 8px', fontSize: 10, fontWeight: 800 }
     : { height: 18, padding: '0 7px', fontSize: 9, fontWeight: 700, boxShadow: 'var(--edge)' };
-  return <span style={{ flex: 'none', display: 'flex', alignItems: 'center', borderRadius: 9999, background: b.bg, color: '#000', whiteSpace: 'nowrap', ...style }}>{b.label}</span>;
+  return <span style={{ flex: 'none', display: 'flex', alignItems: 'center', borderRadius: 9999, background: b.bg, color: 'var(--mako-on-side)', whiteSpace: 'nowrap', ...style }}>{b.label}</span>;
 }
 
 const nameStyle: React.CSSProperties = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
