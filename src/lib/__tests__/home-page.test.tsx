@@ -121,7 +121,9 @@ describe('Home rounds', () => {
     expect(within(desk).getByRole('link', { name: 'Browse pools' }).getAttribute('href')).toBe('/pools');
     const remind = within(desk).getByRole('button', { name: 'Remind me · coming soon' }) as HTMLButtonElement;
     expect(remind.disabled).toBe(true);
-    expect(within(desk).getByText('No rounds are scheduled yet.')).toBeTruthy();
+    // The column beside Pools is Mako Market's own pools now (2026-10-15), not a Rounds list; none is open here.
+    expect(within(desk).queryByRole('region', { name: 'Rounds' })).toBeNull();
+    expect(within(within(desk).getByRole('region', { name: 'Mako markets' })).getByText(/No Mako market is open right now/)).toBeTruthy();
     // Nothing from 2a's live round survives.
     for (const t of [/ENTRIES CLOSE IN/i, /LIVE ENTRIES/i, /Live bets/i, /SLOTS/i, /NEXT ROUND/i]) expect(screen.queryByText(t)).toBeNull();
   });
