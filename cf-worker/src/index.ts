@@ -61,6 +61,11 @@ import {
   type DsDeps,
 } from './crypto-datastreams';
 import { httpEthCall } from './datastreams';
+import { dataStreamsRwaDecision, readRwaPriceSource, rwaDsEligible, type RwaDsDecision } from './rwa-datastreams';
+import { RWA_MARKET_TYPES } from './rwa-decision';
+
+/// FOREX, COMMODITIES or STOCKS (the v8 Data Streams classes).
+const isRwaType = (mType: number): boolean => RWA_MARKET_TYPES[mType] !== undefined;
 import {
   canSend,
   decideAction,
@@ -107,6 +112,11 @@ export interface Env {
   /// today's behaviour plus a logged Chainlink Data Streams decision per pool; "datastreams" = crypto pools settle only
   /// on verified Data Streams reports for their exact close second.
   CRYPTO_PRICE_SOURCE?: string;
+  /// Forex / metals / stocks price source (src/rwa-datastreams.ts): unset or "pyth" = today's behaviour (Pyth Hermes,
+  /// which answers 401 without a paid key, so these pools cannot settle); "datastreams-shadow" = today's behaviour plus a
+  /// logged Data Streams decision per pool; "datastreams" = these pools settle only on verified Data Streams v8 reports
+  /// for their exact close second. Shares the Data Streams secrets, providers and per-tick slots with crypto.
+  RWA_PRICE_SOURCE?: string;
   DATASTREAMS_URL?: string;
   /// Secrets for Data Streams (wrangler secret put), required by both datastreams modes. NEVER log these.
   DATASTREAMS_API_KEY?: string;
@@ -1015,11 +1025,13 @@ export async function runResolver(env: Env): Promise<void> {
   const cfg = validateEnv(env);
   // Crypto price source (src/crypto-datastreams.ts). Data Streams credentials are read here and never logged.
   const crypto = readCryptoPriceSource(env.CRYPTO_PRICE_SOURCE);
+  const rwa = readRwaPriceSource(env.RWA_PRICE_SOURCE);
+  const dsWanted = crypto.source !== 'coingecko' || rwa.source !== 'pyth';
   const dsKey = env.DATASTREAMS_API_KEY?.trim();
   const dsSecret = env.DATASTREAMS_API_SECRET?.trim();
   const pair = verifyPair(env.ALCHEMY_RPC_URL);
   const dsDeps: DsDeps | null =
-    crypto.source !== 'coingecko' && dsKey && dsSecret && pair
+    dsWanted && dsKey && dsSecret && pair
       ? {
           fetchImpl: (i, x) => fetch(i, x),
           base: env.DATASTREAMS_URL?.trim() || DEFAULT_DATASTREAMS_URL,
@@ -1033,6 +1045,10 @@ export async function runResolver(env: Env): Promise<void> {
   if (crypto.invalid !== null) console.error(`CRYPTO_PRICE_SOURCE "${crypto.invalid}" is not coingecko, datastreams-shadow or datastreams — using coingecko`);
   if (crypto.source !== 'coingecko' && !dsDeps) {
     console.error(`CRYPTO_PRICE_SOURCE=${crypto.source} but DATASTREAMS_API_KEY/SECRET or a valid ALCHEMY_RPC_URL (https, not the public RPC) are not set`);
+  }
+  if (rwa.invalid !== null) console.error(`RWA_PRICE_SOURCE "${rwa.invalid}" is not pyth, datastreams-shadow or datastreams — using pyth`);
+  if (rwa.source !== 'pyth' && !dsDeps) {
+    console.error(`RWA_PRICE_SOURCE=${rwa.source} but DATASTREAMS_API_KEY/SECRET or a valid ALCHEMY_RPC_URL (https, not the public RPC) are not set`);
   }
 
   const monadTestnet = {
@@ -1180,15 +1196,18 @@ export async function runResolver(env: Env): Promise<void> {
     );
   const needsCoinGecko = crypto.source !== 'datastreams' && needsData([MarketType.CRYPTO]);
   // This tick's Data Streams evaluations: DS_PER_TICK slots rotating through the eligible crypto pools by the minute.
+  // Forex / metals / stocks pools join the same rotation when their source is Data Streams (one shared budget).
   const dsTurn = dsTurns(
-    crypto.source === 'coingecko'
-      ? []
-      : marketResults.flatMap((r, idx) =>
-          actions[idx] === 'fetch_and_resolve' && r.status === 'fulfilled' && r.value.mType === MarketType.CRYPTO && dsEligible(r.value.mType, r.value.oracleRef) ? [idx] : [],
-        ),
+    marketResults.flatMap((r, idx) => {
+      if (actions[idx] !== 'fetch_and_resolve' || r.status !== 'fulfilled') return [];
+      const m = r.value;
+      const cryptoTurn = crypto.source !== 'coingecko' && m.mType === MarketType.CRYPTO && dsEligible(m.mType, m.oracleRef);
+      const rwaTurn = rwa.source !== 'pyth' && isRwaType(m.mType) && rwaDsEligible(m.mType, m.oracleRef);
+      return cryptoTurn || rwaTurn ? [idx] : [];
+    }),
     Date.now(),
   );
-  const needsPyth = needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
+  const needsPyth = rwa.source !== 'datastreams' && needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
 
   // No-data settlement (one-sided REFUND + 24h forceRefund keeper). Sends
   // from the same wallet, re-reads each market at the finalized block right
@@ -1502,11 +1521,55 @@ export async function runResolver(env: Env): Promise<void> {
           reason = `nba ${parsed.gameId} ${parsed.questionType} · status ${result.status} · FT ${scores}`;
         }
       }
+    } else if (isRwaType(market.mType) && rwa.source === 'datastreams') {
+      // Live: Chainlink Data Streams only, no Pyth and no fallback. Anything but a settle decision waits.
+      if (!dsDeps) {
+        console.error(`[${ts}] market ${i}: RWA_PRICE_SOURCE=datastreams but the Data Streams or Alchemy secrets are not set — waiting`);
+        skipped++;
+        continue;
+      }
+      if (rwaDsEligible(market.mType, market.oracleRef) && !dsTurn.has(Number(i))) {
+        console.log(`[${ts}] market ${i}: datastreams not this tick's turn (${DS_PER_TICK} a tick, rotating) — later tick`);
+        skipped++;
+        continue;
+      }
+      const d = await dataStreamsRwaDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps);
+      if (d.kind !== 'settle') {
+        const say = d.kind === 'final' ? console.error : console.log;
+        say(`[${ts}] market ${i}: datastreams ${d.kind} (${d.reason})${d.kind === 'final' ? ' — needs a human: resolve from admin' : ' — retry next tick'}`);
+        skipped++;
+        continue;
+      }
+      dsEvidence = { event: 'rwa.ds.evidence', market: Number(i), closeTime: Number(market.closeTime), outcome: d.yes ? 'YES' : 'NO', strike: formatPrice18(d.strike), ...d.evidence };
+      outcome = d.yes ? Outcome.YES : Outcome.NO;
+      reason = `${d.symbol} vs strike ${formatPrice18(d.strike)} · Chainlink Data Streams ${formatPrice18(d.price)} at close ${market.closeTime}${d.marketClosed ? ' (market closed: last traded price)' : ''}`;
     } else if (
       market.mType === MarketType.FOREX ||
       market.mType === MarketType.COMMODITIES ||
       market.mType === MarketType.STOCKS
     ) {
+      if (rwa.source === 'datastreams-shadow' && dsTurn.has(Number(i))) {
+        // Shadow: log what Data Streams would decide beside today's Pyth path; nothing is sent from it, and any failure
+        // here is only logged so it can never break a tick.
+        try {
+          const d: RwaDsDecision = dsDeps
+            ? await dataStreamsRwaDecision({ mType: market.mType, oracleRef: market.oracleRef, closeTime: Number(market.closeTime) }, dsDeps)
+            : { kind: 'wait', reason: 'no_credentials' };
+          console.log(
+            JSON.stringify({
+              event: 'rwa.shadow',
+              market: Number(i),
+              closeTime: Number(market.closeTime),
+              ds:
+                d.kind === 'settle'
+                  ? { outcome: d.yes ? 'YES' : 'NO', price: formatPrice18(d.price), strike: formatPrice18(d.strike), marketClosed: d.marketClosed, lastUpdateAgeS: d.evidence.lastUpdateAgeS }
+                  : d,
+            }),
+          );
+        } catch (e) {
+          console.error(`[${ts}] market ${i}: rwa.shadow failed (${shortErrorMessage(e)}) — ignored, tick continues`);
+        }
+      }
       // #180 Pyth-fed price markets. Same gt/lt SYMBOL:op:STRIKE
       // oracleRef shape as CRYPTO, but the symbol is drawn from the
       // PRICE_FEED_BY_SYMBOL allowlist (mirrored from src/lib via
