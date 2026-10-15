@@ -1196,17 +1196,22 @@ export async function runResolver(env: Env): Promise<void> {
     );
   const needsCoinGecko = crypto.source !== 'datastreams' && needsData([MarketType.CRYPTO]);
   // This tick's Data Streams evaluations: DS_PER_TICK slots rotating through the eligible crypto pools by the minute.
-  // Forex / metals / stocks pools join the same rotation when their source is Data Streams (one shared budget).
+  // Forex / metals / stocks pools join the same rotation only when they settle on Data Streams (live): one shared
+  // budget for real settlements. In shadow mode they get one separate logging slot a tick instead, so logging-only
+  // evaluations never take a live crypto settlement's slot (adversary on 67a1cbe).
+  const rwaEligibleIdx = (r: PromiseSettledResult<Market>, idx: number): boolean =>
+    actions[idx] === 'fetch_and_resolve' && r.status === 'fulfilled' && isRwaType(r.value.mType) && rwaDsEligible(r.value.mType, r.value.oracleRef);
   const dsTurn = dsTurns(
     marketResults.flatMap((r, idx) => {
       if (actions[idx] !== 'fetch_and_resolve' || r.status !== 'fulfilled') return [];
       const m = r.value;
       const cryptoTurn = crypto.source !== 'coingecko' && m.mType === MarketType.CRYPTO && dsEligible(m.mType, m.oracleRef);
-      const rwaTurn = rwa.source !== 'pyth' && isRwaType(m.mType) && rwaDsEligible(m.mType, m.oracleRef);
+      const rwaTurn = rwa.source === 'datastreams' && rwaEligibleIdx(r, idx);
       return cryptoTurn || rwaTurn ? [idx] : [];
     }),
     Date.now(),
   );
+  const rwaShadowTurn = dsTurns(rwa.source === 'datastreams-shadow' ? marketResults.flatMap((r, idx) => (rwaEligibleIdx(r, idx) ? [idx] : [])) : [], Date.now(), 1);
   const needsPyth = rwa.source !== 'datastreams' && needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
 
   // No-data settlement (one-sided REFUND + 24h forceRefund keeper). Sends
@@ -1548,7 +1553,7 @@ export async function runResolver(env: Env): Promise<void> {
       market.mType === MarketType.COMMODITIES ||
       market.mType === MarketType.STOCKS
     ) {
-      if (rwa.source === 'datastreams-shadow' && dsTurn.has(Number(i))) {
+      if (rwa.source === 'datastreams-shadow' && rwaShadowTurn.has(Number(i))) {
         // Shadow: log what Data Streams would decide beside today's Pyth path; nothing is sent from it, and any failure
         // here is only logged so it can never break a tick.
         try {

@@ -15,7 +15,7 @@
 //   * the outcome: gt -> YES iff midPrice > strike; lt -> YES iff midPrice < strike; equality -> NO for both.
 // ----------------------------------------------------------------------------
 
-import type { Hex } from 'viem';
+import { hexToString, type Hex } from 'viem';
 
 import type { V8Report } from './datastreams';
 import { OUTCOME_NO, OUTCOME_YES } from './price-decision';
@@ -41,25 +41,30 @@ export const RWA_FEEDS: ReadonlyMap<string, RwaFeed> = new Map(
 
 export type RwaRef = { symbol: string; op: 'gt' | 'lt'; strike: bigint };
 
-/// `SYMBOL:gt|lt:STRIKE` from the market's bytes32 oracle ref (NUL-padded ASCII), as the app writes it
-/// (src/lib/aa-call-allowlist.ts parsePriceFeedOracleRef). The strike is parsed exactly at 10^18; more than 18
-/// decimal places, or anything else, is null (`parse_fail`).
+/// `SYMBOL:gt|lt:STRIKE` from the market's bytes32 oracle ref, normalised EXACTLY as the sponsor's create check
+/// (src/lib/aa-call-allowlist.ts parsePriceFeedOracleRef) and the old Pyth path (index.ts decodeOracleRefString) do:
+/// UTF-8 decode, trailing NULs stripped, whitespace trimmed, each part trimmed. So every ref the sponsor accepts, this
+/// reads (adversary on 67a1cbe: a tab or trailing space passed the sponsor and failed a stricter parser here, so the
+/// pool could never settle). The strike is parsed exactly at 10^18; more than 18 decimal places, or anything else,
+/// is null (`parse_fail`).
 export function parseRwaRef(oracleRef: Hex): RwaRef | null {
   if (!/^0x[0-9a-fA-F]{64}$/.test(oracleRef)) return null;
-  const bytes = oracleRef.slice(2).match(/../g)!.map((b) => parseInt(b, 16));
-  const end = bytes.indexOf(0);
-  const used = end === -1 ? bytes : bytes.slice(0, end);
-  if (end !== -1 && bytes.slice(end).some((b) => b !== 0)) return null;
-  if (used.some((b) => b < 0x20 || b > 0x7e)) return null;
-  const parts = String.fromCharCode(...used).split(':').map((p) => p.trim());
+  let decoded: string;
+  try {
+    decoded = hexToString(oracleRef, { size: 32 }).replace(/\0+$/, '').trim();
+  } catch {
+    return null;
+  }
+  if (decoded.length === 0) return null;
+  const parts = decoded.split(':').map((p) => p.trim());
   if (parts.length !== 3) return null;
   const [symbol, op, strikeText] = parts;
   if (op !== 'gt' && op !== 'lt') return null;
-  const m = /^\+?(?:(\d+)\.(\d+)|(\d+)|\.(\d+))$/.exec(strikeText);
+  const m = /^\+?(?:(\d+)\.(\d{1,18})|(\d+)|\.(\d{1,18}))$/.exec(strikeText);
   if (!m) return null;
   const whole = m[1] ?? m[3] ?? '0';
   const frac = m[2] ?? m[4] ?? '';
-  if (frac.length > 18 || whole.length > 30) return null;
+  if (whole.length > 30) return null;
   const strike = BigInt(whole) * 10n ** 18n + BigInt(frac.padEnd(18, '0'));
   if (strike <= 0n) return null;
   return { symbol, op, strike };
