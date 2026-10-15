@@ -345,7 +345,7 @@ export function trendingPools(
   limit: number = TRENDING_LIMIT,
 ): PoolRow[] {
   const ranked = markets.filter((m) => m.mType in CAT_OF && poolState(m, nowSec) === 'open').sort(byTrending);
-  const cap = Math.max(0, Math.floor(limit));
+  const cap = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : TRENDING_LIMIT;
   return ranked
     .filter((m, i) => i < cap || m.mType === MarketType.MAKO)
     .map((m) => poolRow(m, nowSec, bets?.get(m.id.toString())));
