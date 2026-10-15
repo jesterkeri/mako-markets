@@ -23,16 +23,22 @@
 // map key here).
 //
 // Privacy: this module NEVER selects email (or any column beyond
-// display_name + the precedence inputs). The board is a public surface.
+// display_name, avatar_url + the precedence inputs). The board is a public surface, so a profile photo is returned
+// only when THIS app uploaded it for that user (isAppOwnedAvatarUrl, strict: this app's own Blob store host and the
+// user's own /avatars/<id>/ path), exactly as the public comments wire does; a legacy pasted URL is never served.
 // ----------------------------------------------------------------------------
 
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 
 import type { DbOrTx } from '@/db/client';
 import { users, userSafes } from '@/db/schema';
+import { isAppOwnedAvatarUrl } from '@/lib/avatar-url';
 
 export interface ResolvedIdentity {
-  displayName: string;
+  /// The display name, or null when only a profile photo is set.
+  displayName: string | null;
+  /// The profile photo this app uploaded for the user (strictly checked), or null.
+  avatarUrl: string | null;
   /// Which join branch won — exposed for tests/debugging only.
   branch: 'safe' | 'wallet';
 }
@@ -40,15 +46,16 @@ export interface ResolvedIdentity {
 interface CandidateRow {
   addr: string;
   displayName: string | null;
+  avatarUrl: string | null;
   userId: string;
   branch: 'safe' | 'wallet';
 }
 
-/// Resolve display names for a set of on-chain actor addresses.
+/// Resolve display names and profile photos for a set of on-chain actor addresses.
 /// Input casing is irrelevant (normalized to lowercase); the returned
-/// map is keyed by the LOWERCASE address. Addresses with no
-/// display-name-bearing match are absent — callers fall back to the
-/// truncated address.
+/// map is keyed by the LOWERCASE address. Addresses whose winning match has
+/// neither a display name nor an app-owned photo are absent; callers fall
+/// back to the truncated address and the letter avatar.
 export async function resolveLabels(
   db: DbOrTx,
   addresses: readonly string[],
@@ -63,6 +70,7 @@ export async function resolveLabels(
     .select({
       addr: sql<string>`lower(${userSafes.safeAddress})`,
       displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
       userId: users.id,
     })
     .from(userSafes)
@@ -81,6 +89,7 @@ export async function resolveLabels(
     .select({
       addr: sql<string>`lower(${users.walletAddress})`,
       displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
       userId: users.id,
     })
     .from(users)
@@ -105,8 +114,10 @@ export async function resolveLabels(
 
   const out = new Map<string, ResolvedIdentity>();
   for (const [addr, c] of best) {
-    if (c.displayName !== null && c.displayName !== '') {
-      out.set(addr, { displayName: c.displayName, branch: c.branch });
+    const displayName = c.displayName !== null && c.displayName !== '' ? c.displayName : null;
+    const avatarUrl = c.avatarUrl && isAppOwnedAvatarUrl(c.avatarUrl, c.userId) ? c.avatarUrl : null;
+    if (displayName !== null || avatarUrl !== null) {
+      out.set(addr, { displayName, avatarUrl, branch: c.branch });
     }
   }
   return out;

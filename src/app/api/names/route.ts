@@ -42,7 +42,7 @@ export async function GET(req: Request) {
   try {
     const labels = await resolveLabels(db, addresses, MONAD_TESTNET_ID);
     const names: Record<string, string> = {};
-    for (const [address, identity] of labels) names[address] = identity.displayName;
+    for (const [address, identity] of labels) if (identity.displayName !== null) names[address] = identity.displayName;
     // Every viewer asks for the same creators, so a shared cache takes the load off the database; a renamed
     // account shows its new name within a minute.
     return NextResponse.json({ names }, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' } });

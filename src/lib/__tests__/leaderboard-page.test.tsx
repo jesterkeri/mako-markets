@@ -195,3 +195,42 @@ describe('Leaderboard page', () => {
     expect(fetchMock.mock.calls.length).toBeGreaterThan(before);
   });
 });
+
+describe('Leaderboard: profile photos in the avatar circles (2026-10-15)', () => {
+  const photo = (n: number) => `https://store123.public.blob.vercel-storage.com/avatars/user-${n}/1.webp`;
+  const withPhotos = () => ROWS.map((r, i) => (i === 1 ? r : { ...r, avatarUrl: photo(i) })); // joshua (#2) has none
+
+  it('every circle with a photo shows it (podium and rows, both layouts), the rest keep their letter', async () => {
+    respond = (url) => ({ status: 200, body: board(url, { rows: withPhotos() }) });
+    const { container } = mount();
+    await screen.findAllByText('kemi');
+    const imgs = Array.from(container.querySelectorAll('img'));
+    const srcs = imgs.map((i) => i.getAttribute('src'));
+    for (const i of [0, 2, 3]) expect(srcs.filter((s) => s === photo(i)).length, `row ${i}`).toBeGreaterThan(0);
+    // Each photo sits inside its circle (the circle is the positioned parent) and hides nothing else.
+    for (const img of imgs) {
+      expect(img.getAttribute('alt')).toBe('');
+      expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+      expect((img.parentElement as HTMLElement).style.position).toBe('relative');
+    }
+    // joshua has no photo: no image anywhere carries a photo for him, his letter stays.
+    expect(srcs.some((s) => s === photo(1))).toBe(false);
+  });
+
+  it('a photo that fails to load falls back to the letter', async () => {
+    respond = (url) => ({ status: 200, body: board(url, { rows: [{ ...ROWS[0], avatarUrl: photo(0) }, ...ROWS.slice(1)] }) });
+    const { container } = mount();
+    await screen.findAllByText('kemi');
+    const before = container.querySelectorAll(`img[src="${photo(0)}"]`);
+    expect(before.length).toBeGreaterThan(0);
+    for (const img of Array.from(before)) fireEvent.error(img);
+    expect(container.querySelectorAll(`img[src="${photo(0)}"]`)).toHaveLength(0);
+    expect((before[0].parentElement as HTMLElement | null)?.textContent ?? 'K').toContain('K');
+  });
+
+  it('no avatarUrl on the wire (an older response) means letters only', async () => {
+    const { container } = mount();
+    await screen.findAllByText('kemi');
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+  });
+});
