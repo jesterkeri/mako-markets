@@ -130,7 +130,7 @@ function InviteCardView({ card, question, by, link, variant }: { card: InviteCar
           <div key={s.side} style={{ minWidth: 0, borderRadius: 22, background: s.side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', padding: 14 }}>
             <div style={{ ...display, fontSize: 20, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
             <div style={{ ...display, fontSize: s.pays ? 26 : 18, lineHeight: s.pays ? undefined : '31px', marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{s.pays ?? 'No stake yet'}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
               {s.amount} · {s.bettors} in
             </div>
           </div>

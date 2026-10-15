@@ -14,7 +14,8 @@
 /* ---------- Per-theme variables ----------
  * --edge is the ink stroke light mode puts on filled elements (none in dark). --tg-* colour the desktop theme
  * switch, --wick-* the chart candles, --tb-* the mobile tab bar, --yes-text / --no-text a side's name or share written
- * on the page itself (the side fills are --mako-yes / --mako-no). */
+ * on the page itself (the side fills are --mako-yes / --mako-no), dark enough for 4.5:1 on the page and on a --raise
+ * panel over it (the confirm sheet's table, the create preview, a hovered row). */
 :root,
 [data-theme="dark"] {
   --edge: 0 0 0 0 transparent;
@@ -43,8 +44,8 @@
   --wick-up: #000;
   --wick-dn: #000;
   --up-text: var(--mako-ink);
-  --yes-text: #086652;
-  --no-text: #A33141;
+  --yes-text: #065C49;
+  --no-text: #962B3A;
   --tb-bg: var(--mako-ink);
   --tb-fg: rgba(235, 229, 217, 0.55);
   --tb-sh: 0 10px 24px rgba(40, 30, 10, 0.22);
@@ -192,8 +193,8 @@ body {
   --line: rgba(0, 0, 0, 0.16);
   --dim: rgba(0, 0, 0, 0.62);
   --up-text: #000;
-  --yes-text: #07614D;
-  --no-text: #9C2E3D;
+  --yes-text: #055947;
+  --no-text: #8A2735;
   --m3-inv: #000;
   --m3-inv-fg: #facc15;
   --m3-outline: rgba(0, 0, 0, 0.3);

@@ -16,7 +16,7 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
   const cat = CAT_STYLE[r.cat];
   const pos = r.position;
   const side: React.CSSProperties = { flex: 1, minWidth: 0, height: 56, borderRadius: 20, color: 'var(--mako-on-side)', boxShadow: 'var(--m3-btn-edge)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' };
-  const sideName: React.CSSProperties = { maxWidth: '90%', fontSize: 12, fontWeight: 700, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+  const sideName: React.CSSProperties = { maxWidth: '90%', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
   const sidePays: React.CSSProperties = { ...display, fontSize: 20, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' };
   const cap = (s: string) => (s === 'YES' ? 'Yes' : s === 'NO' ? 'No' : s);
   return (

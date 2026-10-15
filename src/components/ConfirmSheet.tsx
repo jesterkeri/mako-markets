@@ -152,7 +152,8 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <span style={{ flex: 'none', width: 56, height: 56, borderRadius: 9999, background: spec.glyphColor, color: spec.glyphFg ?? '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="mk-onsig" style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 22 }}>{spec.glyph}</span>
+              {/* mk-onsig turns a signal glyph yellow on the dark yellow sheet (where signal fills turn black); a side fill keeps its own text colour. */}
+              <span className={spec.glyphFg ? undefined : 'mk-onsig'} style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 22 }}>{spec.glyph}</span>
             </span>
             <div style={{ minWidth: 0 }}>
               <div className="wl-eyebrow" style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>Confirm to continue</div>

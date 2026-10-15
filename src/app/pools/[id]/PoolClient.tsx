@@ -855,7 +855,7 @@ function PoolMobile(v: ViewProps) {
                   <span style={{ ...display, fontSize: 24, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{yes ? labels.yes : labels.no}</span>
                   {won && <span style={{ height: 24, display: 'flex', alignItems: 'center', padding: '0 9px', borderRadius: 9999, background: 'var(--mako-on-side)', color: yes ? 'var(--mako-yes)' : 'var(--mako-no)', fontSize: 11, fontWeight: 800 }}>WON</span>}
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, marginTop: 14 }}>Pays per 1</div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginTop: 14 }}>Pays per 1</div>
                 <div style={{ ...display, fontSize: pays ? 32 : 18, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>{pays ?? 'No stake yet'}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>
                   {usdc2(yes ? m.totalYes : m.totalNo)} · {yes ? m.yesBettorCount : m.noBettorCount} {(yes ? m.yesBettorCount : m.noBettorCount) === 1 ? 'bettor' : 'bettors'}
