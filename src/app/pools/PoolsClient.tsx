@@ -60,7 +60,7 @@ const tabTitle = (t: PoolTab) => (t === 'TRENDING' ? 'Trending' : catTitle(t));
 type ShownGroup = { title: string; rows: PoolRow[] };
 
 export function PoolsClient() {
-  const { markets, isLoading, isError, refetch } = useMarkets();
+  const { markets, count, isLoading, isError, refetch } = useMarkets();
   const now = useLiveNowSec();
   const { user } = useUser();
   const account = user ? accountAddress(user) : null;
@@ -88,8 +88,12 @@ export function PoolsClient() {
   const counts = list ? { ...list.counts, TRENDING: ranked.length } : null;
   const byOf = (r: PoolRow) => (r.cat === 'MAKO' ? 'Mako Market' : (names.get(r.creator.toLowerCase()) ?? formatAddress(r.creator)));
 
+  // A read missing any pool (one getMarket refused, as the public RPC sometimes does) is an error with Try again, as on
+  // Home: the default Trending tab must never show a list missing a Mako Market pool, or "no pools open", as if it
+  // were complete (adversary on a340ff6).
+  const failed = isError || (!isLoading && markets.length < count);
   const state: 'loading' | 'error' | 'empty' | 'ready' =
-    isError ? 'error' : isLoading || list === null ? 'loading' : openGroups.length === 0 && (filter === 'ALL' || trending) ? 'empty' : 'ready';
+    failed ? 'error' : isLoading || list === null ? 'loading' : openGroups.length === 0 && (filter === 'ALL' || trending) ? 'empty' : 'ready';
 
   const view = { list, counts, openGroups, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry: refetch };
   return (

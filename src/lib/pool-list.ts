@@ -315,7 +315,8 @@ export function closingSoon(
   return { rows, openCount: open.length };
 }
 
-/// Trending's length. Mako Market's own pools never count against it (they always show); the rest fill it up to 20.
+/// Trending's length. Mako Market's own pools always show and are never cut, but they do take places in it: the other
+/// pools fill what is left of the 20 (all 20, or more, if that many Mako Market pools are open).
 /// Twenty is a shortlist, about two phone screens of cards: past that a list stops saying what is popular and becomes
 /// the All tab, which is one tap away and holds every open pool. Raise it only if the open count grows well past it.
 export const TRENDING_LIMIT = 20;
