@@ -60,16 +60,16 @@ describe('parseOracleRef mirrors the resolver', () => {
 describe('poolRules', () => {
   it('states the price rule with the strict comparison the resolver uses', () => {
     const m = pool({});
-    expect(rule(m, 'YES')).toBe('BTC is above $80000 at the first price check after Fri 11:00.');
-    expect(rule(m, 'NO')).toBe('BTC is at $80000 or below at that check.');
-    expect(rule(m, 'SOURCE')).toBe('The CoinGecko spot price in USD, checked every minute.');
-    expect(rule(pool({ oracleRef: ref('BTC:lt:80000') }), 'NO')).toBe('BTC is at $80000 or above at that check.');
+    expect(rule(m, 'YES')).toBe('BTC is above $80000 at Fri 11:00, the close.');
+    expect(rule(m, 'NO')).toBe('BTC is at $80000 or below at the close.');
+    expect(rule(m, 'SOURCE')).toBe('The Chainlink Data Streams price for the close second, verified on chain.');
+    expect(rule(pool({ oracleRef: ref('BTC:lt:80000') }), 'NO')).toBe('BTC is at $80000 or above at the close.');
   });
 
-  it('writes forex strikes without a dollar sign and names Pyth for non-crypto prices', () => {
+  it('writes forex strikes without a dollar sign and names Chainlink Data Streams, with the closed-market rule', () => {
     const m = pool({ mType: MarketType.FOREX, oracleRef: ref('EURUSD:gt:1.095') });
-    expect(rule(m, 'YES')).toBe('EURUSD is above 1.095 at the first price check after Fri 11:00.');
-    expect(rule(m, 'SOURCE')).toContain('Pyth');
+    expect(rule(m, 'YES')).toBe('EURUSD is above 1.095 at Fri 11:00, the close.');
+    expect(rule(m, 'SOURCE')).toBe('The Chainlink Data Streams price for the close second, verified on chain. If the market is closed then, its last traded price.');
   });
 
   it('counts a draw as NO for a football home win, and refunds a postponed match', () => {

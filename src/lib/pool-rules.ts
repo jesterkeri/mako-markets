@@ -100,9 +100,9 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
     const s = `${unit(m)}${ref.strike}`;
     lines.push(
       ref.op === 'gt'
-        ? { k: 'YES', v: `${ref.symbol} is above ${s} at the first price check after ${close}.` }
-        : { k: 'YES', v: `${ref.symbol} is below ${s} at the first price check after ${close}.` },
-      ref.op === 'gt' ? { k: 'NO', v: `${ref.symbol} is at ${s} or below at that check.` } : { k: 'NO', v: `${ref.symbol} is at ${s} or above at that check.` },
+        ? { k: 'YES', v: `${ref.symbol} is above ${s} at ${close}, the close.` }
+        : { k: 'YES', v: `${ref.symbol} is below ${s} at ${close}, the close.` },
+      ref.op === 'gt' ? { k: 'NO', v: `${ref.symbol} is at ${s} or below at the close.` } : { k: 'NO', v: `${ref.symbol} is at ${s} or above at the close.` },
     );
   } else {
     const what = ref.kind === 'football' ? 'goals' : 'points';
@@ -146,8 +146,8 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
           : !ref
             ? 'None the resolver can read.'
             : m.mType === MarketType.CRYPTO
-            ? 'The CoinGecko spot price in USD, checked every minute.'
-            : 'The latest Pyth price, checked every minute. A price Pyth marks as uncertain is skipped.';
+            ? 'The Chainlink Data Streams price for the close second, verified on chain.'
+            : 'The Chainlink Data Streams price for the close second, verified on chain. If the market is closed then, its last traded price.';
   lines.push({ k: 'SOURCE', v: source });
   return lines;
 }

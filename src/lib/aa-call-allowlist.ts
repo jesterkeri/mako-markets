@@ -53,7 +53,7 @@ import {
 } from 'viem';
 
 import { MAKO_ADDRESS, PM_CONTRACT_ADDRESS } from './contract';
-import { PAUSED_CREATE_MTYPES } from './market-availability';
+import { PAUSED_CREATE_MTYPES, PAUSED_PRICE_FEED_SYMBOLS } from './market-availability';
 import { PRICE_FEED_BY_SYMBOL } from './price-feed-assets';
 import { MONAD_TESTNET_ID } from './chain';
 import { SAFE_CONFIG } from './safe-config';
@@ -148,6 +148,7 @@ export type NotAllowedReason =
   | 'bad_create_mtype_out_of_range'
   // A market type paused in market-availability.ts (no price source can settle it today).
   | 'bad_create_mtype_paused'
+  | 'bad_create_symbol_paused'
   | 'bad_create_blocked_wallet'
   // v4 redeploy (slice 4f): sponsor-time mirror of the contract's
   // CreatorDailyCapExceeded (MAX_CREATES_PER_DAY=10 per UTC day for
@@ -871,7 +872,9 @@ export function parsePriceFeedOracleRef(
   // Strict regex AFTER trimming so a trailing-junk symbol doesn't slip
   // through Number()'s coercion (e.g., "1.0850abc" would parse to NaN
   // but a permissive caller could be surprised).
-  if (!/^\+?(\d+\.\d+|\d+|\.\d+)$/.test(strikePart)) {
+  // At most 18 decimal places: the resolver parses the strike exactly at 10^18 (cf-worker/src/rwa-decision.ts) and could
+  // never settle a pool whose strike it cannot read.
+  if (!/^\+?(\d+\.\d{1,18}|\d+|\.\d{1,18})$/.test(strikePart)) {
     return { kind: 'bad_format' };
   }
   const strike = Number(strikePart);
@@ -1004,6 +1007,10 @@ function decodeCreateMarketArgs(call: {
         'bad_create_oracleref_class_mismatch',
         `${result.symbol} is ${result.actualClass}; mType expects ${expectedClass}`,
       );
+    }
+    // No usable Chainlink Data Streams feed: the resolver could never settle it (market-availability.ts).
+    if (PAUSED_PRICE_FEED_SYMBOLS.has(result.symbol)) {
+      throw new NotAllowedError('bad_create_symbol_paused', result.symbol);
     }
     // result.kind === 'ok' — fall through to the rest of the
     // pipeline. The parsed value is not currently used downstream

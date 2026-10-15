@@ -10,12 +10,10 @@
 // the new price-feed branch for mType 3/4/5).
 // ----------------------------------------------------------------------------
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-// FOREX / COMMODITIES / STOCKS creates are paused until the Data Streams resolver can settle them
-// (market-availability.ts, 2026-10-08). This file tests the symbol gate those creates will pass through once they
-// reopen, so the pause list is empty here; aa-call-allowlist-paused.test.ts covers the pause itself.
-vi.mock('../market-availability', () => ({ PAUSED_CREATE_MTYPES: new Set<number>() }));
+// FOREX / COMMODITIES / STOCKS creates reopened on 2026-10-15 (Chainlink Data Streams v8 settles them); this file
+// tests the symbol gate they pass through, against the real market-availability.ts.
 import {
   encodeFunctionData,
   stringToHex,
