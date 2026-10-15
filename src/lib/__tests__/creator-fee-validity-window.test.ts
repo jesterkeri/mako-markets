@@ -305,9 +305,14 @@ describe('creator-fee claim: the finite SafeOp window travels sponsor -> sign ->
 
   // Codex CREATOR_EARNINGS R5: the floor must hold when the op is handed back, not only when the build starts. The head
   // is 238 s behind, so validUntil = now + 62 and the op must be back within ~2 s to leave 60 s to sign.
+  // A head lagging so the signing deadline lands 5 to 6 s from now (whole seconds), with a slow call of 9 s: wide enough
+  // margins that a loaded machine cannot reach the pre-build check past the deadline (it flaked with a 1 to 2 s window).
+  const laggingHeadForDeadlineIn5s = () => BigInt(Math.floor((Date.now() + 6_000) / 1000)) - BigInt(CREATOR_FEE_OP_TTL_S - CREATOR_FEE_MIN_SIGNING_S);
+  const SLOW_MS = 9_000;
+
   it('a builder RPC slower than the remaining signing time: 502, daily count refunded, no row, no sponsorship requested', async () => {
-    state.chainNow = nowS() - BigInt(CREATOR_FEE_OP_TTL_S - CREATOR_FEE_MIN_SIGNING_S) + 2n;
-    state.gasPriceDelayMs = 3_500;
+    state.chainNow = laggingHeadForDeadlineIn5s();
+    state.gasPriceDelayMs = SLOW_MS;
     const r = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
     expect({ status: r.status, body: await r.json() }).toEqual({
       status: 502,
@@ -315,22 +320,22 @@ describe('creator-fee claim: the finite SafeOp window travels sponsor -> sign ->
     });
     expect({ net: state.dailyOps - state.refunds, rows: (await pg.query(`SELECT 1 FROM aa_pending_user_ops`)).rows.length }).toEqual({ net: 0, rows: 0 });
     // The abandoned build finishes its slow RPC later; it must still not ask Pimlico to sponsor the dead op.
-    await new Promise((r) => setTimeout(r, 2_500));
+    await new Promise((r) => setTimeout(r, SLOW_MS - 3_000));
     expect(state.sponsorships).toBe(0);
     expect((await pg.query(`SELECT 1 FROM aa_pending_user_ops`)).rows).toHaveLength(0);
-  }, 15_000);
+  }, 40_000);
 
   it('a Pimlico sponsorship slower than the remaining signing time: 502 at the deadline, refunded, no row', async () => {
-    state.chainNow = nowS() - BigInt(CREATOR_FEE_OP_TTL_S - CREATOR_FEE_MIN_SIGNING_S) + 2n;
-    state.sponsorDelayMs = 3_500;
+    state.chainNow = laggingHeadForDeadlineIn5s();
+    state.sponsorDelayMs = SLOW_MS;
     const started = Date.now();
     const r = await sponsor(req('http://localhost/api/aa/sponsor', claim()));
     expect(r.status).toBe(502);
-    expect(Date.now() - started).toBeLessThan(3_500); // answered at the deadline, not after the slow call
+    expect(Date.now() - started).toBeLessThan(SLOW_MS); // answered at the deadline, not after the slow call
     expect({ net: state.dailyOps - state.refunds, sponsorships: state.sponsorships }).toEqual({ net: 0, sponsorships: 1 });
-    await new Promise((r) => setTimeout(r, 2_500));
+    await new Promise((r) => setTimeout(r, SLOW_MS - 3_000));
     expect((await pg.query(`SELECT 1 FROM aa_pending_user_ops`)).rows).toHaveLength(0);
-  }, 15_000);
+  }, 40_000);
 
   it('a normal claim is untouched by the deadline: fast build, 200, nothing refunded', async () => {
     state.chainNow = nowS();
