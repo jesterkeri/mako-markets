@@ -19,6 +19,7 @@ import {
   POOL_FILTERS,
   positionLabel,
   STATE_PILL,
+  trendingPools,
   usdc2,
   type PoolFilter,
   type PoolRow,
@@ -34,6 +35,9 @@ import { formatAddress } from '@/lib/user-display';
 
 // Pools (8a): every V4 pool that is open, grouped by when it closes, plus the ones that closed in the last week.
 // Desktop is a table, mobile a stack of cards; both render, and the shell's width switch shows one.
+// The first tab, and the one the page opens on, is Trending (Joshua, 2026-10-15): open pools by players, then pot,
+// with Mako Market's own pools pinned at the top (trendingPools in pool-list.ts). It reads the same chain read as the
+// rest of the page, so it costs no request of its own.
 
 const SORTS: readonly { key: PoolSort; label: string }[] = [
   { key: 'closing', label: 'Closing soon' },
@@ -48,12 +52,19 @@ const CREATE_HREF = '/pools/new';
 type Labels = SideLabels;
 type ClosedState = Exclude<PoolRow['state'], 'open'>;
 
+/// The tabs: Trending first, then the category filters in the design's order.
+type PoolTab = 'TRENDING' | PoolFilter;
+const POOL_TABS: readonly PoolTab[] = ['TRENDING', ...POOL_FILTERS];
+const tabTitle = (t: PoolTab) => (t === 'TRENDING' ? 'Trending' : catTitle(t));
+/// What the open list shows under a tab: Trending is one ranked group, a category its closing-time groups.
+type ShownGroup = { title: string; rows: PoolRow[] };
+
 export function PoolsClient() {
   const { markets, isLoading, isError, refetch } = useMarkets();
   const now = useLiveNowSec();
   const { user } = useUser();
   const account = user ? accountAddress(user) : null;
-  const [filter, setFilter] = useState<PoolFilter>('ALL');
+  const [filter, setFilter] = useState<PoolTab>('TRENDING');
   const [sort, setSort] = useState<PoolSort>('closing');
 
   // The pools the page can show, recomputed once a minute rather than every tick, so the reads below keep a
@@ -69,14 +80,18 @@ export function PoolsClient() {
   const labelsOf = usePoolLabels(makoIds);
   const names = useAddressNames(useMemo(() => onPage.filter((m) => m.mType !== MarketType.MAKO).map((m) => m.creator), [onPage]));
 
-  const list = now === null ? null : buildPoolList(markets, now, filter, sort, bets);
-  const openGroups = openPoolGroups(list);
+  const trending = filter === 'TRENDING';
+  // Trending reads the whole open list (counts, totals) as All does; only the rows it shows differ.
+  const list = now === null ? null : buildPoolList(markets, now, trending ? 'ALL' : filter, sort, bets);
+  const ranked = now === null ? [] : trendingPools(markets, now, bets);
+  const openGroups: ShownGroup[] = !trending ? openPoolGroups(list) : ranked.length > 0 ? [{ title: 'Trending', rows: ranked }] : [];
+  const counts = list ? { ...list.counts, TRENDING: ranked.length } : null;
   const byOf = (r: PoolRow) => (r.cat === 'MAKO' ? 'Mako Market' : (names.get(r.creator.toLowerCase()) ?? formatAddress(r.creator)));
 
   const state: 'loading' | 'error' | 'empty' | 'ready' =
-    isError ? 'error' : isLoading || list === null ? 'loading' : openGroups.length === 0 && filter === 'ALL' ? 'empty' : 'ready';
+    isError ? 'error' : isLoading || list === null ? 'loading' : openGroups.length === 0 && (filter === 'ALL' || trending) ? 'empty' : 'ready';
 
-  const view = { list, openGroups, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry: refetch };
+  const view = { list, counts, openGroups, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry: refetch };
   return (
     <>
       <div className="mk-desk mk-desk-frame">
@@ -91,11 +106,13 @@ export function PoolsClient() {
 
 type ViewProps = {
   list: ReturnType<typeof buildPoolList> | null;
+  /// Open pools per tab: the category counts, and Trending's length.
+  counts: Record<PoolTab, number> | null;
   /// The list's open groups only: Pools never shows closed pools (they are on Me).
-  openGroups: ReturnType<typeof buildPoolList>['groups'];
+  openGroups: ShownGroup[];
   state: 'loading' | 'error' | 'empty' | 'ready';
-  filter: PoolFilter;
-  setFilter: (f: PoolFilter) => void;
+  filter: PoolTab;
+  setFilter: (f: PoolTab) => void;
   sort: PoolSort;
   setSort: (s: PoolSort) => void;
   labelsOf: (r: PoolRow) => Labels;
@@ -106,11 +123,13 @@ type ViewProps = {
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const COLS = 'minmax(0,1fr) 170px 212px 120px 92px 20px';
+/// Trending has one fixed order, so it says what the order is where the sort control would be.
+const TRENDING_ORDER = 'Most players first, then the biggest pool';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Desktop
 
-function PoolsDesktop({ list, openGroups, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry }: ViewProps) {
+function PoolsDesktop({ list, counts, openGroups, state, filter, setFilter, sort, setSort, labelsOf, byOf, retry }: ViewProps) {
   return (
     <div style={{ paddingBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 24, padding: '18px 4px 22px' }}>
@@ -139,41 +158,31 @@ function PoolsDesktop({ list, openGroups, state, filter, setFilter, sort, setSor
         </div>
       </div>
 
-      {state === 'ready' && list ? (
+      {state === 'ready' && list && counts ? (
         <>
-          <div data-tour-anchor="pools-topics" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '14px 4px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
-            {POOL_FILTERS.map((c, i) => {
+          {/* Nine tabs and the sort control can outgrow a narrow desktop window: the row wraps rather than overflow. */}
+          <div data-tour-anchor="pools-topics" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, rowGap: 8, padding: '14px 4px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
+            {POOL_TABS.map((c) => {
               const on = c === filter;
               return (
                 <button
                   key={c}
                   onClick={() => setFilter(c)}
                   aria-pressed={on}
-                  data-tour-point={i === 1 ? 'pools-topics' : undefined}
+                  data-tour-point={c === 'CRYPTO' ? 'pools-topics' : undefined}
                   className="mk-press96"
                   style={{ flex: 'none', height: 34, padding: '0 14px', borderRadius: 9999, background: on ? 'var(--mako-canvas-fg)' : 'var(--raise)', color: on ? 'var(--mako-canvas)' : 'var(--mako-canvas-fg)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, letterSpacing: '0.12em' }}
                 >
                   {c}
-                  <span style={{ ...mono, fontSize: 11, fontWeight: 500, opacity: 0.7 }}>{list.counts[c]}</span>
+                  <span style={{ ...mono, fontSize: 11, fontWeight: 500, opacity: 0.7 }}>{counts[c]}</span>
                 </button>
               );
             })}
-            <div role="group" aria-label="Sort" style={{ marginLeft: 'auto', display: 'flex', gap: 2, padding: 3, borderRadius: 9999, boxShadow: 'inset 0 0 0 1px var(--line)' }}>
-              {SORTS.map((o) => {
-                const on = o.key === sort;
-                return (
-                  <button
-                    key={o.key}
-                    onClick={() => setSort(o.key)}
-                    aria-pressed={on}
-                    className="mk-press96"
-                    style={{ height: 28, padding: '0 12px', borderRadius: 9999, background: on ? 'var(--raise2)' : 'transparent', color: on ? 'var(--mako-canvas-fg)' : 'var(--dim)', ...mono, fontSize: 11, fontWeight: 700 }}
-                  >
-                    {o.label}
-                  </button>
-                );
-              })}
-            </div>
+            {filter === 'TRENDING' ? (
+              <span style={{ marginLeft: 'auto', ...mono, fontSize: 11, color: 'var(--dim)', whiteSpace: 'nowrap' }}>{TRENDING_ORDER}</span>
+            ) : (
+              <SortGroup sort={sort} setSort={setSort} />
+            )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 20, padding: '10px 4px', boxShadow: 'inset 0 1px 0 var(--line)', ...mono, fontSize: 10, color: 'var(--dim)' }}>
             <span>MARKET</span>
@@ -185,7 +194,7 @@ function PoolsDesktop({ list, openGroups, state, filter, setFilter, sort, setSor
           </div>
           {openGroups.length === 0 && (
             <div style={{ padding: '56px 4px', boxShadow: 'inset 0 1px 0 var(--line)', textAlign: 'center' }}>
-              <div style={{ ...display, fontSize: 24 }}>{noOpenPoolsTitle(filter)}</div>
+              <div style={{ ...display, fontSize: 24 }}>{noOpenTitle(filter)}</div>
               <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>Pools open when a creator makes one. Try another category, or make one yourself.</div>
             </div>
           )}
@@ -210,6 +219,27 @@ function PoolsDesktop({ list, openGroups, state, filter, setFilter, sort, setSor
           <ListStateDesktop kind="pools" state={state === 'ready' ? 'loading' : state} onRetry={retry} />
         </div>
       )}
+    </div>
+  );
+}
+
+function SortGroup({ sort, setSort }: { sort: PoolSort; setSort: (s: PoolSort) => void }) {
+  return (
+    <div role="group" aria-label="Sort" style={{ marginLeft: 'auto', display: 'flex', gap: 2, padding: 3, borderRadius: 9999, boxShadow: 'inset 0 0 0 1px var(--line)' }}>
+      {SORTS.map((o) => {
+        const on = o.key === sort;
+        return (
+          <button
+            key={o.key}
+            onClick={() => setSort(o.key)}
+            aria-pressed={on}
+            className="mk-press96"
+            style={{ height: 28, padding: '0 12px', borderRadius: 9999, background: on ? 'var(--raise2)' : 'transparent', color: on ? 'var(--mako-canvas-fg)' : 'var(--dim)', ...mono, fontSize: 11, fontWeight: 700 }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -293,7 +323,7 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
 
 const ARROW_UP_RIGHT = 'M7 17L17 7M9 7h8v8';
 
-function PoolsMobile({ list, openGroups: groups, state, filter, setFilter, sort, setSort, labelsOf, retry }: ViewProps) {
+function PoolsMobile({ list, counts, openGroups: groups, state, filter, setFilter, sort, setSort, labelsOf, retry }: ViewProps) {
   const sortLabel = SORTS.find((o) => o.key === sort)!.label;
   return (
     <div style={{ paddingBottom: 24 }}>
@@ -302,7 +332,7 @@ function PoolsMobile({ list, openGroups: groups, state, filter, setFilter, sort,
         <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>Bet YES or NO on what happens next.</div>
       </div>
 
-      {state === 'ready' && list ? (
+      {state === 'ready' && list && counts ? (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '18px 16px 0' }}>
             <div style={{ position: 'relative', borderRadius: '28px 28px 28px 10px', background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', padding: '16px 16px 14px', minHeight: 112 }}>
@@ -319,20 +349,20 @@ function PoolsMobile({ list, openGroups: groups, state, filter, setFilter, sort,
             </div>
           </div>
           <div data-tour-anchor="pools-topics" className="no-scrollbar" style={{ display: 'flex', gap: 8, padding: '18px 16px 4px', overflowX: 'auto', scrollbarWidth: 'none' }}>
-            {POOL_FILTERS.map((c, i) => {
+            {POOL_TABS.map((c) => {
               const on = c === filter;
               return (
                 <button
                   key={c}
                   onClick={() => setFilter(c)}
                   aria-pressed={on}
-                  data-tour-point={i === 1 ? 'pools-topics' : undefined}
+                  data-tour-point={c === 'CRYPTO' ? 'pools-topics' : undefined}
                   className="m3-press"
                   style={{ flex: 'none', height: 40, display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px', borderRadius: 9999, background: on ? 'var(--m3-inv)' : 'var(--raise)', color: on ? 'var(--m3-inv-fg)' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', fontSize: 14, fontWeight: 700, transition: 'background-color 250ms cubic-bezier(0.2,0,0,1)' }}
                 >
-                  {catTitle(c)}
+                  {tabTitle(c)}
                   <span style={{ minWidth: 20, height: 20, padding: '0 5px', borderRadius: 9999, background: on ? 'var(--mako-signal)' : 'var(--raise2)', color: on ? '#000' : 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800 }}>
-                    {list.counts[c]}
+                    {counts[c]}
                   </span>
                 </button>
               );
@@ -340,7 +370,7 @@ function PoolsMobile({ list, openGroups: groups, state, filter, setFilter, sort,
           </div>
           {groups.length === 0 && (
             <div style={{ padding: '36px 20px 0', textAlign: 'center' }}>
-              <div style={{ ...display, fontSize: 22 }}>{noOpenPoolsTitle(filter)}</div>
+              <div style={{ ...display, fontSize: 22 }}>{noOpenTitle(filter)}</div>
               <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>Pools open when a creator makes one. Try another category, or make one yourself.</div>
             </div>
           )}
@@ -349,9 +379,13 @@ function PoolsMobile({ list, openGroups: groups, state, filter, setFilter, sort,
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '22px 20px 12px' }}>
                 <span style={{ width: 28, height: 28, borderRadius: 9999, boxShadow: 'inset 0 0 0 1.5px var(--m3-outline)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800 }}>{g.rows.length}</span>
                 <h2 style={{ margin: 0, ...display, fontSize: 22, letterSpacing: '-0.02em' }}>{g.title}</h2>
-                <button onClick={() => setSort(NEXT_SORT[sort])} aria-label={`Sorted by ${sortLabel.toLowerCase()}. Change sort`} style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>
-                  {sortLabel} ▾
-                </button>
+                {filter === 'TRENDING' ? (
+                  <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>Most players first</span>
+                ) : (
+                  <button onClick={() => setSort(NEXT_SORT[sort])} aria-label={`Sorted by ${sortLabel.toLowerCase()}. Change sort`} style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>
+                    {sortLabel} ▾
+                  </button>
+                )}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '0 12px' }}>
                 {g.rows.map((r) => (
@@ -378,6 +412,11 @@ function PoolsMobile({ list, openGroups: groups, state, filter, setFilter, sort,
       </Link>
     </div>
   );
+}
+
+/// A tab with no open pool. Trending and All never show this: no open pool at all is the page's empty state.
+function noOpenTitle(t: PoolTab): string {
+  return noOpenPoolsTitle(t === 'TRENDING' ? 'ALL' : t);
 }
 
 function CornerArrow({ bg, fg }: { bg: string; fg: string }) {

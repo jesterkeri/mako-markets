@@ -315,6 +315,39 @@ export function closingSoon(
   return { rows, openCount: open.length };
 }
 
+/// Trending's length. Mako Market's own pools never count against it (they always show); the rest fill it up to 20.
+/// Twenty is a shortlist, about two phone screens of cards: past that a list stops saying what is popular and becomes
+/// the All tab, which is one tap away and holds every open pool. Raise it only if the open count grows well past it.
+export const TRENDING_LIMIT = 20;
+
+/// Trending's order: most players first (each side's distinct bettors, summed, as the row's "bettors"), then the
+/// bigger pot, then the newer pool (creation time, then id, which the contract hands out in creation order).
+function byTrending(a: MarketWithId, b: MarketWithId): number {
+  const players = b.yesBettorCount + b.noBettorCount - (a.yesBettorCount + a.noBettorCount);
+  if (players !== 0) return players;
+  const potA = a.totalYes + a.totalNo;
+  const potB = b.totalYes + b.totalNo;
+  if (potA !== potB) return potA > potB ? -1 : 1;
+  if (a.createdAt !== b.createdAt) return a.createdAt > b.createdAt ? -1 : 1;
+  return a.id === b.id ? 0 : a.id > b.id ? -1 : 1;
+}
+
+/// The Pools page's Trending tab (Joshua, 2026-10-15): open pools only (betting not closed, not resolved), ranked by
+/// byTrending, capped at `limit`. Mako Market's own pools (MAKO, admin-curated) are pinned at the top in the same
+/// order and are never cut by the cap. Read from the one every-pool chain read the page already makes; `bets` only
+/// fills each row's position.
+export function trendingPools(
+  markets: readonly MarketWithId[],
+  nowSec: number,
+  bets?: ReadonlyMap<string, UserBet>,
+  limit: number = TRENDING_LIMIT,
+): PoolRow[] {
+  const ranked = markets.filter((m) => m.mType in CAT_OF && poolState(m, nowSec) === 'open').sort(byTrending);
+  const mako = ranked.filter((m) => m.mType === MarketType.MAKO);
+  const rest = ranked.filter((m) => m.mType !== MarketType.MAKO).slice(0, Math.max(0, Math.floor(limit) - mako.length));
+  return [...mako, ...rest].map((m) => poolRow(m, nowSec, bets?.get(m.id.toString())));
+}
+
 /// The groups the Pools page shows: open pools only, on desktop and mobile. Closed pools, and anything to claim from
 /// them, are on Me (Joshua, 2026-10-07).
 export function openPoolGroups(list: PoolList | null): PoolGroup[] {
