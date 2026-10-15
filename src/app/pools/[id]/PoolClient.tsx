@@ -1064,7 +1064,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
             <button
               key={s}
               type="button"
-              className="m3-press mk-side"
+              className="m3-press m3-scale96 mk-side"
               onClick={() => {
                 setSide(s);
                 setOpen(true);
@@ -1118,7 +1118,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
             <button
               onClick={openBet}
               disabled={!ready}
-              className="m3-press m3-scale96"
+              className={ready ? 'm3-press m3-scale96 mk-side' : 'm3-press m3-scale96'}
               style={{ ...big, background: ready ? (side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'var(--raise2)', color: ready ? 'var(--mako-on-side)' : 'var(--dim)', boxShadow: ready ? 'var(--edge)' : 'none' }}
             >
               {ready ? `Bet ${usdc2(amount!)} USDC on ${name}` : "Can't place this bet"}
