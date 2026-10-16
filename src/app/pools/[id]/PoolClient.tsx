@@ -15,7 +15,7 @@ import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
 import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/creator-earnings';
-import { shouldCloseDrawer } from '@/lib/drawer-swipe';
+import { addTouchSample, shouldCloseDrawer, type TouchSample } from '@/lib/drawer-swipe';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
@@ -1021,9 +1021,9 @@ const SWIPE_OPEN_PX = 30;
 
 function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) => void }) {
   const { market: m, row, labels, side, setSide, amountText, setAmountText, amount, estimate, why, openBet, claimAmount, openClaim, signedIn, open, setOpen } = v;
-  const touchY = useRef<number | null>(null);
-  // When the touch began (event timeStamp, ms), for the drag's speed.
-  const touchT = useRef(0);
+  // The touch so far (clientY + event timeStamp), from its start: null when no touch. The release speed is measured
+  // over its last 100 ms (drawer-swipe.ts), so the recent moves are kept, not just the start.
+  const touch = useRef<TouchSample[] | null>(null);
   // How far the open panel is being dragged down, so it follows the finger (0 when not dragging).
   const [dragY, setDragY] = useState(0);
   const name = side === 'yes' ? labels.yes : labels.no;
@@ -1036,26 +1036,28 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
   // Swipe as well as tap (Joshua, 2026-10-08). The panel claims vertical drags (touch-action: none), otherwise the
   // browser scrolls the page underneath and cancels the gesture before it ends; taps still reach its buttons.
   const onTouchStart = (e: React.TouchEvent) => {
-    touchY.current = e.touches[0]?.clientY ?? null;
-    touchT.current = e.timeStamp;
+    const y = e.touches[0]?.clientY;
+    touch.current = y === undefined ? null : [{ y, t: e.timeStamp }];
   };
   const onTouchMove = (e: React.TouchEvent) => {
-    const start = touchY.current;
+    const samples = touch.current;
     const y = e.touches[0]?.clientY;
-    if (!collapsible || !open || start === null || y === undefined) return;
-    setDragY(Math.max(0, y - start));
+    if (samples === null || y === undefined) return;
+    touch.current = addTouchSample(samples, { y, t: e.timeStamp });
+    if (!collapsible || !open) return;
+    setDragY(Math.max(0, y - samples[0].y));
   };
   const onTouchEnd = (e: React.TouchEvent) => {
-    const start = touchY.current;
-    touchY.current = null;
+    const samples = touch.current;
+    touch.current = null;
     setDragY(0);
     const end = e.changedTouches[0]?.clientY;
-    if (!collapsible || start === null || end === undefined) return;
-    if (open && shouldCloseDrawer(end - start, e.timeStamp - touchT.current)) setOpen(false);
-    else if (!open && start - end > SWIPE_OPEN_PX) setOpen(true);
+    if (!collapsible || samples === null || end === undefined) return;
+    if (open && shouldCloseDrawer(addTouchSample(samples, { y: end, t: e.timeStamp }))) setOpen(false);
+    else if (!open && samples[0].y - end > SWIPE_OPEN_PX) setOpen(true);
   };
   const onTouchCancel = () => {
-    touchY.current = null;
+    touch.current = null;
     setDragY(0);
   };
   const oddsChip = (s: Side): React.CSSProperties => ({
