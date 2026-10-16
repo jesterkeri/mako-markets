@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------------
 # CI for mako-markets
 #
-# Runs on every push to main / v4-onboarding and on every PR. Four gates:
+# Runs on every push to main / staging / v4-onboarding and on every PR. Four gates:
 #   1. lint     — ESLint
 #   2. typecheck — `tsc --noEmit` (catches type errors before Vercel build)
 #   3. test     — vitest (`pnpm test:aa`, currently 141 tests)
@@ -30,6 +30,9 @@ on:
   push:
     branches:
       - main
+      # Everything reaches main through staging (beta.makomarket.xyz), so staging runs CI before any release
+      # (a lint error reached main untested on 2026-10-16 because it did not).
+      - staging
       - v4-onboarding
       # Privy sign-in work is pushed here before any merge; its CI runs on every push.
       - 'feat/privy'

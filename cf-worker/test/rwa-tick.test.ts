@@ -191,7 +191,7 @@ function makoAnswer(m: Rpc) {
 
 /// Codex DS_SWAP R4 regression: when set, Alchemy names an OLD but real finalized block (a block both providers know,
 /// with its true hash and timestamp); Ankr names the real current one. Both accept eth_call at either block.
-let alchemyOldFinalized = false;
+const alchemyOldFinalized = false;
 const HEAD = 0x4337013n;
 const OLD = HEAD - 100_000n;
 const blockAt = (n: bigint) => ({
