@@ -576,3 +576,45 @@ a,
 [role="button"] {
   touch-action: manipulation;
 }
+
+/* ============================================================================
+ * Motion pass (feat/motion-pass, Joshua 2026-10-16). Each block below belongs to one item of that pass; the curves
+ * are the ones this file already uses: cubic-bezier(0.23, 1, 0.32, 1) ease-out for entrances and presses,
+ * cubic-bezier(0.32, 0.72, 0, 1) for sheets and drawers.
+ * ========================================================================== */
+
+/* ---------- Motion pass 1: confirm sheet steps ----------
+ * ConfirmSheet keys each step's body on the step, so a new step mounts and plays mk-stepin; a check that replaces a
+ * spinner scales in with mk-checkin. Reduced motion: opacity only. */
+@keyframes mkStepIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes mkCheckIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mk-stepin {
+  animation: mkStepIn 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.mk-checkin {
+  animation: mkCheckIn 150ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-stepin,
+  .mk-checkin {
+    animation: mkFade 150ms ease both;
+  }
+}
