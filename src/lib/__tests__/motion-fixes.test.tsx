@@ -1,6 +1,7 @@
 // Motion pass 6 (Joshua 2026-10-16): fixes to motion that broke the rules.
 //  - The tab bar indicator moves in 220 ms (was 440), on its existing drawer curve; a pressed tab scales to 0.96 (was 0.86).
-//  - The pool page's YES/NO split bar animates a transform, not `width`, and looks the same at rest.
+//  - The pool page's YES/NO split bar keeps origin/main's flex markup (pixel-identical at rest); YES's width moves in
+//    300 ms (was 700), none with reduced motion. (A transform version was tried and dropped: it blurs the seam.)
 //  - Pressing a side button on a mobile pool card tints only that button, not the whole card.
 //  - mako-brand.css hover lifts apply only to a real hover (fine pointer).
 
@@ -60,7 +61,7 @@ vi.mock('@/lib/hooks', () => ({
 }));
 vi.mock('@/lib/use-user', () => ({ useUser: () => ({ user: null }), accountAddress: () => null }));
 
-const { PoolClient, splitNoOffset } = await import('@/app/pools/[id]/PoolClient');
+const { PoolClient } = await import('@/app/pools/[id]/PoolClient');
 
 afterEach(() => {
   cleanup();
@@ -178,14 +179,23 @@ describe('mobile pool card: a side press tints that side only', () => {
 });
 
 describe('pool page split bar', () => {
-  /// What the NO layer's left edge resolves to on a bar `w` px wide, from the rendered transform.
-  function noEdgePx(transform: string, w: number): number {
-    const m = /^translateX\(clamp\(60px, (\d+(?:\.\d+)?)%, calc\(100% - 60px\)\)\)$/.exec(transform);
-    expect(m, `transform ${transform}`).not.toBeNull();
-    return Math.min(Math.max(60, (Number(m![1]) / 100) * w), w - 60);
+  /// The bar exactly as origin/main c1ec789 drew it (PoolClient.tsx:539-542), labels as plain text.
+  const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
+  function OldBar({ yesPct, noPct }: { yesPct: number; noPct: number }) {
+    return (
+      <div style={{ display: 'flex', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)' }}>
+        <div style={{ width: `${yesPct}%`, transition: 'width 700ms cubic-bezier(0.23,1,0.32,1)', background: 'var(--mako-yes)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{yesPct}%</div>
+        <div style={{ flex: 1, background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{noPct}%</div>
+      </div>
+    );
   }
-  /// The old flex bar: YES `width: p%` min 60, NO `flex: 1` min 60.
-  const oldYesPx = (p: number, w: number) => Math.min(Math.max(60, (p / 100) * w), w - 60);
+  /// Every inline declaration of an element, transition longhands left out (the one intended difference).
+  const decls = (el: Element) => {
+    const s = (el as HTMLElement).style;
+    const out: Record<string, string> = {};
+    for (let i = 0; i < s.length; i++) if (!s.item(i).startsWith('transition')) out[s.item(i)] = s.getPropertyValue(s.item(i));
+    return out;
+  };
 
   function bar(theme: 'light' | 'dark') {
     document.documentElement.setAttribute('data-theme', theme);
@@ -197,43 +207,39 @@ describe('pool page split bar', () => {
   }
 
   for (const theme of ['light', 'dark'] as const)
-    it(`${theme}: the YES fraction at rest equals yesPct, both labels sit unscaled above the fills, the edge stroke stays`, () => {
+    it(`${theme}: the old flex markup at rest, declaration for declaration (60px minimums, NO's edge stroke), no transform`, () => {
       const el = bar(theme);
-      const yesPct = Number(el.dataset.splitYes);
-      expect(yesPct).toBe(75);
-      const no = el.querySelector<HTMLElement>('.mk-split-no')!;
-      expect(no.style.transform).toBe(splitNoOffset(75));
-      expect(noEdgePx(no.style.transform, 800) / 800).toBe(0.75);
-      // The YES fill is the bar itself, NO the slid layer; the stroke is NO's left border and the bar's border.
-      expect(el.style.backgroundColor).toBe('var(--mako-yes)');
-      // ...clipped to the padding box, so the border shows what the old bar's border showed: in dark mode --edge-c is
-      // transparent and that is the page behind the bar, never a YES-green ring round the NO side (adversary on
-      // c0bcd32). A longhand colour, because happy-dom drops a background-clip set after a var() shorthand.
-      expect(el.style.backgroundClip).toBe('padding-box');
-      expect(el.style.background).not.toMatch(/border-box/);
-      expect(no.style.background).toBe('var(--mako-no)');
-      // (happy-dom mangles a var() inside a border shorthand into every longhand, so only the colour is readable.)
+      expect(Number(el.dataset.splitYes)).toBe(75);
+      const old = render(<OldBar yesPct={75} noPct={25} />).container.firstElementChild!;
+      // Bar, YES child, NO child: every inline declaration the old bar had, and nothing else.
+      expect(el.children).toHaveLength(2);
+      expect(decls(el)).toEqual(decls(old));
+      const [yes, no] = [...el.children] as HTMLElement[];
+      expect(decls(yes)).toEqual(decls(old.children[0]));
+      expect(decls(no)).toEqual(decls(old.children[1]));
+      // Spot checks that the comparison is about the geometry asked for.
+      expect(yes.style.width).toBe('75%');
+      expect(yes.style.minWidth).toBe('60px');
+      expect(no.style.minWidth).toBe('60px');
       expect(no.style.getPropertyValue('border-left-color')).toBe('var(--edge-c)');
-      expect(el.style.getPropertyValue('border-color')).toBe('var(--edge-c)');
-      // Labels: not inside the transformed layer, black-on-fill colour.
-      const labelLayer = el.lastElementChild as HTMLElement;
-      const labels = [...labelLayer.children].map((s) => s.textContent);
-      expect(labels).toEqual(['75%', '25%']);
-      for (const s of el.querySelectorAll('span')) expect(no.contains(s)).toBe(false);
-      expect(labelLayer.style.color).toBe('var(--mako-on-side)');
-      // Nothing in the bar transitions a layout property any more.
-      for (const n of [el, ...el.querySelectorAll<HTMLElement>('*')]) expect(n.style.transition).not.toMatch(/width/);
+      // The YES width animates through the stylesheet class, not inline; nothing in the bar is transformed.
+      expect(yes.className).toBe('mk-split-yes');
+      for (const n of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
+        expect(n.style.transition).toBe('');
+        expect(n.style.transform).toBe('');
+      }
+      expect(el.querySelector('.mk-split-no')).toBeNull();
+      // Labels, each inside its own fill.
+      expect([yes.textContent, no.textContent]).toEqual(['75%', '25%']);
     });
 
-  it('same geometry as the old flex bar at any share and width, the 60px minimums included', () => {
-    for (const w of [300, 520, 800])
-      for (const p of [0, 3, 10, 50, 75, 95, 100]) expect(noEdgePx(splitNoOffset(p), w), `${p}% of ${w}`).toBeCloseTo(oldYesPx(p, w), 9);
-  });
-
-  it('the move is a 300 ms ease-out transform; reduced motion moves at once', () => {
-    const [rule] = rulesFor(SHELL, '.mk-split-no', 'top');
-    expect(rule.decls.get('transition')).toBe('transform 300ms cubic-bezier(0.23, 1, 0.32, 1)');
-    const [reduced] = rulesFor(SHELL, '.mk-split-no', inReducedMotion);
+  it('YES width moves in 300 ms ease-out (was 700 ms); reduced motion moves at once', () => {
+    const top = rulesFor(SHELL, '.mk-split-yes', 'top');
+    expect(top).toHaveLength(1);
+    expect(top[0].decls.get('transition')).toBe('width 300ms cubic-bezier(0.23, 1, 0.32, 1)');
+    const [reduced] = rulesFor(SHELL, '.mk-split-yes', inReducedMotion);
     expect(reduced.decls.get('transition')).toBe('none');
+    // The transform layer is gone with its rule.
+    expect(rulesFor(SHELL, '.mk-split-no')).toEqual([]);
   });
 });

@@ -503,10 +503,6 @@ function closedNote(state: PoolState, m: MarketWithId, now: number): string {
     : `Waiting for the result. If it isn't settled within 24H of ${close}, anyone can mark the pool refunded.`;
 }
 
-/// Where the pool page's split bar puts the NO layer's left edge: YES's share of the bar, but never under 60px for
-/// either side (the old flex bar's min-widths). A translateX percentage is of the layer's own width, which is the bar's.
-export const splitNoOffset = (yesPct: number) => `translateX(clamp(60px, ${yesPct}%, calc(100% - 60px)))`;
-
 function Odds({ market: m, row, labels }: ViewProps) {
   const open = row.state === 'open';
   const yesWon = row.state === 'yes_won';
@@ -547,20 +543,17 @@ function Odds({ market: m, row, labels }: ViewProps) {
           </div>
         </div>
       </div>
-      {/* The split bar: YES is the bar's own fill; NO is a full-width layer slid right to where YES ends (its left border
-          is the edge stroke). A change of odds moves that layer with a transform (mk-split-no), never a width, and the
-          labels sit above both, unscaled. clamp() keeps 60px for each side, as the old min-widths did. The YES fill is
-          clipped to the padding box: in dark mode --edge-c is transparent, and the old bar showed the page through its
-          border there, not a YES-green ring around the NO side. */}
-      <div data-split-yes={row.yesPct} style={{ position: 'relative', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)', backgroundColor: 'var(--mako-yes)', backgroundClip: 'padding-box' }}>
-        <div aria-hidden="true" className="mk-split-no" style={{ position: 'absolute', inset: 0, boxSizing: 'border-box', background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', transform: splitNoOffset(row.yesPct) }} />
-        <div style={{ position: 'relative', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', color: 'var(--mako-on-side)', ...mono, fontSize: 13, fontWeight: 700 }}>
-          <span>
-            <FlashValue value={row.yesPct} text={`${row.yesPct}%`} kind="neutral" />
-          </span>
-          <span>
-            <FlashValue value={row.noPct} text={`${row.noPct}%`} kind="neutral" />
-          </span>
+      {/* The split bar, exactly as origin/main drew it: a flex bar, YES `width: N%` (min 60px), NO the rest (min 60px)
+          with its left border as the edge stroke. A change of odds animates YES's width (mk-split-yes: 300 ms ease-out,
+          none with reduced motion). Width, not a transform, on purpose: layout puts the YES/NO seam on a whole pixel, a
+          transform leaves it on a fractional one and blurs it (a smeared edge stroke in light mode, an olive column in
+          dark mode). One small bar that animates only when the odds change makes the layout cost negligible. */}
+      <div data-split-yes={row.yesPct} style={{ display: 'flex', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)' }}>
+        <div className="mk-split-yes" style={{ width: `${row.yesPct}%`, background: 'var(--mako-yes)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>
+          <FlashValue value={row.yesPct} text={`${row.yesPct}%`} kind="neutral" />
+        </div>
+        <div style={{ flex: 1, background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>
+          <FlashValue value={row.noPct} text={`${row.noPct}%`} kind="neutral" />
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 4px 0', ...mono, fontSize: 13 }}>

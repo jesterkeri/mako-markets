@@ -688,13 +688,14 @@ a,
 }
 
 /* ---------- Motion pass 6: fixes to existing motion ----------
- * The pool page's YES/NO split bar moves its NO layer with a transform when the odds change (it animated `width` for
- * 700ms). Reduced motion: it moves at once. */
-.mk-split-no {
-  transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1);
+ * The pool page's YES/NO split bar: YES's width moves in 300ms ease-out when the odds change (it was 700ms). Width, not
+ * a transform: layout snaps the YES/NO seam to a whole pixel, a transform does not and blurs it. One small bar that
+ * moves only on an odds change keeps the layout cost negligible. Reduced motion: it moves at once. */
+.mk-split-yes {
+  transition: width 300ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-  .mk-split-no {
+  .mk-split-yes {
     transition: none;
   }
 }
