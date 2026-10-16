@@ -241,7 +241,7 @@ body {
   border-radius: 12px !important;
 }
 .wl-spin {
-  animation: wlSpin 0.9s linear infinite;
+  animation: wlSpin 0.7s linear infinite;
 }
 @keyframes wlSpin {
   to {
