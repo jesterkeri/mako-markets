@@ -65,7 +65,7 @@ export function intelKeys(items: readonly IntelItem[]): string[] {
 /// press that brought no focus with it (a finger dragging the still row, a press the page cancelled) is dropped when it
 /// ends: only a press that focused its card can later explain that card's focus (the return from the story's new tab).
 type InputRecord = { last: 'keyboard' | 'pointer' | null; target: EventTarget | null };
-const input: InputRecord & { pending: boolean; focused: boolean } = { last: null, target: null, pending: false, focused: false };
+const input: InputRecord & { pending: boolean; focused: boolean; down: boolean } = { last: null, target: null, pending: false, focused: false, down: false };
 let listeners = 0;
 let pendingFrom: Element | null = null;
 function onKeyInput(e: KeyboardEvent) {
@@ -88,10 +88,12 @@ function onPointerInput(e: Event) {
   input.pending = false;
   input.last = 'pointer';
   input.target = e.target;
+  input.down = true;
   // A press on the card that already holds focus moves no focus (no focusin), yet it is the press that focus belongs
-  // to, as when an open story is clicked again: it counts as having focused its card.
+  // to, as when an open story is clicked again: it counts as having focused its card. Only an element inside a card
+  // (an `li`) counts as holding it, never something that merely contains the strip.
   const held = document.activeElement;
-  input.focused = held instanceof Element && held !== document.body && held !== document.documentElement && focusFromPointer(held);
+  input.focused = held instanceof Element && held.closest('li') !== null && focusFromPointer(held);
 }
 function onFocusInput(e: FocusEvent) {
   if (input.last !== 'pointer' || !(e.target instanceof Node)) return;
@@ -105,6 +107,7 @@ function onFocusInput(e: FocusEvent) {
 // A touch tap runs pointerdown, touchstart, pointerup, touchend and only then mousedown (which focuses the link), so the
 // tap's own press is dropped at touchend and recorded again by its mousedown.
 function onPressEnd() {
+  input.down = false;
   if (input.last !== 'pointer' || input.focused) return;
   input.last = null;
   input.target = null;
@@ -130,6 +133,7 @@ function useInputRecord() {
       input.target = null;
       input.pending = false;
       input.focused = false;
+      input.down = false;
     };
   }, []);
 }
@@ -253,6 +257,19 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
                 const strip = e.currentTarget;
                 const to = e.relatedTarget as Node | null;
                 if (to ? strip.contains(to) : strip.contains(document.activeElement)) return;
+                // A press held on a card with nothing focusable in it (a story with no link) sends focus to <body> at
+                // the press. The row must not move before the release, so the mode ends only once the press does,
+                // and only if focus is still outside the strip then.
+                if (!to && input.down && input.target instanceof Node && strip.contains(input.target)) {
+                  const after = () => {
+                    for (const t of PRESS_END_EVENTS) window.removeEventListener(t, after, true);
+                    setTimeout(() => {
+                      if (!strip.contains(document.activeElement)) leaveKb(strip);
+                    }, 0);
+                  };
+                  for (const t of PRESS_END_EVENTS) window.addEventListener(t, after, { capture: true, passive: true });
+                  return;
+                }
                 leaveKb(strip);
               }
             : undefined

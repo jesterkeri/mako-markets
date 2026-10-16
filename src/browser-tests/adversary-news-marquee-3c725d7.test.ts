@@ -108,3 +108,41 @@ describe('adversary r5 (3c725d7), Chromium', () => {
     expect({ focused: s.focused, kb: s.kb, fullyInside: s.fullyInside }).toEqual({ focused: 'Story 2', kb: true, fullyInside: true });
   }, 60_000);
 });
+
+// Round 7's suspicion, tested with its fix (1fcc422 -> next commit): a press counted as having focused its card when the
+// focused element merely CONTAINED the pressed card. An ancestor of the strip that holds focus (here the strip's parent
+// made focusable) made a finger drag over Story 2 count, so the press was kept after it ended and a later screen-reader
+// move onto Story 2 was taken for a click: no keyboard mode. Only an element inside a card now counts as holding it.
+describe('a focused ancestor of the strip, Chromium', () => {
+  it('a finger drag over Story 2 while an ancestor holds focus, then a screen reader focuses Story 2: keyboard mode', async () => {
+    const ctx = await h.browser.newContext({ viewport: { width: 1280, height: 900 }, hasTouch: true });
+    const p = await ctx.newPage();
+    await p.goto(h.url(30, 1216));
+    await p.waitForSelector('.mk-marquee-track', { state: 'attached' });
+    await p.evaluate(() => {
+      const a = document.getAnimations()[0];
+      a.currentTime = 0;
+      a.pause();
+      const holder = (document.querySelector('.mk-marquee') as HTMLElement).parentElement!.parentElement!;
+      holder.tabIndex = -1;
+      holder.focus();
+    });
+    expect(await p.evaluate(() => document.activeElement!.contains(document.querySelector('.mk-marquee')))).toBe(true);
+    const r = await p.evaluate(() => {
+      const a = [...document.querySelectorAll('.mk-marquee ul:not([aria-hidden]) a')].find((x) => x.textContent === 'Story 2')!;
+      const b = a.getBoundingClientRect();
+      return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    });
+    const cdp = await ctx.newCDPSession(p);
+    const touch = (type: string, x: number) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: r.y }] });
+    await touch('touchStart', r.x);
+    for (let i = 1; i <= 5; i++) await touch('touchMove', r.x - 6 * i);
+    await touch('touchEnd', r.x - 30);
+    await p.waitForTimeout(300);
+    await srFocus(p, 'Story 2');
+    await p.waitForTimeout(100);
+    const s = await geo(p);
+    await ctx.close();
+    expect({ focused: s.focused, kb: s.kb }).toEqual({ focused: 'Story 2', kb: true });
+  }, 60_000);
+});
