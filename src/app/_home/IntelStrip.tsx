@@ -61,9 +61,11 @@ export function intelKeys(items: readonly IntelItem[]): string[] {
 /// the record as it was: a story clicked and then scrolled past with the arrows still counts as clicked when the reader
 /// comes back to the window. A press is also used up by the first focus it does not explain: focus that arrives anywhere
 /// on the page, away from the pressed card (a screen reader moving on to another story, or out of the strip), clears
-/// it, so the same story focused again later by the keyboard or a screen reader is not taken for the old click.
+/// it, so the same story focused again later by the keyboard or a screen reader is not taken for the old click. And a
+/// press that brought no focus with it (a finger dragging the still row, a press the page cancelled) is dropped when it
+/// ends: only a press that focused its card can later explain that card's focus (the return from the story's new tab).
 type InputRecord = { last: 'keyboard' | 'pointer' | null; target: EventTarget | null };
-const input: InputRecord & { pending: boolean } = { last: null, target: null, pending: false };
+const input: InputRecord & { pending: boolean; focused: boolean } = { last: null, target: null, pending: false, focused: false };
 let listeners = 0;
 let pendingFrom: Element | null = null;
 function onKeyInput(e: KeyboardEvent) {
@@ -86,13 +88,26 @@ function onPointerInput(e: Event) {
   input.pending = false;
   input.last = 'pointer';
   input.target = e.target;
+  input.focused = false;
 }
 function onFocusInput(e: FocusEvent) {
-  if (input.last !== 'pointer' || !(e.target instanceof Node) || focusFromPointer(e.target)) return;
+  if (input.last !== 'pointer' || !(e.target instanceof Node)) return;
+  if (focusFromPointer(e.target)) {
+    input.focused = true;
+    return;
+  }
+  input.last = null;
+  input.target = null;
+}
+// A touch tap runs pointerdown, touchstart, pointerup, touchend and only then mousedown (which focuses the link), so the
+// tap's own press is dropped at touchend and recorded again by its mousedown.
+function onPressEnd() {
+  if (input.last !== 'pointer' || input.focused) return;
   input.last = null;
   input.target = null;
 }
 const POINTER_EVENTS = ['pointerdown', 'mousedown', 'touchstart'] as const;
+const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel'] as const;
 
 function useInputRecord() {
   useEffect(() => {
@@ -100,15 +115,18 @@ function useInputRecord() {
       window.addEventListener('keydown', onKeyInput, true);
       window.addEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.addEventListener(t, onPointerInput, { capture: true, passive: true });
+      for (const t of PRESS_END_EVENTS) window.addEventListener(t, onPressEnd, { capture: true, passive: true });
     }
     return () => {
       if (--listeners > 0) return;
       window.removeEventListener('keydown', onKeyInput, true);
       window.removeEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.removeEventListener(t, onPointerInput, true);
+      for (const t of PRESS_END_EVENTS) window.removeEventListener(t, onPressEnd, true);
       input.last = null;
       input.target = null;
       input.pending = false;
+      input.focused = false;
     };
   }, []);
 }

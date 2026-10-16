@@ -22,8 +22,8 @@ afterAll(async () => {
 const N = 30;
 const W = 1216;
 
-async function open() {
-  const ctx = await h.browser.newContext({ viewport: { width: 1280, height: 2000 } });
+async function open(hasTouch = false) {
+  const ctx = await h.browser.newContext({ viewport: { width: 1280, height: 2000 }, hasTouch });
   const p = await ctx.newPage();
   // A clicked story opens a new tab (target=_blank): close it, the reader is back on Home.
   ctx.on('page', (np: any) => np.close().catch(() => {}));
@@ -207,6 +207,21 @@ describe('keyboard mode (data-kb), Chromium', () => {
     await p.evaluate(() => document.addEventListener('click', (e) => e.preventDefault()));
     await clickStory(p, 'Story 12');
     await p.keyboard.press(key);
+    const { hasFocus, back } = await awayAndBack(ctx, p);
+    expect(hasFocus).toBe(false);
+    expect({ kb: back.kb, playState: back.playState, focused: back.focused }).toEqual({ kb: false, playState: 'running', focused: 'Story 12' });
+    await ctx.close();
+  }, 60_000);
+
+  // A tap runs touchend before the mousedown that focuses the link: the press that brought no focus is dropped at
+  // touchend and the mousedown records it again, so the tap still explains the focus that comes back with the window.
+  it('a story tapped on a touch screen, the window left and returned to: still no mode, the crawl runs', async () => {
+    const { ctx, p } = await open(true);
+    await p.evaluate(() => document.addEventListener('click', (e) => e.preventDefault()));
+    const box = await p.locator('.mk-marquee ul:not([aria-hidden]) a', { hasText: /^Story 12$/ }).boundingBox();
+    await p.touchscreen.tap(box.x + 20, box.y + 5);
+    const tapped = await state(p);
+    expect({ kb: tapped.kb, focused: tapped.focused }).toEqual({ kb: false, focused: 'Story 12' });
     const { hasFocus, back } = await awayAndBack(ctx, p);
     expect(hasFocus).toBe(false);
     expect({ kb: back.kb, playState: back.playState, focused: back.focused }).toEqual({ kb: false, playState: 'running', focused: 'Story 12' });
