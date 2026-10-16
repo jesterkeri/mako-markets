@@ -129,7 +129,7 @@ describe('adversary r7 (1fcc422), Chromium', () => {
   for (const [what, end] of [
     // A context menu that swallowed the release: the menu event itself is NOT the end (it fires on the press on Linux and
     // macOS, adversary r9 on c3ae8f5), the first pointer movement with no button held is.
-    ['a context menu swallowed the release and the pointer then moves', `(() => { const el = document.elementFromPoint(X, Y); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })); window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 0, clientX: X + 5, clientY: Y })); })()`],
+    ['a context menu swallowed the release and the pointer then moves', `(() => { const el = document.elementFromPoint(X, Y); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })); window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 0, pointerId: window.__pid, pointerType: 'mouse', clientX: X + 5, clientY: Y })); })()`],
     ['the window loses focus', `window.dispatchEvent(new FocusEvent('blur'))`],
   ] as const)
     it(`keyboard mode, a press held on a card with no link and no release, then ${what}: the mode ends`, async () => {
@@ -144,6 +144,8 @@ describe('adversary r7 (1fcc422), Chromium', () => {
       const x = before.cardLeft + 60;
       const y = before.cardTop + 40;
       await p.mouse.move(x, y);
+      // The pressing pointer's id, so the simulated move after the swallowed release is that pointer's own.
+      await p.evaluate(() => window.addEventListener('pointerdown', (e) => ((window as any).__pid = e.pointerId), { once: true, capture: true }));
       await p.mouse.down();
       const pressed = await geo(p);
       expect({ kb: pressed.kb, scrollLeft: pressed.scrollLeft, focused: pressed.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: 'BODY' });

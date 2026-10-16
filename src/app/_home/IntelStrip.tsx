@@ -65,7 +65,14 @@ export function intelKeys(items: readonly IntelItem[]): string[] {
 /// press that brought no focus with it (a finger dragging the still row, a press the page cancelled) is dropped when it
 /// ends: only a press that focused its card can later explain that card's focus (the return from the story's new tab).
 type InputRecord = { last: 'keyboard' | 'pointer' | null; target: EventTarget | null };
-const input: InputRecord & { pending: boolean; focused: boolean; down: boolean } = { last: null, target: null, pending: false, focused: false, down: false };
+const input: InputRecord & { pending: boolean; focused: boolean; down: boolean; pointerId: number | null } = {
+  last: null,
+  target: null,
+  pending: false,
+  focused: false,
+  down: false,
+  pointerId: null,
+};
 let listeners = 0;
 let pendingFrom: Element | null = null;
 function onKeyInput(e: KeyboardEvent) {
@@ -89,6 +96,9 @@ function onPointerInput(e: Event) {
   input.last = 'pointer';
   input.target = e.target;
   input.down = true;
+  // The pointer that pressed: only its own events can end the press (a pen hovering, or another pointer, cannot).
+  // mousedown and touchstart carry no pointerId and keep the one their pointerdown set.
+  if (e instanceof PointerEvent) input.pointerId = e.pointerId;
   // A press on the card that already holds focus moves no focus (no focusin), yet it is the press that focus belongs
   // to, as when an open story is clicked again: it counts as having focused its card. Only an element inside a card
   // (an `li`) counts as holding it, never something that merely contains the strip.
@@ -118,20 +128,29 @@ const POINTER_EVENTS = ['pointerdown', 'mousedown', 'touchstart'] as const;
 // and the first pointer movement with no button held count as the end too, or a held press would stay "held" until the
 // next one. Not `contextmenu` itself: on Linux and macOS it fires when the right button goes DOWN, mid-press.
 const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel', 'dragend'] as const;
+/// Whether `e` ends the press under way: an event of another pointer never does (a pen hovering while the mouse is
+/// held), and a release ends it only once no button is held (letting go of a second button, a chord, does not).
+function endsPress(e: Event): boolean {
+  if (e instanceof PointerEvent && input.pointerId !== null && e.pointerId !== input.pointerId) return false;
+  if (e.type === 'pointerup' || e.type === 'mouseup' || e.type === 'pointermove') return (e as MouseEvent).buttons === 0;
+  if (e.type === 'touchend' || e.type === 'touchcancel') return (e as TouchEvent).touches.length === 0;
+  return true; // pointercancel, dragend
+}
 /// Calls `cb` on every press end until the returned function removes it. The window's own blur only: `blur` does not
 /// bubble, so a listener on the window outside the capture phase sees no element's blur.
 function onPressEnds(cb: () => void): () => void {
   const onBlur = (e: Event) => {
     if (e.target === window) cb();
   };
-  const onMove = (e: PointerEvent) => {
-    if (e.buttons === 0) cb();
+  const onEnd = (e: Event) => {
+    if (endsPress(e)) cb();
   };
-  for (const t of PRESS_END_EVENTS) window.addEventListener(t, cb, { capture: true, passive: true });
+  const onMove = onEnd;
+  for (const t of PRESS_END_EVENTS) window.addEventListener(t, onEnd, { capture: true, passive: true });
   window.addEventListener('pointermove', onMove, { capture: true, passive: true });
   window.addEventListener('blur', onBlur);
   return () => {
-    for (const t of PRESS_END_EVENTS) window.removeEventListener(t, cb, true);
+    for (const t of PRESS_END_EVENTS) window.removeEventListener(t, onEnd, true);
     window.removeEventListener('pointermove', onMove, true);
     window.removeEventListener('blur', onBlur);
   };
@@ -158,6 +177,7 @@ function useInputRecord() {
       input.pending = false;
       input.focused = false;
       input.down = false;
+      input.pointerId = null;
     };
   }, []);
 }
