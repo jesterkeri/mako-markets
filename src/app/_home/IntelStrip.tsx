@@ -1,6 +1,6 @@
 'use client';
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { newsAge, type IntelItem } from '@/lib/news-intel';
 import { CAT_STYLE } from '@/lib/pool-list';
@@ -9,8 +9,14 @@ import { CAT_STYLE } from '@/lib/pool-list';
 // once there are more than fit, paused under a fine pointer. The motion is one CSS animation on one track
 // (mako-shell.css, `.mk-marquee`): transform only, linear, no JS loop. The list is drawn twice and the track slides by
 // half its width, so the loop has no seam; the second copy is hidden from assistive tech and its links are out of the
-// tab order, so each story is met once. While a card has keyboard focus, and always with reduced motion, the strip is a
-// still row of one copy that scrolls (by focus, or by hand), so every card a reader reaches is on screen.
+// tab order, so each story is met once.
+//
+// Keyboard mode is React state, not a CSS selector. It starts only when focus ARRIVES on a card and that focus was not
+// caused by a click or a tap (`focusFromPointer`): then the strip carries `data-kb`, which makes it a still row of one
+// copy that scrolls, and every card focus reaches is scrolled wholly into view. It ends when focus leaves the strip, and
+// the crawl starts again from its beginning. A key pressed while focus stays put changes nothing, so a story clicked
+// with the mouse and then ArrowDown or Space to scroll the page never freezes the strip. With reduced motion the strip is
+// always that still row (CSS), and is scrolled by hand.
 
 /// Every moving card is this wide, so one copy of the list is `count x INTEL_CARD_W` pixels.
 export const INTEL_CARD_W = 320;
@@ -32,15 +38,93 @@ export function marqueeMoves(count: number, stripWidth: number | null): boolean 
 
 /// React keys for the cards: the story's link, else its title and publish time, so a story keeps its key when the
 /// 5-minute refetch adds a newer one in front (index keys would hand every card the next one's identity mid-crawl).
-/// A story the feed happens to list twice gets a numbered key rather than a clash.
+/// A story the feed lists more than once gets a numbered key (`#1`, `#2`, ...). Collision-free by construction: every
+/// `#` in a base key is doubled, so a base key's runs of `#` are all even, and a numbered key is the only kind that
+/// carries an odd run (its single `#` before the count). Two bases that are equal get different counts; two that
+/// differ stay different after doubling.
 export function intelKeys(items: readonly IntelItem[]): string[] {
   const seen = new Map<string, number>();
   return items.map((n) => {
-    const base = n.url ? `u:${n.url}` : `t:${n.title}|${n.publishedAt ?? ''}`;
+    const base = (n.url ? `u:${n.url}` : `t:${n.title}|${n.publishedAt ?? ''}`).replace(/#/g, '##');
     const k = seen.get(base) ?? 0;
     seen.set(base, k + 1);
     return k === 0 ? base : `${base}#${k}`;
   });
+}
+
+/// What the reader last did on the page, for telling a click from the keyboard when focus arrives on a card. Kept by
+/// one set of window listeners in the capture phase (so no page handler can hide an event from them), shared by every
+/// mounted strip. A pointer press records itself and its target at once. A key counts only if it is one that moves
+/// focus (Tab, Shift+Tab, an arrow, with no Ctrl, Alt or Meta) AND focus really moved: while its keydown is being
+/// handled the key is `pending` (focus that arrives then is the key's), and a task later it is recorded only if the
+/// focused element changed. So Space, PageDown, Escape, a letter, or an ArrowDown that only scrolled the page, leave
+/// the record as it was: a story clicked and then scrolled past with the arrows still counts as clicked when the reader
+/// comes back to the window.
+type InputRecord = { last: 'keyboard' | 'pointer' | null; target: EventTarget | null };
+const input: InputRecord & { pending: boolean } = { last: null, target: null, pending: false };
+let listeners = 0;
+let pendingFrom: Element | null = null;
+function onKeyInput(e: KeyboardEvent) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.key !== 'Tab' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  // Keys pressed before the first one settles are judged together, from where focus was when the first was pressed,
+  // and the first timer to run settles them all (a timer runs only after each keydown has moved focus or not).
+  if (!input.pending) pendingFrom = document.activeElement;
+  input.pending = true;
+  setTimeout(() => {
+    // A pointer press since then is newer input and has already replaced the record.
+    if (!input.pending) return;
+    input.pending = false;
+    if (document.activeElement === pendingFrom) return;
+    input.last = 'keyboard';
+    input.target = null;
+  }, 0);
+}
+function onPointerInput(e: Event) {
+  input.pending = false;
+  input.last = 'pointer';
+  input.target = e.target;
+}
+const POINTER_EVENTS = ['pointerdown', 'mousedown', 'touchstart'] as const;
+
+function useInputRecord() {
+  useEffect(() => {
+    if (listeners++ === 0) {
+      window.addEventListener('keydown', onKeyInput, true);
+      for (const t of POINTER_EVENTS) window.addEventListener(t, onPointerInput, { capture: true, passive: true });
+    }
+    return () => {
+      if (--listeners > 0) return;
+      window.removeEventListener('keydown', onKeyInput, true);
+      for (const t of POINTER_EVENTS) window.removeEventListener(t, onPointerInput, true);
+      input.last = null;
+      input.target = null;
+      input.pending = false;
+    };
+  }, []);
+}
+
+/// Whether focus arriving on `el` came from a click or a tap: the last input was a pointer press on `el` or inside it
+/// (or on an element around it), and no focus-moving key is being handled. That covers the focus a click gives a link,
+/// and the focus the browser gives the same link back when the reader returns to the window after the story opened in
+/// a new tab. Focus with no pointer press behind it (Tab, an arrow key that moved focus, a screen reader moving focus)
+/// is the keyboard's.
+export function focusFromPointer(el: Node, rec: InputRecord & { pending?: boolean } = input): boolean {
+  if (rec.pending || rec.last !== 'pointer') return false;
+  const t = rec.target;
+  if (!(t instanceof Node)) return true;
+  return el.contains(t) || t.contains(el);
+}
+
+/// Scrolls the strip so the card holding `el` is wholly inside it (the browser leaves a card that is partly on screen
+/// where it is). Horizontal only, and instant: the page itself is the browser's to scroll.
+function revealCard(strip: HTMLElement, el: Element) {
+  const card = el.closest('li');
+  if (!card || !strip.contains(card)) return;
+  const s = strip.getBoundingClientRect();
+  const c = card.getBoundingClientRect();
+  if (c.left < s.left) strip.scrollLeft -= s.left - c.left;
+  else if (c.right > s.right) strip.scrollLeft += Math.min(c.right - s.right, c.left - s.left);
 }
 
 /// The strip's own width, kept current as the window resizes. null until it has been laid out.
@@ -65,6 +149,21 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const moving = marqueeMoves(items.length, useWidth(ref));
   const keys = intelKeys(items);
+  useInputRecord();
+  // Keyboard mode (see the header). `reveal` names the element keyboard focus last arrived on; each arrival is a new
+  // object, so the layout effect below runs once per arrival, after `data-kb` has made the still row.
+  const [kb, setKb] = useState(false);
+  const [reveal, setReveal] = useState<{ el: Element } | null>(null);
+  // A strip that stops moving (the window grew, the feed shrank) leaves keyboard mode, so it never comes back still.
+  if (!moving && (kb || reveal)) {
+    setKb(false);
+    setReveal(null);
+  }
+  useLayoutEffect(() => {
+    const strip = ref.current;
+    if (kb && reveal && strip && document.activeElement === reveal.el) revealCard(strip, reveal.el);
+  }, [kb, reveal]);
+
   const cards = (copy: boolean) =>
     items.map((n, i) => <IntelCard key={copy ? `copy:${keys[i]}` : keys[i]} item={n} nowMs={nowMs} fixed={moving} copy={copy} />);
 
@@ -74,18 +173,33 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
       <div
         ref={ref}
         className={moving ? 'mk-marquee' : undefined}
-        // Keyboard focus turns the strip into a still row that focus scrolls (mako-shell.css). The browser leaves a card
-        // that is partly on screen where it is, so bring the focused card's whole box in. Only for keyboard focus: a
-        // mouse click or a tap leaves the crawl running and must not scroll it.
-        onFocus={moving ? (e) => revealKeyboardFocus(e.target) : undefined}
-        // When focus leaves the strip, the crawl starts again from its beginning, so put the scroll back to the start.
+        data-kb={moving && kb ? '' : undefined}
+        // Focus arriving on a card: from the keyboard it starts (or continues) keyboard mode and brings the card into
+        // view. From a click or a tap it changes nothing: the crawl keeps running (paused only while a fine pointer is
+        // over it), and in keyboard mode the still row stays put, so the row never shifts between press and release.
+        onFocus={
+          moving
+            ? (e) => {
+                if (focusFromPointer(e.target)) return;
+                setKb(true);
+                setReveal({ el: e.target });
+              }
+            : undefined
+        }
+        // Focus leaving the strip ends keyboard mode, and the crawl starts again from its beginning, so the scroll goes
+        // back to the start. The window itself losing focus (the story opened in a new tab) is not focus leaving: the
+        // focused card stays the document's active element, and the mode holds for the reader's return.
         onBlur={
           moving
             ? (e) => {
-                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                const strip = e.currentTarget;
+                const to = e.relatedTarget as Node | null;
+                if (to ? strip.contains(to) : strip.contains(document.activeElement)) return;
+                setKb(false);
+                setReveal(null);
                 // With reduced motion the row is scrolled by hand: leave it where the reader put it.
                 if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-                e.currentTarget.scrollLeft = 0;
+                strip.scrollLeft = 0;
               }
             : undefined
         }
@@ -105,18 +219,6 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
       </div>
     </div>
   );
-}
-
-/// Scrolls the card holding `el` wholly into the strip, when `el` has keyboard focus (:focus-visible). A browser that
-/// does not know :focus-visible also lacks the still-row rule keyed on it, so it does nothing there.
-function revealKeyboardFocus(el: Element) {
-  let keyboard = false;
-  try {
-    keyboard = el.matches(':focus-visible');
-  } catch {
-    return;
-  }
-  if (keyboard) el.closest('li')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 }
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };

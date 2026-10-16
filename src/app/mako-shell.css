@@ -340,21 +340,22 @@ body {
     animation-play-state: paused;
   }
 }
-/* While a card has KEYBOARD focus the strip is a still row, one copy, scrolled by focus: the browser scrolls each card it
- * focuses into view. Pausing alone is not enough, because a card the crawl carried off the left edge sits at a negative
- * offset no scroll can reach. :focus-visible, not :focus-within, so a mouse click or a touch tap on a story never sticks
- * the strip. When keyboard focus leaves, the crawl starts again from its beginning (IntelStrip puts the scroll back). */
-.mk-marquee:has(:focus-visible) {
+/* Keyboard mode: IntelStrip sets `data-kb` while a card has focus that arrived from the keyboard (never a click or a
+ * tap), and clears it when focus leaves the strip. The strip is then a still row of one copy that scrolls, and
+ * IntelStrip scrolls each card focus reaches wholly into view. Pausing alone is not enough, because a card the crawl
+ * carried off the left edge sits at a negative offset no scroll can reach. A plain attribute selector, so it holds in
+ * every browser (no :has(), no :focus-visible). When the mode ends, the crawl starts again from its beginning. */
+.mk-marquee[data-kb] {
   overflow-x: auto;
   -webkit-mask-image: none;
   mask-image: none;
 }
-.mk-marquee:has(:focus-visible) .mk-marquee-track {
+.mk-marquee[data-kb] .mk-marquee-track {
   animation: none;
   transform: none;
   will-change: auto;
 }
-.mk-marquee:has(:focus-visible) .mk-marquee-dup {
+.mk-marquee[data-kb] .mk-marquee-dup {
   display: none;
 }
 /* Reduced motion: nothing moves. One copy of the cards in a row the reader scrolls by hand, no fade over its ends. */

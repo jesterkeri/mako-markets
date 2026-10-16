@@ -151,6 +151,29 @@ describe('IntelStrip', () => {
     expect(intelKeys([b, a, b])).toEqual(['u:https://example.com/x', 't:Final|2026-10-16T10:00:00Z', 'u:https://example.com/x#1']);
     // Same title, different time: two stories.
     expect(new Set(intelKeys([a, { ...a, publishedAt: '2026-10-16T11:00:00Z' }])).size).toBe(2);
+    // A `#` in a link is doubled, so a link with the fragment #1 is never the second listing of the same link.
+    const x1: IntelItem = { ...b, url: 'https://example.com/x#1' };
+    expect(intelKeys([b, b, x1])).toEqual(['u:https://example.com/x', 'u:https://example.com/x#1', 'u:https://example.com/x##1']);
+    expect(intelKeys([x1, b, b, x1])).toEqual(['u:https://example.com/x##1', 'u:https://example.com/x', 'u:https://example.com/x#1', 'u:https://example.com/x##1#1']);
+  });
+
+  it('never hands two cards one key, whatever the links, titles and times spell (exhaustive over a small alphabet)', () => {
+    // Every list of up to 4 stories whose links (or titles) are drawn from strings that contain `#`, digits and `|`.
+    const parts = ['a', 'a#1', 'a#1#1', 'a##1', '#', '#1', '1', 'a|', '|'];
+    const pool: IntelItem[] = [
+      ...parts.map((p) => ({ tag: 'CRYPTO' as const, title: 't', time: '', url: p })),
+      ...parts.map((p) => ({ tag: 'NBA' as const, title: p, time: '', publishedAt: p })),
+      ...parts.map((p) => ({ tag: 'NBA' as const, title: 'x', time: '', publishedAt: p })),
+    ];
+    let lists = 0;
+    for (const i of pool)
+      for (const j of pool)
+        for (const k of pool) {
+          const keys = intelKeys([i, j, k, i]);
+          lists++;
+          expect(new Set(keys).size).toBe(4);
+        }
+    expect(lists).toBe(pool.length ** 3);
   });
 
   it.each([1, 3, 4])('with %i stories on a 1216 px strip: a still row, no copy, nothing hidden', (n) => {
@@ -173,6 +196,145 @@ describe('IntelStrip', () => {
     const c = strip(6, 1824);
     expect(c.querySelector('.mk-marquee')).toBeNull();
     expect((c.querySelector('ul') as HTMLElement).style.gridTemplateColumns).toBe('repeat(6,minmax(0,1fr))');
+  });
+});
+
+describe('keyboard mode is React state, entered only by focus the keyboard moved', () => {
+  const setup = () => {
+    const c = strip(12, 1216);
+    const viewport = c.querySelector('.mk-marquee') as HTMLElement;
+    const links = Array.from(viewport.querySelectorAll('ul:not([aria-hidden]) a')) as HTMLElement[];
+    return { viewport, links };
+  };
+  const key = (k: string, init: KeyboardEventInit = {}) => fireEvent.keyDown(window, { key: k, ...init });
+
+  it('Tab then focus on a card: data-kb on; focus leaving the strip: off, scroll back at 0', () => {
+    const { viewport, links } = setup();
+    key('Tab');
+    fireEvent.focus(links[0]);
+    expect(viewport.hasAttribute('data-kb')).toBe(true);
+    viewport.scrollLeft = 640;
+    // Moving between cards keeps the mode and the scroll.
+    key('Tab');
+    fireEvent.blur(links[0], { relatedTarget: links[1] });
+    fireEvent.focus(links[1], { relatedTarget: links[0] });
+    expect(viewport.hasAttribute('data-kb')).toBe(true);
+    expect(viewport.scrollLeft).toBe(640);
+    fireEvent.blur(links[1], { relatedTarget: document.body });
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+    expect(viewport.scrollLeft).toBe(0);
+  });
+
+  it.each(['pointerdown', 'mousedown', 'touchstart'])('focus that follows a %s on the card never enters the mode', (ev) => {
+    const { viewport, links } = setup();
+    key('Tab');
+    fireEvent(links[2], new Event(ev, { bubbles: true }));
+    fireEvent.focus(links[2]);
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+  });
+
+  it.each([' ', 'ArrowDown', 'PageDown', 'Escape', 'a', 'Shift', 'Enter'])('a click, then %j with focus unchanged: still no mode', (k) => {
+    const { viewport, links } = setup();
+    fireEvent.mouseDown(links[2]);
+    fireEvent.focus(links[2]);
+    key(k);
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+  });
+
+  it('a click, then Tab to the next card: the mode starts on that arrival', () => {
+    const { viewport, links } = setup();
+    fireEvent.mouseDown(links[2]);
+    fireEvent.focus(links[2]);
+    key('Tab');
+    fireEvent.blur(links[2], { relatedTarget: links[3] });
+    fireEvent.focus(links[3], { relatedTarget: links[2] });
+    expect(viewport.hasAttribute('data-kb')).toBe(true);
+  });
+
+  it('only keys that move focus count: Ctrl/Alt/Meta+Tab and Space do not', () => {
+    const { viewport, links } = setup();
+    for (const init of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      fireEvent.mouseDown(links[2]);
+      key('Tab', init);
+      fireEvent.focus(links[2]);
+      expect(viewport.hasAttribute('data-kb')).toBe(false);
+    }
+    fireEvent.mouseDown(links[2]);
+    key(' ');
+    fireEvent.focus(links[2]);
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+  });
+
+  it('an arrow key that moves no focus is forgotten: focus coming back to a clicked card later is still the click', async () => {
+    const { viewport, links } = setup();
+    // A click: the press, then the focus it gives the link.
+    fireEvent.mouseDown(links[2]);
+    links[2].focus();
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+    key('ArrowDown');
+    // A task later the key is settled: focus did not move, so the record stays the click.
+    await new Promise((r) => setTimeout(r, 5));
+    fireEvent.blur(links[2], { relatedTarget: null });
+    fireEvent.focus(links[2]);
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+  });
+
+  it('an arrow key that does move focus is remembered: focus coming back later is the keyboard', async () => {
+    const { viewport, links } = setup();
+    fireEvent.mouseDown(links[2]);
+    links[2].focus();
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+    key('ArrowRight');
+    links[3].focus();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(viewport.hasAttribute('data-kb')).toBe(true);
+    // The window goes and comes back; nothing pending now, and the last input is that key.
+    fireEvent.focus(links[3]);
+    expect(viewport.hasAttribute('data-kb')).toBe(true);
+  });
+
+  it('a click while in the mode keeps the still row as it is (no shift under the pointer)', () => {
+    const { viewport, links } = setup();
+    key('Tab');
+    fireEvent.focus(links[0]);
+    viewport.scrollLeft = 320;
+    fireEvent.mouseDown(links[1]);
+    fireEvent.blur(links[0], { relatedTarget: links[1] });
+    fireEvent.focus(links[1], { relatedTarget: links[0] });
+    expect(viewport.hasAttribute('data-kb')).toBe(true);
+    expect(viewport.scrollLeft).toBe(320);
+  });
+
+  it('a strip that stops moving leaves the mode, so it never comes back still when it moves again', () => {
+    stripWidth = 1216;
+    const { container, rerender } = render(<IntelStrip items={stories(12)} nowMs={NOW} minCols={4} />);
+    const link = container.querySelector('.mk-marquee ul:not([aria-hidden]) a') as HTMLElement;
+    key('Tab');
+    fireEvent.focus(link);
+    expect((container.querySelector('.mk-marquee') as HTMLElement).hasAttribute('data-kb')).toBe(true);
+    // The feed shrinks to 3 stories (they fit, nothing moves), then grows again with focus elsewhere.
+    rerender(<IntelStrip items={stories(3)} nowMs={NOW} minCols={4} />);
+    expect(container.querySelector('.mk-marquee')).toBeNull();
+    rerender(<IntelStrip items={stories(12)} nowMs={NOW} minCols={4} />);
+    expect((container.querySelector('.mk-marquee') as HTMLElement).hasAttribute('data-kb')).toBe(false);
+  });
+
+  it('focusFromPointer: a press on the element, inside it or around it; never after a focus-moving key', async () => {
+    const { focusFromPointer } = await import('@/app/_home/IntelStrip');
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    const span = document.createElement('span');
+    a.appendChild(span);
+    li.appendChild(a);
+    const other = document.createElement('div');
+    expect(focusFromPointer(a, { last: 'pointer', target: a })).toBe(true);
+    expect(focusFromPointer(a, { last: 'pointer', target: span })).toBe(true);
+    expect(focusFromPointer(a, { last: 'pointer', target: li })).toBe(true);
+    expect(focusFromPointer(a, { last: 'pointer', target: other })).toBe(false);
+    expect(focusFromPointer(a, { last: 'keyboard', target: null })).toBe(false);
+    expect(focusFromPointer(a, { last: null, target: null })).toBe(false);
+    // While a focus-moving key is being handled, the focus it brings is the key's, whatever came before.
+    expect(focusFromPointer(a, { last: 'pointer', target: a, pending: true })).toBe(false);
   });
 });
 
@@ -248,14 +410,17 @@ describe('the shipped CSS (mako-shell.css)', () => {
     expect(css.replace(hover, '')).not.toMatch(/\.mk-marquee:hover/);
   });
 
-  it('keyboard focus (never a click or tap) makes a still row of one copy that focus scrolls', () => {
-    // :focus-within would also match a link focused by a mouse click or a touch tap and stick the strip.
-    expect(css).not.toMatch(/\.mk-marquee:focus-within/);
-    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\)\s*\{[^}]*overflow-x:\s*auto/);
-    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\)\s*\{[^}]*[^-]mask-image:\s*none/);
-    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\) \.mk-marquee-track\s*\{[^}]*animation:\s*none/);
-    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\) \.mk-marquee-track\s*\{[^}]*transform:\s*none/);
-    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\) \.mk-marquee-dup\s*\{\s*display:\s*none/);
+  it('keyboard mode (the data-kb attribute IntelStrip sets) makes a still row of one copy, with no :has() or :focus-visible', () => {
+    // :focus-within would also match a link focused by a mouse click or a touch tap and stick the strip; :has() is
+    // missing in older browsers (Firefox ESR 115), and :focus-visible turns on for a clicked link at the next key press.
+    expect(css).not.toMatch(/\.mk-marquee[^{]*:focus-within/);
+    expect(css).not.toMatch(/\.mk-marquee[^{]*:has\(/);
+    expect(css).not.toMatch(/\.mk-marquee[^{]*:focus-visible/);
+    expect(css).toMatch(/\.mk-marquee\[data-kb\]\s*\{[^}]*overflow-x:\s*auto/);
+    expect(css).toMatch(/\.mk-marquee\[data-kb\]\s*\{[^}]*[^-]mask-image:\s*none/);
+    expect(css).toMatch(/\.mk-marquee\[data-kb\] \.mk-marquee-track\s*\{[^}]*animation:\s*none/);
+    expect(css).toMatch(/\.mk-marquee\[data-kb\] \.mk-marquee-track\s*\{[^}]*transform:\s*none/);
+    expect(css).toMatch(/\.mk-marquee\[data-kb\] \.mk-marquee-dup\s*\{\s*display:\s*none/);
   });
 
   it('with reduced motion: no movement, no copy, a row scrolled by hand', () => {
