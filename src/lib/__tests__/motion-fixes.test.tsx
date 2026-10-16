@@ -174,7 +174,12 @@ describe('pool page split bar', () => {
       expect(no.style.transform).toBe(splitNoOffset(75));
       expect(noEdgePx(no.style.transform, 800) / 800).toBe(0.75);
       // The YES fill is the bar itself, NO the slid layer; the stroke is NO's left border and the bar's border.
-      expect(el.style.background).toBe('var(--mako-yes)');
+      expect(el.style.backgroundColor).toBe('var(--mako-yes)');
+      // ...clipped to the padding box, so the border shows what the old bar's border showed: in dark mode --edge-c is
+      // transparent and that is the page behind the bar, never a YES-green ring round the NO side (adversary on
+      // c0bcd32). A longhand colour, because happy-dom drops a background-clip set after a var() shorthand.
+      expect(el.style.backgroundClip).toBe('padding-box');
+      expect(el.style.background).not.toMatch(/border-box/);
       expect(no.style.background).toBe('var(--mako-no)');
       // (happy-dom mangles a var() inside a border shorthand into every longhand, so only the colour is readable.)
       expect(no.style.getPropertyValue('border-left-color')).toBe('var(--edge-c)');

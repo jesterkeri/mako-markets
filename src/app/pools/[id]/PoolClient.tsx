@@ -551,8 +551,10 @@ function Odds({ market: m, row, labels }: ViewProps) {
       </div>
       {/* The split bar: YES is the bar's own fill; NO is a full-width layer slid right to where YES ends (its left border
           is the edge stroke). A change of odds moves that layer with a transform (mk-split-no), never a width, and the
-          labels sit above both, unscaled. clamp() keeps 60px for each side, as the old min-widths did. */}
-      <div data-split-yes={row.yesPct} style={{ position: 'relative', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)', background: 'var(--mako-yes)' }}>
+          labels sit above both, unscaled. clamp() keeps 60px for each side, as the old min-widths did. The YES fill is
+          clipped to the padding box: in dark mode --edge-c is transparent, and the old bar showed the page through its
+          border there, not a YES-green ring around the NO side. */}
+      <div data-split-yes={row.yesPct} style={{ position: 'relative', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)', backgroundColor: 'var(--mako-yes)', backgroundClip: 'padding-box' }}>
         <div aria-hidden="true" className="mk-split-no" style={{ position: 'absolute', inset: 0, boxSizing: 'border-box', background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', transform: splitNoOffset(row.yesPct) }} />
         <div style={{ position: 'relative', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', color: 'var(--mako-on-side)', ...mono, fontSize: 13, fontWeight: 700 }}>
           <span>
