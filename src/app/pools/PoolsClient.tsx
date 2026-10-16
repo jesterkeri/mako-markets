@@ -268,7 +268,7 @@ export function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Label
           </Link>
           <span style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: '100%' }}>
             <span style={{ ...mono, fontSize: 11, color: 'var(--dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {r.cat} · <FlashValue value={r.bettors} kind="neutral">{r.bettors}</FlashValue> {r.bettors === 1 ? 'bettor' : 'bettors'} · by {by}
+              {r.cat} · <FlashValue value={r.bettors} text={String(r.bettors)} kind="neutral" /> {r.bettors === 1 ? 'bettor' : 'bettors'} · by {by}
             </span>
             {pos && (
               <span style={{ flex: 'none', height: 20, display: 'flex', alignItems: 'center', padding: '0 9px', borderRadius: 9999, boxShadow: `inset 0 0 0 1px ${posFg}`, color: posFg, ...mono, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
@@ -281,10 +281,10 @@ export function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Label
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, ...mono, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
           <span style={{ color: 'var(--yes-text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {labels.yes} <FlashValue value={r.yesPct} kind="neutral">{r.yesPct}%</FlashValue>
+            {labels.yes} <FlashValue value={r.yesPct} text={`${r.yesPct}%`} kind="neutral" />
           </span>
           <span style={{ color: 'var(--no-text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            <FlashValue value={r.noPct} kind="neutral">{r.noPct}%</FlashValue> {labels.no}
+            <FlashValue value={r.noPct} text={`${r.noPct}%`} kind="neutral" /> {labels.no}
           </span>
         </div>
         <div style={{ display: 'flex', height: 4, borderRadius: 9999, overflow: 'hidden', background: 'var(--mako-no)', marginTop: 7 }}>
@@ -296,12 +296,12 @@ export function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Label
           <>
             <Link href={`${poolHref(r.id)}?side=yes`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-yes)' }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.yes}</span> <span style={{ fontWeight: 500 }}>
-                <FlashValue value={r.yesPays} kind="neutral">{formatPays(r.yesPays)}</FlashValue>
+                <FlashValue value={r.yesPays} text={formatPays(r.yesPays)} kind="neutral" />
               </span>
             </Link>
             <Link href={`${poolHref(r.id)}?side=no`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-no)' }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.no}</span> <span style={{ fontWeight: 500 }}>
-                <FlashValue value={r.noPays} kind="neutral">{formatPays(r.noPays)}</FlashValue>
+                <FlashValue value={r.noPays} text={formatPays(r.noPays)} kind="neutral" />
               </span>
             </Link>
           </>
@@ -319,7 +319,7 @@ export function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Label
         )}
       </div>
       <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>
-        <FlashValue value={r.pool} kind="direction">{usdc2(r.pool)}</FlashValue>
+        <FlashValue value={r.pool} text={usdc2(r.pool)} kind="direction" />
       </span>
       <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700, color: !open ? 'var(--dim)' : r.closingSoon ? 'var(--mako-red)' : 'var(--mako-canvas-fg)', whiteSpace: 'nowrap' }}>{r.closes}</span>
       <span aria-hidden="true" style={{ textAlign: 'right', ...display, fontSize: 16 }}>

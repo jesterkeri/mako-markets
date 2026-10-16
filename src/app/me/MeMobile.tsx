@@ -140,9 +140,7 @@ export function Figure({ value, size, colour, flash }: { value: Loadable<bigint>
   if (value.status === 'error') return <div style={{ ...display, fontSize: Math.min(size, 22), marginTop: 6, opacity: 0.7 }}>Unavailable</div>;
   return (
     <div style={{ ...display, fontSize: size, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', color: colour }}>
-      <FlashValue value={value.value} kind={flash}>
-        {usdc2(value.value)}
-      </FlashValue>
+      <FlashValue value={value.value} text={usdc2(value.value)} kind={flash} />
     </div>
   );
 }
@@ -447,7 +445,7 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
         <span style={{ whiteSpace: 'nowrap' }}>
           <span style={{ color: 'var(--dim)' }}>Stake</span>{' '}
           <span style={{ fontWeight: 800 }}>
-            <FlashValue value={p.stake} kind="direction">{usdc2(p.stake)}</FlashValue>
+            <FlashValue value={p.stake} text={usdc2(p.stake)} kind="direction" />
           </span>
         </span>
         {p.settlement ? (
@@ -460,7 +458,7 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
                 <Fragment key={e.side}>
                   {i > 0 && ' · '}
                   {pays.length > 1 && `${e.side === 'yes' ? labels.yes : labels.no} `}
-                  <FlashValue value={e.payout} kind="direction">{usdc2(e.payout)}</FlashValue>
+                  <FlashValue value={e.payout} text={usdc2(e.payout)} kind="direction" />
                 </Fragment>
               ))}
             </span>

@@ -26,7 +26,7 @@ vi.mock('@/lib/use-address-names', () => ({ useAddressNames: () => new Map() }))
 
 const USDC = 1_000_000n;
 const NOW = Math.floor(Date.now() / 1000);
-const pool = vi.hoisted(() => ({ yes: 30n, no: 10n, yesN: 2, noN: 1 }));
+const pool = vi.hoisted(() => ({ yes: 30n, no: 10n, yesN: 2, noN: 1, noBase: 0n }));
 const market = (): MarketWithId => ({
   id: 7n,
   creator: '0x00000000000000000000000000000000000000c1',
@@ -37,7 +37,7 @@ const market = (): MarketWithId => ({
   closeTime: BigInt(NOW + 2 * 86400),
   bettingCloseTime: BigInt(NOW + 86400),
   totalYes: pool.yes * USDC,
-  totalNo: pool.no * USDC,
+  totalNo: pool.no * USDC + pool.noBase, // noBase: base units on top, for sub-cent bets
   yesBettorCount: pool.yesN,
   noBettorCount: pool.noN,
   outcome: Outcome.UNRESOLVED,
@@ -67,7 +67,7 @@ const { Amount } = await import('@/app/me/MeDesktop');
 const { Figure } = await import('@/app/me/MeMobile');
 
 beforeEach(() => {
-  Object.assign(pool, { yes: 30n, no: 10n, yesN: 2, noN: 1 });
+  Object.assign(pool, { yes: 30n, no: 10n, yesN: 2, noN: 1, noBase: 0n });
 });
 afterEach(() => {
   cleanup();
@@ -78,11 +78,7 @@ afterEach(() => {
 const flashing = (root: ParentNode) => [...root.querySelectorAll<HTMLElement>('.mk-flash-up, .mk-flash-down, .mk-flash-neutral')];
 
 describe('useFlashOnChange / FlashValue', () => {
-  const Probe = ({ v, kind = 'direction' }: { v: number | bigint | null; kind?: FlashKind }) => (
-    <FlashValue value={v} kind={kind}>
-      {String(v)}
-    </FlashValue>
-  );
+  const Probe = ({ v, kind = 'direction' }: { v: number | bigint | null; kind?: FlashKind }) => <FlashValue value={v} text={String(v)} kind={kind} />;
   const cls = (c: HTMLElement) => (c.firstElementChild as HTMLElement).className;
 
   it('first render and a value arriving after loading do not flash; a change does, for FLASH_HOLD_MS', () => {
@@ -119,6 +115,49 @@ describe('useFlashOnChange / FlashValue', () => {
     expect(cls(v.container), 'the hold restarted at the second change').toBe('mk-flash mk-flash-down');
     act(() => vi.advanceTimersByTime(50));
     expect(cls(v.container)).toBe('mk-flash');
+  });
+
+  // Adversary on c0bcd32: the change that counts is the TEXT on screen; the raw value only gives the direction.
+  const Shown = ({ v, text, kind = 'direction' }: { v: number | bigint | null; text: string; kind?: FlashKind }) => <FlashValue value={v} text={text} kind={kind} />;
+
+  it('a raw change that leaves the shown text alone does not flash, either kind', () => {
+    for (const kind of ['direction', 'neutral'] as const) {
+      const v = render(<Shown v={1.94} text="1.94x" kind={kind} />);
+      v.rerender(<Shown v={1.940097} text="1.94x" kind={kind} />);
+      expect(cls(v.container), kind).toBe('mk-flash');
+      v.rerender(<Shown v={1.9449} text="1.94x" kind={kind} />);
+      expect(cls(v.container), kind).toBe('mk-flash');
+      cleanup();
+    }
+  });
+
+  it('when the text does change, the direction comes from the latest raw value', () => {
+    const v = render(<Shown v={1.95} text="1.95x" />);
+    v.rerender(<Shown v={1.9449} text="1.94x" />);
+    expect(cls(v.container)).toBe('mk-flash mk-flash-down');
+    cleanup();
+    // Drift below the text first, then a rise that shows: up, measured from 1.940097 not 1.94.
+    const w = render(<Shown v={1.94} text="1.94x" />);
+    w.rerender(<Shown v={1.940097} text="1.94x" />);
+    w.rerender(<Shown v={1.946} text="1.95x" />);
+    expect(cls(w.container)).toBe('mk-flash mk-flash-up');
+  });
+
+  it('the rendered text is the compared text', () => {
+    const v = render(<Shown v={3} text="3%" />);
+    expect(v.container.textContent).toBe('3%');
+  });
+
+  it('a text change while the raw value is not a number does not flash (a placeholder, a value arriving); NaN settles', () => {
+    const v = render(<Shown v={null} text="No bets" kind="neutral" />);
+    v.rerender(<Shown v={2.5} text="2.50x" kind="neutral" />);
+    expect(cls(v.container), 'null -> a number is the first value').toBe('mk-flash');
+    v.rerender(<Shown v={null} text="No bets" kind="neutral" />);
+    expect(cls(v.container), 'a number -> null is not a change of number').toBe('mk-flash');
+    cleanup();
+    const n = render(<Shown v={Number.NaN} text="-" />);
+    n.rerender(<Shown v={Number.NaN} text="-" />);
+    expect(cls(n.container)).toBe('mk-flash');
   });
 
   it('neutral values dip whichever way they move; nothing is aria-live', () => {
@@ -161,6 +200,22 @@ describe('pool page', () => {
     expect(flashing(desk).map((e) => e.textContent)).not.toContain('30.00');
   });
 
+  for (const desktop of [true, false])
+    it(`${desktop ? 'desktop' : 'mobile'}: a 0.10 USDC bet into 100 / 100 moves the raw odds but not the shown ones: no odds flash`, () => {
+      Object.assign(pool, { yes: 100n, no: 100n, yesN: 3, noN: 3 });
+      const v = page(desktop);
+      const odds = () => flashing(v.container).filter((e) => /\d+\.\d\dx/.test(e.textContent ?? '')).map((e) => `${e.className} "${e.textContent}"`);
+      const before = [...v.container.querySelectorAll('.mk-flash')].map((e) => e.textContent);
+      expect(before.filter((t) => /^\d+\.\d\dx$/.test(t ?? '')).length, 'the odds are wrapped').toBeGreaterThanOrEqual(2);
+      Object.assign(pool, { noBase: 100_000n });
+      v.rerender(<PoolClient id={7n} initialSide={null} />);
+      const after = [...v.container.querySelectorAll('.mk-flash')].map((e) => e.textContent);
+      expect(after.filter((t) => /x$/.test(t ?? ''))).toEqual(before.filter((t) => /x$/.test(t ?? '')));
+      expect(odds()).toEqual([]);
+      // The NO total did change on screen (100.00 -> 100.10), so that one still flashes.
+      expect(flashing(v.container).map((e) => e.textContent)).toContain('100.10');
+    });
+
   it('mobile: values on the side fills dip (no green or red text on a green or red fill)', () => {
     const v = page(false);
     const mob = v.container.querySelector('.mk-mob')!;
@@ -188,6 +243,13 @@ describe('pools list', () => {
     expect(neutral.length).toBeGreaterThanOrEqual(4); // + both pays
   });
 
+  it('mobile card: pays that still read the same after a sub-cent bet do not dip', () => {
+    const at = (no: bigint): MarketWithId => ({ ...market(), totalYes: 100n * USDC, totalNo: no });
+    const v = render(<PoolMobileCard row={poolRow(at(100n * USDC), NOW)} labels={labels} />);
+    v.rerender(<PoolMobileCard row={poolRow(at(100n * USDC + 100_000n), NOW)} labels={labels} />);
+    expect(flashing(v.container).filter((e) => /x$/.test(e.textContent ?? '')).map((e) => e.textContent)).toEqual([]);
+  });
+
   it('mobile card: everything dips (side fills and the inverse card)', () => {
     const v = render(<PoolMobileCard row={poolRow(m(30n, 10n), NOW)} labels={labels} />);
     expect(flashing(v.container)).toEqual([]);
@@ -206,6 +268,20 @@ describe('Me', () => {
     v.rerender(<Amount value={{ status: 'ready', value: 7n * USDC }} />);
     expect(flashing(v.container)[0].className).toBe('mk-flash mk-flash-up');
     expect(flashing(v.container)[0].textContent).toBe('7.00 USDC');
+  });
+
+  it('a 6-decimal change that still reads the same to 2 decimals does not flash, desktop and mobile', () => {
+    const v = render(<Amount value={{ status: 'ready', value: 5n * USDC + 1n }} />);
+    v.rerender(<Amount value={{ status: 'ready', value: 5n * USDC + 4_000n }} />);
+    expect(v.container.textContent).toBe('5.00 USDC');
+    expect(flashing(v.container)).toEqual([]);
+    cleanup();
+    for (const flash of ['neutral', 'direction'] as const) {
+      const m = render(<Figure value={{ status: 'ready', value: 9n * USDC }} size={24} flash={flash} />);
+      m.rerender(<Figure value={{ status: 'ready', value: 9n * USDC + 4_999n }} size={24} flash={flash} />);
+      expect(flashing(m.container), flash).toEqual([]);
+      cleanup();
+    }
   });
 
   it('mobile tiles: a dip on the yellow / inverse tiles, a direction on a --raise tile', () => {
