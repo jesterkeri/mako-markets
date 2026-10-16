@@ -127,7 +127,9 @@ describe('adversary r7 (1fcc422), Chromium', () => {
   // delivers every mouseup, so the lost release is simulated: the button is held (no mouseup is sent) and the event
   // that replaces the release is dispatched. The mode must end then, not stay on until some later press.
   for (const [what, end] of [
-    ['a context menu opens', `document.elementFromPoint(X, Y).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }))`],
+    // A context menu that swallowed the release: the menu event itself is NOT the end (it fires on the press on Linux and
+    // macOS, adversary r9 on c3ae8f5), the first pointer movement with no button held is.
+    ['a context menu swallowed the release and the pointer then moves', `(() => { const el = document.elementFromPoint(X, Y); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })); window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 0, clientX: X + 5, clientY: Y })); })()`],
     ['the window loses focus', `window.dispatchEvent(new FocusEvent('blur'))`],
   ] as const)
     it(`keyboard mode, a press held on a card with no link and no release, then ${what}: the mode ends`, async () => {
@@ -145,7 +147,7 @@ describe('adversary r7 (1fcc422), Chromium', () => {
       await p.mouse.down();
       const pressed = await geo(p);
       expect({ kb: pressed.kb, scrollLeft: pressed.scrollLeft, focused: pressed.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: 'BODY' });
-      await p.evaluate(end.replace('X', String(x)).replace('Y', String(y)));
+      await p.evaluate(end.replaceAll('X', String(x)).replaceAll('Y', String(y)));
       await p.waitForTimeout(100);
       const after = await geo(p);
       expect({ kb: after.kb, scrollLeft: after.scrollLeft }).toEqual({ kb: false, scrollLeft: 0 });

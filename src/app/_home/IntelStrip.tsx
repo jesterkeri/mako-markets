@@ -114,19 +114,25 @@ function onPressEnd() {
 }
 const POINTER_EVENTS = ['pointerdown', 'mousedown', 'touchstart'] as const;
 // What ends a press. A release can also never reach the page: a native context menu can swallow the mouseup, a drag
-// ends in dragend, and switching window mid-press takes the release elsewhere. So a context menu, a drag's end and the
-// window losing focus count as the end too, or a held press would stay "held" until the next one.
-const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel', 'contextmenu', 'dragend'] as const;
+// ends in dragend, and switching window mid-press takes the release elsewhere. So a drag's end, the window losing focus
+// and the first pointer movement with no button held count as the end too, or a held press would stay "held" until the
+// next one. Not `contextmenu` itself: on Linux and macOS it fires when the right button goes DOWN, mid-press.
+const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel', 'dragend'] as const;
 /// Calls `cb` on every press end until the returned function removes it. The window's own blur only: `blur` does not
 /// bubble, so a listener on the window outside the capture phase sees no element's blur.
 function onPressEnds(cb: () => void): () => void {
   const onBlur = (e: Event) => {
     if (e.target === window) cb();
   };
+  const onMove = (e: PointerEvent) => {
+    if (e.buttons === 0) cb();
+  };
   for (const t of PRESS_END_EVENTS) window.addEventListener(t, cb, { capture: true, passive: true });
+  window.addEventListener('pointermove', onMove, { capture: true, passive: true });
   window.addEventListener('blur', onBlur);
   return () => {
     for (const t of PRESS_END_EVENTS) window.removeEventListener(t, cb, true);
+    window.removeEventListener('pointermove', onMove, true);
     window.removeEventListener('blur', onBlur);
   };
 }
