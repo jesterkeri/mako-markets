@@ -15,6 +15,7 @@ import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
 import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/creator-earnings';
+import { shouldCloseDrawer } from '@/lib/drawer-swipe';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
@@ -968,13 +969,14 @@ function PoolMobile(v: ViewProps) {
   );
 }
 
-/// A drag down of this many pixels closes the open panel; a drag up of SWIPE_OPEN_PX opens the slim bar.
-const SWIPE_CLOSE_PX = 60;
+/// A drag up of this many pixels opens the slim bar. Closing (far enough, or fast enough) is shouldCloseDrawer.
 const SWIPE_OPEN_PX = 30;
 
 function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) => void }) {
   const { market: m, row, labels, side, setSide, amountText, setAmountText, amount, estimate, why, openBet, claimAmount, openClaim, signedIn, open, setOpen } = v;
   const touchY = useRef<number | null>(null);
+  // When the touch began (event timeStamp, ms), for the drag's speed.
+  const touchT = useRef(0);
   // How far the open panel is being dragged down, so it follows the finger (0 when not dragging).
   const [dragY, setDragY] = useState(0);
   const name = side === 'yes' ? labels.yes : labels.no;
@@ -988,6 +990,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
   // browser scrolls the page underneath and cancels the gesture before it ends; taps still reach its buttons.
   const onTouchStart = (e: React.TouchEvent) => {
     touchY.current = e.touches[0]?.clientY ?? null;
+    touchT.current = e.timeStamp;
   };
   const onTouchMove = (e: React.TouchEvent) => {
     const start = touchY.current;
@@ -1001,7 +1004,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
     setDragY(0);
     const end = e.changedTouches[0]?.clientY;
     if (!collapsible || start === null || end === undefined) return;
-    if (open && end - start > SWIPE_CLOSE_PX) setOpen(false);
+    if (open && shouldCloseDrawer(end - start, e.timeStamp - touchT.current)) setOpen(false);
     else if (!open && start - end > SWIPE_OPEN_PX) setOpen(true);
   };
   const onTouchCancel = () => {
@@ -1027,6 +1030,10 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
       onTouchCancel={onTouchCancel}
+      // The snap back after a drag is mk-betdrawer's transform transition (mako-shell.css); while the finger drags,
+      // data-dragging turns it off so the panel follows the finger 1:1.
+      className="mk-betdrawer"
+      data-dragging={dragY ? '' : undefined}
       style={{
         position: 'fixed',
         left: 0,
@@ -1042,7 +1049,6 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
         gap: 10,
         touchAction: collapsible ? 'none' : undefined,
         transform: dragY ? `translateY(${dragY}px)` : undefined,
-        transition: dragY ? 'none' : 'transform 180ms ease',
       }}
     >
       {collapsible ? (
@@ -1085,7 +1091,9 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
         </div>
       )}
       {row.state === 'open' && expanded && (
-        <>
+        // The form enters (mk-betform: @starting-style fade + 8px rise) when the panel opens. Same column and gap as
+        // the panel, so the layout is unchanged.
+        <div className="mk-betform" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ width: 150, flex: 'none' }}>
               <SideToggle side={side} setSide={setSide} labels={labels} height={38} fontSize={14} background="var(--mako-canvas)" />
@@ -1127,7 +1135,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
           <div style={{ fontSize: 13, color: 'var(--dim)', textAlign: 'center' }}>
             Pays {estimate === null ? '0.00' : usdc2(estimate)} USDC if {name} wins
           </div>
-        </>
+        </div>
       )}
       {row.state !== 'open' && claimAmount !== null && (
         <button onClick={openClaim} className="m3-press m3-scale96" style={{ ...big, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>

@@ -618,3 +618,39 @@ a,
     animation: mkFade 150ms ease both;
   }
 }
+
+/* ---------- Motion pass 3: the pool page's mobile bet drawer ----------
+ * After a drag that does not close it, the panel snaps back on the drawer curve; while the finger drags
+ * (data-dragging) it follows the finger with no transition. The bet form enters when the panel opens: @starting-style
+ * gives its first frame. Reduced motion: no snap-back movement, and the form fades in without rising. */
+.mk-betdrawer {
+  transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.mk-betdrawer[data-dragging] {
+  transition: none;
+}
+.mk-betform {
+  transition:
+    opacity 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@starting-style {
+  .mk-betform {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-betdrawer {
+    transition: none;
+  }
+  .mk-betform {
+    transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  @starting-style {
+    .mk-betform {
+      opacity: 0;
+      transform: none;
+    }
+  }
+}
