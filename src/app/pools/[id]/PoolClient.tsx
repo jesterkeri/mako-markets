@@ -502,6 +502,10 @@ function closedNote(state: PoolState, m: MarketWithId, now: number): string {
     : `Waiting for the result. If it isn't settled within 24H of ${close}, anyone can mark the pool refunded.`;
 }
 
+/// Where the pool page's split bar puts the NO layer's left edge: YES's share of the bar, but never under 60px for
+/// either side (the old flex bar's min-widths). A translateX percentage is of the layer's own width, which is the bar's.
+export const splitNoOffset = (yesPct: number) => `translateX(clamp(60px, ${yesPct}%, calc(100% - 60px)))`;
+
 function Odds({ market: m, row, labels }: ViewProps) {
   const open = row.state === 'open';
   const yesWon = row.state === 'yes_won';
@@ -537,9 +541,15 @@ function Odds({ market: m, row, labels }: ViewProps) {
           </div>
         </div>
       </div>
-      <div style={{ display: 'flex', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)' }}>
-        <div style={{ width: `${row.yesPct}%`, transition: 'width 700ms cubic-bezier(0.23,1,0.32,1)', background: 'var(--mako-yes)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.yesPct}%</div>
-        <div style={{ flex: 1, background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.noPct}%</div>
+      {/* The split bar: YES is the bar's own fill; NO is a full-width layer slid right to where YES ends (its left border
+          is the edge stroke). A change of odds moves that layer with a transform (mk-split-no), never a width, and the
+          labels sit above both, unscaled. clamp() keeps 60px for each side, as the old min-widths did. */}
+      <div data-split-yes={row.yesPct} style={{ position: 'relative', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)', background: 'var(--mako-yes)' }}>
+        <div aria-hidden="true" className="mk-split-no" style={{ position: 'absolute', inset: 0, boxSizing: 'border-box', background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', transform: splitNoOffset(row.yesPct) }} />
+        <div style={{ position: 'relative', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', color: 'var(--mako-on-side)', ...mono, fontSize: 13, fontWeight: 700 }}>
+          <span>{row.yesPct}%</span>
+          <span>{row.noPct}%</span>
+        </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 4px 0', ...mono, fontSize: 13 }}>
         <span>

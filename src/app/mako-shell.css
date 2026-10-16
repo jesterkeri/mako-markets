@@ -129,7 +129,7 @@ body {
   transition: color 220ms ease, transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .mk-tab:active {
-  transform: scale(0.86);
+  transform: scale(0.96);
 }
 
 /* ---------- Two layouts, not one squeezed ----------
@@ -331,9 +331,9 @@ body {
   --m3-tint: var(--mako-paper);
 }
 
-/* The tab bar's sliding indicator. */
+/* The tab bar's sliding indicator: core navigation, used constantly, so kept short (220ms; motion pass 6). */
 .mk-tabind {
-  transition: transform 440ms cubic-bezier(0.32, 0.72, 0, 1), opacity 200ms ease;
+  transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1), opacity 200ms ease;
   will-change: transform;
 }
 
@@ -675,4 +675,21 @@ a,
   .mk-resultin {
     animation: mkFade 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
   }
+}
+
+/* ---------- Motion pass 6: fixes to existing motion ----------
+ * The pool page's YES/NO split bar moves its NO layer with a transform when the odds change (it animated `width` for
+ * 700ms). Reduced motion: it moves at once. */
+.mk-split-no {
+  transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-split-no {
+    transition: none;
+  }
+}
+/* A mobile pool card is itself a press target, but pressing one of its side buttons (inside .mk-over) tints only that
+ * button: :active also matches every ancestor of the pressed element, so the card's own tint is held off then. */
+.mk-cardpress:has(.mk-over :active)::after {
+  opacity: 0;
 }

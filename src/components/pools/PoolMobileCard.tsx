@@ -20,7 +20,8 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
   const sidePays: React.CSSProperties = { ...display, fontSize: 20, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' };
   const cap = (s: string) => (s === 'YES' ? 'Yes' : s === 'NO' ? 'No' : s);
   return (
-    <div className="m3-press" style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
+    // mk-cardpress: pressing a side button tints that button only, not the whole card (mako-shell.css).
+    <div className="m3-press mk-cardpress" style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px 0 4px', borderRadius: 9999, background: cat.bg, color: cat.fg, boxShadow: 'var(--edge)', fontSize: 12, fontWeight: 800 }}>
           <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: 9999, background: 'rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8 }}>

@@ -143,9 +143,12 @@
   cursor: pointer;
   transition: transform 80ms ease, box-shadow 80ms ease;
 }
-.mako-button:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 5px 5px 0 0 var(--mako-ink);
+/* Hover lifts only where a hover is real (a mouse), not on a tap (motion pass 6). */
+@media (hover: hover) and (pointer: fine) {
+  .mako-button:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 0 var(--mako-ink);
+  }
 }
 .mako-button:active {
   transform: var(--mako-press-offset);
@@ -313,9 +316,11 @@
   cursor: pointer;
   transition: transform 80ms ease, box-shadow 80ms ease;
 }
-.mako-bet-tile:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: var(--mako-shadow-sm);
+@media (hover: hover) and (pointer: fine) {
+  .mako-bet-tile:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: var(--mako-shadow-sm);
+  }
 }
 .mako-bet-tile--yes {
   background: var(--mako-ink);
