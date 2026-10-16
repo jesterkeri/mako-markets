@@ -131,6 +131,24 @@ describe('mako-brand.css hover lifts are gated to a fine pointer', () => {
     const loose = parseCss(BRAND).filter((r) => r.selectors.some((s) => s.includes(':hover')) && r.decls.has('transform') && !inFineHover(r.context));
     expect(loose.map((r) => r.selectors.join(', '))).toEqual([]);
   });
+
+  // Hover effects a tap can leave stuck on a touch screen (adversary on 94fe408): tints, shadows, a paused ticker.
+  for (const [file, sel] of [
+    [BRAND, '.mako-button--ghost:hover'],
+    [BRAND, '.mako-nav-item:hover'],
+    [SHELL, '.wm-row:hover'],
+    ['src/app/globals.css', '.ticker-crawl:hover'],
+  ] as const)
+    it(`${sel} (${file.split('/').pop()}) applies only behind the fine-pointer gate`, () => {
+      const rules = rulesFor(file, sel);
+      expect(rules.length, `${sel} still exists`).toBeGreaterThan(0);
+      for (const r of rules) expect(inFineHover(r.context), `${sel} in [${r.context.join(' > ') || 'top level'}]`).toBe(true);
+    });
+
+  it('a keyboard focus on a menu row still tints it everywhere (only the hover moved behind the gate)', () => {
+    const [focus] = rulesFor(SHELL, '.wm-row:focus-visible', 'top');
+    expect(focus.decls.get('background')).toBe('var(--raise)');
+  });
 });
 
 describe('mobile pool card: a side press tints that side only', () => {

@@ -187,9 +187,12 @@
   background: transparent;
   box-shadow: none;
 }
-.mako-button--ghost:hover {
-  background: var(--mako-surface-elevated);
-  box-shadow: var(--mako-shadow-sm);
+/* Gated like the other hover lifts: on a touch screen a tap leaves the button "hovered", raised and shadowed. */
+@media (hover: hover) and (pointer: fine) {
+  .mako-button--ghost:hover {
+    background: var(--mako-surface-elevated);
+    box-shadow: var(--mako-shadow-sm);
+  }
 }
 
 /* ── Cards ───────────────────────────────────────────────────────────────── */
@@ -298,8 +301,11 @@
 .mako-nav-item:last-child {
   border-bottom: 0;
 }
-.mako-nav-item:hover {
-  background: var(--mako-surface-elevated);
+/* Only a real hover: a tap must not leave the item tinted. */
+@media (hover: hover) and (pointer: fine) {
+  .mako-nav-item:hover {
+    background: var(--mako-surface-elevated);
+  }
 }
 .mako-nav-item[aria-current="page"] {
   background: var(--mako-ink);

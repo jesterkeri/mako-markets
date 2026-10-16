@@ -264,8 +264,13 @@ body {
   }
 }
 
-/* Desktop menu rows and pressed buttons. */
-.wm-row:hover,
+/* Desktop menu rows and pressed buttons. The hover tint only where a hover is real (a tap must not leave it on); the
+ * keyboard focus tint everywhere. */
+@media (hover: hover) and (pointer: fine) {
+  .wm-row:hover {
+    background: var(--raise);
+  }
+}
 .wm-row:focus-visible {
   background: var(--raise);
 }
