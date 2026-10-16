@@ -131,6 +131,16 @@ body {
 .mk-tab:active {
   transform: scale(0.96);
 }
+/* Reduced motion: no scale. A brief dim stays as the press cue (opacity, not movement). */
+@media (prefers-reduced-motion: reduce) {
+  .mk-tab {
+    transition: color 220ms ease, opacity 100ms ease;
+  }
+  .mk-tab:active {
+    transform: none;
+    opacity: 0.7;
+  }
+}
 
 /* ---------- Two layouts, not one squeezed ----------
  * Desktop (terminal look) from 1024px, mobile (Material 3 Expressive) below. A page renders both; CSS shows one,

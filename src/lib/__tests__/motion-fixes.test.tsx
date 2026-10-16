@@ -84,6 +84,25 @@ describe('tab bar', () => {
     const rules = rulesFor(SHELL, '.mk-tab:active', 'top');
     expect(rules.map((r) => r.decls.get('transform'))).toEqual(['scale(0.96)']);
   });
+
+  it('reduced motion: a pressed tab does not scale, and dims instead (adversary on c0bcd32)', () => {
+    const all = parseCss(SHELL);
+    const reduced = rulesFor(SHELL, '.mk-tab:active', inReducedMotion);
+    expect(reduced).toHaveLength(1);
+    expect(reduced[0].decls.get('transform')).toBe('none');
+    expect(reduced[0].decls.get('opacity')).toBe('0.7');
+    // It comes after the top-level press rule, so it wins at equal specificity.
+    const at = (sel: string, reducedOnly: boolean) => all.findIndex((r) => r.selectors.includes(sel) && (reducedOnly ? inReducedMotion(r.context) : r.context.length === 0));
+    expect(at('.mk-tab:active', true)).toBeGreaterThan(at('.mk-tab:active', false));
+    expect(at('.mk-tab:active', false)).toBeGreaterThanOrEqual(0);
+    // Its transition carries the dim and nothing that moves.
+    const [base] = rulesFor(SHELL, '.mk-tab', inReducedMotion);
+    const t = base.decls.get('transition')!;
+    expect(t).toMatch(/opacity 100ms ease/);
+    expect(t).not.toMatch(/transform|all/);
+    expect(at('.mk-tab', true)).toBeGreaterThan(at('.mk-tab', false));
+    expect(at('.mk-tab', false)).toBeGreaterThanOrEqual(0);
+  });
 });
 
 describe('mako-brand.css hover lifts are gated to a fine pointer', () => {
