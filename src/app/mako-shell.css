@@ -654,3 +654,25 @@ a,
     }
   }
 }
+
+/* ---------- Motion pass 4: a round's result arriving ----------
+ * When a round settles UP or DOWN while its page is open (never on first load), the big result scales in once.
+ * Reduced motion: opacity only. */
+@keyframes mkResultIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mk-resultin {
+  animation: mkResultIn 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-resultin {
+    animation: mkFade 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  }
+}
