@@ -59,7 +59,9 @@ export function intelKeys(items: readonly IntelItem[]): string[] {
 /// handled the key is `pending` (focus that arrives then is the key's), and a task later it is recorded only if the
 /// focused element changed. So Space, PageDown, Escape, a letter, or an ArrowDown that only scrolled the page, leave
 /// the record as it was: a story clicked and then scrolled past with the arrows still counts as clicked when the reader
-/// comes back to the window.
+/// comes back to the window. A press is also used up by the first focus it does not explain: focus that arrives anywhere
+/// on the page, away from the pressed card (a screen reader moving on to another story, or out of the strip), clears
+/// it, so the same story focused again later by the keyboard or a screen reader is not taken for the old click.
 type InputRecord = { last: 'keyboard' | 'pointer' | null; target: EventTarget | null };
 const input: InputRecord & { pending: boolean } = { last: null, target: null, pending: false };
 let listeners = 0;
@@ -85,17 +87,24 @@ function onPointerInput(e: Event) {
   input.last = 'pointer';
   input.target = e.target;
 }
+function onFocusInput(e: FocusEvent) {
+  if (input.last !== 'pointer' || !(e.target instanceof Node) || focusFromPointer(e.target)) return;
+  input.last = null;
+  input.target = null;
+}
 const POINTER_EVENTS = ['pointerdown', 'mousedown', 'touchstart'] as const;
 
 function useInputRecord() {
   useEffect(() => {
     if (listeners++ === 0) {
       window.addEventListener('keydown', onKeyInput, true);
+      window.addEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.addEventListener(t, onPointerInput, { capture: true, passive: true });
     }
     return () => {
       if (--listeners > 0) return;
       window.removeEventListener('keydown', onKeyInput, true);
+      window.removeEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.removeEventListener(t, onPointerInput, true);
       input.last = null;
       input.target = null;
