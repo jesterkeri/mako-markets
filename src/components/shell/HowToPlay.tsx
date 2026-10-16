@@ -4,7 +4,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Mascot } from '@/components/Mascot';
-import { prefersReducedMotion, useReducedMotion } from '@/lib/use-media-query';
+import { prefersReducedMotion } from '@/lib/use-media-query';
 import { NAV } from '@/lib/shell-nav';
 import {
   publishTourStep,
@@ -24,11 +24,9 @@ import {
 // or under what it explains. Positions are measured on the live page (getBoundingClientRect), as DESIGN_RULES ask,
 // against the elements that carry `data-tour-anchor` / `data-tour-point`, the nav links and the tab bar.
 
-const EASE = 'cubic-bezier(0.65,0,0.35,1)';
-/// The card and its arrow slide to their next place, except for someone who asked for less motion (fade only).
-function useSlide(): string | undefined {
-  return useReducedMotion() ? undefined : `left 650ms ${EASE}`;
-}
+// Each step's card is a fresh element at its own place (keyed on the step), so its mk-pop entrance plays again, grown
+// from the arrow; it never slides from the previous step's anchor (motion pass 5, Joshua 2026-10-16). Reduced motion
+// turns mk-pop into a fade (mako-shell.css).
 const DESK_CARD_SHADOW = 'var(--edge), inset 0 0 0 1px var(--line), 0 0 0 5px var(--mako-canvas), 0 24px 60px rgba(0,0,0,.45)';
 const MOB_CARD_SHADOW = 'var(--edge), 0 18px 40px rgba(0,0,0,.35)';
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
@@ -36,6 +34,12 @@ const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 
 type DeskPlace = { top: number; left: number; caret: number | null };
 type MobPlace = { mode: 'fixed'; bottom: number; caret: number | null } | { mode: 'page'; top: number; caret: number | null };
+/// A place, with the step it was measured for: a card renders only at its own step's place, never for one frame at
+/// the previous step's.
+type Placed<P> = { i: number; place: P };
+
+/// The card's transform-origin: at its arrow (`caret` px from its left, on the given edge), else the edge's centre.
+const originAt = (caret: number | null, edge: 'top' | 'bottom') => `${caret === null ? 'center' : `${caret}px`} ${edge}`;
 
 function shown(sel: string): HTMLElement | null {
   for (const el of document.querySelectorAll<HTMLElement>(sel)) if (el.getClientRects().length > 0) return el;
@@ -105,8 +109,8 @@ function Tour({ index }: { index: number }) {
   const params = useSearchParams();
   const step = TOUR_STEPS[index];
   const last = index === TOUR_LENGTH - 1;
-  const [desk, setDesk] = useState<DeskPlace | null>(null);
-  const [mob, setMob] = useState<MobPlace | null>(null);
+  const [desk, setDesk] = useState<Placed<DeskPlace> | null>(null);
+  const [mob, setMob] = useState<Placed<MobPlace> | null>(null);
   const deskNext = useRef<HTMLElement>(null);
   const mobNext = useRef<HTMLElement>(null);
   const scrolled = useRef<number | null>(null);
@@ -125,10 +129,10 @@ function Tour({ index }: { index: number }) {
       const isDesk = window.matchMedia('(min-width: 1024px)').matches;
       if (isDesk) {
         const next = placeDesktop(step);
-        setDesk((prev) => (prev && prev.top === next.top && prev.left === next.left && prev.caret === next.caret ? prev : next));
+        setDesk((prev) => (prev && prev.i === index && prev.place.top === next.top && prev.place.left === next.left && prev.place.caret === next.caret ? prev : { i: index, place: next }));
       } else {
         const next = placeMobile(step, index);
-        setMob((prev) => (prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+        setMob((prev) => (prev && prev.i === index && JSON.stringify(prev.place) === JSON.stringify(next) ? prev : { i: index, place: next }));
       }
       // A pointer card's target below the fold is brought into view once per step.
       if (step.style === 'pointer' && step.anchor && scrolled.current !== index) {
@@ -163,10 +167,10 @@ function Tour({ index }: { index: number }) {
   return (
     <>
       <div className="mk-desk">
-        <DesktopCard step={step} place={desk} actions={actions} nextRef={deskNext} />
+        <DesktopCard key={index} step={step} place={desk?.i === index ? desk.place : null} actions={actions} nextRef={deskNext} />
       </div>
       <div className="mk-mob mk-m">
-        <MobileCard step={step} place={mob} actions={actions} nextRef={mobNext} />
+        <MobileCard key={index} step={step} place={mob?.i === index ? mob.place : null} actions={actions} nextRef={mobNext} />
       </div>
     </>
   );
@@ -228,17 +232,15 @@ function DeskButtons({ actions, height, nextRef }: { actions: Actions; height: n
 }
 
 function YellowCaret({ left }: { left: number }) {
-  const slide = useSlide();
   return (
     <span
       aria-hidden="true"
-      style={{ position: 'absolute', top: -9, left, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderBottom: '10px solid var(--mako-signal)', transition: slide }}
+      style={{ position: 'absolute', top: -9, left, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderBottom: '10px solid var(--mako-signal)' }}
     />
   );
 }
 
 function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place: DeskPlace | null; actions: Actions; nextRef: React.RefObject<HTMLElement | null> }) {
-  const slide = useSlide();
   const frameRight = `max(0px, (100vw - ${DESK_FRAME_MAX}px) / 2)`;
   if (step.style === 'mako') {
     return (
@@ -246,7 +248,7 @@ function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place:
         <div aria-hidden="true" style={{ position: 'fixed', right: `calc(${frameRight} + 36px)`, bottom: 24, zIndex: 45, pointerEvents: 'none' }}>
           <Mascot pose={step.pose} motion={step.motion} alt="" style={{ display: 'block', height: 300, width: 'auto' }} />
         </div>
-        <div role="dialog" aria-label="How to play" className="wl-dlg mk-pop" style={{ position: 'fixed', zIndex: 45, boxSizing: 'border-box', borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, right: `calc(${frameRight} + 330px)`, bottom: 150, width: 430, padding: '20px 22px 22px' }}>
+        <div role="dialog" aria-label="How to play" className="wl-dlg mk-pop" style={{ position: 'fixed', zIndex: 45, boxSizing: 'border-box', borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, right: `calc(${frameRight} + 330px)`, bottom: 150, width: 430, padding: '20px 22px 22px', transformOrigin: '100% calc(100% - 52px)' }}>
           <span aria-hidden="true" style={{ position: 'absolute', right: -7, bottom: 46, width: 12, height: 12, background: 'var(--mako-canvas)', boxShadow: 'inset -1px 1px 0 var(--line)', transform: 'rotate(45deg)' }} />
           <DeskHead index={actions.index} skip={actions.skip} />
           <div style={{ ...display, fontSize: 30, lineHeight: 1.05, letterSpacing: '-0.03em', marginTop: 12 }}>{step.title}</div>
@@ -266,7 +268,7 @@ function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place:
         role="dialog"
         aria-label="How to play"
         className="wl-dlg mk-pop"
-        style={{ position: 'absolute', top: place.top, left: place.left, width: 620, boxSizing: 'border-box', zIndex: 45, borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', transition: slide }}
+        style={{ position: 'absolute', top: place.top, left: place.left, width: 620, boxSizing: 'border-box', zIndex: 45, borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', transformOrigin: originAt(place.caret, 'top') }}
       >
         {place.caret !== null && <YellowCaret left={place.caret} />}
         <div style={{ position: 'relative', margin: '8px 0 0 8px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minHeight: 300 }}>
@@ -299,7 +301,7 @@ function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place:
       role="dialog"
       aria-label="How to play"
       className="wl-dlg mk-pop"
-      style={{ position: 'absolute', top: place.top, left: place.left, width: 500, boxSizing: 'border-box', zIndex: 45, borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, padding: 14, display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: 16 }}
+      style={{ position: 'absolute', top: place.top, left: place.left, width: 500, boxSizing: 'border-box', zIndex: 45, borderRadius: 16, background: 'var(--mako-canvas)', color: 'var(--mako-canvas-fg)', boxShadow: DESK_CARD_SHADOW, padding: 14, display: 'grid', gridTemplateColumns: '120px minmax(0,1fr)', gap: 16, transformOrigin: originAt(place.caret, 'top') }}
     >
       {place.caret !== null && <YellowCaret left={place.caret} />}
       <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minHeight: 170 }}>
@@ -322,14 +324,18 @@ function DesktopCard({ step, place, actions, nextRef }: { step: TourStep; place:
 // Mobile: cream on dark / black on light, no border or ring; Mako inside the card beside the text, facing it.
 
 function MobileCard({ step, place, actions, nextRef }: { step: TourStep; place: MobPlace | null; actions: Actions; nextRef: React.RefObject<HTMLElement | null> }) {
-  const slide = useSlide();
   if (!place) return null;
   const tint = 'color-mix(in srgb, var(--m3-inv-fg) 12%, transparent)';
   const pos: React.CSSProperties = place.mode === 'fixed' ? { position: 'fixed', bottom: `calc(${place.bottom}px + env(safe-area-inset-bottom))` } : { position: 'absolute', top: place.top };
   return (
-    <div role="dialog" aria-label="How to play" className="mk-pop" style={{ ...pos, left: 12, right: 12, zIndex: 45, boxSizing: 'border-box', borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: MOB_CARD_SHADOW, padding: '14px 16px' }}>
+    <div
+      role="dialog"
+      aria-label="How to play"
+      className="mk-pop"
+      style={{ ...pos, left: 12, right: 12, zIndex: 45, boxSizing: 'border-box', borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: MOB_CARD_SHADOW, padding: '14px 16px', transformOrigin: originAt(place.caret, place.mode === 'fixed' ? 'bottom' : 'top') }}
+    >
       {place.caret !== null && place.mode === 'fixed' && (
-        <span aria-hidden="true" style={{ position: 'absolute', bottom: -9, left: place.caret, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderTop: '10px solid var(--m3-inv)', transition: slide }} />
+        <span aria-hidden="true" style={{ position: 'absolute', bottom: -9, left: place.caret, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderTop: '10px solid var(--m3-inv)' }} />
       )}
       {place.caret !== null && place.mode === 'page' && (
         <span aria-hidden="true" style={{ position: 'absolute', top: -9, left: place.caret, width: 0, height: 0, marginLeft: -9, borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderBottom: '10px solid var(--m3-inv)' }} />
