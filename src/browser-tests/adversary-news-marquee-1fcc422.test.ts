@@ -121,4 +121,35 @@ describe('adversary r7 (1fcc422), Chromium', () => {
     expect({ kb: released.kb, scrollLeft: released.scrollLeft, focused: released.focused }).toEqual({ kb: false, scrollLeft: 0, focused: 'BODY' });
     await ctx.close();
   }, 60_000);
+
+  // Adversary r8's suspicion (29f6aca), closed in the next commit: a release that never reaches the page. A native
+  // context menu can swallow the mouseup, and switching window mid-press takes the release elsewhere. Headless Chromium
+  // delivers every mouseup, so the lost release is simulated: the button is held (no mouseup is sent) and the event
+  // that replaces the release is dispatched. The mode must end then, not stay on until some later press.
+  for (const [what, end] of [
+    ['a context menu opens', `document.elementFromPoint(X, Y).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }))`],
+    ['the window loses focus', `window.dispatchEvent(new FocusEvent('blur'))`],
+  ] as const)
+    it(`keyboard mode, a press held on a card with no link and no release, then ${what}: the mode ends`, async () => {
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 2000 } });
+      const p = await ctx.newPage();
+      await p.goto(`file://${dir}/index.html`);
+      await p.waitForSelector('.mk-marquee-track', { state: 'attached' });
+      await p.focus('#before');
+      for (let i = 0; i < 11; i++) await p.keyboard.press('Tab');
+      const before = await geo(p);
+      expect({ kb: before.kb, focused: before.focused }).toEqual({ kb: true, focused: 'Story 12' });
+      const x = before.cardLeft + 60;
+      const y = before.cardTop + 40;
+      await p.mouse.move(x, y);
+      await p.mouse.down();
+      const pressed = await geo(p);
+      expect({ kb: pressed.kb, scrollLeft: pressed.scrollLeft, focused: pressed.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: 'BODY' });
+      await p.evaluate(end.replace('X', String(x)).replace('Y', String(y)));
+      await p.waitForTimeout(100);
+      const after = await geo(p);
+      expect({ kb: after.kb, scrollLeft: after.scrollLeft }).toEqual({ kb: false, scrollLeft: 0 });
+      await p.mouse.up();
+      await ctx.close();
+    }, 60_000);
 });

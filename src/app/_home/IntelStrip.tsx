@@ -113,7 +113,24 @@ function onPressEnd() {
   input.target = null;
 }
 const POINTER_EVENTS = ['pointerdown', 'mousedown', 'touchstart'] as const;
-const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel'] as const;
+// What ends a press. A release can also never reach the page: a native context menu can swallow the mouseup, a drag
+// ends in dragend, and switching window mid-press takes the release elsewhere. So a context menu, a drag's end and the
+// window losing focus count as the end too, or a held press would stay "held" until the next one.
+const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel', 'contextmenu', 'dragend'] as const;
+/// Calls `cb` on every press end until the returned function removes it. The window's own blur only: `blur` does not
+/// bubble, so a listener on the window outside the capture phase sees no element's blur.
+function onPressEnds(cb: () => void): () => void {
+  const onBlur = (e: Event) => {
+    if (e.target === window) cb();
+  };
+  for (const t of PRESS_END_EVENTS) window.addEventListener(t, cb, { capture: true, passive: true });
+  window.addEventListener('blur', onBlur);
+  return () => {
+    for (const t of PRESS_END_EVENTS) window.removeEventListener(t, cb, true);
+    window.removeEventListener('blur', onBlur);
+  };
+}
+let stopPressEnds: (() => void) | null = null;
 
 function useInputRecord() {
   useEffect(() => {
@@ -121,14 +138,15 @@ function useInputRecord() {
       window.addEventListener('keydown', onKeyInput, true);
       window.addEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.addEventListener(t, onPointerInput, { capture: true, passive: true });
-      for (const t of PRESS_END_EVENTS) window.addEventListener(t, onPressEnd, { capture: true, passive: true });
+      stopPressEnds = onPressEnds(onPressEnd);
     }
     return () => {
       if (--listeners > 0) return;
       window.removeEventListener('keydown', onKeyInput, true);
       window.removeEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.removeEventListener(t, onPointerInput, true);
-      for (const t of PRESS_END_EVENTS) window.removeEventListener(t, onPressEnd, true);
+      stopPressEnds?.();
+      stopPressEnds = null;
       input.last = null;
       input.target = null;
       input.pending = false;
@@ -261,13 +279,12 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
                 // the press. The row must not move before the release, so the mode ends only once the press does,
                 // and only if focus is still outside the strip then.
                 if (!to && input.down && input.target instanceof Node && strip.contains(input.target)) {
-                  const after = () => {
-                    for (const t of PRESS_END_EVENTS) window.removeEventListener(t, after, true);
+                  const stop = onPressEnds(() => {
+                    stop();
                     setTimeout(() => {
                       if (!strip.contains(document.activeElement)) leaveKb(strip);
                     }, 0);
-                  };
-                  for (const t of PRESS_END_EVENTS) window.addEventListener(t, after, { capture: true, passive: true });
+                  });
                   return;
                 }
                 leaveKb(strip);
