@@ -180,10 +180,11 @@ describe('pool page split bar', () => {
       expect(no.style.getPropertyValue('border-left-color')).toBe('var(--edge-c)');
       expect(el.style.getPropertyValue('border-color')).toBe('var(--edge-c)');
       // Labels: not inside the transformed layer, black-on-fill colour.
-      const labels = [...el.querySelectorAll('span')].map((s) => s.textContent);
+      const labelLayer = el.lastElementChild as HTMLElement;
+      const labels = [...labelLayer.children].map((s) => s.textContent);
       expect(labels).toEqual(['75%', '25%']);
       for (const s of el.querySelectorAll('span')) expect(no.contains(s)).toBe(false);
-      expect((el.querySelector('span')!.parentElement as HTMLElement).style.color).toBe('var(--mako-on-side)');
+      expect(labelLayer.style.color).toBe('var(--mako-on-side)');
       // Nothing in the bar transitions a layout property any more.
       for (const n of [el, ...el.querySelectorAll<HTMLElement>('*')]) expect(n.style.transition).not.toMatch(/width/);
     });

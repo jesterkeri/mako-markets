@@ -27,6 +27,7 @@ import {
   wholeUsdc,
 } from '@/lib/pool-list';
 import { useAddressNames } from '@/lib/use-address-names';
+import { FlashValue } from '@/lib/use-flash';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { usePoolLabels, type SideLabels } from '@/lib/use-pool-labels';
 import { accountAddress, useUser } from '@/lib/use-user';
@@ -248,7 +249,7 @@ function SortGroup({ sort, setSort }: { sort: PoolSort; setSort: (s: PoolSort) =
   );
 }
 
-function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: string }) {
+export function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: string }) {
   const cat = CAT_STYLE[r.cat];
   const open = r.state === 'open';
   const pos = r.position;
@@ -267,7 +268,7 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
           </Link>
           <span style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: '100%' }}>
             <span style={{ ...mono, fontSize: 11, color: 'var(--dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {r.cat} · {r.bettors} {r.bettors === 1 ? 'bettor' : 'bettors'} · by {by}
+              {r.cat} · <FlashValue value={r.bettors} kind="neutral">{r.bettors}</FlashValue> {r.bettors === 1 ? 'bettor' : 'bettors'} · by {by}
             </span>
             {pos && (
               <span style={{ flex: 'none', height: 20, display: 'flex', alignItems: 'center', padding: '0 9px', borderRadius: 9999, boxShadow: `inset 0 0 0 1px ${posFg}`, color: posFg, ...mono, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
@@ -280,10 +281,10 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, ...mono, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
           <span style={{ color: 'var(--yes-text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {labels.yes} {r.yesPct}%
+            {labels.yes} <FlashValue value={r.yesPct} kind="neutral">{r.yesPct}%</FlashValue>
           </span>
           <span style={{ color: 'var(--no-text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {r.noPct}% {labels.no}
+            <FlashValue value={r.noPct} kind="neutral">{r.noPct}%</FlashValue> {labels.no}
           </span>
         </div>
         <div style={{ display: 'flex', height: 4, borderRadius: 9999, overflow: 'hidden', background: 'var(--mako-no)', marginTop: 7 }}>
@@ -294,10 +295,14 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
         {open ? (
           <>
             <Link href={`${poolHref(r.id)}?side=yes`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-yes)' }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.yes}</span> <span style={{ fontWeight: 500 }}>{formatPays(r.yesPays)}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.yes}</span> <span style={{ fontWeight: 500 }}>
+                <FlashValue value={r.yesPays} kind="neutral">{formatPays(r.yesPays)}</FlashValue>
+              </span>
             </Link>
             <Link href={`${poolHref(r.id)}?side=no`} className="mk-press96" style={{ ...sideBtn, background: 'var(--mako-no)' }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.no}</span> <span style={{ fontWeight: 500 }}>{formatPays(r.noPays)}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labels.no}</span> <span style={{ fontWeight: 500 }}>
+                <FlashValue value={r.noPays} kind="neutral">{formatPays(r.noPays)}</FlashValue>
+              </span>
             </Link>
           </>
         ) : (
@@ -313,7 +318,9 @@ function DesktopRow({ row: r, labels, by }: { row: PoolRow; labels: Labels; by: 
           </span>
         )}
       </div>
-      <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>{usdc2(r.pool)}</span>
+      <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>
+        <FlashValue value={r.pool} kind="direction">{usdc2(r.pool)}</FlashValue>
+      </span>
       <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700, color: !open ? 'var(--dim)' : r.closingSoon ? 'var(--mako-red)' : 'var(--mako-canvas-fg)', whiteSpace: 'nowrap' }}>{r.closes}</span>
       <span aria-hidden="true" style={{ textAlign: 'right', ...display, fontSize: 16 }}>
         →

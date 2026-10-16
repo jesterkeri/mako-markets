@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRef } from 'react';
+import { Fragment, useRef } from 'react';
 
 import { ListStateMobile } from '@/components/ListState';
 import { ICON } from '@/components/shell/icons';
@@ -10,6 +10,7 @@ import { tourHref } from '@/lib/tour';
 import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { CAT_STYLE, usdc2 } from '@/lib/pool-list';
+import { FlashValue, type FlashKind } from '@/lib/use-flash';
 import { formatAddress } from '@/lib/user-display';
 
 import {
@@ -132,10 +133,18 @@ function Identity(v: MeView) {
   );
 }
 
-function Figure({ value, size, colour }: { value: Loadable<bigint>; size: number; colour?: string }) {
+/// A total on a tile. When a re-read changes it, it flashes (motion pass 7): up / down colours on a --raise tile, a dip
+/// on the yellow and inverse tiles, where a green or red text would not read.
+export function Figure({ value, size, colour, flash }: { value: Loadable<bigint>; size: number; colour?: string; flash: FlashKind }) {
   if (value.status === 'loading') return <div aria-label="Loading" style={{ width: '70%', height: size * 0.8, borderRadius: 8, marginTop: 6, background: 'color-mix(in srgb, currentColor 16%, transparent)' }} />;
   if (value.status === 'error') return <div style={{ ...display, fontSize: Math.min(size, 22), marginTop: 6, opacity: 0.7 }}>Unavailable</div>;
-  return <div style={{ ...display, fontSize: size, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', color: colour }}>{usdc2(value.value)}</div>;
+  return (
+    <div style={{ ...display, fontSize: size, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', color: colour }}>
+      <FlashValue value={value.value} kind={flash}>
+        {usdc2(value.value)}
+      </FlashValue>
+    </div>
+  );
 }
 
 function Tiles(v: MeView) {
@@ -157,20 +166,20 @@ function Tiles(v: MeView) {
         </a>
         <div style={{ fontSize: 14, fontWeight: 700, opacity: 0.7 }}>Balance</div>
         <div style={{ marginTop: 40 }}>
-          <Figure value={v.balance} size={44} />
+          <Figure value={v.balance} size={44} flash="neutral" />
         </div>
         <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>USDC</div>
       </div>
       <div style={{ borderRadius: 24, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '14px 16px' }}>
         <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.65 }}>In play</div>
         <div style={{ marginTop: 4 }}>
-          <Figure value={inPlay} size={24} />
+          <Figure value={inPlay} size={24} flash="neutral" />
         </div>
       </div>
       <div style={{ borderRadius: 24, background: 'var(--raise)', padding: '14px 16px' }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--dim)' }}>Won all time</div>
         <div style={{ marginTop: 4 }}>
-          <Figure value={won} size={24} />
+          <Figure value={won} size={24} flash="direction" />
         </div>
       </div>
       <CreatorTotalsTile account={v.account} />
@@ -191,7 +200,7 @@ function CreatorTotalsTile({ account }: { account: string }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--dim)' }}>Creator earnings · to claim</div>
         <div style={{ marginTop: 4 }}>
-          <Figure value={unclaimed} size={24} colour={t.status === 'ready' && t.value.unclaimed > 0n ? 'var(--up-text)' : undefined} />
+          <Figure value={unclaimed} size={24} colour={t.status === 'ready' && t.value.unclaimed > 0n ? 'var(--up-text)' : undefined} flash="direction" />
         </div>
       </div>
       {sub && <div style={{ flex: 'none', fontSize: 13, fontWeight: 700, color: 'var(--dim)', fontVariantNumeric: 'tabular-nums' }}>{sub}</div>}
@@ -436,14 +445,25 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
       <div style={{ ...display, fontSize: 18, lineHeight: 1.22, marginTop: 10 }}>{p.market.question}</div>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 10, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
         <span style={{ whiteSpace: 'nowrap' }}>
-          <span style={{ color: 'var(--dim)' }}>Stake</span> <span style={{ fontWeight: 800 }}>{usdc2(p.stake)}</span>
+          <span style={{ color: 'var(--dim)' }}>Stake</span>{' '}
+          <span style={{ fontWeight: 800 }}>
+            <FlashValue value={p.stake} kind="direction">{usdc2(p.stake)}</FlashValue>
+          </span>
         </span>
         {p.settlement ? (
           <span style={{ fontWeight: 800, color: resultColour(p), textAlign: 'right' }}>{resultLabel(p.settlement, p.stake)} USDC</span>
         ) : (
           <span style={{ textAlign: 'right', minWidth: 0 }}>
             <span style={{ color: 'var(--dim)' }}>Est. payout</span>{' '}
-            <span style={{ fontWeight: 800 }}>{pays.map((e) => (pays.length > 1 ? `${e.side === 'yes' ? labels.yes : labels.no} ${usdc2(e.payout)}` : usdc2(e.payout))).join(' · ')}</span>
+            <span style={{ fontWeight: 800 }}>
+              {pays.map((e, i) => (
+                <Fragment key={e.side}>
+                  {i > 0 && ' · '}
+                  {pays.length > 1 && `${e.side === 'yes' ? labels.yes : labels.no} `}
+                  <FlashValue value={e.payout} kind="direction">{usdc2(e.payout)}</FlashValue>
+                </Fragment>
+              ))}
+            </span>
           </span>
         )}
       </div>

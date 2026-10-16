@@ -693,3 +693,36 @@ a,
 .mk-cardpress:has(.mk-over :active)::after {
   opacity: 0;
 }
+
+/* ---------- Motion pass 7: a live value that changes ----------
+ * useFlashOnChange (src/lib/use-flash.tsx) puts mk-flash-up / -down / -neutral on a changed value for 150 ms: the
+ * colour (or dip) comes in over that time, and leaves over 450 ms when the class goes, 600 ms in all. Colour and
+ * opacity only, tabular figures so changing digits never shift the layout. Up / down use the side text tokens, which
+ * are set for 4.5:1 on the page and on a --raise panel. Reduced motion: the colours stay; the neutral dip becomes a
+ * brief underline. */
+.mk-flash {
+  font-variant-numeric: tabular-nums;
+  transition:
+    color 450ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 450ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.mk-flash-up {
+  color: var(--yes-text);
+  transition-duration: 150ms;
+}
+.mk-flash-down {
+  color: var(--no-text);
+  transition-duration: 150ms;
+}
+.mk-flash-neutral {
+  opacity: 0.6;
+  transition-duration: 150ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-flash-neutral {
+    opacity: 1;
+    text-decoration-line: underline;
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 3px;
+  }
+}

@@ -22,6 +22,7 @@ import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateL
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
+import { FlashValue } from '@/lib/use-flash';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { marketToChartConfig } from '@/lib/market-chart';
 import { MarketChart } from '@/components/MarketChart';
@@ -386,7 +387,7 @@ function PoolDesktop(v: ViewProps) {
               {cat.abbr}
             </span>
             <span style={{ ...mono, fontSize: 12, color: 'var(--dim)' }}>
-              {row.cat} · {row.bettors} {row.bettors === 1 ? 'BETTOR' : 'BETTORS'}
+              {row.cat} · <FlashValue value={row.bettors} kind="neutral">{row.bettors}</FlashValue> {row.bettors === 1 ? 'BETTOR' : 'BETTORS'}
             </span>
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 52, lineHeight: 1.02, letterSpacing: '-0.035em', maxWidth: 720, textWrap: 'balance' }}>{m.question}</h1>
@@ -510,12 +511,19 @@ function Odds({ market: m, row, labels }: ViewProps) {
   const open = row.state === 'open';
   const yesWon = row.state === 'yes_won';
   const noWon = row.state === 'no_won';
-  const big = (s: string | null) =>
-    s === null ? (
+  // The odds flash up (YES text) or down (NO text) when a re-poll changes them (motion pass 7).
+  const big = (pays: number | null) => {
+    const s = perOne(pays);
+    return s === null ? (
       <span style={{ ...display, fontSize: 22, color: 'var(--dim)' }}>No stake yet</span>
     ) : (
-      <span style={{ ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' }}>{s}</span>
+      <span style={{ ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' }}>
+        <FlashValue value={pays} kind="direction">
+          {s}
+        </FlashValue>
+      </span>
     );
+  };
   const won = (bg: string) => <span style={{ ...mono, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 9999, background: bg, color: 'var(--mako-on-side)', boxShadow: 'var(--edge)' }}>WON</span>;
   return (
     <div style={{ borderTop: '1px solid var(--line)', paddingTop: 16 }}>
@@ -526,7 +534,7 @@ function Odds({ market: m, row, labels }: ViewProps) {
             {yesWon && won('var(--mako-yes)')}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            {big(perOne(row.yesPays))}
+            {big(row.yesPays)}
             {row.yesPays !== null && <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>PER 1 USDC</span>}
           </div>
         </div>
@@ -536,7 +544,7 @@ function Odds({ market: m, row, labels }: ViewProps) {
             {noWon && won('var(--mako-no)')}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexDirection: 'row-reverse' }}>
-            {big(perOne(row.noPays))}
+            {big(row.noPays)}
             {row.noPays !== null && <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>PER 1 USDC</span>}
           </div>
         </div>
@@ -547,16 +555,30 @@ function Odds({ market: m, row, labels }: ViewProps) {
       <div data-split-yes={row.yesPct} style={{ position: 'relative', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)', background: 'var(--mako-yes)' }}>
         <div aria-hidden="true" className="mk-split-no" style={{ position: 'absolute', inset: 0, boxSizing: 'border-box', background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', transform: splitNoOffset(row.yesPct) }} />
         <div style={{ position: 'relative', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 14px', color: 'var(--mako-on-side)', ...mono, fontSize: 13, fontWeight: 700 }}>
-          <span>{row.yesPct}%</span>
-          <span>{row.noPct}%</span>
+          <span>
+            <FlashValue value={row.yesPct} kind="neutral">{row.yesPct}%</FlashValue>
+          </span>
+          <span>
+            <FlashValue value={row.noPct} kind="neutral">{row.noPct}%</FlashValue>
+          </span>
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 4px 0', ...mono, fontSize: 13 }}>
         <span>
-          <span style={{ fontWeight: 700 }}>{usdc2(m.totalYes)} USDC</span> <span style={{ color: 'var(--dim)' }}>· {m.yesBettorCount} {m.yesBettorCount === 1 ? 'bettor' : 'bettors'}</span>
+          <span style={{ fontWeight: 700 }}>
+            <FlashValue value={m.totalYes} kind="direction">{usdc2(m.totalYes)}</FlashValue> USDC
+          </span>{' '}
+          <span style={{ color: 'var(--dim)' }}>
+            · <FlashValue value={m.yesBettorCount} kind="neutral">{m.yesBettorCount}</FlashValue> {m.yesBettorCount === 1 ? 'bettor' : 'bettors'}
+          </span>
         </span>
         <span>
-          <span style={{ color: 'var(--dim)' }}>{m.noBettorCount} {m.noBettorCount === 1 ? 'bettor' : 'bettors'} ·</span> <span style={{ fontWeight: 700 }}>{usdc2(m.totalNo)} USDC</span>
+          <span style={{ color: 'var(--dim)' }}>
+            <FlashValue value={m.noBettorCount} kind="neutral">{m.noBettorCount}</FlashValue> {m.noBettorCount === 1 ? 'bettor' : 'bettors'} ·
+          </span>{' '}
+          <span style={{ fontWeight: 700 }}>
+            <FlashValue value={m.totalNo} kind="direction">{usdc2(m.totalNo)}</FlashValue> USDC
+          </span>
         </span>
       </div>
       <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', padding: '10px 4px 0' }}>
@@ -832,7 +854,7 @@ function PoolMobile(v: ViewProps) {
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 28, lineHeight: 1.08, letterSpacing: '-0.025em' }}>{m.question}</h1>
           <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.65, marginTop: 8 }}>
-            Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by {by} · {row.bettors} {row.bettors === 1 ? 'bettor' : 'bettors'}
+            Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by {by} · <FlashValue value={row.bettors} kind="neutral">{row.bettors}</FlashValue> {row.bettors === 1 ? 'bettor' : 'bettors'}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 18, gap: 12 }}>
             <div style={{ minWidth: 0 }}>
@@ -867,9 +889,14 @@ function PoolMobile(v: ViewProps) {
                   {won && <span style={{ height: 24, display: 'flex', alignItems: 'center', padding: '0 9px', borderRadius: 9999, background: 'var(--mako-on-side)', color: yes ? 'var(--mako-yes)' : 'var(--mako-no)', fontSize: 11, fontWeight: 800 }}>WON</span>}
                 </div>
                 <div style={{ fontSize: 12, fontWeight: 700, marginTop: 14 }}>Pays per 1</div>
-                <div style={{ ...display, fontSize: pays ? 32 : 18, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>{pays ?? 'No stake yet'}</div>
+                {/* On the side's own fill, a green or red flash would vanish: these dip instead (motion pass 7). */}
+                <div style={{ ...display, fontSize: pays ? 32 : 18, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>
+                  {pays === null ? 'No stake yet' : <FlashValue value={yes ? row.yesPays : row.noPays} kind="neutral">{pays}</FlashValue>}
+                </div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>
-                  {usdc2(yes ? m.totalYes : m.totalNo)} · {yes ? m.yesBettorCount : m.noBettorCount} {(yes ? m.yesBettorCount : m.noBettorCount) === 1 ? 'bettor' : 'bettors'}
+                  <FlashValue value={yes ? m.totalYes : m.totalNo} kind="neutral">{usdc2(yes ? m.totalYes : m.totalNo)}</FlashValue> ·{' '}
+                  <FlashValue value={yes ? m.yesBettorCount : m.noBettorCount} kind="neutral">{yes ? m.yesBettorCount : m.noBettorCount}</FlashValue>{' '}
+                  {(yes ? m.yesBettorCount : m.noBettorCount) === 1 ? 'bettor' : 'bettors'}
                 </div>
               </div>
             );
@@ -1087,7 +1114,10 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
               }}
               style={oddsChip(s)}
             >
-              {s === 'yes' ? labels.yes : labels.no} {perOne(s === 'yes' ? row.yesPays : row.noPays) ?? ''}
+              {s === 'yes' ? labels.yes : labels.no}{' '}
+              <FlashValue value={s === 'yes' ? row.yesPays : row.noPays} kind="neutral">
+                {perOne(s === 'yes' ? row.yesPays : row.noPays) ?? ''}
+              </FlashValue>
             </button>
           ))}
           <button

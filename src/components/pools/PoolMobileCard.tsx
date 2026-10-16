@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import { CAT_STYLE, catTitle, formatPays, positionLabel, usdc2, type PoolRow } from '@/lib/pool-list';
+import { FlashValue } from '@/lib/use-flash';
 import type { SideLabels } from '@/lib/use-pool-labels';
 
 // One open pool as a mobile card (8a): an inverse card with the category chip, the countdown, the question, the
@@ -42,23 +43,30 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
       </Link>
       <div className="mk-over" style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <Link href={`${poolHref(r.id)}?side=yes`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-yes)' }}>
+          {/* On the side fills and the inverse card a green or red flash would vanish: a change dips (motion pass 7). */}
           <span style={sideName}>
-            {cap(labels.yes)} {r.yesPct}%
+            {cap(labels.yes)} <FlashValue value={r.yesPct} kind="neutral">{r.yesPct}%</FlashValue>
           </span>
-          <span style={sidePays}>{formatPays(r.yesPays) || 'No bets'}</span>
+          <span style={sidePays}>
+            <FlashValue value={r.yesPays} kind="neutral">{formatPays(r.yesPays) || 'No bets'}</FlashValue>
+          </span>
         </Link>
         <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-no)' }}>
           <span style={sideName}>
-            {cap(labels.no)} {r.noPct}%
+            {cap(labels.no)} <FlashValue value={r.noPct} kind="neutral">{r.noPct}%</FlashValue>
           </span>
-          <span style={sidePays}>{formatPays(r.noPays) || 'No bets'}</span>
+          <span style={sidePays}>
+            <FlashValue value={r.noPays} kind="neutral">{formatPays(r.noPays) || 'No bets'}</FlashValue>
+          </span>
         </Link>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-        <span style={{ opacity: 0.72 }}>{usdc2(r.pool)} USDC</span>
+        <span style={{ opacity: 0.72 }}>
+          <FlashValue value={r.pool} kind="neutral">{usdc2(r.pool)}</FlashValue> USDC
+        </span>
         <span aria-hidden="true" style={{ width: 4, height: 4, borderRadius: '50%', background: 'currentColor', opacity: 0.72 }} />
         <span style={{ opacity: 0.72, whiteSpace: 'nowrap' }}>
-          {r.bettors} {r.bettors === 1 ? 'bettor' : 'bettors'}
+          <FlashValue value={r.bettors} kind="neutral">{r.bettors}</FlashValue> {r.bettors === 1 ? 'bettor' : 'bettors'}
         </span>
         {pos && (
           <span style={{ marginLeft: 'auto', flex: 'none', height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontWeight: 700 }}>
