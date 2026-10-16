@@ -88,7 +88,10 @@ function onPointerInput(e: Event) {
   input.pending = false;
   input.last = 'pointer';
   input.target = e.target;
-  input.focused = false;
+  // A press on the card that already holds focus moves no focus (no focusin), yet it is the press that focus belongs
+  // to, as when an open story is clicked again: it counts as having focused its card.
+  const held = document.activeElement;
+  input.focused = held instanceof Element && held !== document.body && held !== document.documentElement && focusFromPointer(held);
 }
 function onFocusInput(e: FocusEvent) {
   if (input.last !== 'pointer' || !(e.target instanceof Node)) return;
