@@ -760,9 +760,18 @@ function BetFormDesktop(v: ViewProps) {
   );
 }
 
-function SideToggle({ side, setSide, labels, height, fontSize, background = 'var(--raise)' }: { side: Side; setSide: (s: Side) => void; labels: { yes: string; no: string }; height: number; fontSize: number; background?: string }) {
+/// The YES/NO choice (desktop bet form and the mobile bet drawer). One pill (mk-sideind) slides behind the two labels
+/// and takes the chosen side's colour (motion pass 8); the labels stay put. Text on the pill is --mako-on-side.
+export function SideToggle({ side, setSide, labels, height, fontSize, background = 'var(--raise)' }: { side: Side; setSide: (s: Side) => void; labels: { yes: string; no: string }; height: number; fontSize: number; background?: string }) {
   return (
-    <div role="group" aria-label="Side" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 4, borderRadius: 9999, background }}>
+    <div role="group" aria-label="Side" style={{ position: 'relative', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 4, borderRadius: 9999, background }}>
+      {/* One cell wide: (100% - 4px padding x2 - 4px gap) / 2 = 50% - 6px; moved one cell plus the gap to sit under NO. */}
+      <span
+        aria-hidden="true"
+        className="mk-sideind"
+        data-side={side}
+        style={{ position: 'absolute', top: 4, bottom: 4, left: 4, width: 'calc(50% - 6px)', borderRadius: 9999, background: side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)', boxShadow: 'var(--edge)', transform: side === 'yes' ? 'none' : 'translateX(calc(100% + 4px))' }}
+      />
       {(['yes', 'no'] as const).map((s) => {
         const on = s === side;
         return (
@@ -770,7 +779,8 @@ function SideToggle({ side, setSide, labels, height, fontSize, background = 'var
             key={s}
             onClick={() => setSide(s)}
             aria-pressed={on}
-            style={{ height, borderRadius: 9999, background: on ? (s === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'transparent', color: on ? 'var(--mako-on-side)' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...display, fontSize, transition: 'background-color 200ms ease', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 8px' }}
+            className="mk-sidelabel"
+            style={{ position: 'relative', height, borderRadius: 9999, background: 'transparent', color: on ? 'var(--mako-on-side)' : 'var(--mako-canvas-fg)', ...display, fontSize, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 8px' }}
           >
             {s === 'yes' ? labels.yes : labels.no}
           </button>

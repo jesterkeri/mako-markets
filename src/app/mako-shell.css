@@ -726,3 +726,21 @@ a,
     text-underline-offset: 3px;
   }
 }
+
+/* ---------- Motion pass 8: the YES/NO side toggle ----------
+ * One pill slides behind the two labels (like the tab indicator) and takes the side's colour; the labels' text colour
+ * follows over the same time, so it changes as the pill arrives. Reduced motion: no slide, an instant swap. */
+.mk-sideind {
+  transition:
+    transform 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.mk-sidelabel {
+  transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-sideind,
+  .mk-sidelabel {
+    transition: none;
+  }
+}
