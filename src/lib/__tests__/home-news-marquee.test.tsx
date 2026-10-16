@@ -319,18 +319,24 @@ describe('keyboard mode is React state, entered only by focus the keyboard moved
     expect((container.querySelector('.mk-marquee') as HTMLElement).hasAttribute('data-kb')).toBe(false);
   });
 
-  it('focusFromPointer: a press on the element, inside it or around it; never after a focus-moving key', async () => {
+  it('focusFromPointer: a press on the card (the element, inside it, or its li); never outside the card or after a focus-moving key', async () => {
     const { focusFromPointer } = await import('@/app/_home/IntelStrip');
+    const ul = document.createElement('ul');
     const li = document.createElement('li');
     const a = document.createElement('a');
     const span = document.createElement('span');
     a.appendChild(span);
     li.appendChild(a);
+    ul.appendChild(li);
     const other = document.createElement('div');
     expect(focusFromPointer(a, { last: 'pointer', target: a })).toBe(true);
     expect(focusFromPointer(a, { last: 'pointer', target: span })).toBe(true);
     expect(focusFromPointer(a, { last: 'pointer', target: li })).toBe(true);
     expect(focusFromPointer(a, { last: 'pointer', target: other })).toBe(false);
+    // A press on something that merely holds the card (the row, the strip, blank page space = <html>) says nothing about
+    // focus that arrives later (a screen reader moving focus): that focus is the keyboard's.
+    expect(focusFromPointer(a, { last: 'pointer', target: ul })).toBe(false);
+    expect(focusFromPointer(a, { last: 'pointer', target: document.documentElement })).toBe(false);
     expect(focusFromPointer(a, { last: 'keyboard', target: null })).toBe(false);
     expect(focusFromPointer(a, { last: null, target: null })).toBe(false);
     // While a focus-moving key is being handled, the focus it brings is the key's, whatever came before.

@@ -13,8 +13,8 @@ import { CAT_STYLE } from '@/lib/pool-list';
 //
 // Keyboard mode is React state, not a CSS selector. It starts only when focus ARRIVES on a card and that focus was not
 // caused by a click or a tap (`focusFromPointer`): then the strip carries `data-kb`, which makes it a still row of one
-// copy that scrolls, and every card focus reaches is scrolled wholly into view. It ends when focus leaves the strip, and
-// the crawl starts again from its beginning. A key pressed while focus stays put changes nothing, so a story clicked
+// copy that scrolls, and every card focus reaches is scrolled wholly into view (again after a refetch moves it). It ends
+// when focus leaves the strip, or a refetch removes the focused card, and the crawl starts again from its beginning. A key pressed while focus stays put changes nothing, so a story clicked
 // with the mouse and then ArrowDown or Space to scroll the page never freezes the strip. With reduced motion the strip is
 // always that still row (CSS), and is scrolled by hand.
 
@@ -104,16 +104,19 @@ function useInputRecord() {
   }, []);
 }
 
-/// Whether focus arriving on `el` came from a click or a tap: the last input was a pointer press on `el` or inside it
-/// (or on an element around it), and no focus-moving key is being handled. That covers the focus a click gives a link,
-/// and the focus the browser gives the same link back when the reader returns to the window after the story opened in
-/// a new tab. Focus with no pointer press behind it (Tab, an arrow key that moved focus, a screen reader moving focus)
-/// is the keyboard's.
+/// Whether focus arriving on `el` came from a click or a tap: the last input was a pointer press on `el`'s card (the
+/// `li` around it; `el` itself when it has none) or inside it, and no focus-moving key is being handled. That covers
+/// the focus a click gives a link, and the focus the browser gives the same link back when the reader returns to the
+/// window after the story opened in a new tab (the press that opened it was on that link). A press anywhere else, even
+/// on an element that holds the strip (blank page space is <html>, which holds everything), says nothing about focus
+/// that arrives later: focus with no pointer press on its card behind it (Tab, an arrow key that moved focus, a screen
+/// reader moving focus, a script calling focus()) is the keyboard's.
 export function focusFromPointer(el: Node, rec: InputRecord & { pending?: boolean } = input): boolean {
   if (rec.pending || rec.last !== 'pointer') return false;
   const t = rec.target;
   if (!(t instanceof Node)) return true;
-  return el.contains(t) || t.contains(el);
+  const card = el instanceof Element ? (el.closest('li') ?? el) : el;
+  return card.contains(t);
 }
 
 /// Scrolls the strip so the card holding `el` is wholly inside it (the browser leaves a card that is partly on screen
@@ -163,6 +166,31 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
     const strip = ref.current;
     if (kb && reveal && strip && document.activeElement === reveal.el) revealCard(strip, reveal.el);
   }, [kb, reveal]);
+  // Leaving keyboard mode: the crawl starts again from its beginning, so the scroll goes back to the start. With
+  // reduced motion the row is scrolled by hand, so it stays where the reader put it.
+  const leaveKb = (strip: HTMLElement) => {
+    setKb(false);
+    setReveal(null);
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    strip.scrollLeft = 0;
+  };
+  // Keyboard mode is checked again whenever the 5-minute refetch changes the stories, not only when focus events reach
+  // the strip, because that is the one way the cards change under a focused one. If focus is no longer inside the strip
+  // (the refetch dropped the focused story: React removed its card, focus fell to <body>, and no blur reached the
+  // strip), the mode ends just as a blur would end it. If focus is still inside (a newer story in front moves every
+  // card a card width right), the focused card is brought wholly into view again. Only on a change of stories, so a
+  // reader who scrolled the still row by hand is not pulled back by an unrelated render (the age labels re-render).
+  const storiesKey = keys.join('\n');
+  const shownStories = useRef(storiesKey);
+  useLayoutEffect(() => {
+    if (shownStories.current === storiesKey) return;
+    shownStories.current = storiesKey;
+    const strip = ref.current;
+    if (!kb || !strip) return;
+    const focused = document.activeElement;
+    if (focused && strip.contains(focused)) revealCard(strip, focused);
+    else leaveKb(strip);
+  });
 
   const cards = (copy: boolean) =>
     items.map((n, i) => <IntelCard key={copy ? `copy:${keys[i]}` : keys[i]} item={n} nowMs={nowMs} fixed={moving} copy={copy} />);
@@ -195,15 +223,15 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
                 const strip = e.currentTarget;
                 const to = e.relatedTarget as Node | null;
                 if (to ? strip.contains(to) : strip.contains(document.activeElement)) return;
-                setKb(false);
-                setReveal(null);
-                // With reduced motion the row is scrolled by hand: leave it where the reader put it.
-                if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-                strip.scrollLeft = 0;
+                leaveKb(strip);
               }
             : undefined
         }
       >
+        {/* A refetch that changes the story count changes this duration mid-loop, and the crawl jumps once to where the
+            elapsed time falls in the new loop. Accepted, not corrected: a refetch moves the cards under the crawl anyway
+            (a newer story in front shifts every card one width), the feed is capped at 30 so the count rarely changes,
+            and keeping the pixel position would mean driving the animation from JS for a once-in-5-minutes event. */}
         {moving ? (
           <div className="mk-marquee-track" style={{ '--mk-marquee-dur': `${marqueeDurationSec(items.length)}s` } as React.CSSProperties}>
             <ul className="mk-marquee-row">{cards(false)}</ul>
