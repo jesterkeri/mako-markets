@@ -2,11 +2,12 @@
 
 import { useQuery } from '@tanstack/react-query';
 
-import { latestIntel, parseNews, type IntelItem } from '@/lib/news-intel';
+import { parseNews, type IntelItem } from '@/lib/news-intel';
 
 export type NewsView = { status: 'loading' } | { status: 'unavailable' } | { status: 'ready'; items: IntelItem[] };
 
-/// How many headlines Home shows (2a: four across on desktop, a scrolling strip of the same four on mobile).
+/// How many headline columns Home's Market intel lays out when the stories fit (2a: four across) and how many
+/// skeletons show while loading. Home shows every story the feed has; past what fits, the strip crawls (IntelStrip).
 export const INTEL_COUNT = 4;
 
 /// The whole feed from `GET /api/news`, re-read every 5 minutes; Home and /news share it. A failed read, or a feed
@@ -30,8 +31,8 @@ export function useNewsFeed(): NewsView {
   return q.isError ? { status: 'unavailable' } : { status: 'loading' };
 }
 
-/// Home's market intel: the newest INTEL_COUNT items of the feed.
+/// Home's market intel: every item of the feed, newest first (the route caps it at 30), from the same read as /news
+/// (Joshua, 2026-10-16: the strip moves through all the latest stories, not only four).
 export function useNews(): NewsView {
-  const feed = useNewsFeed();
-  return feed.status === 'ready' ? { status: 'ready', items: latestIntel(feed.items, INTEL_COUNT) } : feed;
+  return useNewsFeed();
 }

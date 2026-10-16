@@ -7,11 +7,11 @@ import { Mascot } from '@/components/Mascot';
 import { HomeRoundsBand } from '@/components/rounds/HomeRounds';
 import { poolHref } from '@/components/pools/PoolMobileCard';
 import { listStateCopy } from '@/lib/list-states';
-import { newsAge } from '@/lib/news-intel';
 import { CAT_STYLE, formatPays, noOpenPoolsTitle, POOL_FILTERS, usdc2, type PoolFilter, type PoolRow } from '@/lib/pool-list';
 import type { SideLabels } from '@/lib/use-pool-labels';
 
 import { DESK_ROWS, HOME_MAKO_ROWS, type MakoView, type PoolsView } from './home-view';
+import { IntelStrip } from './IntelStrip';
 import { INTEL_COUNT, type NewsView } from './use-news';
 
 // Home desktop (2a): terminal look, hairline rules, mono numbers, pill controls, no card panels.
@@ -249,8 +249,9 @@ function SkeletonRow() {
   );
 }
 
-/// 2a's Market intel: the newest four headlines. Not a live feed (the route caches for 15 minutes), so it is labelled
-/// LATEST; "All news" opens the whole feed (3a).
+/// 2a's Market intel: the latest headlines, every one the feed has, crawling slowly left once they overflow the strip
+/// (IntelStrip, Joshua 2026-10-16). Not a live feed (the route caches for 15 minutes), so it is labelled LATEST; "All
+/// news" opens the whole feed (3a).
 function MarketIntel({ news, nowMs }: { news: NewsView; nowMs: number | null }) {
   return (
     <section aria-labelledby="home-intel" style={{ marginTop: 22, borderTop: '1px solid var(--line)' }}>
@@ -265,36 +266,18 @@ function MarketIntel({ news, nowMs }: { news: NewsView; nowMs: number | null }) 
       </div>
       {news.status === 'unavailable' ? (
         <p style={{ margin: 0, padding: '14px 20px 18px', boxShadow: 'inset 0 1px 0 var(--line)', fontSize: 14, color: 'var(--dim)' }}>News is unavailable right now.</p>
-      ) : (
-        <ul aria-busy={news.status === 'loading' || undefined} aria-label={news.status === 'loading' ? 'Loading news' : undefined} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: `repeat(${INTEL_COUNT},minmax(0,1fr))`, boxShadow: 'inset 0 1px 0 var(--line)' }}>
-          {news.status === 'loading'
-            ? Array.from({ length: INTEL_COUNT }, (_, i) => (
-                <li key={i} style={{ padding: '14px 20px 18px', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: 'inset -1px 0 0 var(--line)' }}>
-                  <div style={{ width: '45%', height: 11, borderRadius: 8, background: BAR }} />
-                  <div style={{ width: '92%', height: 14, borderRadius: 8, background: BAR }} />
-                  <div style={{ width: '65%', height: 14, borderRadius: 8, background: BAR }} />
-                </li>
-              ))
-            : news.items.map((n, i) => {
-                const age = newsAge(n.publishedAt, n.time, nowMs ?? Number.NaN).long;
-                return (
-                  <li key={`${i}-${n.title}`} className={n.url ? 'mk-row' : undefined} style={{ position: 'relative', padding: '14px 20px 18px', display: 'flex', flexDirection: 'column', gap: 8, boxShadow: 'inset -1px 0 0 var(--line)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, ...mono, fontSize: 11 }}>
-                      <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', background: CAT_STYLE[n.tag].bg }} />
-                      <span style={{ fontWeight: 700 }}>{n.tag}</span>
-                      <span style={{ color: 'var(--dim)' }}>{age}</span>
-                    </div>
-                    {n.url ? (
-                      <a href={n.url} target="_blank" rel="noopener noreferrer" className="mk-rowlink" style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, textWrap: 'pretty', color: 'inherit', textDecoration: 'none' }}>
-                        {n.title}
-                      </a>
-                    ) : (
-                      <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, textWrap: 'pretty' }}>{n.title}</div>
-                    )}
-                  </li>
-                );
-              })}
+      ) : news.status === 'loading' ? (
+        <ul aria-busy="true" aria-label="Loading news" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: `repeat(${INTEL_COUNT},minmax(0,1fr))`, boxShadow: 'inset 0 1px 0 var(--line)' }}>
+          {Array.from({ length: INTEL_COUNT }, (_, i) => (
+            <li key={i} style={{ padding: '14px 20px 18px', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: 'inset -1px 0 0 var(--line)' }}>
+              <div style={{ width: '45%', height: 11, borderRadius: 8, background: BAR }} />
+              <div style={{ width: '92%', height: 14, borderRadius: 8, background: BAR }} />
+              <div style={{ width: '65%', height: 14, borderRadius: 8, background: BAR }} />
+            </li>
+          ))}
         </ul>
+      ) : (
+        <IntelStrip items={news.items} nowMs={nowMs} minCols={INTEL_COUNT} />
       )}
     </section>
   );
