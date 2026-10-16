@@ -189,8 +189,8 @@ function makoAnswer(m: Rpc) {
   }
 }
 
-/// Codex DS_SWAP R4 regression: when set, Alchemy names an OLD but real finalized block (a block both providers know,
-/// with its true hash and timestamp); Ankr names the real current one. Both accept eth_call at either block.
+/// Codex DS_SWAP R4 regression switch, copied from adversary-ds-swap-live.test.ts and never set here: both providers
+/// always name the current block in this file. The stale-block case for forex pools is adversary-rwa-block-stale.test.ts.
 const alchemyOldFinalized = false;
 const HEAD = 0x4337013n;
 const OLD = HEAD - 100_000n;
