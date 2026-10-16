@@ -114,6 +114,18 @@ describe('mako-brand.css hover lifts are gated to a fine pointer', () => {
       expect(all.some((r) => r.decls.get('transform') === 'translate(-1px, -1px)' && inFineHover(r.context))).toBe(true);
     });
   }
+  it('.mako-button--yes:hover moves its shadow only behind the fine-pointer gate, after the base lift (adversary on c0bcd32)', () => {
+    const all = parseCss(BRAND);
+    const rules = rulesFor(BRAND, '.mako-button--yes:hover');
+    expect(rules).toHaveLength(1);
+    expect(inFineHover(rules[0].context)).toBe(true);
+    expect(rules[0].decls.get('box-shadow')).toBe('5px 5px 0 0 var(--mako-red)');
+    // Same specificity as .mako-button:hover, so it must come later to keep its red shadow on a mouse.
+    const at = (sel: string) => all.findIndex((r) => r.selectors.includes(sel) && inFineHover(r.context));
+    expect(at('.mako-button:hover')).toBeGreaterThanOrEqual(0);
+    expect(at('.mako-button--yes:hover')).toBeGreaterThan(at('.mako-button:hover'));
+  });
+
   it('no transform-moving :hover rule in mako-brand.css is left ungated', () => {
     const loose = parseCss(BRAND).filter((r) => r.selectors.some((s) => s.includes(':hover')) && r.decls.has('transform') && !inFineHover(r.context));
     expect(loose.map((r) => r.selectors.join(', '))).toEqual([]);

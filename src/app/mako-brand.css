@@ -174,8 +174,11 @@
   color: var(--mako-paper);
   box-shadow: var(--mako-shadow-red);
 }
-.mako-button--yes:hover {
-  box-shadow: 5px 5px 0 0 var(--mako-red);
+/* Its lifted shadow is part of the hover lift, so it is gated the same way: a tap must not leave it stuck on. */
+@media (hover: hover) and (pointer: fine) {
+  .mako-button--yes:hover {
+    box-shadow: 5px 5px 0 0 var(--mako-red);
+  }
 }
 .mako-button--yes:active {
   box-shadow: 2px 2px 0 0 var(--mako-red);
