@@ -307,7 +307,7 @@ body {
  * it stays smooth while the page loads. The track holds the list twice and slides by half its width: no seam. The
  * duration comes from the component (`--mk-marquee-dur`, card count x card width at 40 px/s), so the speed is the same
  * however many stories there are. The edges fade through a mask (alpha only), so the page shows through in either
- * theme. It stops under a fine pointer (touch taps would stick it) and while any card has keyboard focus. */
+ * theme. It stops under a fine pointer (a touch tap would stick it). Keyboard focus does more than pause: see below. */
 .mk-marquee {
   overflow: hidden;
   -webkit-mask-image: linear-gradient(to right, transparent, var(--mako-canvas-fg) 48px, var(--mako-canvas-fg) calc(100% - 48px), transparent);
@@ -318,6 +318,14 @@ body {
   width: max-content;
   animation: mkMarquee var(--mk-marquee-dur, 60s) linear infinite;
   will-change: transform;
+}
+/* Each copy of the list is a row. Its layout lives here, not inline, so the rules below can hide the copy. */
+.mk-marquee-row {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex: none;
 }
 @keyframes mkMarquee {
   from {
@@ -332,8 +340,22 @@ body {
     animation-play-state: paused;
   }
 }
-.mk-marquee:focus-within .mk-marquee-track {
-  animation-play-state: paused;
+/* While a card has KEYBOARD focus the strip is a still row, one copy, scrolled by focus: the browser scrolls each card it
+ * focuses into view. Pausing alone is not enough, because a card the crawl carried off the left edge sits at a negative
+ * offset no scroll can reach. :focus-visible, not :focus-within, so a mouse click or a touch tap on a story never sticks
+ * the strip. When keyboard focus leaves, the crawl starts again from its beginning (IntelStrip puts the scroll back). */
+.mk-marquee:has(:focus-visible) {
+  overflow-x: auto;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.mk-marquee:has(:focus-visible) .mk-marquee-track {
+  animation: none;
+  transform: none;
+  will-change: auto;
+}
+.mk-marquee:has(:focus-visible) .mk-marquee-dup {
+  display: none;
 }
 /* Reduced motion: nothing moves. One copy of the cards in a row the reader scrolls by hand, no fade over its ends. */
 @media (prefers-reduced-motion: reduce) {
@@ -347,7 +369,7 @@ body {
     transform: none;
     will-change: auto;
   }
-  .mk-marquee-dup {
+  .mk-marquee .mk-marquee-dup {
     display: none;
   }
 }

@@ -1,8 +1,9 @@
 // Home's Market intel cards move (Joshua, 2026-10-16): every story the feed has crawls slowly left in an endless loop
-// once the stories overflow the strip, paused under the pointer and while a card has keyboard focus, and still with
-// reduced motion. The list is drawn twice for a seamless loop; assistive tech and the keyboard meet each story once.
-// Too few stories to overflow the strip never move (no story on screen twice). The motion itself is CSS, so its rules
-// are read from the shipped stylesheet.
+// once the stories overflow the strip, paused under a fine pointer, a still row of one copy while a card has KEYBOARD
+// focus (never a click or tap), and still with reduced motion. The list is drawn twice for a seamless loop; assistive
+// tech and the keyboard meet each story once. Too few stories to overflow the strip never move (no story on screen
+// twice). The motion itself is CSS, so its rules are read from the shipped stylesheet; what only a real browser can
+// show (layout, focus scrolling, animation state) is in src/browser-tests (local only, `pnpm test:browser`).
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,7 +18,7 @@ vi.mock('next/link', () => ({
 }));
 vi.mock('@/components/rounds/HomeRounds', () => ({ HomeRoundsBand: () => null }));
 
-const { IntelStrip, INTEL_CARD_W, INTEL_PX_PER_SEC, marqueeDurationSec, marqueeMoves } = await import('@/app/_home/IntelStrip');
+const { IntelStrip, INTEL_CARD_W, INTEL_PX_PER_SEC, intelKeys, marqueeDurationSec, marqueeMoves } = await import('@/app/_home/IntelStrip');
 const { HomeDesktop } = await import('@/app/_home/HomeDesktop');
 
 const NOW = Date.parse('2026-10-16T12:00:00Z');
@@ -91,6 +92,11 @@ describe('IntelStrip', () => {
     expect(dup.classList.contains('mk-marquee-dup')).toBe(true);
     expect(first.querySelectorAll('li')).toHaveLength(12);
     expect(dup.querySelectorAll('li')).toHaveLength(12);
+    // Both rows take their layout from the stylesheet class; no inline display that would beat the rules hiding the copy.
+    for (const ul of [first, dup]) {
+      expect(ul.classList.contains('mk-marquee-row')).toBe(true);
+      expect(ul.style.display).toBe('');
+    }
 
     // The copy's links are out of the tab order; the first copy's are not.
     const dupLinks = Array.from(dup.querySelectorAll('a'));
@@ -117,6 +123,34 @@ describe('IntelStrip', () => {
     expect(viewport.scrollLeft).toBe(300);
     fireEvent.blur(b, { relatedTarget: document.body });
     expect(viewport.scrollLeft).toBe(0);
+  });
+
+  it('a refetch that adds a newer story in front keeps every existing card (keyed by story, not by position)', () => {
+    stripWidth = 1216;
+    const before = stories(12);
+    const { container, rerender } = render(<IntelStrip items={before} nowMs={NOW} minCols={4} />);
+    const cardOf = (title: string) =>
+      Array.from(container.querySelectorAll('.mk-marquee-track > ul:not([aria-hidden]) li')).find((li) => li.textContent?.match(/Story \d+/)?.[0] === title);
+    const copyCardOf = (title: string) =>
+      Array.from(container.querySelectorAll('.mk-marquee-dup li')).find((li) => li.textContent?.match(/Story \d+/)?.[0] === title);
+    const s1 = cardOf('Story 1');
+    const s7 = cardOf('Story 7');
+    const c1 = copyCardOf('Story 1');
+    expect(s1 && s7 && c1).toBeTruthy();
+    const newer: IntelItem = { tag: 'CRYPTO', title: 'Story 0', time: 'RECENT', url: 'https://example.com/story-0', publishedAt: new Date(NOW).toISOString() };
+    rerender(<IntelStrip items={[newer, ...before]} nowMs={NOW} minCols={4} />);
+    expect(cardOf('Story 1')).toBe(s1);
+    expect(cardOf('Story 7')).toBe(s7);
+    expect(copyCardOf('Story 1')).toBe(c1);
+  });
+
+  it('keys each story by its link, else its title and publish time, and a repeated story never clashes', () => {
+    const a: IntelItem = { tag: 'NBA', title: 'Final', time: '', publishedAt: '2026-10-16T10:00:00Z' };
+    const b: IntelItem = { tag: 'CRYPTO', title: 'Linked', time: '', url: 'https://example.com/x' };
+    expect(intelKeys([a, b])).toEqual(['t:Final|2026-10-16T10:00:00Z', 'u:https://example.com/x']);
+    expect(intelKeys([b, a, b])).toEqual(['u:https://example.com/x', 't:Final|2026-10-16T10:00:00Z', 'u:https://example.com/x#1']);
+    // Same title, different time: two stories.
+    expect(new Set(intelKeys([a, { ...a, publishedAt: '2026-10-16T11:00:00Z' }])).size).toBe(2);
   });
 
   it.each([1, 3, 4])('with %i stories on a 1216 px strip: a still row, no copy, nothing hidden', (n) => {
@@ -207,21 +241,34 @@ describe('the shipped CSS (mako-shell.css)', () => {
     expect(track).toMatch(/will-change:\s*transform/);
   });
 
-  it('pauses under a fine pointer only, and whenever a card has focus', () => {
+  it('pauses under a fine pointer only', () => {
     const hover = mediaWith('(hover: hover) and (pointer: fine)', '.mk-marquee:hover');
     expect(hover).toMatch(/\.mk-marquee:hover \.mk-marquee-track\s*\{\s*animation-play-state:\s*paused/);
     // Never an ungated hover pause (touch taps would stick it).
     expect(css.replace(hover, '')).not.toMatch(/\.mk-marquee:hover/);
-    expect(css).toMatch(/\.mk-marquee:focus-within \.mk-marquee-track\s*\{\s*animation-play-state:\s*paused/);
+  });
+
+  it('keyboard focus (never a click or tap) makes a still row of one copy that focus scrolls', () => {
+    // :focus-within would also match a link focused by a mouse click or a touch tap and stick the strip.
+    expect(css).not.toMatch(/\.mk-marquee:focus-within/);
+    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\)\s*\{[^}]*overflow-x:\s*auto/);
+    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\)\s*\{[^}]*[^-]mask-image:\s*none/);
+    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\) \.mk-marquee-track\s*\{[^}]*animation:\s*none/);
+    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\) \.mk-marquee-track\s*\{[^}]*transform:\s*none/);
+    expect(css).toMatch(/\.mk-marquee:has\(:focus-visible\) \.mk-marquee-dup\s*\{\s*display:\s*none/);
   });
 
   it('with reduced motion: no movement, no copy, a row scrolled by hand', () => {
     const reduced = mediaWith('(prefers-reduced-motion: reduce)', '.mk-marquee');
     expect(reduced).toMatch(/\.mk-marquee-track\s*\{[^}]*animation:\s*none/);
     expect(reduced).toMatch(/\.mk-marquee-track\s*\{[^}]*transform:\s*none/);
-    expect(reduced).toMatch(/\.mk-marquee-dup\s*\{\s*display:\s*none/);
+    expect(reduced).toMatch(/\.mk-marquee \.mk-marquee-dup\s*\{\s*display:\s*none/);
     expect(reduced).toMatch(/\.mk-marquee\s*\{[^}]*overflow-x:\s*auto/);
     expect(reduced).toMatch(/\.mk-marquee\s*\{[^}]*mask-image:\s*none/);
+  });
+
+  it('lays the rows out in the stylesheet, so the rules that hide the copy can win', () => {
+    expect(css).toMatch(/\.mk-marquee-row\s*\{[^}]*display:\s*flex/);
   });
 
   it('fades the edges with a mask from a theme token, never a hard-coded colour', () => {
