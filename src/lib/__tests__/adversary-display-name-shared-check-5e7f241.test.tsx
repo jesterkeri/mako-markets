@@ -28,6 +28,8 @@ import * as schema from '@/db/schema';
 
 const state = vi.hoisted(() => ({ db: null as unknown, session: null as unknown }));
 
+// (Builder: the per-account name-check cap, Codex UNIQUE_NAMES R1 M2, is its own test; here it always allows.)
+vi.mock('@/lib/name-check-budget', () => ({ reserveNameCheck: async () => 'ok' }));
 vi.mock('server-only', () => ({}));
 vi.mock('@/db/client', () => ({
   get db() {
