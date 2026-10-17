@@ -54,12 +54,17 @@ export function useChartColors() {
     // A reload still in flight (after a failed save) is cancelled, so its older answer never lands over this save.
     onMutate: async ({ account: made, colors }: Save) => {
       await qc.cancelQueries({ queryKey: ['chart-colors', made] });
+      const before = qc.getQueryData<ChartColors | null>(['chart-colors', made]);
       qc.setQueryData(['chart-colors', made], colors);
+      return { before };
     },
-    // Reload the saved set only when no later save is queued: a queued Reset has already set the cache, and a reload
-    // landing after it would show the old colours over it.
-    onError: (_e, { account: made }) => {
-      if (qc.isMutating({ mutationKey: ['chart-colors'] }) <= 1) void qc.invalidateQueries({ queryKey: ['chart-colors', made] });
+    // Put back the colours from before this save and reload the saved set, but only when no later save is queued: a
+    // queued Reset has already set the cache, and either would show the old colours over it. The put-back keeps the
+    // chart right when the reload fails too (offline, or refused after a sign-in elsewhere).
+    onError: (_e, { account: made }, ctx) => {
+      if (qc.isMutating({ mutationKey: ['chart-colors'] }) > 1) return;
+      if (ctx) qc.setQueryData(['chart-colors', made], ctx.before);
+      void qc.invalidateQueries({ queryKey: ['chart-colors', made] });
     },
   });
   const { mutate } = mutation;
