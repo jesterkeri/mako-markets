@@ -249,3 +249,18 @@ describe('raw identity of malformed entries (adversary on f4a663c)', () => {
     expect(reportKey(e.fullReport)).toBe(keccak256((e.fullReport as string).toLowerCase() as `0x${string}`));
   });
 });
+
+describe('an unproven minute still counts its invalid entries (Codex RECORDER_UNIT_A R1 M1)', () => {
+  const page = capture('open-minute-BTC');
+  const M = obsOf(page[0]);
+  const bad = { ...at(page, M + 10), fullReport: 'not hex' }; // derived: open-minute-BTC M + 10, fullReport
+  const withBad = page.map((e) => (obsOf(e) === M + 10 ? bad : e));
+  it('no exhaustion witness: incomplete, n_rejected 1', () => {
+    const row = buildMinute(feed('BTC'), M, withBad.filter((e) => obsOf(e) < M + 60));
+    expect([row.state, row.n_rejected]).toEqual(['incomplete', 1]);
+  });
+  it('failed page checks (fetchOk false): incomplete, n_rejected 1', () => {
+    const row = buildMinute(feed('BTC'), M, withBad, false);
+    expect([row.state, row.n_rejected]).toEqual(['incomplete', 1]);
+  });
+});

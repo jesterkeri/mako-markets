@@ -138,12 +138,13 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
     if (candleInput(v, M)) valid.push(v);
   }
 
-  if (!fetchOk || !witness) return base;
+  // Plan 3.1: every invalid entry counts in n_rejected, an unproven minute's too, so the reject alert still sees it.
+  const rejected = [...raw.values()].filter((x) => !x.valid).length + foreign.size;
+  if (!fetchOk || !witness) return { ...base, n_rejected: rejected };
 
   // Identical bytes at one second count once (sorted by second, then key); two different valid reports at one second
   // are a conflict: the first key at that second against each later one.
   const uniq = [...new Map(valid.map((v) => [`${v.obs}:${v.key}`, v])).values()].sort(byObsKey);
-  const rejected = [...raw.values()].filter((x) => !x.valid).length + foreign.size;
   const conflicts: Conflict[] = [];
   for (let i = 1, first = 0; i < uniq.length; i++) {
     if (uniq[i].obs !== uniq[first].obs) first = i;
