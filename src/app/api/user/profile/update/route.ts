@@ -1,8 +1,10 @@
 import { type Address } from 'viem';
 import { eq } from 'drizzle-orm';
+import { del } from '@vercel/blob';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
+import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
@@ -139,6 +141,12 @@ export async function POST(req: Request) {
     setClause.avatarUrl = validated.avatarUrl ?? null;
   }
 
+  // Removing a photo deletes its file too, not only the link to it (Joshua 2026-10-17): read the current one first.
+  const removedPhoto =
+    setClause.avatarUrl === null
+      ? ((await db.select({ url: users.avatarUrl }).from(users).where(eq(users.id, session.userId)).limit(1))[0]?.url ?? null)
+      : null;
+
   const updated = await db
     .update(users)
     .set(setClause)
@@ -158,6 +166,11 @@ export async function POST(req: Request) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
   const row = updated[0];
+
+  // Only this user's own upload, as the upload route does on replace; the app's token can only reach its own store.
+  if (removedPhoto && isOwnedAvatarBlobUrl(removedPhoto, session.userId)) {
+    await del(removedPhoto).catch((e) => console.warn('[profile-update] removed photo delete failed', e));
+  }
 
   // Read prior-session createdAt for the eager cache write in the
   // client (so the response can be written into the ['user'] cache

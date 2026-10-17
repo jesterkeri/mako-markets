@@ -1,22 +1,21 @@
 import { db } from '@/db/client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { registeredAddresses, resolveStoredIdentities } from '@/lib/leaderboard/identity';
-import { avatarVersion } from '@/lib/public-avatar';
 
 // GET /api/avatar/<address>?v=<version> -> the account's profile photo, streamed.
 // The public address of a photo (Joshua 2026-10-17, Codex PUBLIC_PROFILE R1 M2): the stored Blob URL's path carries
 // the internal account id, so the leaderboard, profiles and comments link here instead. Streamed, never redirected (a
 // redirect would hand out the stored URL). Only this app's own Blob store is fetched (resolveStoredIdentities keeps
-// app-owned photos only), so this cannot be pointed at another host. The current version is cached a year (a new photo
-// gets a new `v`); anything else a minute. No account or no photo: 404, and the page shows the letter avatar.
+// app-owned photos only), so this cannot be pointed at another host. Cached at most a minute, browser and CDN alike
+// (Joshua 2026-10-17: a removed photo must stop being served, not linger in a year-long cache); `v` only makes a new
+// photo show at once. No account or no photo: 404, and the page shows the letter avatar.
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-const YEAR = 'public, max-age=31536000, s-maxage=31536000, immutable';
 const MINUTE = 'public, max-age=60, s-maxage=60';
 
 const notFound = () => new Response(null, { status: 404, headers: { 'cache-control': MINUTE } });
 
-export async function GET(req: Request, { params }: { params: Promise<{ address: string }> }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ address: string }> }) {
   const raw = (await params).address;
   if (!ADDRESS_RE.test(raw)) return notFound();
   const address = raw.toLowerCase();
@@ -27,8 +26,5 @@ export async function GET(req: Request, { params }: { params: Promise<{ address:
   const photo = await fetch(stored);
   const type = photo.headers.get('content-type') ?? '';
   if (!photo.ok || !photo.body || !type.startsWith('image/')) return notFound();
-  const current = new URL(req.url).searchParams.get('v') === avatarVersion(stored);
-  return new Response(photo.body, {
-    headers: { 'content-type': type, 'cache-control': current ? YEAR : MINUTE, 'x-content-type-options': 'nosniff' },
-  });
+  return new Response(photo.body, { headers: { 'content-type': type, 'cache-control': MINUTE, 'x-content-type-options': 'nosniff' } });
 }

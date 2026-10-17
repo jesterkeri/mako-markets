@@ -56,19 +56,20 @@ const get = (address: string, v?: string) =>
 const image = (bytes = 'PNGDATA', type = 'image/webp') => new Response(bytes, { status: 200, headers: { 'content-type': type } });
 
 describe('GET /api/avatar/<address>', () => {
-  it("streams the account's own photo, by its Safe in any case; the current version is cached a year", async () => {
+  it("streams the account's own photo, by its Safe in any case, cached a minute at most", async () => {
     await setPhoto('email', photoOf('email'));
     blob.mockResolvedValueOnce(image());
     const res = await get(SAFE, avatarVersion(photoOf('email')));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('PNGDATA');
     expect(res.headers.get('content-type')).toBe('image/webp');
-    expect(res.headers.get('cache-control')).toContain('immutable');
+    // Never a long cache: a removed photo must stop being served (Joshua 2026-10-17).
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
     expect(res.headers.get('location')).toBeNull(); // streamed, never redirected to the stored URL
     expect(blob).toHaveBeenCalledWith(photoOf('email'));
   });
 
-  it('a stale or missing version still gets the photo, cached only a minute', async () => {
+  it('a stale or missing version still gets the current photo, cached a minute', async () => {
     await setPhoto('wallet', photoOf('wallet'));
     blob.mockResolvedValue(image());
     for (const v of ['000000000000', undefined]) {
@@ -78,7 +79,13 @@ describe('GET /api/avatar/<address>', () => {
     }
   });
 
-  it('no account, no photo, a photo on another host, or a non-image reply: 404, and only an owned photo is ever fetched', async () => {
+  it('a removed photo is a 404 at once; so are no account, a photo on another host, or a non-image reply', async () => {
+    await setPhoto('wallet', photoOf('wallet'));
+    blob.mockResolvedValueOnce(image());
+    expect((await get(WALLET, avatarVersion(photoOf('wallet')))).status).toBe(200);
+    await setPhoto('wallet', null); // removed
+    expect((await get(WALLET, avatarVersion(photoOf('wallet')))).status).toBe(404);
+    blob.mockClear();
     expect((await get(NOBODY)).status).toBe(404); // not a Mako Market account
     expect((await get(SAFE_LOWER)).status).toBe(404); // account without a photo
     await setPhoto('wallet', 'https://attacker.example/x.png');
