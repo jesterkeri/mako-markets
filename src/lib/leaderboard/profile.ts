@@ -4,7 +4,7 @@ import { cache } from 'react';
 import { db } from '@/db/client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 
-import { resolveLabels } from './identity';
+import { registeredAddresses, resolveLabels } from './identity';
 import { getCallerRank } from './queries';
 
 /// A player's public profile (13a, Joshua 2026-10-17): what the leaderboard already shows publicly for one address,
@@ -38,6 +38,13 @@ export async function readPublicProfile(actor: `0x${string}`): Promise<PublicPro
     bets: ranked?.row.bets ?? 0,
   };
 }
+
+/// Whether this address belongs to a Mako Market account; only those have a profile. Two small lookups, run before
+/// (and outside) the cached all-players rank query, so a made-up address costs no rank query and no cache entry.
+/// cache(): the page and its metadata share one check per request.
+export const isRegistered = cache(async (actor: `0x${string}`): Promise<boolean> =>
+  (await registeredAddresses(db, [actor], MONAD_TESTNET_ID)).has(actor),
+);
 
 /// Cached a minute per address, like the board (45 s): the rank query aggregates every player, and a profile is a
 /// public link anyone can open repeatedly. React's cache() also shares one call between the page and its metadata in

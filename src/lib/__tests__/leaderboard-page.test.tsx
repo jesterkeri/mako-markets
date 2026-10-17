@@ -40,6 +40,7 @@ const row = (n: number, name: string | null, net: number, staked: number, bets: 
   bets,
   creatorFees: String(creatorFees),
   displayName: name,
+  registered: n !== 0xb2, // 0xb2 bet without ever signing in
 });
 
 const ROWS: BoardWireRow[] = [
@@ -100,13 +101,15 @@ describe('Leaderboard page', () => {
     expect(url.searchParams.get('me')).toBe(ME);
   });
 
-  it('every player opens their profile at /u/<address> (13a), and nothing else on the board is a link', async () => {
+  it('every registered player opens their profile at /u/<address> (13a), and nothing else on the board is a link', async () => {
     const { container } = mount();
     await screen.findAllByText('kemi');
     const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
     expect(hrefs.length).toBeGreaterThan(0);
     for (const h of hrefs) expect(h, h).toMatch(/^\/u\/0x[0-9a-f]{40}$/);
-    expect(hrefs).toContain('/u/0x00000000000000000000000000000000000000b2'); // the unnamed player too
+    expect(hrefs).toContain('/u/0x00000000000000000000000000000000000000a1');
+    // A bettor with no Mako Market account has no profile, so it is never a link (Joshua 2026-10-17).
+    expect(hrefs.filter((h) => h.endsWith('b2'))).toEqual([]);
     expect(screen.getAllByText('0x0000…00b2').length).toBeGreaterThan(0); // unnamed player: short address
     expect(container.textContent).not.toMatch(/@kemi/); // no handle prefix: names are not unique handles
   });

@@ -11,7 +11,7 @@ import {
   type LeaderboardRow,
   type LeaderboardWindow,
 } from '@/lib/leaderboard/queries';
-import { resolveLabels } from '@/lib/leaderboard/identity';
+import { registeredAddresses, resolveLabels } from '@/lib/leaderboard/identity';
 import { LEADERBOARD_CONTRACTS } from '@/lib/leaderboard/contracts';
 
 // ----------------------------------------------------------------------------
@@ -72,6 +72,8 @@ export interface LeaderboardBoardRow extends LeaderboardRow {
   /// The player's profile photo, only if this app uploaded it for them (strictly checked in
   /// lib/leaderboard/identity.ts), or null -> the UI draws the letter avatar.
   avatarUrl: string | null;
+  /// A Mako Market account (wallet sign-in or email Safe): only these have a profile page to link to.
+  registered: boolean;
 }
 
 export interface LeaderboardViewer extends LeaderboardBoardRow {
@@ -111,15 +113,16 @@ async function buildBoard(
     orderBy: ORDER_BY[sort],
     limit: BOARD_LIMIT,
   });
-  const labels = await resolveLabels(
-    db,
-    rows.map((r) => r.actor),
-    MONAD_TESTNET_ID,
-  );
+  const actors = rows.map((r) => r.actor);
+  const [labels, registered] = await Promise.all([
+    resolveLabels(db, actors, MONAD_TESTNET_ID),
+    registeredAddresses(db, actors, MONAD_TESTNET_ID),
+  ]);
   const boardRows: LeaderboardBoardRow[] = rows.map((r) => ({
     ...r,
     displayName: labels.get(r.actor)?.displayName ?? null,
     avatarUrl: labels.get(r.actor)?.avatarUrl ?? null,
+    registered: registered.has(r.actor),
   }));
 
   // Scope cursor rows to the CONFIGURED contract set on the active
@@ -198,11 +201,16 @@ export async function GET(req: Request) {
         if (rank === null) {
           viewer = null;
         } else {
-          const labels = await resolveLabels(db, [meLower], MONAD_TESTNET_ID);
+          const [labels, registered] = await Promise.all([
+            resolveLabels(db, [meLower], MONAD_TESTNET_ID),
+            registeredAddresses(db, [meLower], MONAD_TESTNET_ID),
+          ]);
           viewer = {
             ...rank.row,
             displayName: labels.get(meLower)?.displayName ?? null,
             avatarUrl: labels.get(meLower)?.avatarUrl ?? null,
+            // `me` is only a query parameter, so it is looked up like any row.
+            registered: registered.has(meLower),
             rank: rank.rank,
           };
         }

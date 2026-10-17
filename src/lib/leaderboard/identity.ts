@@ -29,6 +29,7 @@
 // ----------------------------------------------------------------------------
 
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { getAddress, isAddress } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
 import { users, userSafes } from '@/db/schema';
@@ -121,6 +122,23 @@ export async function resolveLabels(
     }
   }
   return out;
+}
+
+/// The addresses (lowercase) that belong to a Mako Market account: a wallet sign-in, or an email account's Safe on
+/// `chainId`. Only these have a public profile (Joshua 2026-10-17); a bettor who never signed in has none. Compares the
+/// raw columns so both lookups use their indexes (Codex PUBLIC_PROFILE R1 M1): wallet_address is lowercase by CHECK,
+/// and both Safe writers store deriveSafeAddress's checksummed form (the lowercase form is matched too, for safety).
+export async function registeredAddresses(db: DbOrTx, addresses: readonly string[], chainId: number): Promise<Set<string>> {
+  const lowered = [...new Set(addresses.map((a) => a.toLowerCase()))].filter((a) => isAddress(a, { strict: false }));
+  if (lowered.length === 0) return new Set();
+  const [wallets, safes] = await Promise.all([
+    db.select({ addr: users.walletAddress }).from(users).where(inArray(users.walletAddress, lowered)),
+    db
+      .select({ addr: userSafes.safeAddress })
+      .from(userSafes)
+      .where(and(eq(userSafes.chainId, chainId), inArray(userSafes.safeAddress, [...lowered, ...lowered.map((a) => getAddress(a))]))),
+  ]);
+  return new Set([...wallets, ...safes].flatMap((r) => (r.addr ? [r.addr.toLowerCase()] : [])));
 }
 
 /// True when `a` outranks `b` under the documented precedence.

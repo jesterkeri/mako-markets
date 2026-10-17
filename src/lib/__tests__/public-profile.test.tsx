@@ -31,7 +31,8 @@ const { default: PlayerPage } = await import('@/app/u/[address]/page');
 const SAFE = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
 const SAFE_LOWER = SAFE.toLowerCase();
 const WALLET = '0x000000000000000000000000000000000000b22d';
-const NOBODY = '0x000000000000000000000000000000000000c33e';
+const NOBODY = '0x000000000000000000000000000000000000c33e'; // bet-free and never signed in: no account
+const NEWBIE = '0x000000000000000000000000000000000000d44f'; // signed in, never bet
 
 let t: TestDb | null = null;
 let tx = 0;
@@ -51,6 +52,7 @@ async function seed() {
   `);
   const { rows } = await t.client.query<{ id: string }>(`INSERT INTO users (email, display_name) VALUES ('kemi@example.com', 'Kemi') RETURNING id`);
   await t.client.query(`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES ($1, 10143, $2)`, [rows[0].id, SAFE]);
+  await t.client.query(`INSERT INTO users (wallet_address) VALUES ($1), ($2)`, [WALLET, NEWBIE]);
   // Kemi (Safe): stakes 2, wins 10 -> +8, #1. The wallet player: stakes 5, never wins -> -5, #2.
   for (const [actor, kind, amount] of [
     [SAFE_LOWER, 'bet', '1000000'],
@@ -101,12 +103,20 @@ describe('/u/[address]', () => {
     expect(container.textContent).toContain('−5.00');
   });
 
-  it('an address with no bets: Unranked, zeros, still a page', async () => {
+  it('an account with no bets: Unranked, zeros, still a page', async () => {
     await seed();
-    const { container } = await open(NOBODY);
+    const { container } = await open(NEWBIE);
     expect(container.textContent).toContain('Unranked');
     expect(container.textContent).toContain('No bets yet.');
     expect(container.textContent).toContain('0.00');
+  });
+
+  it('an address with no Mako Market account, even one that bet: not found, and no rank query (Codex PUBLIC_PROFILE R1 M1)', async () => {
+    await seed();
+    await t!.client.query(`DELETE FROM users WHERE wallet_address = $1`, [WALLET]); // WALLET bet but now has no account
+    const made = Array.from({ length: 50 }, (_, i) => `0x${(0xe000 + i).toString(16).padStart(40, '0')}`);
+    for (const a of [NOBODY, WALLET, ...made]) await expect(open(a), a).rejects.toThrow('NOT_FOUND');
+    expect(cacheKeys).toEqual([]); // getPublicProfile (the all-players rank query) never ran
   });
 
   it('anything that is not an address: not found, and no query', async () => {

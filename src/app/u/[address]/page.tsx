@@ -5,7 +5,7 @@ import { CopyButton } from '@/app/me/MeParts';
 import { AvatarFill } from '@/app/leaderboard/_components/AvatarFill';
 import { TONE_FG } from '@/app/leaderboard/_components/props';
 import { avatarColour, initialOf, signedUsdc2, usdc2 } from '@/lib/leaderboard/board-view';
-import { getPublicProfile, type PublicProfile } from '@/lib/leaderboard/profile';
+import { getPublicProfile, isRegistered, type PublicProfile } from '@/lib/leaderboard/profile';
 import { formatAddress } from '@/lib/user-display';
 
 // Reads the ledger per request (cached a minute per address in getPublicProfile); never prerendered.
@@ -16,16 +16,17 @@ const actorFrom = (raw: string): `0x${string}` | null => (ADDRESS_RE.test(raw) ?
 
 export async function generateMetadata({ params }: { params: Promise<{ address: string }> }): Promise<Metadata> {
   const actor = actorFrom((await params).address);
-  if (!actor) return { title: 'Player · Mako Market Beta' };
+  if (!actor || !(await isRegistered(actor))) return { title: 'Player · Mako Market Beta' };
   const p = await getPublicProfile(actor);
   return { title: `${p.displayName?.trim() || formatAddress(actor)} · Mako Market Beta` };
 }
 
-/// /u/[address] (13a, Joshua 2026-10-17): a player's public profile, opened from the leaderboard, a pool's creator or
+/// /u/[address] (13a, Joshua 2026-10-17): a Mako Market account's public profile, opened from the leaderboard, a pool's creator or
 /// a comment's author. Name, photo, all-time profit rank, profit, bets, volume and the address with Copy.
 export default async function PlayerPage({ params }: { params: Promise<{ address: string }> }) {
   const actor = actorFrom((await params).address);
-  if (!actor) notFound();
+  // Only a Mako Market account has a profile (Joshua 2026-10-17); any other address is not found, before the rank query.
+  if (!actor || !(await isRegistered(actor))) notFound();
   const p = await getPublicProfile(actor);
   return (
     <>

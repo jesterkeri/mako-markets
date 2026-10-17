@@ -119,6 +119,8 @@ async function seed() {
     CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email text, wallet_address text, display_name text, avatar_url text);
     CREATE TABLE user_safes (user_id uuid NOT NULL, chain_id integer NOT NULL, safe_address text NOT NULL);
   `);
+  // (Builder, Joshua 2026-10-17: only a Mako Market account has a profile, so the player signs in with this wallet.)
+  await t.client.query(`INSERT INTO users (wallet_address) VALUES ($1)`, [WALLET]);
   await t.db.insert(makoMarketEvents).values({
     chainId: 10143,
     contractAddress: '0x00000000000000000000000000000000000000aa',
