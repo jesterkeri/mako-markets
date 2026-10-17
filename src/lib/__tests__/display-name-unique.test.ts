@@ -104,11 +104,12 @@ describe('GET /api/user/profile/name-available', () => {
   });
   it('free, own, taken, reserved, invalid', async () => {
     mocks.session.mockResolvedValue({ userId: 'me' });
-    mocks.holder.mockResolvedValueOnce([]);
+    // Each check reads the caller's own key first, then looks for another holder.
+    mocks.holder.mockResolvedValueOnce([{ key: null }]).mockResolvedValueOnce([]);
     expect((await ask('jester')).body).toEqual({ available: true });
-    mocks.holder.mockResolvedValueOnce([]); // the query excludes the caller, so the caller's own name finds nobody
+    mocks.holder.mockResolvedValueOnce([{ key: 'jester' }]); // the keeper's own name, even while a duplicate shows it
     expect((await ask('Jester')).body).toEqual({ available: true });
-    mocks.holder.mockResolvedValueOnce([{ id: 'someone' }]);
+    mocks.holder.mockResolvedValueOnce([{ key: null }]).mockResolvedValueOnce([{ id: 'someone' }]);
     expect((await ask('JESTER')).body).toEqual({ available: false, reason: 'taken' });
     expect((await ask('Mako Market')).body).toEqual({ available: false, reason: 'reserved' });
     expect((await ask('bad<name>')).body).toEqual({ available: false, reason: 'invalid' });

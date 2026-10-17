@@ -5,7 +5,7 @@
 -- must pick another. A trigger keeps the key equal to the shown name on every insert or name write, whichever app
 -- version writes it (the previous app keeps serving after this migration and writes only display_name); the unique
 -- index, and the trigger itself for a name another account still shows without a key, refuse a duplicate from any
--- writer. Known limit: reserved names are checked by the app only, so the previous app could set one during the
+-- writer; the account holding the key may always re-save its own name. Known limit: reserved names are checked by the app only, so the previous app could set one during the
 -- short overlap.
 --
 -- Verification (after `pnpm db:migrate`):
@@ -26,7 +26,11 @@ BEGIN
   NEW."display_name_key" := CASE WHEN NEW."display_name" IS NULL THEN NULL
     ELSE lower(regexp_replace(btrim(NEW."display_name", ' '), ' +', ' ', 'g')) END;
   -- The unique index sees keys only; an account that shared this name before 0017 still shows it with no key, so it
-  -- is checked here, with the index's error, so every app version reports it as a taken name.
+  -- is checked here, with the index's error, so every app version reports it as a taken name. The keeper (already
+  -- holding this key) is exempt: it may re-save its own name, or change its case, while duplicates remain.
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD."display_name_key" IS NOT DISTINCT FROM NEW."display_name_key" THEN RETURN NEW; END IF;
+  END IF;
   IF NEW."display_name_key" IS NOT NULL AND EXISTS (
     SELECT 1 FROM "users" o
     WHERE o."id" <> NEW."id" AND o."display_name_key" IS NULL AND o."display_name" IS NOT NULL
