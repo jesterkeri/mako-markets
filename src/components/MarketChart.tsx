@@ -138,8 +138,10 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   // Candle colours (TradingView's set, saved to the account). A change shows at once and is saved 500 ms after the
   // last one, so dragging a colour picker does not send a request per step.
   const candle = useChartColors();
-  // The draft holds only the colours changed, over the saved set, so it can never put defaults over saved choices.
-  const [candleDraft, setCandleDraft] = useState<Partial<ChartColors> | null>(null);
+  // The draft holds only the colours changed, over the saved set, so it can never put defaults over saved choices. It
+  // belongs to the account it was made on and is dropped if another account signs in before it is saved.
+  const [draft, setDraft] = useState<{ account: string | null; patch: Partial<ChartColors> } | null>(null);
+  const candleDraft = draft && draft.account === candle.account ? draft.patch : null;
   const candleColors = candleDraft ? { ...candle.colors, ...candleDraft } : candle.colors;
   const { save: saveCandleColors } = candle;
   // The change still waiting for its save, so it is saved, not lost, if the chart closes inside the 500 ms.
@@ -152,7 +154,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     const t = setTimeout(() => {
       pendingCandle.current = null;
       saveCandleColors(full);
-      setCandleDraft(null);
+      setDraft(null);
     }, 500);
     return () => clearTimeout(t);
   }, [candleDraft, candle.colors, saveCandleColors]);
@@ -471,7 +473,10 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
                     part={part}
                     colors={candleColors}
                     disabled={!candle.canSave}
-                    onChange={(key, value) => candle.canSave && setCandleDraft((d) => ({ ...d, [key]: value }))}
+                    onChange={(key, value) =>
+                      candle.canSave &&
+                      setDraft((d) => ({ account: candle.account, patch: { ...(d?.account === candle.account ? d.patch : null), [key]: value } }))
+                    }
                   />
                 ))}
               </div>
@@ -480,7 +485,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
                   <button
                     type="button"
                     onClick={() => {
-                      setCandleDraft(null);
+                      setDraft(null);
                       saveCandleColors(null);
                     }}
                     className="underline"

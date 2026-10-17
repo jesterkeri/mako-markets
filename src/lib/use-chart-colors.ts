@@ -26,6 +26,7 @@ export function useChartColors() {
   const mutation = useMutation({
     // One save at a time, in the order made, so a Reset can never be overtaken by an earlier colour.
     scope: { id: 'chart-colors' },
+    mutationKey: ['chart-colors'],
     mutationFn: async (colors: ChartColors | null) => {
       const res = await fetch('/api/user/chart-colors', {
         method: 'POST',
@@ -36,11 +37,16 @@ export function useChartColors() {
       if (!res.ok) throw new Error(`chart colours not saved (${res.status})`);
     },
     onMutate: (colors) => qc.setQueryData(KEY, colors),
-    onError: () => qc.invalidateQueries({ queryKey: KEY }),
+    // Reload the saved set only when no later save is queued: a queued Reset has already set the cache, and a reload
+    // landing after it would show the old colours over it.
+    onError: () => {
+      if (qc.isMutating({ mutationKey: ['chart-colors'] }) <= 1) void qc.invalidateQueries({ queryKey: KEY });
+    },
   });
   const saved = user ? (query.data ?? null) : null;
   return {
     colors: saved ?? DEFAULT_CHART_COLORS,
+    account,
     signedIn: user !== null,
     // Changes wait for the saved set: a change over unloaded defaults would save defaults over the user's choices.
     canSave: user !== null && query.isSuccess,
