@@ -8,6 +8,10 @@ import { useUser } from './use-user';
 
 type Save = { account: string; colors: ChartColors | null };
 
+// The colours the server last confirmed for each account (a load, or a save it accepted). A failed save puts these back:
+// the cache may hold several unsaved changes queued one behind another, and only the server's word is safe to show.
+const confirmed = new Map<string, ChartColors | null>();
+
 /// The candle colours for the signed-in user (saved to the account), or TradingView's defaults. `save` stores a full set,
 /// or null to go back to the defaults; the cache updates first so the chart changes at once.
 export function useChartColors() {
@@ -28,7 +32,9 @@ export function useChartColors() {
       // Names the account: a read under another account's cookie (a sign-in in another tab) is refused, never filed here.
       const res = await fetch(`/api/user/chart-colors?account=${account}`, { credentials: 'same-origin' });
       if (!res.ok) throw new Error(`chart colours not loaded (${res.status})`);
-      return ((await res.json()) as { colors: ChartColors | null }).colors;
+      const { colors } = (await res.json()) as { colors: ChartColors | null };
+      if (account) confirmed.set(account, colors);
+      return colors;
     },
   });
   const mutation = useMutation({
@@ -50,20 +56,19 @@ export function useChartColors() {
         body: JSON.stringify({ account: made, colors }),
       });
       if (!res.ok) throw new Error(`chart colours not saved (${res.status})`);
+      confirmed.set(made, colors);
     },
     // A reload still in flight (after a failed save) is cancelled, so its older answer never lands over this save.
     onMutate: async ({ account: made, colors }: Save) => {
       await qc.cancelQueries({ queryKey: ['chart-colors', made] });
-      const before = qc.getQueryData<ChartColors | null>(['chart-colors', made]);
       qc.setQueryData(['chart-colors', made], colors);
-      return { before };
     },
-    // Put back the colours from before this save and reload the saved set, but only when no later save is queued: a
-    // queued Reset has already set the cache, and either would show the old colours over it. The put-back keeps the
-    // chart right when the reload fails too (offline, or refused after a sign-in elsewhere).
-    onError: (_e, { account: made }, ctx) => {
+    // Put back what the server last confirmed and reload, but only when no later save is queued: a queued Reset has
+    // already set the cache, and either would show the old colours over it. The put-back keeps the chart right when
+    // the reload fails too (offline, or refused after a sign-in elsewhere).
+    onError: (_e, { account: made }) => {
       if (qc.isMutating({ mutationKey: ['chart-colors'] }) > 1) return;
-      if (ctx) qc.setQueryData(['chart-colors', made], ctx.before);
+      if (confirmed.has(made)) qc.setQueryData(['chart-colors', made], confirmed.get(made));
       void qc.invalidateQueries({ queryKey: ['chart-colors', made] });
     },
   });
