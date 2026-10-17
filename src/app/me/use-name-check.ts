@@ -9,11 +9,13 @@ import { validateDisplayName } from './profile-rules';
 export type NameCheck = 'idle' | 'checking' | 'available' | 'taken' | 'reserved';
 
 /// Live availability of the name being typed on Me, 400 ms after the last keystroke. 'idle' while the draft is the
-/// current name or not a valid name (the format message covers that). Advisory: the save route enforces it.
+/// current name unchanged or not a valid name (the format message covers that). A case or spacing change is asked
+/// about: the keeper of a shared name may make it, an account that shared it before migration 0017 may not.
+/// Advisory: the save route enforces it.
 export function useNameCheck(draft: string, current: string | null, editing: boolean): NameCheck {
   const [state, setState] = useState<{ key: string; check: NameCheck }>({ key: '', check: 'idle' });
   const key = displayNameKey(draft);
-  const skip = !editing || validateDisplayName(draft) !== null || (current !== null && key === displayNameKey(current));
+  const skip = !editing || validateDisplayName(draft) !== null || (current !== null && draft.trim() === current.trim());
   useEffect(() => {
     if (skip) return;
     const ctrl = new AbortController();

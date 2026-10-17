@@ -1,5 +1,5 @@
-// The Me page's live name check (src/app/me/use-name-check.ts): asks only after typing pauses, skips the current name
-// and invalid drafts, and never shows a verdict for an older draft.
+// The Me page's live name check (src/app/me/use-name-check.ts): asks only after typing pauses, skips the unchanged
+// current name and invalid drafts, and never shows a verdict for an older draft.
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -29,8 +29,8 @@ describe('useNameCheck', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.current).toBe('taken');
   });
-  it('the current name (any case), an invalid draft, or not editing: idle and no request', async () => {
-    for (const [draft, editing] of [['JESTER', true], ['bad<', true], ['Belle', false]] as const) {
+  it('the current name unchanged, an invalid draft, or not editing: idle and no request', async () => {
+    for (const [draft, editing] of [['jester', true], [' jester ', true], ['bad<', true], ['Belle', false]] as const) {
       const { result } = renderHook(() => useNameCheck(draft, 'jester', editing));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
@@ -53,5 +53,14 @@ describe('useNameCheck', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain('name=Belle');
     expect(result.current).toBe('available');
+  });
+  it('a case change of the current name is asked about (the server knows whether this account keeps the name)', async () => {
+    reply({ available: false, reason: 'taken' });
+    const { result } = renderHook(() => useNameCheck('JESTER', 'jester', true));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current).toBe('taken');
   });
 });
