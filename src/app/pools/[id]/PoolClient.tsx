@@ -507,14 +507,14 @@ function Odds({ market: m, row, labels }: ViewProps) {
   const open = row.state === 'open';
   const yesWon = row.state === 'yes_won';
   const noWon = row.state === 'no_won';
-  // The odds flash up (YES text) or down (NO text) when a re-poll changes them (motion pass 7).
+  // The odds flash neutral when a re-poll changes them: a price, not good or bad news (owner, 2026-10-17).
   const big = (pays: number | null) => {
     const s = perOne(pays);
     return s === null ? (
       <span style={{ ...display, fontSize: 22, color: 'var(--dim)' }}>No stake yet</span>
     ) : (
       <span style={{ ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' }}>
-        <FlashValue value={pays} text={s} kind="direction" />
+        <FlashValue value={pays} text={s} kind="neutral" />
       </span>
     );
   };
