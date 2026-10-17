@@ -34,7 +34,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // Candle colours come from the account (useChartColors -> /api/user/me); these tests count /api/charts requests only.
 vi.mock('@/lib/use-chart-colors', async () => {
   const { DEFAULT_CHART_COLORS } = await import('@/lib/chart-colors');
-  return { useChartColors: () => ({ colors: DEFAULT_CHART_COLORS, signedIn: false, canSave: false, loadFailed: false, save: () => {}, saveFailed: false }) };
+  return { useChartColors: () => ({ colors: DEFAULT_CHART_COLORS, account: null, signedIn: false, canSave: false, loadFailed: false, save: () => {}, saveFailed: false }) };
 });
 
 vi.mock('@/components/chart/CandlestickChart', () => ({
