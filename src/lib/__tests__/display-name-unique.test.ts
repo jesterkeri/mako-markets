@@ -55,16 +55,21 @@ describe('migration 0017 on Postgres: the oldest holder keeps a shared name', ()
       expect(r.rows[0].k, name).toBe(displayNameKey(name));
     }
   });
-  it('after 0017 a second account cannot take a held key (unique index); clearing a name frees it', async () => {
-    await expect(pg.query(`UPDATE users SET display_name = 'jester', display_name_key = 'jester' WHERE id = $1`, [ids.newer])).rejects.toThrow(/users_display_name_key_uniq|unique/);
-    await pg.query(`UPDATE users SET display_name = NULL, display_name_key = NULL WHERE id = $1`, [ids.oldest]);
-    await pg.query(`UPDATE users SET display_name = 'jester', display_name_key = 'jester' WHERE id = $1`, [ids.newer]);
+  it('after 0017 a name is free only once nobody shows it: the keyed holder and every grandfathered one', async () => {
+    const take = (id: string) => pg.query(`UPDATE users SET display_name = 'jester' WHERE id = $1`, [id]);
+    await expect(take(ids.newer)).rejects.toThrow(/users_display_name_key_uniq|unique|shown by another/);
+    await pg.query(`UPDATE users SET display_name = NULL WHERE id = $1`, [ids.oldest]);
+    // "  JESTER " (grandfathered, no key) still shows it.
+    await expect(take(ids.newer)).rejects.toThrow(/shown by another/);
+    await pg.query(`UPDATE users SET display_name = 'spaced one' WHERE id = $1`, [ids.spaced]);
+    await take(ids.newer);
     expect(await keyOf(ids.newer)).toBe('jester');
+    expect(await keyOf(ids.spaced)).toBe('spaced one'); // the trigger keys every name write
   });
   it('re-running 0017 changes nothing (IF NOT EXISTS, and only NULL keys are filled)', async () => {
     await apply(pg, '0017_display_name_key');
     expect(await keyOf(ids.newer)).toBe('jester');
-    expect(await keyOf(ids.spaced)).toBeNull();
+    expect(await keyOf(ids.spaced)).toBe('spaced one');
   });
 });
 

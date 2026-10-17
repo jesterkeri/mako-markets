@@ -3,8 +3,10 @@
 -- unique index allows each key once. Backfill: where accounts already share a name, the OLDEST account (created_at,
 -- then id) keeps it and the others get no key: they still show their name, but saving it again is refused and they
 -- must pick another. A trigger keeps the key equal to the shown name on every insert or name write, whichever app
--- version writes it (the previous app keeps serving after this migration and writes only display_name), so the
--- unique index refuses a duplicate from any writer.
+-- version writes it (the previous app keeps serving after this migration and writes only display_name); the unique
+-- index, and the trigger itself for a name another account still shows without a key, refuse a duplicate from any
+-- writer. Known limit: reserved names are checked by the app only, so the previous app could set one during the
+-- short overlap.
 --
 -- Verification (after `pnpm db:migrate`):
 --   \d users
@@ -23,6 +25,16 @@ CREATE OR REPLACE FUNCTION "users_display_name_key_sync"() RETURNS trigger LANGU
 BEGIN
   NEW."display_name_key" := CASE WHEN NEW."display_name" IS NULL THEN NULL
     ELSE lower(regexp_replace(btrim(NEW."display_name", ' '), ' +', ' ', 'g')) END;
+  -- The unique index sees keys only; an account that shared this name before 0017 still shows it with no key, so it
+  -- is checked here, with the index's error, so every app version reports it as a taken name.
+  IF NEW."display_name_key" IS NOT NULL AND EXISTS (
+    SELECT 1 FROM "users" o
+    WHERE o."id" <> NEW."id" AND o."display_name_key" IS NULL AND o."display_name" IS NOT NULL
+      AND lower(regexp_replace(btrim(o."display_name", ' '), ' +', ' ', 'g')) = NEW."display_name_key"
+  ) THEN
+    RAISE EXCEPTION 'display name % is shown by another account', NEW."display_name"
+      USING ERRCODE = 'unique_violation', CONSTRAINT = 'users_display_name_key_uniq';
+  END IF;
   RETURN NEW;
 END
 $$;--> statement-breakpoint
