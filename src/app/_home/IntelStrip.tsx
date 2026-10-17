@@ -65,12 +65,11 @@ export function intelKeys(items: readonly IntelItem[]): string[] {
 /// press that brought no focus with it (a finger dragging the still row, a press the page cancelled) is dropped when it
 /// ends: only a press that focused its card can later explain that card's focus (the return from the story's new tab).
 type InputRecord = { last: 'keyboard' | 'pointer' | null; target: EventTarget | null };
-const input: InputRecord & { pending: boolean; focused: boolean; down: boolean; pointerId: number | null } = {
+const input: InputRecord & { pending: boolean; focused: boolean; pointerId: number | null } = {
   last: null,
   target: null,
   pending: false,
   focused: false,
-  down: false,
   pointerId: null,
 };
 let listeners = 0;
@@ -95,7 +94,6 @@ function onPointerInput(e: Event) {
   input.pending = false;
   input.last = 'pointer';
   input.target = e.target;
-  input.down = true;
   // The pointer that pressed: only its own events can end the press (a pen hovering, or another pointer, cannot).
   // mousedown and touchstart carry no pointerId and keep the one their pointerdown set.
   if (e instanceof PointerEvent) input.pointerId = e.pointerId;
@@ -117,7 +115,6 @@ function onFocusInput(e: FocusEvent) {
 // A touch tap runs pointerdown, touchstart, pointerup, touchend and only then mousedown (which focuses the link), so the
 // tap's own press is dropped at touchend and recorded again by its mousedown.
 function onPressEnd() {
-  input.down = false;
   if (input.last !== 'pointer' || input.focused) return;
   input.last = null;
   input.target = null;
@@ -176,7 +173,6 @@ function useInputRecord() {
       input.target = null;
       input.pending = false;
       input.focused = false;
-      input.down = false;
       input.pointerId = null;
     };
   }, []);
@@ -301,18 +297,6 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
                 const strip = e.currentTarget;
                 const to = e.relatedTarget as Node | null;
                 if (to ? strip.contains(to) : strip.contains(document.activeElement)) return;
-                // A press held on a card with nothing focusable in it (a story with no link) sends focus to <body> at
-                // the press. The row must not move before the release, so the mode ends only once the press does,
-                // and only if focus is still outside the strip then.
-                if (!to && input.down && input.target instanceof Node && strip.contains(input.target)) {
-                  const stop = onPressEnds(() => {
-                    stop();
-                    setTimeout(() => {
-                      if (!strip.contains(document.activeElement)) leaveKb(strip);
-                    }, 0);
-                  });
-                  return;
-                }
                 leaveKb(strip);
               }
             : undefined
@@ -346,6 +330,10 @@ function IntelCard({ item: n, nowMs, fixed, copy }: { item: IntelItem; nowMs: nu
   return (
     <li
       className={n.url ? 'mk-row' : undefined}
+      // A story with no link still takes focus when pressed (never by Tab: tabIndex -1), so a press on it keeps focus
+      // inside the strip like a press on a linked card: in keyboard mode the still row stays where it is, with no
+      // blur to <body> and nothing that has to wait for the press to end. The hidden copy is never focusable.
+      tabIndex={!n.url && !copy ? -1 : undefined}
       style={{ position: 'relative', padding: '14px 20px 18px', display: 'flex', flexDirection: 'column', gap: 8, boxShadow: 'inset -1px 0 0 var(--line)', boxSizing: 'border-box', ...(fixed ? { flex: 'none', width: INTEL_CARD_W } : null) }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, ...mono, fontSize: 11 }}>

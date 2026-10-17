@@ -114,11 +114,12 @@ describe('adversary r7 (1fcc422), Chromium', () => {
     const pressed = await geo(p);
     await p.mouse.up();
     expect({ scrollLeft: pressed.scrollLeft, cardLeft: pressed.cardLeft }).toEqual({ scrollLeft: before.scrollLeft, cardLeft: before.cardLeft });
-    // After the release focus is still outside the strip (on <body>), so the mode ends then: the crawl starts again
-    // from its beginning (added with the fix).
+    // The card itself takes the focus (tabIndex -1), as a linked card's link does: focus never leaves the strip, so
+    // the mode holds after the release and the row stays where it was (r12 design; r7 to r11 had focus go to <body>
+    // and the mode end at the release).
     await p.waitForTimeout(100);
     const released = await geo(p);
-    expect({ kb: released.kb, scrollLeft: released.scrollLeft, focused: released.focused }).toEqual({ kb: false, scrollLeft: 0, focused: 'BODY' });
+    expect({ kb: released.kb, scrollLeft: released.scrollLeft, focused: released.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: expect.stringMatching(/Story 11$/) });
     await ctx.close();
   }, 60_000);
 
@@ -132,7 +133,7 @@ describe('adversary r7 (1fcc422), Chromium', () => {
     ['a context menu swallowed the release and the pointer then moves', `(() => { const el = document.elementFromPoint(X, Y); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })); window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 0, pointerId: window.__pid, pointerType: 'mouse', clientX: X + 5, clientY: Y })); })()`],
     ['the window loses focus', `window.dispatchEvent(new FocusEvent('blur'))`],
   ] as const)
-    it(`keyboard mode, a press held on a card with no link and no release, then ${what}: the mode ends`, async () => {
+    it(`keyboard mode, a press held on a card with no link and no release, then ${what}: the row never moves and the mode holds on the card`, async () => {
       const ctx = await browser.newContext({ viewport: { width: 1280, height: 2000 } });
       const p = await ctx.newPage();
       await p.goto(`file://${dir}/index.html`);
@@ -148,11 +149,12 @@ describe('adversary r7 (1fcc422), Chromium', () => {
       await p.evaluate(() => window.addEventListener('pointerdown', (e) => ((window as any).__pid = e.pointerId), { once: true, capture: true }));
       await p.mouse.down();
       const pressed = await geo(p);
-      expect({ kb: pressed.kb, scrollLeft: pressed.scrollLeft, focused: pressed.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: 'BODY' });
+      expect({ kb: pressed.kb, scrollLeft: pressed.scrollLeft, focused: pressed.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: expect.stringMatching(/Story 11$/) });
       await p.evaluate(end.replaceAll('X', String(x)).replaceAll('Y', String(y)));
       await p.waitForTimeout(100);
       const after = await geo(p);
-      expect({ kb: after.kb, scrollLeft: after.scrollLeft }).toEqual({ kb: false, scrollLeft: 0 });
+      // Focus is on the card inside the strip, so nothing ends the mode: the row has not moved.
+      expect({ kb: after.kb, scrollLeft: after.scrollLeft, focused: after.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: expect.stringMatching(/Story 11$/) });
       await p.mouse.up();
       await ctx.close();
     }, 60_000);

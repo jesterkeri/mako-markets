@@ -109,7 +109,7 @@ async function heldOnLinkless(p: any) {
   await p.mouse.move(x, y);
   await p.mouse.down();
   const pressed = await geo(p);
-  expect({ kb: pressed.kb, scrollLeft: pressed.scrollLeft, focused: pressed.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: 'BODY' });
+  expect({ kb: pressed.kb, scrollLeft: pressed.scrollLeft, focused: pressed.focused }).toEqual({ kb: true, scrollLeft: before.scrollLeft, focused: expect.stringMatching(/Story 11$/) });
   return { before, x, y };
 }
 
@@ -218,11 +218,11 @@ describe('adversary r10 probes, Chromium', () => {
     await p.mouse.up();
     await p.waitForTimeout(100);
     const after = await geo(p);
-    expect({ kb: after.kb, scrollLeft: after.scrollLeft }).toEqual({ kb: false, scrollLeft: 0 });
+    expect({ kb: after.kb, scrollLeft: after.scrollLeft }).toEqual({ kb: true, scrollLeft: before.scrollLeft });
     await ctx.close();
   }, 60_000);
 
-  it('probe: the strip unmounts while a deferred end waits, then the press ends: no error', async () => {
+  it('probe: the strip unmounts while a press is held on a link-less card, then the press ends: no error', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 2000 } });
     const p = await ctx.newPage();
     const errors: string[] = [];

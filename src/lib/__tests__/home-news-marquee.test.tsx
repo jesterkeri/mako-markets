@@ -53,6 +53,25 @@ function strip(n: number, width: number) {
   return render(<IntelStrip items={stories(n)} nowMs={NOW} minCols={4} />).container;
 }
 
+describe('a story with no link (r12 design)', () => {
+  it('its card takes focus on a press but never from Tab (tabIndex -1); the hidden copy is never focusable; linked cards stay as they were', () => {
+    const c = strip(12, 1216);
+    const cards = (sel: string) => [...c.querySelectorAll<HTMLLIElement>(`${sel} li`)];
+    const shown = cards('.mk-marquee ul:not([aria-hidden])');
+    const copy = cards('.mk-marquee ul[aria-hidden]');
+    expect(shown).toHaveLength(12);
+    expect(copy).toHaveLength(12);
+    for (const li of shown) expect(li.getAttribute('tabindex'), li.textContent!).toBe(li.querySelector('a') ? null : '-1');
+    for (const li of copy) expect(li.getAttribute('tabindex'), li.textContent!).toBeNull();
+    expect(shown.filter((li) => !li.querySelector('a')).length).toBe(4);
+  });
+  it('a still strip (no crawl) gives link-less cards the same press focus', () => {
+    const c = strip(4, 1216);
+    const li = [...c.querySelectorAll<HTMLLIElement>('li')].filter((x) => !x.querySelector('a'));
+    expect(li.map((x) => x.getAttribute('tabindex'))).toEqual(['-1']);
+  });
+});
+
 describe('when the strip moves', () => {
   it('moves only when one copy of the list is at least a card wider than the strip', () => {
     // A 1280 px window: the strip is about 1216 px wide, so 4 stories (1280 px) would show a story twice at once.
