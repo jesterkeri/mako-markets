@@ -494,7 +494,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
                   </button>
                 ) : (
                   <span className="text-muted normal-case">
-                    {!candle.signedIn ? 'Sign in to change and keep your colours.' : candle.loadFailed ? 'Your colours did not load.' : 'Loading your colours.'}
+                    {candle.loadFailed ? 'Your colours did not load.' : candle.signedIn || candle.loading ? 'Loading your colours.' : 'Sign in to change and keep your colours.'}
                   </span>
                 )}
                 {candle.saveFailed && <span role="alert" className="text-mako-red normal-case">Not saved</span>}

@@ -11,7 +11,7 @@ type Save = { account: string; colors: ChartColors | null };
 /// The candle colours for the signed-in user (saved to the account), or TradingView's defaults. `save` stores a full set,
 /// or null to go back to the defaults; the cache updates first so the chart changes at once.
 export function useChartColors() {
-  const { user } = useUser();
+  const { user, isLoading: userLoading, isError: userError } = useUser();
   const qc = useQueryClient();
   // Keyed by account, so another account signing in on the same tab never sees (or saves) this one's colours.
   const account = user ? (user.authType === 'magic' ? user.safeAddress : user.walletAddress) : null;
@@ -68,9 +68,11 @@ export function useChartColors() {
     colors: saved ?? DEFAULT_CHART_COLORS,
     account,
     signedIn: user !== null,
+    // Still finding out who is signed in: not a reason to ask them to sign in.
+    loading: !user && userLoading === true,
     // Changes wait for the saved set: a change over unloaded defaults would save defaults over the user's choices.
     canSave: user !== null && query.isSuccess,
-    loadFailed: query.isError,
+    loadFailed: query.isError || (!user && userError === true),
     save: useCallback((colors: ChartColors | null) => account && mutate({ account, colors }), [account, mutate]),
     saveFailed: mutation.isError,
   };

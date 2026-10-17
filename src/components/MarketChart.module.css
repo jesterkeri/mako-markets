@@ -63,5 +63,8 @@
     width: auto !important;
     margin-top: 0 !important;
     z-index: 60;
+    /* With the candle colour pickers the sheet is taller than a landscape phone: cap it and let it scroll. */
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto !important;
   }
 }
