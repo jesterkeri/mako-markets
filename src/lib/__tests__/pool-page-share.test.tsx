@@ -157,16 +157,21 @@ describe('pool page share control', () => {
     renderPage(false);
     const panel = screen.getByRole('button', { name: 'Hide the bet panel' }).parentElement as HTMLElement;
     expect(panel.style.touchAction).toBe('none');
+    // A slow drag: since motion pass 3 a short drag that is fast enough (a flick) closes the panel, so this one takes
+    // a full second (0.03 px/ms). The touch events' timeStamps come from performance.now().
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(10_000);
     await act(async () => {
       fireEvent.touchStart(panel, { touches: [{ clientY: 500 }] });
       fireEvent.touchMove(panel, { touches: [{ clientY: 530 }] });
     });
     expect(panel.style.transform).toBe('translateY(30px)');
+    clock.mockReturnValue(11_000);
     await act(async () => {
       fireEvent.touchEnd(panel, { changedTouches: [{ clientY: 530 }] });
     });
+    clock.mockRestore();
     expect(panel.style.transform).toBe('');
-    expect(screen.getByRole('button', { name: 'Hide the bet panel' }), 'a 30px drag springs back').toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide the bet panel' }), 'a slow 30px drag springs back').toBeTruthy();
     await act(async () => {
       fireEvent.touchStart(panel, { touches: [{ clientY: 500 }] });
       fireEvent.touchMove(panel, { touches: [{ clientY: 520 }] });

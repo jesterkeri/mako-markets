@@ -129,7 +129,17 @@ body {
   transition: color 220ms ease, transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .mk-tab:active {
-  transform: scale(0.86);
+  transform: scale(0.96);
+}
+/* Reduced motion: no scale. A brief dim stays as the press cue (opacity, not movement). */
+@media (prefers-reduced-motion: reduce) {
+  .mk-tab {
+    transition: color 220ms ease, opacity 100ms ease;
+  }
+  .mk-tab:active {
+    transform: none;
+    opacity: 0.7;
+  }
 }
 
 /* ---------- Two layouts, not one squeezed ----------
@@ -241,7 +251,7 @@ body {
   border-radius: 12px !important;
 }
 .wl-spin {
-  animation: wlSpin 0.9s linear infinite;
+  animation: wlSpin 0.7s linear infinite;
 }
 @keyframes wlSpin {
   to {
@@ -254,8 +264,13 @@ body {
   }
 }
 
-/* Desktop menu rows and pressed buttons. */
-.wm-row:hover,
+/* Desktop menu rows and pressed buttons. The hover tint only where a hover is real (a tap must not leave it on); the
+ * keyboard focus tint everywhere. */
+@media (hover: hover) and (pointer: fine) {
+  .wm-row:hover {
+    background: var(--raise);
+  }
+}
 .wm-row:focus-visible {
   background: var(--raise);
 }
@@ -331,9 +346,9 @@ body {
   --m3-tint: var(--mako-paper);
 }
 
-/* The tab bar's sliding indicator. */
+/* The tab bar's sliding indicator: core navigation, used constantly, so kept short (220ms; motion pass 6). */
 .mk-tabind {
-  transition: transform 440ms cubic-bezier(0.32, 0.72, 0, 1), opacity 200ms ease;
+  transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1), opacity 200ms ease;
   will-change: transform;
 }
 
@@ -575,4 +590,173 @@ button,
 a,
 [role="button"] {
   touch-action: manipulation;
+}
+
+/* ============================================================================
+ * Motion pass (feat/motion-pass, Joshua 2026-10-16). Each block below belongs to one item of that pass; the curves
+ * are the ones this file already uses: cubic-bezier(0.23, 1, 0.32, 1) ease-out for entrances and presses,
+ * cubic-bezier(0.32, 0.72, 0, 1) for sheets and drawers.
+ * ========================================================================== */
+
+/* ---------- Motion pass 1: confirm sheet steps ----------
+ * ConfirmSheet keys each step's body on the step, so a new step mounts and plays mk-stepin; a check that replaces a
+ * spinner scales in with mk-checkin. Reduced motion: opacity only. */
+@keyframes mkStepIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes mkCheckIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mk-stepin {
+  animation: mkStepIn 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.mk-checkin {
+  animation: mkCheckIn 150ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-stepin,
+  .mk-checkin {
+    animation: mkFade 150ms ease both;
+  }
+}
+
+/* ---------- Motion pass 3: the pool page's mobile bet drawer ----------
+ * After a drag that does not close it, the panel snaps back on the drawer curve; while the finger drags
+ * (data-dragging) it follows the finger with no transition. The bet form enters when the panel opens: @starting-style
+ * gives its first frame. Reduced motion: no snap-back movement, and the form fades in without rising. */
+.mk-betdrawer {
+  transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.mk-betdrawer[data-dragging] {
+  transition: none;
+}
+.mk-betform {
+  transition:
+    opacity 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@starting-style {
+  .mk-betform {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-betdrawer {
+    transition: none;
+  }
+  .mk-betform {
+    transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  @starting-style {
+    .mk-betform {
+      opacity: 0;
+      transform: none;
+    }
+  }
+}
+
+/* ---------- Motion pass 4: a round's result arriving ----------
+ * When a round settles UP or DOWN while its page is open (never on first load), the big result scales in once.
+ * Reduced motion: opacity only. */
+@keyframes mkResultIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mk-resultin {
+  animation: mkResultIn 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-resultin {
+    animation: mkFade 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  }
+}
+
+/* ---------- Motion pass 6: fixes to existing motion ----------
+ * The pool page's YES/NO split bar: YES's width moves in 300ms ease-out when the odds change (it was 700ms). Width, not
+ * a transform: layout snaps the YES/NO seam to a whole pixel, a transform does not and blurs it. One small bar that
+ * moves only on an odds change keeps the layout cost negligible. Reduced motion: it moves at once. */
+.mk-split-yes {
+  transition: width 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-split-yes {
+    transition: none;
+  }
+}
+/* A mobile pool card is itself a press target, but pressing one of its side buttons (inside .mk-over) tints only that
+ * button: :active also matches every ancestor of the pressed element, so the card's own tint is held off then. */
+.mk-cardpress:has(.mk-over :active)::after {
+  opacity: 0;
+}
+
+/* ---------- Motion pass 7: a live value that changes ----------
+ * useFlashOnChange (src/lib/use-flash.tsx) puts mk-flash-up / -down / -neutral on a changed value for 150 ms: the
+ * colour (or dip) comes in over that time, and leaves over 450 ms when the class goes, 600 ms in all. Colour and
+ * opacity only, tabular figures so changing digits never shift the layout. Up / down use the side text tokens, which
+ * are set for 4.5:1 on the page and on a --raise panel. Reduced motion: the colours stay; the neutral dip becomes a
+ * brief underline. */
+.mk-flash {
+  font-variant-numeric: tabular-nums;
+  transition:
+    color 450ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 450ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.mk-flash-up {
+  color: var(--yes-text);
+  transition-duration: 150ms;
+}
+.mk-flash-down {
+  color: var(--no-text);
+  transition-duration: 150ms;
+}
+.mk-flash-neutral {
+  opacity: 0.6;
+  transition-duration: 150ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-flash-neutral {
+    opacity: 1;
+    text-decoration-line: underline;
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 3px;
+  }
+}
+
+/* ---------- Motion pass 8: the YES/NO side toggle ----------
+ * One pill slides behind the two labels (like the tab indicator) and takes the side's colour; the labels' text colour
+ * follows over the same time, so it changes as the pill arrives. Reduced motion: no slide, an instant swap. */
+.mk-sideind {
+  transition:
+    transform 200ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.mk-sidelabel {
+  transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-sideind,
+  .mk-sidelabel {
+    transition: none;
+  }
 }

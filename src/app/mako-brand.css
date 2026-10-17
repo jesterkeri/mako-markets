@@ -143,9 +143,12 @@
   cursor: pointer;
   transition: transform 80ms ease, box-shadow 80ms ease;
 }
-.mako-button:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 5px 5px 0 0 var(--mako-ink);
+/* Hover lifts only where a hover is real (a mouse), not on a tap (motion pass 6). */
+@media (hover: hover) and (pointer: fine) {
+  .mako-button:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 0 var(--mako-ink);
+  }
 }
 .mako-button:active {
   transform: var(--mako-press-offset);
@@ -171,8 +174,11 @@
   color: var(--mako-paper);
   box-shadow: var(--mako-shadow-red);
 }
-.mako-button--yes:hover {
-  box-shadow: 5px 5px 0 0 var(--mako-red);
+/* Its lifted shadow is part of the hover lift, so it is gated the same way: a tap must not leave it stuck on. */
+@media (hover: hover) and (pointer: fine) {
+  .mako-button--yes:hover {
+    box-shadow: 5px 5px 0 0 var(--mako-red);
+  }
 }
 .mako-button--yes:active {
   box-shadow: 2px 2px 0 0 var(--mako-red);
@@ -181,9 +187,12 @@
   background: transparent;
   box-shadow: none;
 }
-.mako-button--ghost:hover {
-  background: var(--mako-surface-elevated);
-  box-shadow: var(--mako-shadow-sm);
+/* Gated like the other hover lifts: on a touch screen a tap leaves the button "hovered", raised and shadowed. */
+@media (hover: hover) and (pointer: fine) {
+  .mako-button--ghost:hover {
+    background: var(--mako-surface-elevated);
+    box-shadow: var(--mako-shadow-sm);
+  }
 }
 
 /* ── Cards ───────────────────────────────────────────────────────────────── */
@@ -292,8 +301,11 @@
 .mako-nav-item:last-child {
   border-bottom: 0;
 }
-.mako-nav-item:hover {
-  background: var(--mako-surface-elevated);
+/* Only a real hover: a tap must not leave the item tinted. */
+@media (hover: hover) and (pointer: fine) {
+  .mako-nav-item:hover {
+    background: var(--mako-surface-elevated);
+  }
 }
 .mako-nav-item[aria-current="page"] {
   background: var(--mako-ink);
@@ -313,9 +325,11 @@
   cursor: pointer;
   transition: transform 80ms ease, box-shadow 80ms ease;
 }
-.mako-bet-tile:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: var(--mako-shadow-sm);
+@media (hover: hover) and (pointer: fine) {
+  .mako-bet-tile:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: var(--mako-shadow-sm);
+  }
 }
 .mako-bet-tile--yes {
   background: var(--mako-ink);

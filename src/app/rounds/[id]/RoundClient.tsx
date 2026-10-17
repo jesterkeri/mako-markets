@@ -280,6 +280,13 @@ function countdown(r: Round, phase: RoundPhase, now: number): { label: string; v
 export function RoundView(v: View & { narrow: boolean }) {
   const { round: r, phase, now, narrow } = v;
   const cd = countdown(r, phase, now);
+  // The result plays its reveal (mk-resultin) only when it arrives while this page is open: a round already settled
+  // when the page first renders shows its result still. Whether a pending phase was ever seen is kept in state and
+  // updated during render (React's "storing information from previous renders" pattern).
+  const resultShown = phase === 'settled' || phase === 'refunded';
+  const [sawPending, setSawPending] = useState(!resultShown);
+  if (!resultShown && !sawPending) setSawPending(true);
+  const reveal = sawPending && phase === 'settled';
   const actions = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {v.position.kind !== 'none' && <PositionCard {...v} />}
@@ -329,7 +336,13 @@ export function RoundView(v: View & { narrow: boolean }) {
         </div>
         <div style={{ flex: 'none', textAlign: narrow ? 'left' : 'right' }}>
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--dim)' }}>{cd.label}</div>
-          <div style={{ ...display, fontSize: narrow ? 56 : 84, lineHeight: 1, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', marginTop: 4 }}>{cd.value}</div>
+          <div
+            data-round-result={phase === 'settled' ? cd.value : undefined}
+            className={reveal ? 'mk-resultin' : undefined}
+            style={{ ...display, fontSize: narrow ? 56 : 84, lineHeight: 1, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', marginTop: 4, transformOrigin: narrow ? 'left center' : 'right center' }}
+          >
+            {cd.value}
+          </div>
           <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 6, maxWidth: 360 }}>{cd.sub}</div>
         </div>
       </div>

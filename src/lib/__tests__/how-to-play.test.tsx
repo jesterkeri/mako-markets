@@ -188,8 +188,9 @@ describe('the copy is true today', () => {
   });
 });
 
-// Reduced motion is fade only (DESIGN_RULES; Codex S7 r1): a pointer target below the fold is scrolled to at once,
-// and the card and its arrow do not slide. Without the preference both keep their motion.
+// Reduced motion is fade only (DESIGN_RULES; Codex S7 r1): a pointer target below the fold is scrolled to at once.
+// The card and its arrow never slide between anchors, with or without the preference (motion pass 5, Joshua
+// 2026-10-16: each step's card pops in at its own place instead; motion-tour-card.test.tsx).
 describe('reduced motion', () => {
   function media({ desktop, reduced }: { desktop: boolean; reduced: boolean }) {
     vi.spyOn(window, 'matchMedia').mockImplementation(
@@ -230,7 +231,7 @@ describe('reduced motion', () => {
       expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ behavior: reduced ? 'instant' : 'smooth' }));
     });
 
-    it(`${reduced ? 'with' : 'without'} it, the desktop tab card and its arrow ${reduced ? 'do not slide' : 'slide'}`, () => {
+    it(`${reduced ? 'with' : 'without'} it, the desktop tab card and its arrow do not slide`, () => {
       media({ desktop: true, reduced });
       layout();
       page(
@@ -245,10 +246,10 @@ describe('reduced motion', () => {
         </div>,
       );
       const card = screen.getAllByRole('dialog', { name: 'How to play' })[0];
-      expect(slidingIn(card)).toHaveLength(reduced ? 0 : 2);
+      expect(slidingIn(card)).toHaveLength(0);
     });
 
-    it(`${reduced ? 'with' : 'without'} it, the mobile card's arrow ${reduced ? 'does not slide' : 'slides'}`, () => {
+    it(`${reduced ? 'with' : 'without'} it, the mobile card's arrow does not slide`, () => {
       media({ desktop: false, reduced });
       layout();
       page(
@@ -263,7 +264,7 @@ describe('reduced motion', () => {
         </div>,
       );
       const card = screen.getAllByRole('dialog', { name: 'How to play' })[0];
-      expect(slidingIn(card)).toHaveLength(reduced ? 0 : 1);
+      expect(slidingIn(card)).toHaveLength(0);
     });
   }
 });

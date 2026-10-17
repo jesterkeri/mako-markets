@@ -15,12 +15,14 @@ import { explorerUrl } from '@/lib/chain';
 import { makoContract, MarketType, type MarketWithId } from '@/lib/contract';
 import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/creator-earnings';
+import { addTouchSample, shouldCloseDrawer, type TouchSample } from '@/lib/drawer-swipe';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
+import { FlashValue } from '@/lib/use-flash';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { marketToChartConfig } from '@/lib/market-chart';
 import { MarketChart } from '@/components/MarketChart';
@@ -385,7 +387,7 @@ function PoolDesktop(v: ViewProps) {
               {cat.abbr}
             </span>
             <span style={{ ...mono, fontSize: 12, color: 'var(--dim)' }}>
-              {row.cat} · {row.bettors} {row.bettors === 1 ? 'BETTOR' : 'BETTORS'}
+              {row.cat} · <FlashValue value={row.bettors} text={String(row.bettors)} kind="neutral" /> {row.bettors === 1 ? 'BETTOR' : 'BETTORS'}
             </span>
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 52, lineHeight: 1.02, letterSpacing: '-0.035em', maxWidth: 720, textWrap: 'balance' }}>{m.question}</h1>
@@ -505,12 +507,17 @@ function Odds({ market: m, row, labels }: ViewProps) {
   const open = row.state === 'open';
   const yesWon = row.state === 'yes_won';
   const noWon = row.state === 'no_won';
-  const big = (s: string | null) =>
-    s === null ? (
+  // The odds flash up (YES text) or down (NO text) when a re-poll changes them (motion pass 7).
+  const big = (pays: number | null) => {
+    const s = perOne(pays);
+    return s === null ? (
       <span style={{ ...display, fontSize: 22, color: 'var(--dim)' }}>No stake yet</span>
     ) : (
-      <span style={{ ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' }}>{s}</span>
+      <span style={{ ...display, fontSize: 56, lineHeight: 1, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums' }}>
+        <FlashValue value={pays} text={s} kind="direction" />
+      </span>
     );
+  };
   const won = (bg: string) => <span style={{ ...mono, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 9999, background: bg, color: 'var(--mako-on-side)', boxShadow: 'var(--edge)' }}>WON</span>;
   return (
     <div style={{ borderTop: '1px solid var(--line)', paddingTop: 16 }}>
@@ -521,7 +528,7 @@ function Odds({ market: m, row, labels }: ViewProps) {
             {yesWon && won('var(--mako-yes)')}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            {big(perOne(row.yesPays))}
+            {big(row.yesPays)}
             {row.yesPays !== null && <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>PER 1 USDC</span>}
           </div>
         </div>
@@ -531,21 +538,40 @@ function Odds({ market: m, row, labels }: ViewProps) {
             {noWon && won('var(--mako-no)')}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexDirection: 'row-reverse' }}>
-            {big(perOne(row.noPays))}
+            {big(row.noPays)}
             {row.noPays !== null && <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>PER 1 USDC</span>}
           </div>
         </div>
       </div>
-      <div style={{ display: 'flex', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)' }}>
-        <div style={{ width: `${row.yesPct}%`, transition: 'width 700ms cubic-bezier(0.23,1,0.32,1)', background: 'var(--mako-yes)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.yesPct}%</div>
-        <div style={{ flex: 1, background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>{row.noPct}%</div>
+      {/* The split bar, exactly as origin/main drew it: a flex bar, YES `width: N%` (min 60px), NO the rest (min 60px)
+          with its left border as the edge stroke. A change of odds animates YES's width (mk-split-yes: 300 ms ease-out,
+          none with reduced motion). Width, not a transform, on purpose: layout puts the YES/NO seam on a whole pixel, a
+          transform leaves it on a fractional one and blurs it (a smeared edge stroke in light mode, an olive column in
+          dark mode). One small bar that animates only when the odds change makes the layout cost negligible. */}
+      <div data-split-yes={row.yesPct} style={{ display: 'flex', height: 34, borderRadius: 9999, overflow: 'hidden', margin: '14px 4px 0', border: '1.5px solid var(--edge-c)' }}>
+        <div className="mk-split-yes" style={{ width: `${row.yesPct}%`, background: 'var(--mako-yes)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>
+          <FlashValue value={row.yesPct} text={`${row.yesPct}%`} kind="neutral" />
+        </div>
+        <div style={{ flex: 1, background: 'var(--mako-no)', borderLeft: '1.5px solid var(--edge-c)', color: 'var(--mako-on-side)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 14px', ...mono, fontSize: 13, fontWeight: 700, minWidth: 60 }}>
+          <FlashValue value={row.noPct} text={`${row.noPct}%`} kind="neutral" />
+        </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 4px 0', ...mono, fontSize: 13 }}>
         <span>
-          <span style={{ fontWeight: 700 }}>{usdc2(m.totalYes)} USDC</span> <span style={{ color: 'var(--dim)' }}>· {m.yesBettorCount} {m.yesBettorCount === 1 ? 'bettor' : 'bettors'}</span>
+          <span style={{ fontWeight: 700 }}>
+            <FlashValue value={m.totalYes} text={usdc2(m.totalYes)} kind="direction" /> USDC
+          </span>{' '}
+          <span style={{ color: 'var(--dim)' }}>
+            · <FlashValue value={m.yesBettorCount} text={String(m.yesBettorCount)} kind="neutral" /> {m.yesBettorCount === 1 ? 'bettor' : 'bettors'}
+          </span>
         </span>
         <span>
-          <span style={{ color: 'var(--dim)' }}>{m.noBettorCount} {m.noBettorCount === 1 ? 'bettor' : 'bettors'} ·</span> <span style={{ fontWeight: 700 }}>{usdc2(m.totalNo)} USDC</span>
+          <span style={{ color: 'var(--dim)' }}>
+            <FlashValue value={m.noBettorCount} text={String(m.noBettorCount)} kind="neutral" /> {m.noBettorCount === 1 ? 'bettor' : 'bettors'} ·
+          </span>{' '}
+          <span style={{ fontWeight: 700 }}>
+            <FlashValue value={m.totalNo} text={usdc2(m.totalNo)} kind="direction" /> USDC
+          </span>
         </span>
       </div>
       <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', padding: '10px 4px 0' }}>
@@ -727,9 +753,18 @@ function BetFormDesktop(v: ViewProps) {
   );
 }
 
-function SideToggle({ side, setSide, labels, height, fontSize, background = 'var(--raise)' }: { side: Side; setSide: (s: Side) => void; labels: { yes: string; no: string }; height: number; fontSize: number; background?: string }) {
+/// The YES/NO choice (desktop bet form and the mobile bet drawer). One pill (mk-sideind) slides behind the two labels
+/// and takes the chosen side's colour (motion pass 8); the labels stay put. Text on the pill is --mako-on-side.
+export function SideToggle({ side, setSide, labels, height, fontSize, background = 'var(--raise)' }: { side: Side; setSide: (s: Side) => void; labels: { yes: string; no: string }; height: number; fontSize: number; background?: string }) {
   return (
-    <div role="group" aria-label="Side" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 4, borderRadius: 9999, background }}>
+    <div role="group" aria-label="Side" style={{ position: 'relative', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 4, borderRadius: 9999, background }}>
+      {/* One cell wide: (100% - 4px padding x2 - 4px gap) / 2 = 50% - 6px; moved one cell plus the gap to sit under NO. */}
+      <span
+        aria-hidden="true"
+        className="mk-sideind"
+        data-side={side}
+        style={{ position: 'absolute', top: 4, bottom: 4, left: 4, width: 'calc(50% - 6px)', borderRadius: 9999, background: side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)', boxShadow: 'var(--edge)', transform: side === 'yes' ? 'none' : 'translateX(calc(100% + 4px))' }}
+      />
       {(['yes', 'no'] as const).map((s) => {
         const on = s === side;
         return (
@@ -737,7 +772,8 @@ function SideToggle({ side, setSide, labels, height, fontSize, background = 'var
             key={s}
             onClick={() => setSide(s)}
             aria-pressed={on}
-            style={{ height, borderRadius: 9999, background: on ? (s === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)') : 'transparent', color: on ? 'var(--mako-on-side)' : 'var(--mako-canvas-fg)', boxShadow: on ? 'var(--edge)' : 'none', ...display, fontSize, transition: 'background-color 200ms ease', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 8px' }}
+            className="mk-sidelabel"
+            style={{ position: 'relative', height, borderRadius: 9999, background: 'transparent', color: on ? 'var(--mako-on-side)' : 'var(--mako-canvas-fg)', ...display, fontSize, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 8px' }}
           >
             {s === 'yes' ? labels.yes : labels.no}
           </button>
@@ -821,7 +857,7 @@ function PoolMobile(v: ViewProps) {
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 28, lineHeight: 1.08, letterSpacing: '-0.025em' }}>{m.question}</h1>
           <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.65, marginTop: 8 }}>
-            Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by {by} · {row.bettors} {row.bettors === 1 ? 'bettor' : 'bettors'}
+            Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by {by} · <FlashValue value={row.bettors} text={String(row.bettors)} kind="neutral" /> {row.bettors === 1 ? 'bettor' : 'bettors'}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 18, gap: 12 }}>
             <div style={{ minWidth: 0 }}>
@@ -856,9 +892,14 @@ function PoolMobile(v: ViewProps) {
                   {won && <span style={{ height: 24, display: 'flex', alignItems: 'center', padding: '0 9px', borderRadius: 9999, background: 'var(--mako-on-side)', color: yes ? 'var(--mako-yes)' : 'var(--mako-no)', fontSize: 11, fontWeight: 800 }}>WON</span>}
                 </div>
                 <div style={{ fontSize: 12, fontWeight: 700, marginTop: 14 }}>Pays per 1</div>
-                <div style={{ ...display, fontSize: pays ? 32 : 18, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>{pays ?? 'No stake yet'}</div>
+                {/* On the side's own fill, a green or red flash would vanish: these dip instead (motion pass 7). */}
+                <div style={{ ...display, fontSize: pays ? 32 : 18, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>
+                  {pays === null ? 'No stake yet' : <FlashValue value={yes ? row.yesPays : row.noPays} text={pays} kind="neutral" />}
+                </div>
                 <div style={{ fontSize: 13, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>
-                  {usdc2(yes ? m.totalYes : m.totalNo)} · {yes ? m.yesBettorCount : m.noBettorCount} {(yes ? m.yesBettorCount : m.noBettorCount) === 1 ? 'bettor' : 'bettors'}
+                  <FlashValue value={yes ? m.totalYes : m.totalNo} text={usdc2(yes ? m.totalYes : m.totalNo)} kind="neutral" /> ·{' '}
+                  <FlashValue value={yes ? m.yesBettorCount : m.noBettorCount} text={String(yes ? m.yesBettorCount : m.noBettorCount)} kind="neutral" />{' '}
+                  {(yes ? m.yesBettorCount : m.noBettorCount) === 1 ? 'bettor' : 'bettors'}
                 </div>
               </div>
             );
@@ -968,13 +1009,14 @@ function PoolMobile(v: ViewProps) {
   );
 }
 
-/// A drag down of this many pixels closes the open panel; a drag up of SWIPE_OPEN_PX opens the slim bar.
-const SWIPE_CLOSE_PX = 60;
+/// A drag up of this many pixels opens the slim bar. Closing (far enough, or fast enough) is shouldCloseDrawer.
 const SWIPE_OPEN_PX = 30;
 
 function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) => void }) {
   const { market: m, row, labels, side, setSide, amountText, setAmountText, amount, estimate, why, openBet, claimAmount, openClaim, signedIn, open, setOpen } = v;
-  const touchY = useRef<number | null>(null);
+  // The touch so far (clientY + event timeStamp), from its start: null when no touch. The release speed is measured
+  // over its last 100 ms (drawer-swipe.ts), so the recent moves are kept, not just the start.
+  const touch = useRef<TouchSample[] | null>(null);
   // How far the open panel is being dragged down, so it follows the finger (0 when not dragging).
   const [dragY, setDragY] = useState(0);
   const name = side === 'yes' ? labels.yes : labels.no;
@@ -987,25 +1029,28 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
   // Swipe as well as tap (Joshua, 2026-10-08). The panel claims vertical drags (touch-action: none), otherwise the
   // browser scrolls the page underneath and cancels the gesture before it ends; taps still reach its buttons.
   const onTouchStart = (e: React.TouchEvent) => {
-    touchY.current = e.touches[0]?.clientY ?? null;
+    const y = e.touches[0]?.clientY;
+    touch.current = y === undefined ? null : [{ y, t: e.timeStamp }];
   };
   const onTouchMove = (e: React.TouchEvent) => {
-    const start = touchY.current;
+    const samples = touch.current;
     const y = e.touches[0]?.clientY;
-    if (!collapsible || !open || start === null || y === undefined) return;
-    setDragY(Math.max(0, y - start));
+    if (samples === null || y === undefined) return;
+    touch.current = addTouchSample(samples, { y, t: e.timeStamp });
+    if (!collapsible || !open) return;
+    setDragY(Math.max(0, y - samples[0].y));
   };
   const onTouchEnd = (e: React.TouchEvent) => {
-    const start = touchY.current;
-    touchY.current = null;
+    const samples = touch.current;
+    touch.current = null;
     setDragY(0);
     const end = e.changedTouches[0]?.clientY;
-    if (!collapsible || start === null || end === undefined) return;
-    if (open && end - start > SWIPE_CLOSE_PX) setOpen(false);
-    else if (!open && start - end > SWIPE_OPEN_PX) setOpen(true);
+    if (!collapsible || samples === null || end === undefined) return;
+    if (open && shouldCloseDrawer(addTouchSample(samples, { y: end, t: e.timeStamp }))) setOpen(false);
+    else if (!open && samples[0].y - end > SWIPE_OPEN_PX) setOpen(true);
   };
   const onTouchCancel = () => {
-    touchY.current = null;
+    touch.current = null;
     setDragY(0);
   };
   const oddsChip = (s: Side): React.CSSProperties => ({
@@ -1027,6 +1072,10 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
       onTouchCancel={onTouchCancel}
+      // The snap back after a drag is mk-betdrawer's transform transition (mako-shell.css); while the finger drags,
+      // data-dragging turns it off so the panel follows the finger 1:1.
+      className="mk-betdrawer"
+      data-dragging={dragY ? '' : undefined}
       style={{
         position: 'fixed',
         left: 0,
@@ -1042,7 +1091,6 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
         gap: 10,
         touchAction: collapsible ? 'none' : undefined,
         transform: dragY ? `translateY(${dragY}px)` : undefined,
-        transition: dragY ? 'none' : 'transform 180ms ease',
       }}
     >
       {collapsible ? (
@@ -1071,7 +1119,8 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
               }}
               style={oddsChip(s)}
             >
-              {s === 'yes' ? labels.yes : labels.no} {perOne(s === 'yes' ? row.yesPays : row.noPays) ?? ''}
+              {s === 'yes' ? labels.yes : labels.no}{' '}
+              <FlashValue value={s === 'yes' ? row.yesPays : row.noPays} text={perOne(s === 'yes' ? row.yesPays : row.noPays) ?? ''} kind="neutral" />
             </button>
           ))}
           <button
@@ -1085,7 +1134,9 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
         </div>
       )}
       {row.state === 'open' && expanded && (
-        <>
+        // The form enters (mk-betform: @starting-style fade + 8px rise) when the panel opens. Same column and gap as
+        // the panel, so the layout is unchanged.
+        <div className="mk-betform" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ width: 150, flex: 'none' }}>
               <SideToggle side={side} setSide={setSide} labels={labels} height={38} fontSize={14} background="var(--mako-canvas)" />
@@ -1127,7 +1178,7 @@ function MobileBottom(v: ViewProps & { open: boolean; setOpen: (open: boolean) =
           <div style={{ fontSize: 13, color: 'var(--dim)', textAlign: 'center' }}>
             Pays {estimate === null ? '0.00' : usdc2(estimate)} USDC if {name} wins
           </div>
-        </>
+        </div>
       )}
       {row.state !== 'open' && claimAmount !== null && (
         <button onClick={openClaim} className="m3-press m3-scale96" style={{ ...big, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>

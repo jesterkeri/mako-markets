@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import { CAT_STYLE, catTitle, formatPays, positionLabel, usdc2, type PoolRow } from '@/lib/pool-list';
+import { FlashValue } from '@/lib/use-flash';
 import type { SideLabels } from '@/lib/use-pool-labels';
 
 // One open pool as a mobile card (8a): an inverse card with the category chip, the countdown, the question, the
@@ -20,7 +21,8 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
   const sidePays: React.CSSProperties = { ...display, fontSize: 20, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' };
   const cap = (s: string) => (s === 'YES' ? 'Yes' : s === 'NO' ? 'No' : s);
   return (
-    <div className="m3-press" style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
+    // mk-cardpress: pressing a side button tints that button only, not the whole card (mako-shell.css).
+    <div className="m3-press mk-cardpress" style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px 0 4px', borderRadius: 9999, background: cat.bg, color: cat.fg, boxShadow: 'var(--edge)', fontSize: 12, fontWeight: 800 }}>
           <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: 9999, background: 'rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8 }}>
@@ -41,23 +43,30 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
       </Link>
       <div className="mk-over" style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <Link href={`${poolHref(r.id)}?side=yes`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-yes)' }}>
+          {/* On the side fills and the inverse card a green or red flash would vanish: a change dips (motion pass 7). */}
           <span style={sideName}>
-            {cap(labels.yes)} {r.yesPct}%
+            {cap(labels.yes)} <FlashValue value={r.yesPct} text={`${r.yesPct}%`} kind="neutral" />
           </span>
-          <span style={sidePays}>{formatPays(r.yesPays) || 'No bets'}</span>
+          <span style={sidePays}>
+            <FlashValue value={r.yesPays} text={formatPays(r.yesPays) || 'No bets'} kind="neutral" />
+          </span>
         </Link>
         <Link href={`${poolHref(r.id)}?side=no`} className="m3-press m3-scale96 mk-side" style={{ ...side, background: 'var(--mako-no)' }}>
           <span style={sideName}>
-            {cap(labels.no)} {r.noPct}%
+            {cap(labels.no)} <FlashValue value={r.noPct} text={`${r.noPct}%`} kind="neutral" />
           </span>
-          <span style={sidePays}>{formatPays(r.noPays) || 'No bets'}</span>
+          <span style={sidePays}>
+            <FlashValue value={r.noPays} text={formatPays(r.noPays) || 'No bets'} kind="neutral" />
+          </span>
         </Link>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-        <span style={{ opacity: 0.72 }}>{usdc2(r.pool)} USDC</span>
+        <span style={{ opacity: 0.72 }}>
+          <FlashValue value={r.pool} text={usdc2(r.pool)} kind="neutral" /> USDC
+        </span>
         <span aria-hidden="true" style={{ width: 4, height: 4, borderRadius: '50%', background: 'currentColor', opacity: 0.72 }} />
         <span style={{ opacity: 0.72, whiteSpace: 'nowrap' }}>
-          {r.bettors} {r.bettors === 1 ? 'bettor' : 'bettors'}
+          <FlashValue value={r.bettors} text={String(r.bettors)} kind="neutral" /> {r.bettors === 1 ? 'bettor' : 'bettors'}
         </span>
         {pos && (
           <span style={{ marginLeft: 'auto', flex: 'none', height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontWeight: 700 }}>
