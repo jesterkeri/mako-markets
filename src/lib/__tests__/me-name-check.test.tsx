@@ -15,7 +15,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   fetchMock.mockReset();
 });
-const reply = (body: unknown) => fetchMock.mockResolvedValueOnce({ json: async () => body });
+// Answers are shared across hook instances for 2 s (use-name-check.ts), so each test asks about its own names.
+const reply = (body: unknown) => fetchMock.mockResolvedValueOnce({ ok: true, json: async () => body });
 
 describe('useNameCheck', () => {
   it('checking, then taken, 400 ms after the last keystroke', async () => {
@@ -41,17 +42,17 @@ describe('useNameCheck', () => {
   });
   it('typing on: the earlier draft is never asked about, and its answer is never shown', async () => {
     reply({ available: true });
-    const { result, rerender } = renderHook(({ d }) => useNameCheck(d, null, true), { initialProps: { d: 'Bel' } });
+    const { result, rerender } = renderHook(({ d }) => useNameCheck(d, null, true), { initialProps: { d: 'Ros' } });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
     });
-    rerender({ d: 'Belle' });
+    rerender({ d: 'Rosalind' });
     expect(result.current).toBe('checking');
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('name=Belle');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('name=Rosalind');
     expect(result.current).toBe('available');
   });
   it('a case change of the current name is asked about (the server knows whether this account keeps the name)', async () => {
@@ -62,5 +63,14 @@ describe('useNameCheck', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.current).toBe('taken');
+  });
+  it('a refused or failed check gives no verdict: it stays checking, never "Looks good"', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'unauthorized' }) });
+    const { result } = renderHook(() => useNameCheck('Ottoline', null, true));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current).toBe('checking');
   });
 });
