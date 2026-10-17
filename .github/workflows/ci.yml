@@ -287,7 +287,8 @@ jobs:
   # Price recorder Worker (price-recorder/, mako-design/CHARTS_DS_PLAN.md): records one-minute candles from Chainlink
   # Data Streams for the charts; never settles anything. Its own package like keeper/. It decodes with the resolver's
   # own cf-worker/src/datastreams.ts, so the rules-version check fails if that file or a feed table changes without
-  # `pnpm rules-version`; the spike proves the deploy bundle carries that file and decodes a verified report.
+  # `pnpm rules-version`. Until the tick exists (unit c) the Worker entry imports no decoder, so the spike builds a
+  # separate entry that does and proves the bundle carries the resolver file and decodes a verified report.
   price-recorder:
     runs-on: ubuntu-latest
     timeout-minutes: 15

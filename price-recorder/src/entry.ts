@@ -25,11 +25,13 @@ export function jsonSecond(v: unknown): number | null {
   return null;
 }
 
-/// keccak256 of the report bytes. A value that is not hex is hashed as its UTF-8 text, so a malformed entry still has
-/// a stable identity in raw_fp (and is invalid everywhere else).
+/// keccak256 of the report bytes (plan 3.3). A value that is not hex still gets a stable identity in raw_fp (and is
+/// invalid everywhere else): keccak256 over a one-byte tag and its text, 0x01 for a non-hex string, 0x02 for anything
+/// else as JSON, so `null`, "null" and the hex bytes of "null" stay three different entries.
 export function reportKey(fullReport: unknown): Hex {
   if (typeof fullReport === 'string' && /^0x([0-9a-fA-F]{2})*$/.test(fullReport)) return keccak256(fullReport.toLowerCase() as Hex);
-  return keccak256(stringToBytes(typeof fullReport === 'string' ? fullReport : JSON.stringify(fullReport ?? null)));
+  const [tag, text] = typeof fullReport === 'string' ? [1, fullReport] : [2, JSON.stringify(fullReport ?? null)];
+  return keccak256(new Uint8Array([tag, ...stringToBytes(text)]));
 }
 
 export type RawEntry = { obs: number; key: Hex };

@@ -237,3 +237,15 @@ describe('fingerprints (plan 3.3)', () => {
     expect([row.fp, row.raw_fp]).toEqual([null, null]);
   });
 });
+
+describe('raw identity of malformed entries (adversary on f4a663c)', () => {
+  it('null, the string "null" and the hex bytes of "null" are three different raw entries', async () => {
+    const { reportKey } = await import('../src/entry');
+    const keys = [reportKey(null), reportKey('null'), reportKey('0x6e756c6c')];
+    expect(new Set(keys).size).toBe(3);
+    // A real hex report keeps the plain keccak of its bytes (plan 3.3).
+    const e = capture('open-minute-BTC')[0];
+    const { keccak256 } = await import('viem');
+    expect(reportKey(e.fullReport)).toBe(keccak256((e.fullReport as string).toLowerCase() as `0x${string}`));
+  });
+});

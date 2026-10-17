@@ -61,6 +61,13 @@ export type MinuteRow = {
 
 const NS = 1_000_000_000n;
 
+/// Floor division for bigint (`/` truncates toward zero). A price stamped a few ms after its own report second is real
+/// (seen in the NYSE and AAPL captures), and its age is then -1 s, not 0.
+const floorDiv = (a: bigint, b: bigint): bigint => {
+  const q = a / b;
+  return (a % b !== 0n) && ((a < 0n) !== (b < 0n)) ? q - 1n : q;
+};
+
 /// Plan 3.3 classes. v3 is always fresh-open. v8: status 2 is fresh-open unless the price is strictly older than
 /// STALE_EXCLUDE_S (integer nanoseconds); status 1 closed; status 0, and any status the schema does not define,
 /// unknown (a gap, never a price).
@@ -154,7 +161,7 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
   let maxStale: number | null = null;
   for (const v of uniq) {
     if (v.report.schema !== 8 || v.report.marketStatus !== 2) continue;
-    const s = Number((BigInt(v.obs) * NS - v.report.lastUpdateTimestamp) / NS);
+    const s = Number(floorDiv(BigInt(v.obs) * NS - v.report.lastUpdateTimestamp, NS));
     maxStale = maxStale === null ? s : Math.max(maxStale, s);
   }
   const counted = { ...base, ...proven, n_open: fresh.length, max_stale_s: maxStale };
