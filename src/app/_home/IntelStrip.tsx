@@ -65,13 +65,7 @@ export function intelKeys(items: readonly IntelItem[]): string[] {
 /// press that brought no focus with it (a finger dragging the still row, a press the page cancelled) is dropped when it
 /// ends: only a press that focused its card can later explain that card's focus (the return from the story's new tab).
 type InputRecord = { last: 'keyboard' | 'pointer' | null; target: EventTarget | null };
-const input: InputRecord & { pending: boolean; focused: boolean; pointerId: number | null } = {
-  last: null,
-  target: null,
-  pending: false,
-  focused: false,
-  pointerId: null,
-};
+const input: InputRecord & { pending: boolean; focused: boolean } = { last: null, target: null, pending: false, focused: false };
 let listeners = 0;
 let pendingFrom: Element | null = null;
 function onKeyInput(e: KeyboardEvent) {
@@ -94,9 +88,6 @@ function onPointerInput(e: Event) {
   input.pending = false;
   input.last = 'pointer';
   input.target = e.target;
-  // The pointer that pressed: only its own events can end the press (a pen hovering, or another pointer, cannot).
-  // mousedown and touchstart carry no pointerId and keep the one their pointerdown set.
-  if (e instanceof PointerEvent) input.pointerId = e.pointerId;
   // A press on the card that already holds focus moves no focus (no focusin), yet it is the press that focus belongs
   // to, as when an open story is clicked again: it counts as having focused its card. Only an element inside a card
   // (an `li`) counts as holding it, never something that merely contains the strip.
@@ -120,39 +111,8 @@ function onPressEnd() {
   input.target = null;
 }
 const POINTER_EVENTS = ['pointerdown', 'mousedown', 'touchstart'] as const;
-// What ends a press. A release can also never reach the page: a native context menu can swallow the mouseup, a drag
-// ends in dragend, and switching window mid-press takes the release elsewhere. So a drag's end, the window losing focus
-// and the first pointer movement with no button held count as the end too, or a held press would stay "held" until the
-// next one. Not `contextmenu` itself: on Linux and macOS it fires when the right button goes DOWN, mid-press.
-const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel', 'dragend'] as const;
-/// Whether `e` ends the press under way: an event of another pointer never does (a pen hovering while the mouse is
-/// held), and a release ends it only once no button is held (letting go of a second button, a chord, does not).
-function endsPress(e: Event): boolean {
-  if (e instanceof PointerEvent && input.pointerId !== null && e.pointerId !== input.pointerId) return false;
-  if (e.type === 'pointerup' || e.type === 'mouseup' || e.type === 'pointermove') return (e as MouseEvent).buttons === 0;
-  if (e.type === 'touchend' || e.type === 'touchcancel') return (e as TouchEvent).touches.length === 0;
-  return true; // pointercancel, dragend
-}
-/// Calls `cb` on every press end until the returned function removes it. The window's own blur only: `blur` does not
-/// bubble, so a listener on the window outside the capture phase sees no element's blur.
-function onPressEnds(cb: () => void): () => void {
-  const onBlur = (e: Event) => {
-    if (e.target === window) cb();
-  };
-  const onEnd = (e: Event) => {
-    if (endsPress(e)) cb();
-  };
-  const onMove = onEnd;
-  for (const t of PRESS_END_EVENTS) window.addEventListener(t, onEnd, { capture: true, passive: true });
-  window.addEventListener('pointermove', onMove, { capture: true, passive: true });
-  window.addEventListener('blur', onBlur);
-  return () => {
-    for (const t of PRESS_END_EVENTS) window.removeEventListener(t, onEnd, true);
-    window.removeEventListener('pointermove', onMove, true);
-    window.removeEventListener('blur', onBlur);
-  };
-}
-let stopPressEnds: (() => void) | null = null;
+// A release, or the browser cancelling the press. A press that focused its card is kept past these (see onPressEnd).
+const PRESS_END_EVENTS = ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'touchcancel'] as const;
 
 function useInputRecord() {
   useEffect(() => {
@@ -160,20 +120,18 @@ function useInputRecord() {
       window.addEventListener('keydown', onKeyInput, true);
       window.addEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.addEventListener(t, onPointerInput, { capture: true, passive: true });
-      stopPressEnds = onPressEnds(onPressEnd);
+      for (const t of PRESS_END_EVENTS) window.addEventListener(t, onPressEnd, { capture: true, passive: true });
     }
     return () => {
       if (--listeners > 0) return;
       window.removeEventListener('keydown', onKeyInput, true);
       window.removeEventListener('focusin', onFocusInput, true);
       for (const t of POINTER_EVENTS) window.removeEventListener(t, onPointerInput, true);
-      stopPressEnds?.();
-      stopPressEnds = null;
+      for (const t of PRESS_END_EVENTS) window.removeEventListener(t, onPressEnd, true);
       input.last = null;
       input.target = null;
       input.pending = false;
       input.focused = false;
-      input.pointerId = null;
     };
   }, []);
 }
@@ -227,35 +185,28 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
   const moving = marqueeMoves(items.length, useWidth(ref));
   const keys = intelKeys(items);
   useInputRecord();
-  // Keyboard mode (see the header). `reveal` names the element keyboard focus last arrived on; each arrival is a new
-  // object, so the layout effect below runs once per arrival, after `data-kb` has made the still row.
-  const [kb, setKb] = useState(false);
+  // Keyboard mode (see the header) is on while `reveal` names the element keyboard focus last arrived on; each arrival is
+  // a new object, so the layout effect below runs once per arrival, after `data-kb` has made the still row.
   const [reveal, setReveal] = useState<{ el: Element } | null>(null);
-  // A strip that stops moving (the window grew, the feed shrank) leaves keyboard mode, so it never comes back still.
-  if (!moving && (kb || reveal)) {
-    setKb(false);
-    setReveal(null);
-  }
-  // A strip that starts moving (a refetch crossed the card count) under keyboard focus enters keyboard mode, as focus
-  // arriving would: otherwise the crawl would carry the focused card off screen.
+  const kb = reveal !== null;
+  // Keyboard mode only exists while the strip moves. A strip that stops moving (the window grew, the feed shrank) leaves
+  // it, so it never comes back still; one that starts moving (a refetch crossed the card count) under keyboard focus
+  // enters it, as focus arriving would, or the crawl would carry the focused card off screen.
   // shortcut: matches focus inside any intel strip; Home mounts one, scope it to this strip's ref if that changes.
   const [wasMoving, setWasMoving] = useState(moving);
   if (wasMoving !== moving) {
     setWasMoving(moving);
     const focused = typeof document === 'undefined' ? null : document.activeElement;
-    if (moving && focused?.closest('[data-intel-strip]') && !focusFromPointer(focused)) {
-      setKb(true);
-      setReveal({ el: focused });
-    }
+    if (!moving) setReveal(null);
+    else if (focused?.closest('[data-intel-strip]') && !focusFromPointer(focused)) setReveal({ el: focused });
   }
   useLayoutEffect(() => {
     const strip = ref.current;
-    if (kb && reveal && strip && document.activeElement === reveal.el) revealCard(strip, reveal.el);
-  }, [kb, reveal]);
+    if (reveal && strip && document.activeElement === reveal.el) revealCard(strip, reveal.el);
+  }, [reveal]);
   // Leaving keyboard mode: the crawl starts again from its beginning, so the scroll goes back to the start. With
   // reduced motion the row is scrolled by hand, so it stays where the reader put it.
   const leaveKb = (strip: HTMLElement) => {
-    setKb(false);
     setReveal(null);
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     strip.scrollLeft = 0;
@@ -298,7 +249,6 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
           moving
             ? (e) => {
                 if (focusFromPointer(e.target)) return;
-                setKb(true);
                 setReveal({ el: e.target });
               }
             : undefined
