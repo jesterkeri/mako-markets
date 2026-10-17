@@ -113,12 +113,13 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
   };
 
   const valid: ValidEntry[] = [];
-  const raw = new Map<string, { obs: number; key: Hex }>();
+  // Raw entries by exact identity (entry.ts rawEntry), each marked valid or not; identical values share validity.
+  const raw = new Map<string, { obs: number; key: Hex; valid: boolean }>();
   let witness = false;
   for (const e of entries) {
     const r = rawEntry(e, feed);
-    if (r && r.obs >= M && r.obs < end) raw.set(`${r.obs}:${r.key}`, r);
     const v = validEntry(e, feed);
+    if (r && r.obs >= M && r.obs < end) raw.set(r.id, { obs: r.obs, key: r.key, valid: v !== null });
     if (!v) continue;
     if (exhaustionWitness(v, end)) witness = true;
     if (candleInput(v, M)) valid.push(v);
@@ -134,8 +135,7 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
     bySecond.set(v.obs, [...(bySecond.get(v.obs) ?? []), v.key]);
   }
   const uniq = [...inputs.values()].sort((a, b) => a.obs - b.obs);
-  const validKeys = new Set(inputs.keys());
-  const rejected = [...raw.keys()].filter((k) => !validKeys.has(k)).length;
+  const rejected = [...raw.values()].filter((x) => !x.valid).length;
 
   if (!fetchOk || !witness) return { ...base, state: 'incomplete' };
 

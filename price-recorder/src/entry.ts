@@ -34,7 +34,19 @@ export function reportKey(fullReport: unknown): Hex {
   return keccak256(new Uint8Array([tag, ...stringToBytes(text)]));
 }
 
-export type RawEntry = { obs: number; key: Hex };
+/// `id` is the entry's exact identity for de-duplication (plan 3.3: "de-duplicated by identical bytes"): its second and
+/// its `fullReport` exactly as sent, with the kind kept apart (hex bytes, other text, another JSON value, absent), so
+/// two different values are never one entry. `key` is only the fingerprint item; for a hex report it is the plain
+/// keccak of the bytes, so any byte string can reach any key and keys alone cannot be the identity.
+export type RawEntry = { obs: number; key: Hex; id: string };
+
+function rawId(obs: number, e: PageEntry): string {
+  const v = e.fullReport;
+  if (!('fullReport' in e) || v === undefined) return JSON.stringify([obs, 'absent']);
+  if (typeof v === 'string' && /^0x([0-9a-fA-F]{2})*$/.test(v)) return JSON.stringify([obs, 'hex', v.toLowerCase()]);
+  if (typeof v === 'string') return JSON.stringify([obs, 'text', v]);
+  return JSON.stringify([obs, 'json', JSON.stringify(v)]);
+}
 
 /// The entry as raw_fp sees it: JSON feedID equals the feed and JSON observationsTimestamp is a second. Nothing else
 /// is read.
@@ -42,7 +54,7 @@ export function rawEntry(e: PageEntry, feed: Feed): RawEntry | null {
   if (typeof e.feedID !== 'string' || e.feedID.toLowerCase() !== feed.feedId) return null;
   const obs = jsonSecond(e.observationsTimestamp);
   if (obs === null) return null;
-  return { obs, key: reportKey(e.fullReport) };
+  return { obs, key: reportKey(e.fullReport), id: rawId(obs, e) };
 }
 
 export type ValidEntry = { obs: number; key: Hex; report: DecodedReport; price: bigint };

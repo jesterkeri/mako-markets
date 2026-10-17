@@ -64,6 +64,10 @@ def second(v):
         return None
     if isinstance(v, int):
         return v if v >= 0 else None
+    # A JSON number written 1792071096.0 parses as a float here but as the integer 1792071096 in JavaScript, which
+    # the recorder cannot tell apart; accept an integral float so both sides read such a page alike.
+    if isinstance(v, float):
+        return int(v) if v.is_integer() and 0 <= v < 2**53 else None
     if isinstance(v, str) and v.isdigit() and (v == "0" or not v.startswith("0")) and len(v) <= 15:
         return int(v)
     return None
