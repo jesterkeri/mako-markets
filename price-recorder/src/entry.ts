@@ -45,7 +45,17 @@ export function rawId(obs: number, e: PageEntry): string {
   if (!('fullReport' in e) || v === undefined) return JSON.stringify([obs, 'absent']);
   if (typeof v === 'string' && /^0x([0-9a-fA-F]{2})*$/.test(v)) return JSON.stringify([obs, 'hex', v.toLowerCase()]);
   if (typeof v === 'string') return JSON.stringify([obs, 'text', v]);
-  return JSON.stringify([obs, 'json', JSON.stringify(v)]);
+  return JSON.stringify([obs, 'json', typed(v)]);
+}
+
+/// JSON.stringify is not one-to-one on parsed values (Infinity and NaN both print as null, -0 as 0), so a non-string
+/// fullReport is written with every number tagged by its exact text and every value by its type.
+// shortcut: object keys keep JavaScript's order, which moves integer-like keys first; such a value is never a report.
+function typed(v: unknown): string {
+  if (typeof v === 'number') return `n${Object.is(v, -0) ? '-0' : String(v)}`;
+  if (Array.isArray(v)) return `a[${v.map(typed).join(',')}]`;
+  if (v && typeof v === 'object') return `o{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${typed(x)}`).join(',')}}`;
+  return `${typeof v}:${JSON.stringify(v)}`;
 }
 
 /// The JSON second of an entry of `feed`, or null if the JSON feedID is another feed's or the second is malformed.
