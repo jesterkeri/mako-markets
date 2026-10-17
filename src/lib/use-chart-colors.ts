@@ -19,7 +19,7 @@ export function useChartColors() {
     staleTime: Infinity,
     queryFn: async (): Promise<ChartColors | null> => {
       const res = await fetch('/api/user/chart-colors', { credentials: 'same-origin' });
-      if (!res.ok) return null;
+      if (!res.ok) throw new Error(`chart colours not loaded (${res.status})`);
       return ((await res.json()) as { colors: ChartColors | null }).colors;
     },
   });
@@ -41,7 +41,10 @@ export function useChartColors() {
   const saved = user ? (query.data ?? null) : null;
   return {
     colors: saved ?? DEFAULT_CHART_COLORS,
-    canSave: user !== null,
+    signedIn: user !== null,
+    // Changes wait for the saved set: a change over unloaded defaults would save defaults over the user's choices.
+    canSave: user !== null && query.isSuccess,
+    loadFailed: query.isError,
     save: mutation.mutate,
     saveFailed: mutation.isError,
   };

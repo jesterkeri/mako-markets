@@ -9,7 +9,7 @@ import { DEFAULT_CHART_COLORS, type ChartColors } from '../chart-colors';
 
 const hook = vi.hoisted(() => ({ canSave: true, save: vi.fn(), colors: null as ChartColors | null }));
 vi.mock('@/lib/use-chart-colors', () => ({
-  useChartColors: () => ({ colors: hook.colors ?? DEFAULT_CHART_COLORS, canSave: hook.canSave, save: hook.save, saveFailed: false }),
+  useChartColors: () => ({ colors: hook.colors ?? DEFAULT_CHART_COLORS, signedIn: hook.canSave, canSave: hook.canSave, loadFailed: false, save: hook.save, saveFailed: false }),
 }));
 const seen = vi.hoisted(() => ({ colors: [] as unknown[] }));
 vi.mock('@/components/chart/CandlestickChart', () => ({

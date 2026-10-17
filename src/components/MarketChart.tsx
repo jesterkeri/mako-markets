@@ -138,18 +138,30 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   // Candle colours (TradingView's set, saved to the account). A change shows at once and is saved 500 ms after the
   // last one, so dragging a colour picker does not send a request per step.
   const candle = useChartColors();
-  const [candleDraft, setCandleDraft] = useState<ChartColors | null>(null);
-  const candleColors = candleDraft ?? candle.colors;
+  // The draft holds only the colours changed, over the saved set, so it can never put defaults over saved choices.
+  const [candleDraft, setCandleDraft] = useState<Partial<ChartColors> | null>(null);
+  const candleColors = candleDraft ? { ...candle.colors, ...candleDraft } : candle.colors;
   const { save: saveCandleColors } = candle;
+  // The change still waiting for its save, so it is saved, not lost, if the chart closes inside the 500 ms.
+  const pendingCandle = useRef<ChartColors | null>(null);
   useEffect(() => {
-    if (!candleDraft) return;
-    // The draft is handed to the save (which puts it in the cache at once) and cleared, so it is saved exactly once.
+    const full = candleDraft && { ...candle.colors, ...candleDraft };
+    pendingCandle.current = full;
+    if (!full) return;
+    // Handed to the save (which puts it in the cache at once) and cleared, so it is saved exactly once.
     const t = setTimeout(() => {
-      saveCandleColors(candleDraft);
+      pendingCandle.current = null;
+      saveCandleColors(full);
       setCandleDraft(null);
     }, 500);
     return () => clearTimeout(t);
-  }, [candleDraft, saveCandleColors]);
+  }, [candleDraft, candle.colors, saveCandleColors]);
+  useEffect(
+    () => () => {
+      if (pendingCandle.current) saveCandleColors(pendingCandle.current);
+    },
+    [saveCandleColors],
+  );
 
   // Drawing tools state (krait port)
   const [drawingsOpen, setDrawingsOpen] = useState(false);
@@ -459,7 +471,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
                     part={part}
                     colors={candleColors}
                     disabled={!candle.canSave}
-                    onChange={(key, value) => setCandleDraft({ ...candleColors, [key]: value })}
+                    onChange={(key, value) => candle.canSave && setCandleDraft((d) => ({ ...d, [key]: value }))}
                   />
                 ))}
               </div>
@@ -476,7 +488,9 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
                     Reset to TradingView
                   </button>
                 ) : (
-                  <span className="text-muted normal-case">Sign in to change and keep your colours.</span>
+                  <span className="text-muted normal-case">
+                    {!candle.signedIn ? 'Sign in to change and keep your colours.' : candle.loadFailed ? 'Your colours did not load.' : 'Loading your colours.'}
+                  </span>
                 )}
                 {candle.saveFailed && <span role="alert" className="text-mako-red normal-case">Not saved</span>}
               </div>
