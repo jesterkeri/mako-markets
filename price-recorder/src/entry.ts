@@ -40,7 +40,7 @@ export function reportKey(fullReport: unknown): Hex {
 /// keccak of the bytes, so any byte string can reach any key and keys alone cannot be the identity.
 export type RawEntry = { obs: number; key: Hex; id: string };
 
-function rawId(obs: number, e: PageEntry): string {
+export function rawId(obs: number, e: PageEntry): string {
   const v = e.fullReport;
   if (!('fullReport' in e) || v === undefined) return JSON.stringify([obs, 'absent']);
   if (typeof v === 'string' && /^0x([0-9a-fA-F]{2})*$/.test(v)) return JSON.stringify([obs, 'hex', v.toLowerCase()]);

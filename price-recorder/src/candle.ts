@@ -19,7 +19,7 @@
 import { concat, keccak256, numberToHex, type Hex } from 'viem';
 
 import type { Feed } from './feeds';
-import { candleInput, exhaustionWitness, jsonSecond, rawEntry, validEntry, type PageEntry, type ValidEntry } from './entry';
+import { candleInput, exhaustionWitness, jsonSecond, rawEntry, rawId, validEntry, type PageEntry, type ValidEntry } from './entry';
 import { MINUTE_S, RAW_RULE, STALE_EXCLUDE_S } from './rules';
 import { RULES_VERSION } from './rules-version';
 
@@ -131,7 +131,7 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
     else if (!r) {
       const obs = jsonSecond(e.observationsTimestamp);
       const id = typeof e.feedID === 'string' ? e.feedID.toLowerCase() : (e.feedID ?? null);
-      if (obs !== null && obs >= M && obs < end) foreign.add(JSON.stringify([id, obs, e.fullReport ?? null]));
+      if (obs !== null && obs >= M && obs < end) foreign.add(JSON.stringify([id, rawId(obs, e)]));
     }
     if (!v) continue;
     if (exhaustionWitness(v, end)) witness = true;
