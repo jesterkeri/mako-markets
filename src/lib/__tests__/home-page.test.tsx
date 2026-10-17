@@ -77,7 +77,7 @@ const NEWS_ITEMS = [
   { kind: 'event', tag: 'FOOTBALL', title: 'Arsenal 2-1 Chelsea · FT', time: 'RECENT' },
   { kind: 'headline', tag: 'NBA', title: 'Lakers sign a guard', time: '1H AGO', url: 'javascript:alert(1)', publishedAt: new Date((NOW - 2 * HOUR - 30) * 1000).toISOString() },
   { kind: 'headline', tag: 'CRYPTO', title: 'ETH leads majors', time: '2H AGO', url: 'https://www.coindesk.com/eth', publishedAt: new Date((NOW - 90 * 60 - 30) * 1000).toISOString() },
-  { kind: 'headline', tag: 'CRYPTO', title: 'Fifth item never shows', time: '3H AGO', publishedAt: new Date((NOW - 4 * HOUR - 30) * 1000).toISOString() },
+  { kind: 'headline', tag: 'CRYPTO', title: 'Fifth item shows too', time: '3H AGO', publishedAt: new Date((NOW - 4 * HOUR - 30) * 1000).toISOString() },
 ];
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
 
@@ -200,14 +200,15 @@ describe('Home pools', () => {
 });
 
 describe('Home market intel', () => {
-  it('shows the newest four, labelled LATEST, linking out safely, aged from publishedAt', async () => {
+  it('shows every story the feed has (not only four), labelled LATEST, linking out safely, aged from publishedAt', async () => {
     const { desk } = renderHome();
     const intel = within(desk).getByRole('region', { name: 'Market intel' });
     await within(intel).findByText('Bitcoin holds above $75K');
     expect(within(intel).getByText('LATEST')).toBeTruthy();
     expect(screen.queryByText(/LIVE FEED/)).toBeNull();
     expect(within(intel).getByRole('link', { name: 'All news →' }).getAttribute('href')).toBe('/news');
-    expect(screen.queryAllByText('Fifth item never shows')).toEqual([]);
+    // Since 2026-10-16 the strip carries every story the feed has (IntelStrip), the fifth included.
+    expect(within(intel).getAllByText('Fifth item shows too')).toHaveLength(1);
 
     const btc = within(intel).getByRole('link', { name: 'Bitcoin holds above $75K' });
     expect(btc.getAttribute('href')).toBe('https://www.coindesk.com/markets/btc');

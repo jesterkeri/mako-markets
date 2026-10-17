@@ -317,6 +317,79 @@ body {
   z-index: 1;
 }
 
+/* Home's Market intel cards (Joshua, 2026-10-16): a slow endless crawl to the left through every story, drawn only
+ * when the stories overflow the strip (IntelStrip.tsx). One CSS animation on one track, transform only and linear, so
+ * it stays smooth while the page loads. The track holds the list twice and slides by half its width: no seam. The
+ * duration comes from the component (`--mk-marquee-dur`, card count x card width at 40 px/s), so the speed is the same
+ * however many stories there are. The edges fade through a mask (alpha only), so the page shows through in either
+ * theme. It stops under a fine pointer (a touch tap would stick it). Keyboard focus does more than pause: see below. */
+.mk-marquee {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, var(--mako-canvas-fg) 48px, var(--mako-canvas-fg) calc(100% - 48px), transparent);
+  mask-image: linear-gradient(to right, transparent, var(--mako-canvas-fg) 48px, var(--mako-canvas-fg) calc(100% - 48px), transparent);
+}
+.mk-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: mkMarquee var(--mk-marquee-dur, 60s) linear infinite;
+  will-change: transform;
+}
+/* Each copy of the list is a row. Its layout lives here, not inline, so the rules below can hide the copy. */
+.mk-marquee-row {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex: none;
+}
+@keyframes mkMarquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  .mk-marquee:hover .mk-marquee-track {
+    animation-play-state: paused;
+  }
+}
+/* Keyboard mode: IntelStrip sets `data-kb` while a card has focus that arrived from the keyboard (never a click or a
+ * tap), and clears it when focus leaves the strip. The strip is then a still row of one copy that scrolls, and
+ * IntelStrip scrolls each card focus reaches wholly into view. Pausing alone is not enough, because a card the crawl
+ * carried off the left edge sits at a negative offset no scroll can reach. A plain attribute selector, so it holds in
+ * every browser (no :has(), no :focus-visible). When the mode ends, the crawl starts again from its beginning. */
+.mk-marquee[data-kb] {
+  overflow-x: auto;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.mk-marquee[data-kb] .mk-marquee-track {
+  animation: none;
+  transform: none;
+  will-change: auto;
+}
+.mk-marquee[data-kb] .mk-marquee-dup {
+  display: none;
+}
+/* Reduced motion: nothing moves. One copy of the cards in a row the reader scrolls by hand, no fade over its ends. */
+@media (prefers-reduced-motion: reduce) {
+  .mk-marquee {
+    overflow-x: auto;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .mk-marquee-track {
+    animation: none;
+    transform: none;
+    will-change: auto;
+  }
+  .mk-marquee .mk-marquee-dup {
+    display: none;
+  }
+}
+
 /* Pressed-state tint for mobile controls. */
 .m3-press {
   position: relative;
