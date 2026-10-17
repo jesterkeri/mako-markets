@@ -35,7 +35,9 @@ function ask(name: string, key: string): Promise<NameCheck | null> {
 /// Advisory: the save route enforces it.
 export function useNameCheck(draft: string, current: string | null, editing: boolean): NameCheck {
   const [state, setState] = useState<{ key: string; check: NameCheck }>({ key: '', check: 'idle' });
-  const key = displayNameKey(draft);
+  // The answer depends on the account (its own name counts as available), so a verdict belongs to the typed name AND
+  // the account's current name: a sign-in as another account in another tab asks again instead of keeping the old one.
+  const key = `${current ?? ''}\n${displayNameKey(draft)}`;
   const skip = !editing || validateDisplayName(draft) !== null || (current !== null && draft.trim() === current.trim());
   useEffect(() => {
     if (skip) return;
