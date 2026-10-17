@@ -204,6 +204,8 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  // The candles last drawn (deduped, sorted), so a colour change can repaint the volume bars without re-fitting.
+  const shownCandlesRef = useRef<Candle[]>([]);
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null);
   const ema50Ref = useRef<ISeriesApi<'Line'> | null>(null);
 
@@ -433,6 +435,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
     unique.sort((a, b) => a.timestamp - b.timestamp);
 
     series.setData(toChartData(unique));
+    shownCandlesRef.current = unique;
     if (volumeRef.current) {
       const cc = candleColorsRef.current;
       volumeRef.current.setData(toVolumeData(unique, withAlpha(cc.upBody, 0.5) ?? cc.upBody, withAlpha(cc.downBody, 0.5) ?? cc.downBody));
@@ -444,11 +447,15 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
       ema50Ref.current.setData(computeEMA(unique, 50));
     }
     chart?.timeScale().fitContent();
-  }, [candles, showVolume, showMA20, showEMA50, candleColors]);
+  }, [candles, showVolume, showMA20, showEMA50]);
 
-  // A change of candle colours (the colour panel) repaints the candles at once; the effect above repaints the volume.
+  // A change of candle colours (the colour panel) repaints the candles and volume bars in place: no setData on the
+  // candles and no fitContent, so the user's zoom and scroll stay, as on TradingView.
   useEffect(() => {
     seriesRef.current?.applyOptions(candleOptions(candleColors));
+    const shown = shownCandlesRef.current;
+    if (volumeRef.current && shown.length > 0)
+      volumeRef.current.setData(toVolumeData(shown, withAlpha(candleColors.upBody, 0.5) ?? candleColors.upBody, withAlpha(candleColors.downBody, 0.5) ?? candleColors.downBody));
   }, [candleColors]);
 
   return (
