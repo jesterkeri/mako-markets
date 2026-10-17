@@ -236,6 +236,18 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
     setKb(false);
     setReveal(null);
   }
+  // A strip that starts moving (a refetch crossed the card count) under keyboard focus enters keyboard mode, as focus
+  // arriving would: otherwise the crawl would carry the focused card off screen.
+  // shortcut: matches focus inside any intel strip; Home mounts one, scope it to this strip's ref if that changes.
+  const [wasMoving, setWasMoving] = useState(moving);
+  if (wasMoving !== moving) {
+    setWasMoving(moving);
+    const focused = typeof document === 'undefined' ? null : document.activeElement;
+    if (moving && focused?.closest('[data-intel-strip]') && !focusFromPointer(focused)) {
+      setKb(true);
+      setReveal({ el: focused });
+    }
+  }
   useLayoutEffect(() => {
     const strip = ref.current;
     if (kb && reveal && strip && document.activeElement === reveal.el) revealCard(strip, reveal.el);
@@ -276,6 +288,7 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
     <div style={{ boxShadow: 'inset 0 1px 0 var(--line)' }}>
       <div
         ref={ref}
+        data-intel-strip=""
         className={moving ? 'mk-marquee' : undefined}
         data-kb={moving && kb ? '' : undefined}
         // Focus arriving on a card: from the keyboard it starts (or continues) keyboard mode and brings the card into
@@ -308,18 +321,21 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
             elapsed time falls in the new loop. Accepted, not corrected: a refetch moves the cards under the crawl anyway
             (a newer story in front shifts every card one width), the feed is capped at 30 so the count rarely changes,
             and keeping the pixel position would mean driving the animation from JS for a once-in-5-minutes event. */}
-        {moving ? (
-          <div className="mk-marquee-track" style={{ '--mk-marquee-dur': `${marqueeDurationSec(items.length)}s` } as React.CSSProperties}>
-            <ul className="mk-marquee-row">{cards(false)}</ul>
+        {/* One tree whether moving or still, so a refetch that starts or stops the crawl keeps every card mounted and
+            keyboard focus where it is (a different parent would remount them all and drop focus to <body>). */}
+        <div className={moving ? 'mk-marquee-track' : undefined} style={moving ? ({ '--mk-marquee-dur': `${marqueeDurationSec(items.length)}s` } as React.CSSProperties) : undefined}>
+          <ul
+            className={moving ? 'mk-marquee-row' : undefined}
+            style={moving ? undefined : { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: `repeat(${Math.max(minCols, items.length)},minmax(0,1fr))` }}
+          >
+            {cards(false)}
+          </ul>
+          {moving ? (
             <ul aria-hidden="true" className="mk-marquee-row mk-marquee-dup">
               {cards(true)}
             </ul>
-          </div>
-        ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: `repeat(${Math.max(minCols, items.length)},minmax(0,1fr))` }}>
-            {cards(false)}
-          </ul>
-        )}
+          ) : null}
+        </div>
       </div>
     </div>
   );
