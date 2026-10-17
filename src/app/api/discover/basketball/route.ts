@@ -132,9 +132,9 @@ export async function GET(): Promise<NextResponse<DiscoverBasketballResponse>> {
         return {
           id: g.id,
           homeTeam:
-            g.home_team?.abbreviation ?? g.home_team?.name ?? g.home_team?.full_name ?? 'HOME',
+            g.home_team?.name ?? g.home_team?.full_name ?? g.home_team?.abbreviation ?? 'HOME',
           visitorTeam:
-            g.visitor_team?.abbreviation ?? g.visitor_team?.name ?? g.visitor_team?.full_name ?? 'AWAY',
+            g.visitor_team?.name ?? g.visitor_team?.full_name ?? g.visitor_team?.abbreviation ?? 'AWAY',
           tipoffIso: iso,
           tipoffLabel: formatTipoff(iso),
         };

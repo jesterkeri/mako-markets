@@ -450,7 +450,8 @@ function FixtureRow({ title, when, opensAt, on, onClick, now }: { title: string;
       style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 12, textAlign: 'left', background: on ? 'var(--raise2)' : 'transparent', boxShadow: on ? 'inset 0 0 0 1.5px var(--mako-canvas-fg)' : 'inset 0 -1px 0 var(--line)', opacity: notYet ? 0.55 : 1, cursor: notYet ? 'not-allowed' : 'pointer' }}
     >
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: 'block', fontWeight: 700, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+        {/* Wraps, never cut: on a phone a match title ("Timberwolves @ Trail Blazers") is wider than the row. */}
+        <span style={{ display: 'block', fontWeight: 700, fontSize: 15, overflowWrap: 'anywhere' }}>{title}</span>
         {notYet && <span style={{ display: 'block', ...mono, fontSize: 11, color: 'var(--dim)', marginTop: 3 }}>Pools open {dateTime(opensAt!)}</span>}
       </span>
       <span style={{ flex: 'none', ...mono, fontSize: 11, color: 'var(--dim)' }}>{when}</span>
