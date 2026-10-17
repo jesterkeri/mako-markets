@@ -3,7 +3,7 @@
 // resolves it, load from THIS app's Blob host under the SAME user's /avatars/<id>/ path over https.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resolveLabels } from '@/lib/leaderboard/identity';
+import { resolveStoredIdentities as resolveLabels } from '@/lib/leaderboard/identity'; // (builder: the strict photo gate now feeds /api/avatar; the public gets only its path)
 import { createTestDb, type TestDb } from './test-db';
 
 const CHAIN = 10143;

@@ -34,11 +34,13 @@ import { getAddress, isAddress } from 'viem';
 import type { DbOrTx } from '@/db/client';
 import { users, userSafes } from '@/db/schema';
 import { isAppOwnedAvatarUrl } from '@/lib/avatar-url';
+import { publicAvatarPath } from '@/lib/public-avatar';
 
 export interface ResolvedIdentity {
   /// The display name, or null when only a profile photo is set.
   displayName: string | null;
-  /// The profile photo this app uploaded for the user (strictly checked), or null.
+  /// The profile photo this app uploaded for the user (strictly checked), or null: from resolveLabels its public
+  /// /api/avatar path, from resolveStoredIdentities the stored Blob URL.
   avatarUrl: string | null;
   /// Which join branch won — exposed for tests/debugging only.
   branch: 'safe' | 'wallet';
@@ -58,6 +60,18 @@ interface CandidateRow {
 /// neither a display name nor an app-owned photo are absent; callers fall
 /// back to the truncated address and the letter avatar.
 export async function resolveLabels(
+  db: DbOrTx,
+  addresses: readonly string[],
+  chainId: number,
+): Promise<Map<string, ResolvedIdentity>> {
+  const stored = await resolveStoredIdentities(db, addresses, chainId);
+  // The public never gets the stored photo URL (it carries the internal account id): only its /api/avatar path.
+  for (const [addr, id] of stored) if (id.avatarUrl) stored.set(addr, { ...id, avatarUrl: publicAvatarPath(addr, id.avatarUrl) });
+  return stored;
+}
+
+/// As resolveLabels, but with the STORED photo URL. Server-only: for /api/avatar, which streams it; never serialise it.
+export async function resolveStoredIdentities(
   db: DbOrTx,
   addresses: readonly string[],
   chainId: number,

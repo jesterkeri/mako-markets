@@ -28,6 +28,7 @@ import type { Address } from 'viem';
 import type { DbOrTx } from '@/db/client';
 import { users } from '@/db/schema';
 import { isAppOwnedAvatarUrl } from '@/lib/avatar-url';
+import { publicAvatarPath } from '@/lib/public-avatar';
 import { deriveSafeAddress } from '@/lib/safe';
 import { formatAddress } from '@/lib/user-display';
 
@@ -90,12 +91,15 @@ export async function resolveCommentAuthors(
     // /avatars/<id>/ prefix; otherwise null → glyph. Fails closed when the app
     // host can't be resolved. Keeps the public comments JSON from beaconing
     // third-party hosts.
+    // The public gets the photo's /api/avatar path, never the stored URL, whose path carries the internal account id
+    // (Joshua 2026-10-17, Codex PUBLIC_PROFILE R1 M2); without an address there is no public path, so the glyph shows.
     const avatarUrl =
-      r.avatarUrl && isAppOwnedAvatarUrl(r.avatarUrl, r.id) ? r.avatarUrl : null;
+      r.avatarUrl && addressLower && isAppOwnedAvatarUrl(r.avatarUrl, r.id) ? publicAvatarPath(addressLower, r.avatarUrl) : null;
 
     out.set(r.id, {
       authorLabel,
-      avatarSeed: seedFor(r.id),
+      // Seeded from the public address when there is one, so no per-account tag derived from the internal id is sent.
+      avatarSeed: seedFor(addressLower ?? r.id),
       avatarUrl,
       addressLower,
     });

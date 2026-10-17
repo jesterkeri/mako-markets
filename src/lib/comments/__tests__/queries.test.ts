@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
 
 import { makoMarketEvents, users } from '@/db/schema';
+import { publicAvatarPath } from '@/lib/public-avatar';
 import { deriveSafeAddress } from '@/lib/safe';
 import { decodeCursor } from '../cursor';
 import {
@@ -108,7 +109,8 @@ describe('createComment + getCommentsPage — happy path', () => {
     const c = page.comments[0];
     expect(c.body).toBe('first!');
     expect(c.authorLabel).toBe('Ann');
-    expect(c.avatarSeed).toBe(createHash('sha256').update(userId).digest('hex'));
+    // Seeded from the public address, not the internal id (Joshua 2026-10-17).
+    expect(c.avatarSeed).toBe(createHash('sha256').update(deriveSafeAddress(eoa(1) as Address).toLowerCase()).digest('hex'));
     expect(c.avatarUrl).toBeNull(); // this seeded user uploaded no photo
     expect(c.isOwn).toBe(true);
     expect(c.deleted).toBe(false);
@@ -169,16 +171,13 @@ describe('wire-shape privacy + avatarSeed non-reversibility', () => {
     // The public on-chain address rides as authorAddress, for the profile link (Joshua 2026-10-17), and nowhere else.
     expect(page.comments[0].authorAddress).toBe(safeLower);
     expect(json.split(safeLower).length - 1).toBe(1);
-    expect(page.comments[0].avatarSeed).toBe(
-      createHash('sha256').update(userId).digest('hex'),
-    );
-    // No photo uploaded → avatarUrl is null → the internal user_id assertion
-    // above stays true. The user_id only rides along inside avatarUrl for
-    // users who HAVE a photo (accepted 2026-07-07), covered by the next test.
+    // The colour seed comes from the public address: nothing derived from the internal id is sent.
+    expect(page.comments[0].avatarSeed).toBe(createHash('sha256').update(safeLower).digest('hex'));
+    expect(page.comments[0].avatarSeed).not.toBe(createHash('sha256').update(userId).digest('hex'));
     expect(page.comments[0].avatarUrl).toBeNull();
   });
 
-  it('serializes the photo URL when it is an OWNED Vercel Blob URL', async () => {
+  it('an OWNED photo is sent only as its /api/avatar path: the stored URL (and the user id in it) never is', async () => {
     const u = await tdb.db
       .insert(users)
       .values({ email: 'pho@x.co', magicEoa: eoa(0x7ac), authType: 'magic', displayName: 'Pho' })
@@ -190,7 +189,9 @@ describe('wire-shape privacy + avatarSeed non-reversibility', () => {
 
     await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 'hi' });
     const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
-    expect(page.comments[0].avatarUrl).toBe(PHOTO);
+    const safeLower = deriveSafeAddress(eoa(0x7ac) as Address).toLowerCase();
+    expect(page.comments[0].avatarUrl).toBe(publicAvatarPath(safeLower, PHOTO));
+    expect(JSON.stringify(page)).not.toContain(userId); // Joshua 2026-10-17: no internal id, photo or not
   });
 
   it('FILTERS a legacy non-owned avatar_url (arbitrary host) to null (Codex MAJOR)', async () => {
