@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache';
+import { cache } from 'react';
 
 import { db } from '@/db/client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
@@ -39,7 +40,8 @@ export async function readPublicProfile(actor: `0x${string}`): Promise<PublicPro
 }
 
 /// Cached a minute per address, like the board (45 s): the rank query aggregates every player, and a profile is a
-/// public link anyone can open repeatedly.
-export function getPublicProfile(actor: `0x${string}`): Promise<PublicProfile> {
-  return unstable_cache(() => readPublicProfile(actor), ['public-profile', actor], { revalidate: 60 })();
-}
+/// public link anyone can open repeatedly. React's cache() also shares one call between the page and its metadata in
+/// the same request, which unstable_cache alone does not on a miss.
+export const getPublicProfile = cache((actor: `0x${string}`): Promise<PublicProfile> =>
+  unstable_cache(() => readPublicProfile(actor), ['public-profile', actor], { revalidate: 60 })(),
+);
