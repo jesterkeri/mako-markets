@@ -63,9 +63,8 @@ function Profile({ p, compact }: { p: PublicProfile; compact: boolean }) {
 
       <div style={{ marginTop: compact ? 16 : 20, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', borderRadius: 12, boxShadow: 'inset 0 0 0 1px var(--line)' }}>
         <span style={{ ...mono, fontSize: compact ? 12 : 13, minWidth: 0, flex: '1 1 auto', overflowWrap: 'anywhere' }}>{p.actor}</span>
-        <CopyButton text={p.actor} style={{ flex: 'none', height: 32, padding: '0 14px', borderRadius: 9999, background: 'var(--mako-canvas-fg)', color: 'var(--mako-canvas)', ...mono, fontSize: 12, fontWeight: 700 }}>
-          {(copied) => (copied ? 'Copied' : 'Copy address')}
-        </CopyButton>
+        {/* Its own "Copy" / "Copied" label: a server page cannot hand a function to a client button. */}
+        <CopyButton text={p.actor} style={{ flex: 'none', height: 32, padding: '0 14px', borderRadius: 9999, background: 'var(--mako-canvas-fg)', color: 'var(--mako-canvas)', ...mono, fontSize: 12, fontWeight: 700 }} />
       </div>
 
       <dl style={{ marginTop: compact ? 16 : 24, display: 'grid', gridTemplateColumns: compact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))', gap: compact ? 10 : 14 }}>

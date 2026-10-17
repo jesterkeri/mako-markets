@@ -88,7 +88,7 @@ describe('/u/[address]', () => {
     expect(text).toContain('+8.00');
     expect(text).toContain('2.00'); // volume: USDC staked
     expect(screen.getAllByText(SAFE_LOWER)).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'Copy address' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Copy' })).toHaveLength(2);
     expect(text).not.toContain('kemi@example.com');
     expect(cacheKeys).toContainEqual(['public-profile', SAFE_LOWER]); // one cache entry per address, any case
   });
