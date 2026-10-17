@@ -15,7 +15,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   fetchMock.mockReset();
 });
-// Answers are shared across hook instances for 2 s (use-name-check.ts), so each test asks about its own names.
+// Answers are shared across hook instances within one pause (use-name-check.ts), so each test asks about its own names.
 const reply = (body: unknown) => fetchMock.mockResolvedValueOnce({ ok: true, json: async () => body });
 
 describe('useNameCheck', () => {

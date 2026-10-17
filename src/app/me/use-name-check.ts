@@ -9,20 +9,21 @@ import { validateDisplayName } from './profile-rules';
 export type NameCheck = 'idle' | 'checking' | 'available' | 'taken' | 'reserved';
 
 // Me mounts the desktop and phone editors together (CSS shows one), so both ask at the same pause: one request per
-// name, shared while in flight and for 2 s after (the two editors' timers need not fire together). null = no verdict (offline, signed out, bad reply): the check stays 'checking'
+// name, shared only within that pause (the answer is dropped on the next timer turn, so a name that changes hands is
+// asked about afresh; the two editors' timers fire in the same turn). A request gives up after 10 s. null = no verdict (offline, signed out, bad reply): the check stays 'checking'
 // rather than showing "Looks good", and the save route still decides.
 const inflight = new Map<string, Promise<NameCheck | null>>();
 function ask(name: string, key: string): Promise<NameCheck | null> {
   let p = inflight.get(key);
   if (!p) {
-    p = fetch(`/api/user/profile/name-available?name=${encodeURIComponent(name)}`, { credentials: 'same-origin' })
+    p = fetch(`/api/user/profile/name-available?name=${encodeURIComponent(name)}`, { credentials: 'same-origin', signal: AbortSignal.timeout(10_000) })
       .then(async (res) => {
         if (!res.ok) return null;
         const body = (await res.json()) as { available?: boolean; reason?: string };
         return body.available ? 'available' : body.reason === 'reserved' ? 'reserved' : body.reason === 'taken' ? 'taken' : null;
       })
       .catch(() => null)
-      .finally(() => setTimeout(() => inflight.delete(key), 2000));
+      .finally(() => setTimeout(() => inflight.delete(key), 0));
     inflight.set(key, p);
   }
   return p;
