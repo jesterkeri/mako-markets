@@ -50,7 +50,8 @@ export function rawId(obs: number, e: PageEntry): string {
 
 /// JSON.stringify is not one-to-one on parsed values (Infinity and NaN print as null, -0 as 0), so every number and string
 /// is tagged with its exact text first. A value too deep to print cannot crash the minute: it gets one fixed identity.
-// shortcut: two different unprintable values (nested thousands deep) count as one; a page like that is never a report.
+// shortcut: two different unprintable values (a fullReport or feedID nested thousands deep) count as one; a page
+// like that is never a report.
 export function typed(v: unknown): string {
   try {
     return JSON.stringify(v, (_k, x: unknown) => (typeof x === 'number' ? `n:${Object.is(x, -0) ? '-0' : String(x)}` : typeof x === 'string' ? `s:${x}` : x)) ?? 'undefined';

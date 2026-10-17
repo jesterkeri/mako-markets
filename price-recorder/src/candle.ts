@@ -123,6 +123,8 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
   const foreign = new Set<string>();
   let witness = false;
   for (const e of entries) {
+    // An element that is not a JSON object (null, a number, a string, an array) has no second, so it is in no minute.
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) continue;
     const r = rawEntry(e, feed);
     const v = validEntry(e, feed);
     if (r && r.obs >= M && r.obs < end) raw.set(r.id, { obs: r.obs, key: r.key, valid: v !== null });
