@@ -143,7 +143,11 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   const { save: saveCandleColors } = candle;
   useEffect(() => {
     if (!candleDraft) return;
-    const t = setTimeout(() => saveCandleColors(candleDraft), 500);
+    // The draft is handed to the save (which puts it in the cache at once) and cleared, so it is saved exactly once.
+    const t = setTimeout(() => {
+      saveCandleColors(candleDraft);
+      setCandleDraft(null);
+    }, 500);
     return () => clearTimeout(t);
   }, [candleDraft, saveCandleColors]);
 
