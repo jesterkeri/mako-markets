@@ -124,4 +124,3 @@ describe('adversary 0531bd6: odds neutral, totals directional', () => {
     expect(odds(v.container)).toEqual([]);
   });
 });
-
