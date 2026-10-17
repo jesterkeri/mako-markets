@@ -41,6 +41,9 @@ export function useNameCheck(draft: string, current: string | null, editing: boo
     if (skip) return;
     let live = true;
     const t = setTimeout(() => {
+      // A new check drops this name's earlier answer: the name may have changed hands since, and a check that never
+      // answers must read 'checking', not the old "Looks good".
+      setState((s) => (s.key === key ? { key: '', check: 'idle' } : s));
       void ask(draft.trim(), key).then((check) => {
         if (live && check) setState({ key, check });
       });
