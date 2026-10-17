@@ -76,8 +76,10 @@ describe('shared rules', () => {
   it('reserved names, with spaces, dots, underscores and dashes ignored; ordinary names are not', () => {
     for (const r of ['mako', 'Mako Market', 'mako_market', 'MAKO-MARKETS', 'Admin', 'support', 'Official', 'mod', 'Team'])
       expect(isReservedDisplayName(r), r).toBe(true);
-    for (const ok of ['jester', 'makoman', 'mako fan', 'teamwork', 'administrators club']) expect(isReservedDisplayName(ok), ok).toBe(false);
-    for (const r of ['Mako_Official', 'mako team', 'MakoSupport', 'the mako app']) expect(isReservedDisplayName(r), r).toBe(true);
+    for (const ok of ['jester', 'makoman', 'mako fan', 'teamwork', 'administrators club', 'Makoto Tomoda', 'Makoto Happy', 'the mako app'])
+      expect(isReservedDisplayName(ok), ok).toBe(false);
+    for (const r of ['Mako_Official', 'mako team', 'MakoSupport', 'Mako HQ', 'Mako Bot', 'Support Team', 'mako-market-official'])
+      expect(isReservedDisplayName(r), r).toBe(true);
   });
 });
 
