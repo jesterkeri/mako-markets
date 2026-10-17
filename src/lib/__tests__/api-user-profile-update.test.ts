@@ -422,6 +422,19 @@ describe('POST /api/user/profile/update: unique display names (Joshua 2026-10-17
       expect(await res.json()).toEqual({ error: 'name_taken' });
     }
   });
+  it('the trigger refusing a reserved name the app check let through: 400 name_reserved (direct or wrapped in cause)', async () => {
+    const { POST } = await import('@/app/api/user/profile/update/route');
+    for (const err of [
+      { code: '23514', constraint: 'users_display_name_reserved' },
+      Object.assign(new Error('query failed'), { cause: { code: '23514', constraint_name: 'users_display_name_reserved' } }),
+    ]) {
+      setupHappy();
+      mocks.updateReturning.mockRejectedValueOnce(err);
+      const res = await POST(makeRequest({ displayName: 'Jester' }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'name_reserved' });
+    }
+  });
   it('a name another account holds or still shows is refused before the write (409 name_taken)', async () => {
     setupHappy();
     mocks.nameHeldByOther.mockResolvedValueOnce(true);

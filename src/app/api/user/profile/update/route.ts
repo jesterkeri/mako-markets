@@ -163,7 +163,8 @@ export async function POST(req: Request) {
       lastEmailChangedAt: users.lastEmailChangedAt,
     });
   } catch (err) {
-    if (isNameTaken(err)) return Response.json({ error: 'name_taken' }, { status: 409 });
+    if (refusedBy(err, '23505', 'users_display_name_key_uniq')) return Response.json({ error: 'name_taken' }, { status: 409 });
+    if (refusedBy(err, '23514', 'users_display_name_reserved')) return Response.json({ error: 'name_reserved' }, { status: 400 });
     throw err;
   }
 
@@ -213,10 +214,11 @@ export async function POST(req: Request) {
   });
 }
 
-/// The unique index on the name key refused the write (Postgres 23505), directly or wrapped by drizzle in `cause`.
-function isNameTaken(err: unknown): boolean {
+/// The database refused the write with this code and constraint (the name index or trigger: 23505 taken, 23514
+/// reserved), directly or wrapped by drizzle in `cause`.
+function refusedBy(err: unknown, code: string, constraint: string): boolean {
   for (let e = err as { code?: string; constraint?: string; constraint_name?: string; cause?: unknown } | undefined; e; e = e.cause as typeof e) {
-    if (e.code === '23505' && (e.constraint ?? e.constraint_name) === 'users_display_name_key_uniq') return true;
+    if (e.code === code && (e.constraint ?? e.constraint_name) === constraint) return true;
   }
   return false;
 }

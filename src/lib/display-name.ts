@@ -13,7 +13,10 @@ const BRAND = ['mako', 'makomarket', 'makomarkets'];
 const ROLES = ['official', 'team', 'support', 'admin', 'administrator', 'staff', 'mod', 'moderator', 'market', 'markets', 'app', 'hq', 'bot', 'system', 'help'];
 const WORDS = new Set([...BRAND, ...ROLES]);
 
-// The whole name, with spaces, dots, underscores and dashes removed, is a run of those words.
-const ONLY_WORDS = new RegExp(`^(?:${[...WORDS].sort((a, b) => b.length - a.length).join('|')})+$`);
+// The whole name, with spaces, dots, underscores and dashes removed, is a run of those words. Migration 0017's trigger
+// holds the same pattern so every writer, including an older app version, refuses these (Codex UNIQUE_NAMES R1 M1); a
+// test fails if the two ever differ.
+export const RESERVED_PATTERN = `^(${[...WORDS].sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).join('|')})+$`;
+const ONLY_WORDS = new RegExp(RESERVED_PATTERN);
 
 export const isReservedDisplayName = (name: string): boolean => ONLY_WORDS.test(displayNameKey(name).replace(/[ ._-]/g, ''));

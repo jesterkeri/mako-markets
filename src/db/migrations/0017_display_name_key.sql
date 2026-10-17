@@ -5,8 +5,8 @@
 -- must pick another. A trigger keeps the key equal to the shown name on every insert or name write, whichever app
 -- version writes it (the previous app keeps serving after this migration and writes only display_name); the unique
 -- index, and the trigger itself for a name another account still shows without a key, refuse a duplicate from any
--- writer; the account holding the key may always re-save its own name. Known limit: reserved names are checked by the app only, so the previous app could set one during the
--- short overlap.
+-- writer; the account holding the key may always re-save its own name. Reserved names are refused by the trigger
+-- too, so the previous app cannot set one during the overlap.
 --
 -- Verification (after `pnpm db:migrate`):
 --   \d users
@@ -25,6 +25,13 @@ CREATE OR REPLACE FUNCTION "users_display_name_key_sync"() RETURNS trigger LANGU
 BEGIN
   NEW."display_name_key" := CASE WHEN NEW."display_name" IS NULL THEN NULL
     ELSE lower(regexp_replace(btrim(NEW."display_name", ' '), ' +', ' ', 'g')) END;
+  -- Reserved names (src/lib/display-name.ts RESERVED_PATTERN, kept identical by a test): refused from every writer,
+  -- including an app version from before this migration, and before the keeper exemption, so no account can save one.
+  IF NEW."display_name_key" IS NOT NULL
+    AND regexp_replace(NEW."display_name_key", '[ ._-]', '', 'g') ~ '^(administrator|makomarkets|makomarket|moderator|official|markets|support|market|system|admin|staff|help|mako|team|app|bot|mod|hq)+$' THEN
+    RAISE EXCEPTION 'display name % is reserved', NEW."display_name"
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'users_display_name_reserved';
+  END IF;
   -- The unique index sees keys only; an account that shared this name before 0017 still shows it with no key, so it
   -- is checked here, with the index's error, so every app version reports it as a taken name. The keeper (already
   -- holding this key) is exempt: it may re-save its own name, or change its case, while duplicates remain.
