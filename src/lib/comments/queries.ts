@@ -179,6 +179,7 @@ function toWire(
     // Real photo when the author uploaded one (else null → glyph fallback).
     // Not shown for a deleted row (author identity is hidden there).
     avatarUrl: deleted ? null : author?.avatarUrl ?? null,
+    authorAddress: deleted ? null : addr,
     isOwn: viewerUserId !== null && viewerUserId === row.userId,
     position: addr ? badges.get(addr) ?? null : null,
     body: deleted ? '' : row.body,

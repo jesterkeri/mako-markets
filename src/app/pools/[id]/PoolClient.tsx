@@ -22,6 +22,7 @@ import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateL
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
+import { profileHref } from '@/lib/leaderboard/board-view';
 import { FlashValue } from '@/lib/use-flash';
 import { useLiveNowSec } from '@/lib/use-live-clock';
 import { marketToChartConfig } from '@/lib/market-chart';
@@ -392,7 +393,7 @@ function PoolDesktop(v: ViewProps) {
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 52, lineHeight: 1.02, letterSpacing: '-0.035em', maxWidth: 720, textWrap: 'balance' }}>{m.question}</h1>
           <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 10 }}>
-            {catTitle(row.cat)} · betting closes {dayTime(Number(m.bettingCloseTime))}. Hosted by <span style={{ color: 'var(--mako-canvas-fg)', fontWeight: 700 }}>{by}</span>
+            {catTitle(row.cat)} · betting closes {dayTime(Number(m.bettingCloseTime))}. Hosted by <Host m={m} by={by} style={{ color: 'var(--mako-canvas-fg)', fontWeight: 700 }} />
           </div>
         </div>
         <div style={{ flex: 'none', textAlign: 'right' }}>
@@ -783,6 +784,16 @@ export function SideToggle({ side, setSide, labels, height, fontSize, background
   );
 }
 
+/// The pool's host: a link to their profile (13a), or plain text for a Mako Market house pool.
+function Host({ m, by, style }: { m: MarketWithId; by: string; style?: React.CSSProperties }) {
+  if (m.mType === MarketType.MAKO) return <span style={style}>{by}</span>;
+  return (
+    <Link href={profileHref(m.creator)} style={{ textDecoration: 'underline', textUnderlineOffset: 3, ...style }}>
+      {by}
+    </Link>
+  );
+}
+
 function CreatorCard({ by, creatorStats, market: m }: ViewProps) {
   const initial = [...by][0]?.toUpperCase() ?? '?';
   return (
@@ -791,7 +802,7 @@ function CreatorCard({ by, creatorStats, market: m }: ViewProps) {
         {initial}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{by}</div>
+        <Host m={m} by={by} style={{ display: 'block', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
         <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>
           {m.mType === MarketType.MAKO
             ? 'House pool'
@@ -857,7 +868,7 @@ function PoolMobile(v: ViewProps) {
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 28, lineHeight: 1.08, letterSpacing: '-0.025em' }}>{m.question}</h1>
           <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.65, marginTop: 8 }}>
-            Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by {by} · <FlashValue value={row.bettors} text={String(row.bettors)} kind="neutral" /> {row.bettors === 1 ? 'bettor' : 'bettors'}
+            Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by <Host m={m} by={by} /> · <FlashValue value={row.bettors} text={String(row.bettors)} kind="neutral" /> {row.bettors === 1 ? 'bettor' : 'bettors'}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 18, gap: 12 }}>
             <div style={{ minWidth: 0 }}>
@@ -951,7 +962,7 @@ function PoolMobile(v: ViewProps) {
             {[...by][0]?.toUpperCase() ?? '?'}
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{by}</div>
+            <Host m={m} by={by} style={{ display: 'block', fontSize: 15, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
             <div style={{ fontSize: 13, color: 'var(--dim)' }}>
               {m.mType === MarketType.MAKO ? 'House pool' : v.creatorStats ? `${v.creatorStats.pools} ${v.creatorStats.pools === 1 ? 'pool' : 'pools'} · ${v.creatorStats.bothSides}% got bets on both sides` : 'Creator'}
             </div>

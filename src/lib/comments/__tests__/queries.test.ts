@@ -158,7 +158,7 @@ describe('position badges (checksummed safe vs lowercase actor — #186 trap)', 
 });
 
 describe('wire-shape privacy + avatarSeed non-reversibility', () => {
-  it('never serializes email / magic_eoa / user_id / raw address for a named user', async () => {
+  it('never serializes email / magic_eoa / user_id; the on-chain address only as authorAddress', async () => {
     const { userId, safeLower } = await seedMagicUser(eoa(0xabc), 'Named');
     await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 'hi' });
     const page = await getCommentsPage(db(), MARKET_5, null, 30, userId);
@@ -166,7 +166,9 @@ describe('wire-shape privacy + avatarSeed non-reversibility', () => {
     expect(json).not.toContain('@x.co'); // email
     expect(json).not.toContain(eoa(0xabc)); // magic_eoa
     expect(json).not.toContain(userId); // internal id
-    expect(json).not.toContain(safeLower); // raw address hidden behind the name
+    // The public on-chain address rides as authorAddress, for the profile link (Joshua 2026-10-17), and nowhere else.
+    expect(page.comments[0].authorAddress).toBe(safeLower);
+    expect(json.split(safeLower).length - 1).toBe(1);
     expect(page.comments[0].avatarSeed).toBe(
       createHash('sha256').update(userId).digest('hex'),
     );

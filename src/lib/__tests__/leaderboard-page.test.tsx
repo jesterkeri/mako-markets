@@ -100,10 +100,13 @@ describe('Leaderboard page', () => {
     expect(url.searchParams.get('me')).toBe(ME);
   });
 
-  it('shows players as plain text: no links anywhere on the board', async () => {
+  it('every player opens their profile at /u/<address> (13a), and nothing else on the board is a link', async () => {
     const { container } = mount();
     await screen.findAllByText('kemi');
-    expect(container.querySelectorAll('a')).toHaveLength(0);
+    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const h of hrefs) expect(h, h).toMatch(/^\/u\/0x[0-9a-f]{40}$/);
+    expect(hrefs).toContain('/u/0x00000000000000000000000000000000000000b2'); // the unnamed player too
     expect(screen.getAllByText('0x0000…00b2').length).toBeGreaterThan(0); // unnamed player: short address
     expect(container.textContent).not.toMatch(/@kemi/); // no handle prefix: names are not unique handles
   });

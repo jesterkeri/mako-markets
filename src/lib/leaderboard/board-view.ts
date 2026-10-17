@@ -156,6 +156,9 @@ export function playerNames(rows: readonly BoardWireRow[], viewer?: BoardWireRow
   return names;
 }
 
+/// A player's public profile page (13a).
+export const profileHref = (actor: string): string => `/u/${actor.toLowerCase()}`;
+
 /// The letter in a player's avatar: their name's first letter, or the first hex digit of their address.
 export function initialOf(displayName: string | null, actor: string): string {
   const name = displayName?.trim();

@@ -8,9 +8,11 @@
 //
 // The API returns no total count, so the design's count beside "Comments" is left out rather than guessed.
 
+import Link from 'next/link';
 import { useState } from 'react';
 
 import type { CommentPosition, CommentWire } from '@/lib/comments/types';
+import { profileHref } from '@/lib/leaderboard/board-view';
 import { useDeleteComment, usePostComment, type CommentTargetParams } from '@/lib/use-comments';
 
 import {
@@ -78,6 +80,16 @@ function Avatar({ url, initial, colour, size, fontSize }: { url: string | null; 
 }
 
 /// A deleted comment hides who wrote it: a blank disc, no photo.
+/// The author's name: a link to their profile (13a) when the comment carries their address, else plain text.
+function AuthorName({ c, style }: { c: CommentWire; style: React.CSSProperties }) {
+  if (!c.authorAddress) return <span style={style}>{c.authorLabel}</span>;
+  return (
+    <Link href={profileHref(c.authorAddress)} style={style}>
+      {c.authorLabel}
+    </Link>
+  );
+}
+
 function CommentAvatar({ c, size, fontSize }: { c: CommentWire; size: number; fontSize: number }) {
   if (c.deleted) return <Avatar url={null} initial="" colour="var(--raise2)" size={size} fontSize={fontSize} />;
   return <Avatar url={c.avatarUrl} initial={initialOf(c.authorLabel)} colour={avatarColour(c.avatarSeed, c.isOwn)} size={size} fontSize={fontSize} />;
@@ -304,7 +316,7 @@ function ComposerDesktop({
 function MetaDesktop({ c, nowMs }: { c: CommentWire; nowMs: number }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, ...MONO, fontSize: 12, minWidth: 0 }}>
-      {!c.deleted && <span style={{ fontWeight: 700, ...nameStyle }}>{c.authorLabel}</span>}
+      {!c.deleted && <AuthorName c={c} style={{ fontWeight: 700, ...nameStyle }} />}
       {!c.deleted && <Badge position={c.position} />}
       <span style={{ flex: 'none', color: 'var(--dim)' }}>{timeAgo(c.createdAt, nowMs)}</span>
     </div>
@@ -592,7 +604,7 @@ function ComposerMobile({
 function MetaMobile({ c, nowMs }: { c: CommentWire; nowMs: number }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, minWidth: 0 }}>
-      {!c.deleted && <span style={{ fontWeight: 800, ...nameStyle }}>{c.authorLabel}</span>}
+      {!c.deleted && <AuthorName c={c} style={{ fontWeight: 800, ...nameStyle }} />}
       {!c.deleted && <Badge position={c.position} mobile />}
       <span style={{ flex: 'none', marginLeft: 'auto', fontSize: 12, color: 'var(--dim)' }}>{timeAgo(c.createdAt, nowMs)}</span>
     </div>
