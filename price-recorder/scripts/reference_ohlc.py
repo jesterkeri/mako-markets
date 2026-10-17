@@ -8,6 +8,7 @@ and CI re-runs this script and fails if the committed file differs.
 Run: python3 -I scripts/reference_ohlc.py        (from price-recorder/)
 """
 import json
+import re
 import os
 import sys
 
@@ -42,7 +43,7 @@ def sint(w):
 def blob_of(full_hex):
     """fullReport = (bytes32[3], bytes, bytes32[], bytes32[], bytes32): bytes32[3] inline in words 0..2, then the
     offset of the `bytes` field in word 3; at that offset, a length word and the data."""
-    if not isinstance(full_hex, str) or not full_hex.startswith("0x") or len(full_hex) % 2:
+    if not isinstance(full_hex, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})*", full_hex):
         return None
     try:
         b = bytes.fromhex(full_hex[2:])
@@ -68,7 +69,7 @@ def second(v):
     # the recorder cannot tell apart; accept an integral float so both sides read such a page alike.
     if isinstance(v, float):
         return int(v) if v.is_integer() and 0 <= v < 2**53 else None
-    if isinstance(v, str) and v.isdigit() and (v == "0" or not v.startswith("0")) and len(v) <= 15:
+    if isinstance(v, str) and re.fullmatch(r"0|[1-9][0-9]{0,14}", v):  # ASCII digits only, as the recorder
         return int(v)
     return None
 

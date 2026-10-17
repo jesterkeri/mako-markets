@@ -19,7 +19,7 @@
 import { concat, keccak256, numberToHex, type Hex } from 'viem';
 
 import type { Feed } from './feeds';
-import { candleInput, exhaustionWitness, rawEntry, validEntry, type PageEntry, type ValidEntry } from './entry';
+import { candleInput, exhaustionWitness, jsonSecond, rawEntry, validEntry, type PageEntry, type ValidEntry } from './entry';
 import { MINUTE_S, RAW_RULE, STALE_EXCLUDE_S } from './rules';
 import { RULES_VERSION } from './rules-version';
 
@@ -115,11 +115,18 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
   const valid: ValidEntry[] = [];
   // Raw entries by exact identity (entry.ts rawEntry), each marked valid or not; identical values share validity.
   const raw = new Map<string, { obs: number; key: Hex; valid: boolean }>();
+  const foreign = new Set<string>();
   let witness = false;
   for (const e of entries) {
     const r = rawEntry(e, feed);
     const v = validEntry(e, feed);
     if (r && r.obs >= M && r.obs < end) raw.set(r.id, { obs: r.obs, key: r.key, valid: v !== null });
+    // Plan 3.1: every invalid entry whose JSON second is in the minute counts in n_rejected, another feed's included
+    // (raw_fp and n_raw stay this feed's).
+    else if (!r) {
+      const obs = jsonSecond(e.observationsTimestamp);
+      if (obs !== null && obs >= M && obs < end) foreign.add(JSON.stringify([e.feedID ?? null, obs, e.fullReport ?? null]));
+    }
     if (!v) continue;
     if (exhaustionWitness(v, end)) witness = true;
     if (candleInput(v, M)) valid.push(v);
@@ -135,7 +142,7 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
     bySecond.set(v.obs, [...(bySecond.get(v.obs) ?? []), v.key]);
   }
   const uniq = [...inputs.values()].sort((a, b) => a.obs - b.obs);
-  const rejected = [...raw.values()].filter((x) => !x.valid).length;
+  const rejected = [...raw.values()].filter((x) => !x.valid).length + foreign.size;
 
   if (!fetchOk || !witness) return { ...base, state: 'incomplete' };
 
