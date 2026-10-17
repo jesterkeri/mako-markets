@@ -1,0 +1,16 @@
+name = "mako-price-recorder"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Mako Market price recorder (mako-design/CHARTS_DS_PLAN.md). Records one-minute candles from Chainlink Data Streams
+# for the charts. Unit (a) of the build: decoding and the candle builder only. No cron, no storage and no secrets yet;
+# the tick (unit c), D1 (unit b) and the read API (unit e) come in later commits. Nothing here settles a pool, and it
+# has no binding to, or shared storage with, mako-auto-resolver.
+[triggers]
+crons = []
+
+# The decoder is the resolver's own file (cf-worker/src/datastreams.ts, plan 3.1), outside this package; its `viem`
+# import resolves to the copy here, pinned to the resolver's locked version (the bundling spike, `pnpm bundle:spike`,
+# proves it). Same pattern as keeper/ and rounds-watch/.
+[alias]
+"viem" = "./node_modules/viem"

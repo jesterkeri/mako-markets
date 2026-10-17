@@ -1,0 +1,278 @@
+[
+ {
+  "c": "81054562700494190000000",
+  "close_obs": 1792177799,
+  "file": "capture-2026-10-16/live-page-BTC.json",
+  "h": "81091730000000000000000",
+  "l": "81032087385762120000000",
+  "max_stale_s": null,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "81032087385762120000000",
+  "open_obs": 1792177740,
+  "state": "open",
+  "symbol": "BTC",
+  "t": 1792177740
+ },
+ {
+  "file": "capture-2026-10-16/live-page-BTC.json",
+  "state": "incomplete",
+  "symbol": "BTC",
+  "t": 1792177800
+ },
+ {
+  "c": "1123622500000000000",
+  "close_obs": 1792177799,
+  "file": "capture-2026-10-16/live-page-EURUSD.json",
+  "h": "1123622500000000000",
+  "l": "1123572500000000000",
+  "max_stale_s": 4,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "1123602499999999900",
+  "open_obs": 1792177740,
+  "state": "open",
+  "symbol": "EURUSD",
+  "t": 1792177740
+ },
+ {
+  "file": "capture-2026-10-16/live-page-EURUSD.json",
+  "state": "incomplete",
+  "symbol": "EURUSD",
+  "t": 1792177800
+ },
+ {
+  "c": "4171295000000000000000",
+  "close_obs": 1792097999,
+  "file": "capture-2026-10-16/metals-break-start-XAUUSD.json",
+  "h": "4171855000000000000000",
+  "l": "4170746000000000000000",
+  "max_stale_s": 2,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "4170810000000000000000",
+  "open_obs": 1792097940,
+  "state": "open",
+  "symbol": "XAUUSD",
+  "t": 1792097940
+ },
+ {
+  "c": "4170695000000000000000",
+  "close_obs": 1792098001,
+  "file": "capture-2026-10-16/metals-break-start-XAUUSD.json",
+  "h": "4170850000000000000000",
+  "l": "4170695000000000000000",
+  "max_stale_s": 1,
+  "n_open": 2,
+  "n_reports": 60,
+  "o": "4170850000000000000000",
+  "open_obs": 1792098000,
+  "state": "open",
+  "symbol": "XAUUSD",
+  "t": 1792098000
+ },
+ {
+  "file": "capture-2026-10-16/metals-break-start-XAUUSD.json",
+  "max_stale_s": null,
+  "n_open": 0,
+  "n_reports": 60,
+  "state": "closed",
+  "symbol": "XAUUSD",
+  "t": 1792098060
+ },
+ {
+  "file": "capture-2026-10-16/metals-break-start-XAUUSD.json",
+  "state": "incomplete",
+  "symbol": "XAUUSD",
+  "t": 1792098120
+ },
+ {
+  "c": "342005000000000000000",
+  "close_obs": 1792094399,
+  "file": "capture-2026-10-16/nyse-close-AAPL.json",
+  "h": "342620000000000000000",
+  "l": "341794999999999960000",
+  "max_stale_s": 8,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "342610000000000000000",
+  "open_obs": 1792094340,
+  "state": "open",
+  "symbol": "AAPL",
+  "t": 1792094340
+ },
+ {
+  "c": "341980000000000000000",
+  "close_obs": 1792094403,
+  "file": "capture-2026-10-16/nyse-close-AAPL.json",
+  "h": "342000000000000000000",
+  "l": "341980000000000000000",
+  "max_stale_s": 12,
+  "n_open": 4,
+  "n_reports": 60,
+  "o": "341980000000000000000",
+  "open_obs": 1792094400,
+  "state": "open",
+  "symbol": "AAPL",
+  "t": 1792094400
+ },
+ {
+  "file": "capture-2026-10-16/nyse-close-AAPL.json",
+  "max_stale_s": null,
+  "n_open": 0,
+  "n_reports": 60,
+  "state": "closed",
+  "symbol": "AAPL",
+  "t": 1792094460
+ },
+ {
+  "file": "capture-2026-10-16/nyse-close-AAPL.json",
+  "state": "incomplete",
+  "symbol": "AAPL",
+  "t": 1792094520
+ },
+ {
+  "file": "capture-2026-10-16/nyse-open-AAPL.json",
+  "max_stale_s": null,
+  "n_open": 0,
+  "n_reports": 60,
+  "state": "closed",
+  "symbol": "AAPL",
+  "t": 1792070940
+ },
+ {
+  "c": "346345000000000000000",
+  "close_obs": 1792071059,
+  "file": "capture-2026-10-16/nyse-open-AAPL.json",
+  "h": "347110000000000000000",
+  "l": "346250000000000000000",
+  "max_stale_s": 48389,
+  "n_open": 29,
+  "n_reports": 60,
+  "o": "347110000000000000000",
+  "open_obs": 1792071031,
+  "state": "open",
+  "symbol": "AAPL",
+  "t": 1792071000
+ },
+ {
+  "c": "346235000000000000000",
+  "close_obs": 1792071119,
+  "file": "capture-2026-10-16/nyse-open-AAPL.json",
+  "h": "346340000000000000000",
+  "l": "345405000000000000000",
+  "max_stale_s": 2,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "346340000000000000000",
+  "open_obs": 1792071060,
+  "state": "open",
+  "symbol": "AAPL",
+  "t": 1792071060
+ },
+ {
+  "file": "capture-2026-10-16/nyse-open-AAPL.json",
+  "state": "incomplete",
+  "symbol": "AAPL",
+  "t": 1792071120
+ },
+ {
+  "c": "344970000000000000000",
+  "close_obs": 1792076459,
+  "file": "capture-2026-10-16/open-minute-AAPL.json",
+  "h": "344970000000000000000",
+  "l": "344695000000000000000",
+  "max_stale_s": 4,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "344805000000000000000",
+  "open_obs": 1792076400,
+  "state": "open",
+  "symbol": "AAPL",
+  "t": 1792076400
+ },
+ {
+  "file": "capture-2026-10-16/open-minute-AAPL.json",
+  "state": "incomplete",
+  "symbol": "AAPL",
+  "t": 1792076460
+ },
+ {
+  "c": "81806102184919190000000",
+  "close_obs": 1792076459,
+  "file": "capture-2026-10-16/open-minute-BTC.json",
+  "h": "81808453000000000000000",
+  "l": "81749247601916720000000",
+  "max_stale_s": null,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "81782746281674200000000",
+  "open_obs": 1792076400,
+  "state": "open",
+  "symbol": "BTC",
+  "t": 1792076400
+ },
+ {
+  "file": "capture-2026-10-16/open-minute-BTC.json",
+  "state": "incomplete",
+  "symbol": "BTC",
+  "t": 1792076460
+ },
+ {
+  "c": "1120017500000000000",
+  "close_obs": 1792076459,
+  "file": "capture-2026-10-16/open-minute-EURUSD.json",
+  "h": "1120182500000000000",
+  "l": "1119992500000000000",
+  "max_stale_s": 0,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "1120182500000000000",
+  "open_obs": 1792076400,
+  "state": "open",
+  "symbol": "EURUSD",
+  "t": 1792076400
+ },
+ {
+  "file": "capture-2026-10-16/open-minute-EURUSD.json",
+  "state": "incomplete",
+  "symbol": "EURUSD",
+  "t": 1792076460
+ },
+ {
+  "c": "4159330000000000000000",
+  "close_obs": 1792076459,
+  "file": "capture-2026-10-16/open-minute-XAUUSD.json",
+  "h": "4159330000000000000000",
+  "l": "4157010000000000000000",
+  "max_stale_s": 0,
+  "n_open": 60,
+  "n_reports": 60,
+  "o": "4157930000000000000000",
+  "open_obs": 1792076400,
+  "state": "open",
+  "symbol": "XAUUSD",
+  "t": 1792076400
+ },
+ {
+  "file": "capture-2026-10-16/open-minute-XAUUSD.json",
+  "state": "incomplete",
+  "symbol": "XAUUSD",
+  "t": 1792076460
+ },
+ {
+  "file": "capture-2026-10-16/weekend-EURUSD.json",
+  "max_stale_s": null,
+  "n_open": 0,
+  "n_reports": 60,
+  "state": "closed",
+  "symbol": "EURUSD",
+  "t": 1791633600
+ },
+ {
+  "file": "capture-2026-10-16/weekend-EURUSD.json",
+  "state": "incomplete",
+  "symbol": "EURUSD",
+  "t": 1791633660
+ }
+]

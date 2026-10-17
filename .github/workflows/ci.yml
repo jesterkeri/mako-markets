@@ -284,6 +284,56 @@ jobs:
       - name: Build the deploy bundle
         run: pnpm bundle
 
+  # Price recorder Worker (price-recorder/, mako-design/CHARTS_DS_PLAN.md): records one-minute candles from Chainlink
+  # Data Streams for the charts; never settles anything. Its own package like keeper/. It decodes with the resolver's
+  # own cf-worker/src/datastreams.ts, so the rules-version check fails if that file or a feed table changes without
+  # `pnpm rules-version`; the spike proves the deploy bundle carries that file and decodes a verified report.
+  price-recorder:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: price-recorder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Fixture checksums
+        working-directory: price-recorder/test/fixtures
+        run: sha256sum -c SHA256SUMS
+
+      - name: Rules version is current
+        run: node scripts/gen-rules-version.mjs --check
+
+      - name: Independent Python reference is current
+        run: python3 -I scripts/reference_ohlc.py --check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build the deploy bundle
+        run: pnpm bundle
+
+      - name: Bundling spike (the resolver decoder inside the bundle)
+        run: pnpm bundle:spike
+
   # Rounds liveness watch Worker (rounds-watch/): alert-only, its own package like keeper/.
   rounds-watch:
     runs-on: ubuntu-latest

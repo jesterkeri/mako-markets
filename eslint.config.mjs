@@ -37,6 +37,9 @@ const eslintConfig = defineConfig([
     "watchdog/.wrangler/**",
     "cf-worker/dist/**",
     "cf-worker/.wrangler/**",
+    "price-recorder/dist/**",
+    "price-recorder/dist-spike/**",
+    "price-recorder/.wrangler/**",
   ]),
 ]);
 
