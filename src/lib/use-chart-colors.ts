@@ -5,13 +5,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DEFAULT_CHART_COLORS, type ChartColors } from './chart-colors';
 import { useUser } from './use-user';
 
-const KEY = ['chart-colors'] as const;
-
 /// The candle colours for the signed-in user (saved to the account), or TradingView's defaults. `save` stores a full set,
 /// or null to go back to the defaults; the cache updates first so the chart changes at once.
 export function useChartColors() {
   const { user } = useUser();
   const qc = useQueryClient();
+  // Keyed by account, so another account signing in on the same tab never sees (or saves) this one's colours.
+  const account = user ? (user.authType === 'magic' ? user.safeAddress : user.walletAddress) : null;
+  const KEY = ['chart-colors', account];
   const query = useQuery({
     queryKey: KEY,
     enabled: user !== null,
@@ -23,6 +24,8 @@ export function useChartColors() {
     },
   });
   const mutation = useMutation({
+    // One save at a time, in the order made, so a Reset can never be overtaken by an earlier colour.
+    scope: { id: 'chart-colors' },
     mutationFn: async (colors: ChartColors | null) => {
       const res = await fetch('/api/user/chart-colors', {
         method: 'POST',
@@ -39,7 +42,7 @@ export function useChartColors() {
   return {
     colors: saved ?? DEFAULT_CHART_COLORS,
     canSave: user !== null,
-    save: (colors: ChartColors | null) => mutation.mutate(colors),
+    save: mutation.mutate,
     saveFailed: mutation.isError,
   };
 }
