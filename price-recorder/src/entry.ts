@@ -30,7 +30,7 @@ export function jsonSecond(v: unknown): number | null {
 /// else as JSON, so `null`, "null" and the hex bytes of "null" stay three different entries.
 export function reportKey(fullReport: unknown): Hex {
   if (typeof fullReport === 'string' && /^0x([0-9a-fA-F]{2})*$/.test(fullReport)) return keccak256(fullReport.toLowerCase() as Hex);
-  const [tag, text] = typeof fullReport === 'string' ? [1, fullReport] : [2, JSON.stringify(fullReport ?? null)];
+  const [tag, text] = typeof fullReport === 'string' ? [1, fullReport] : [2, typed(fullReport ?? null)];
   return keccak256(new Uint8Array([tag, ...stringToBytes(text)]));
 }
 
@@ -48,14 +48,15 @@ export function rawId(obs: number, e: PageEntry): string {
   return JSON.stringify([obs, 'json', typed(v)]);
 }
 
-/// JSON.stringify is not one-to-one on parsed values (Infinity and NaN both print as null, -0 as 0), so a non-string
-/// fullReport is written with every number tagged by its exact text and every value by its type.
-// shortcut: object keys keep JavaScript's order, which moves integer-like keys first; such a value is never a report.
-function typed(v: unknown): string {
-  if (typeof v === 'number') return `n${Object.is(v, -0) ? '-0' : String(v)}`;
-  if (Array.isArray(v)) return `a[${v.map(typed).join(',')}]`;
-  if (v && typeof v === 'object') return `o{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${typed(x)}`).join(',')}}`;
-  return `${typeof v}:${JSON.stringify(v)}`;
+/// JSON.stringify is not one-to-one on parsed values (Infinity and NaN print as null, -0 as 0), so every number and string
+/// is tagged with its exact text first. A value too deep to print cannot crash the minute: it gets one fixed identity.
+// shortcut: two different unprintable values (nested thousands deep) count as one; a page like that is never a report.
+export function typed(v: unknown): string {
+  try {
+    return JSON.stringify(v, (_k, x: unknown) => (typeof x === 'number' ? `n:${Object.is(x, -0) ? '-0' : String(x)}` : typeof x === 'string' ? `s:${x}` : x)) ?? 'undefined';
+  } catch {
+    return 'unprintable';
+  }
 }
 
 /// The JSON second of an entry of `feed`, or null if the JSON feedID is another feed's or the second is malformed.
