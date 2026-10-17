@@ -144,6 +144,31 @@ describe('IntelStrip', () => {
     expect(viewport.scrollLeft).toBe(0);
   });
 
+  it('a refetch whose headlines contain the old separator still ends keyboard mode when the focused card goes (Codex NEWS_MARQUEE R1 F1)', () => {
+    // Codex's lists: joined with a newline, both give "t:a|\nt:b|\nt:c|"; the focused second card is not in the second list.
+    stripWidth = 300;
+    const first: IntelItem[] = [
+      { tag: 'NBA', title: 'a', time: '' },
+      { tag: 'NBA', title: 'b|\nt:c', time: '' },
+    ];
+    const second: IntelItem[] = [
+      { tag: 'NBA', title: 'a|\nt:b', time: '' },
+      { tag: 'NBA', title: 'c', time: '' },
+    ];
+    expect(intelKeys(first).join('\n')).toBe(intelKeys(second).join('\n'));
+    const { container, rerender } = render(<IntelStrip items={first} nowMs={NOW} minCols={1} />);
+    const viewport = container.querySelector('.mk-marquee') as HTMLElement;
+    expect(viewport).not.toBeNull();
+    const focused = container.querySelectorAll<HTMLElement>('.mk-marquee-track > ul:not([aria-hidden]) li')[1];
+    focused.focus();
+    fireEvent.focus(focused);
+    expect(viewport.hasAttribute('data-kb')).toBe(true);
+    viewport.scrollLeft = 200;
+    rerender(<IntelStrip items={second} nowMs={NOW} minCols={1} />);
+    expect(viewport.hasAttribute('data-kb')).toBe(false);
+    expect(viewport.scrollLeft).toBe(0);
+  });
+
   it('a refetch that adds a newer story in front keeps every existing card (keyed by story, not by position)', () => {
     stripWidth = 1216;
     const before = stories(12);

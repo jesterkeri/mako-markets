@@ -254,7 +254,9 @@ export function IntelStrip({ items, nowMs, minCols }: Props) {
   // strip), the mode ends just as a blur would end it. If focus is still inside (a newer story in front moves every
   // card a card width right), the focused card is brought wholly into view again. Only on a change of stories, so a
   // reader who scrolled the still row by hand is not pulled back by an unrelated render (the age labels re-render).
-  const storiesKey = keys.join('\n');
+  // JSON, not a joined string: a headline may contain any character, the separator included, so two different lists
+  // could join to the same string and a removed focused card would go unnoticed (Codex NEWS_MARQUEE R1 F1).
+  const storiesKey = JSON.stringify(keys);
   const shownStories = useRef(storiesKey);
   useLayoutEffect(() => {
     if (shownStories.current === storiesKey) return;
