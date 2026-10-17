@@ -5,6 +5,7 @@ import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { checkSameOrigin } from '@/lib/csrf';
 import { DISPLAY_NAME_RE, displayNameKey, isReservedDisplayName } from '@/lib/display-name';
+import { nameHeldByOther } from '@/lib/display-name-holder';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
@@ -139,6 +140,11 @@ export async function POST(req: Request) {
   }
   if (Object.prototype.hasOwnProperty.call(validated, 'avatarUrl')) {
     setClause.avatarUrl = validated.avatarUrl ?? null;
+  }
+
+  // A name another account holds or still shows (kept from before migration 0017) is refused before the write.
+  if (setClause.displayNameKey && (await nameHeldByOther(setClause.displayNameKey, session.userId))) {
+    return Response.json({ error: 'name_taken' }, { status: 409 });
   }
 
   let updated;

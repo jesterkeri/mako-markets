@@ -29,7 +29,10 @@ const mocks = vi.hoisted(() => ({
   updateSet: vi.fn(),
   updateReturning: vi.fn(),
   selectPriorSession: vi.fn(),
+  nameHeldByOther: vi.fn(async () => false),
 }));
+
+vi.mock('@/lib/display-name-holder', () => ({ nameHeldByOther: mocks.nameHeldByOther }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
 vi.mock('@/lib/user-session', () => ({ getUserSession: mocks.getUserSession }));
@@ -84,7 +87,10 @@ vi.mock('drizzle-orm', () => ({
   desc: (a: unknown) => ({ desc: a }),
 }));
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  mocks.nameHeldByOther.mockImplementation(async () => false);
+});
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
 const EOA = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -415,6 +421,15 @@ describe('POST /api/user/profile/update: unique display names (Joshua 2026-10-17
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual({ error: 'name_taken' });
     }
+  });
+  it('a name another account holds or still shows is refused before the write (409 name_taken)', async () => {
+    setupHappy();
+    mocks.nameHeldByOther.mockResolvedValueOnce(true);
+    const { POST } = await import('@/app/api/user/profile/update/route');
+    const res = await POST(makeRequest({ displayName: 'Jo' }));
+    expect(res.status).toBe(409);
+    expect(mocks.nameHeldByOther).toHaveBeenCalledWith('jo', USER_ID);
+    expect(mocks.updateSet).not.toHaveBeenCalled();
   });
   it('any other database error is not mistaken for a taken name', async () => {
     setupHappy();

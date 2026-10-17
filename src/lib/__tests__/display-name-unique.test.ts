@@ -76,7 +76,8 @@ describe('shared rules', () => {
   it('reserved names, with spaces, dots, underscores and dashes ignored; ordinary names are not', () => {
     for (const r of ['mako', 'Mako Market', 'mako_market', 'MAKO-MARKETS', 'Admin', 'support', 'Official', 'mod', 'Team'])
       expect(isReservedDisplayName(r), r).toBe(true);
-    for (const ok of ['jester', 'makoman', 'teamwork', 'administrators club']) expect(isReservedDisplayName(ok), ok).toBe(false);
+    for (const ok of ['jester', 'makoman', 'mako fan', 'teamwork', 'administrators club']) expect(isReservedDisplayName(ok), ok).toBe(false);
+    for (const r of ['Mako_Official', 'mako team', 'MakoSupport', 'the mako app']) expect(isReservedDisplayName(r), r).toBe(true);
   });
 });
 
@@ -98,7 +99,7 @@ describe('GET /api/user/profile/name-available', () => {
     mocks.session.mockResolvedValue({ userId: 'me' });
     mocks.holder.mockResolvedValueOnce([]);
     expect((await ask('jester')).body).toEqual({ available: true });
-    mocks.holder.mockResolvedValueOnce([{ id: 'me' }]);
+    mocks.holder.mockResolvedValueOnce([]); // the query excludes the caller, so the caller's own name finds nobody
     expect((await ask('Jester')).body).toEqual({ available: true });
     mocks.holder.mockResolvedValueOnce([{ id: 'someone' }]);
     expect((await ask('JESTER')).body).toEqual({ available: false, reason: 'taken' });

@@ -10,4 +10,10 @@ export const displayNameKey = (name: string): string => name.trim().replace(/ +/
 // Names nobody can take, so no one can pose as the platform. Compared with spaces, dots, underscores and dashes removed.
 const RESERVED = new Set(['mako', 'makomarket', 'makomarkets', 'admin', 'administrator', 'support', 'official', 'moderator', 'mod', 'staff', 'team', 'system']);
 
-export const isReservedDisplayName = (name: string): boolean => RESERVED.has(displayNameKey(name).replace(/[ ._-]/g, ''));
+// A name with "mako" in it that also names a role ("Mako_Official", "mako team") poses as the platform too.
+const ROLE = /official|team|support|admin|staff|mod|market|app/;
+
+export const isReservedDisplayName = (name: string): boolean => {
+  const bare = displayNameKey(name).replace(/[ ._-]/g, '');
+  return RESERVED.has(bare) || (bare.includes('mako') && ROLE.test(bare));
+};

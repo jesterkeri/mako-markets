@@ -1,8 +1,5 @@
-import { eq } from 'drizzle-orm';
-
-import { db } from '@/db/client';
-import { users } from '@/db/schema';
 import { DISPLAY_NAME_RE, displayNameKey, isReservedDisplayName } from '@/lib/display-name';
+import { nameHeldByOther } from '@/lib/display-name-holder';
 import { getUserSession } from '@/lib/user-session';
 
 // GET /api/user/profile/name-available?name=... -> { available, reason? }
@@ -15,7 +12,6 @@ export async function GET(req: Request) {
   const name = (new URL(req.url).searchParams.get('name') ?? '').trim();
   if (!DISPLAY_NAME_RE.test(name)) return Response.json({ available: false, reason: 'invalid' });
   if (isReservedDisplayName(name)) return Response.json({ available: false, reason: 'reserved' });
-  const holder = await db.select({ id: users.id }).from(users).where(eq(users.displayNameKey, displayNameKey(name))).limit(1);
-  if (holder.length > 0 && holder[0].id !== session.userId) return Response.json({ available: false, reason: 'taken' });
+  if (await nameHeldByOther(displayNameKey(name), session.userId)) return Response.json({ available: false, reason: 'taken' });
   return Response.json({ available: true });
 }
