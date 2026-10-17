@@ -36,7 +36,8 @@ import {
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
 import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from './use-creator-totals';
-import { validateDisplayName } from './profile-rules';
+import { NAME_RESERVED, NAME_TAKEN, validateDisplayName } from './profile-rules';
+import { useNameCheck } from './use-name-check';
 
 // Me on desktop (11a), in the terminal look: identity and test USDC, the four totals, profit and badges, then the
 // positions beside Ready to claim.
@@ -84,9 +85,12 @@ function Identity(v: MeView) {
   const { user, account, name, label, initial, emailAccount, editing, draft, edit } = v;
   const invalid = editing ? validateDisplayName(draft) : null;
   const unchanged = draft.trim() === (name ?? '');
-  const canSave = !invalid && !unchanged && !edit.nameBusy;
-  const hint = invalid ?? (edit.nameError || 'Looks good. This is how you show up in comments and the leaderboard.');
-  const hintIsError = invalid !== null || edit.nameError !== '';
+  const check = useNameCheck(draft, name, editing);
+  const canSave = !invalid && !unchanged && !edit.nameBusy && check !== 'taken' && check !== 'reserved';
+  const hint =
+    invalid ??
+    (check === 'taken' ? NAME_TAKEN : check === 'reserved' ? NAME_RESERVED : edit.nameError || (check === 'checking' ? 'Checking the name...' : 'Looks good. This is how you show up in comments and the leaderboard.'));
+  const hintIsError = invalid !== null || check === 'taken' || check === 'reserved' || edit.nameError !== '';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 22, padding: '22px 4px 24px' }}>
       <button

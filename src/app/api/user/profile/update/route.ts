@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { checkSameOrigin } from '@/lib/csrf';
+import { DISPLAY_NAME_RE, displayNameKey, isReservedDisplayName } from '@/lib/display-name';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
@@ -52,8 +53,6 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // missing-vs-null safe at the type level.
 // ----------------------------------------------------------------------------
 
-const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
-
 type UpdateInput = {
   displayName?: string | null;
   avatarUrl?: string | null;
@@ -85,6 +84,7 @@ function validateBody(raw: unknown): ValidatedFields | { error: string } {
       const trimmed = v.trim();
       if (trimmed.length === 0) return { error: 'bad_body' };
       if (!DISPLAY_NAME_RE.test(trimmed)) return { error: 'bad_body' };
+      if (isReservedDisplayName(trimmed)) return { error: 'name_reserved' };
       out.displayName = trimmed;
     } else {
       return { error: 'bad_body' };
@@ -131,19 +131,23 @@ export async function POST(req: Request) {
   // Build the SET clause from the validated fields. Skipping a key
   // entirely (vs. setting to null) is what makes the update touch only
   // the columns the body asked for.
-  const setClause: { displayName?: string | null; avatarUrl?: string | null } = {};
+  const setClause: { displayName?: string | null; displayNameKey?: string | null; avatarUrl?: string | null } = {};
   if (Object.prototype.hasOwnProperty.call(validated, 'displayName')) {
     setClause.displayName = validated.displayName ?? null;
+    // Names are unique case-insensitively: the key's unique index (migration 0017) refuses a name another account holds.
+    setClause.displayNameKey = validated.displayName ? displayNameKey(validated.displayName) : null;
   }
   if (Object.prototype.hasOwnProperty.call(validated, 'avatarUrl')) {
     setClause.avatarUrl = validated.avatarUrl ?? null;
   }
 
-  const updated = await db
-    .update(users)
-    .set(setClause)
-    .where(eq(users.id, session.userId))
-    .returning({
+  let updated;
+  try {
+    updated = await db
+      .update(users)
+      .set(setClause)
+      .where(eq(users.id, session.userId))
+      .returning({
       email: users.email,
       magicEoa: users.magicEoa,
       displayName: users.displayName,
@@ -152,6 +156,10 @@ export async function POST(req: Request) {
       totpEnabledAt: users.totpEnabledAt,
       lastEmailChangedAt: users.lastEmailChangedAt,
     });
+  } catch (err) {
+    if (isNameTaken(err)) return Response.json({ error: 'name_taken' }, { status: 409 });
+    throw err;
+  }
 
   if (updated.length === 0) {
     // Session points to a deleted user. Mirror /me semantics.
@@ -197,4 +205,12 @@ export async function POST(req: Request) {
     ...walletUserToWire(row, session.walletAddress),
     lastSignInAt,
   });
+}
+
+/// The unique index on the name key refused the write (Postgres 23505), directly or wrapped by drizzle in `cause`.
+function isNameTaken(err: unknown): boolean {
+  for (let e = err as { code?: string; constraint?: string; constraint_name?: string; cause?: unknown } | undefined; e; e = e.cause as typeof e) {
+    if (e.code === '23505' && (e.constraint ?? e.constraint_name) === 'users_display_name_key_uniq') return true;
+  }
+  return false;
 }

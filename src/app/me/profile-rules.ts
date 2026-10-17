@@ -14,10 +14,15 @@ export function validateDisplayName(value: string): string | null {
   return null;
 }
 
-/// The message for a display-name update the server refused.
-export function nameSaveError(status: number): string {
+/// The message for a display-name update the server refused (`code` is the response's `error`).
+export function nameSaveError(status: number, code?: string): string {
+  if (status === 409 || code === 'name_taken') return NAME_TAKEN;
+  if (code === 'name_reserved') return NAME_RESERVED;
   return status === 400 ? 'Display name was rejected. Try a shorter / simpler value.' : 'Update failed. Please retry.';
 }
+
+export const NAME_TAKEN = 'That name is taken. Pick another.';
+export const NAME_RESERVED = 'That name is reserved. Pick another.';
 
 const AVATAR_MAX_BYTES = 4 * 1024 * 1024;
 const AVATAR_MIME_ALLOW = new Set(['image/png', 'image/jpeg', 'image/webp']);

@@ -37,7 +37,8 @@ import {
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
 import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from './use-creator-totals';
-import { validateDisplayName } from './profile-rules';
+import { NAME_RESERVED, NAME_TAKEN, validateDisplayName } from './profile-rules';
+import { useNameCheck } from './use-name-check';
 
 // Me on mobile (11a), in the expressive look: identity, the balance tiles, test USDC, create and settings rows,
 // Ready to claim, profit, badges, then the positions as cards. The shell draws the header and the tab bar.
@@ -472,9 +473,12 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
 function NameDialog(v: MeView) {
   const { edit, draft, name } = v;
   const invalid = validateDisplayName(draft);
-  const canSave = !invalid && draft.trim() !== (name ?? '') && !edit.nameBusy;
-  const hint = invalid ?? (edit.nameError || 'Looks good. This is how you show up in comments and the leaderboard.');
-  const hintIsError = invalid !== null || edit.nameError !== '';
+  const check = useNameCheck(draft, name, true);
+  const canSave = !invalid && draft.trim() !== (name ?? '') && !edit.nameBusy && check !== 'taken' && check !== 'reserved';
+  const hint =
+    invalid ??
+    (check === 'taken' ? NAME_TAKEN : check === 'reserved' ? NAME_RESERVED : edit.nameError || (check === 'checking' ? 'Checking the name...' : 'Looks good. This is how you show up in comments and the leaderboard.'));
+  const hintIsError = invalid !== null || check === 'taken' || check === 'reserved' || edit.nameError !== '';
   return (
     <MobileDialog label="Display name" onClose={v.cancelEdit}>
       <form

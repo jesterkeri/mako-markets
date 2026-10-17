@@ -171,7 +171,7 @@ describe('POST /api/user/profile/update', () => {
     const res = await POST(makeRequest({ displayName: ' Joshua ' }));
     expect(res.status).toBe(200);
     const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(setArg).toEqual({ displayName: 'Joshua' });
+    expect(setArg).toEqual({ displayName: 'Joshua', displayNameKey: 'joshua' });
     const body = await res.json() as { displayName: string };
     expect(body.displayName).toBe('Joshua');
   });
@@ -201,7 +201,7 @@ describe('POST /api/user/profile/update', () => {
     const res = await POST(makeRequest({ displayName: null }));
     expect(res.status).toBe(200);
     const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(setArg).toEqual({ displayName: null });
+    expect(setArg).toEqual({ displayName: null, displayNameKey: null });
   });
 
   it('displayName: empty string after trim → 400 bad_body', async () => {
@@ -246,7 +246,7 @@ describe('POST /api/user/profile/update', () => {
     const res = await POST(makeRequest({ displayName: 'Joshua' }));
     expect(res.status).toBe(200);
     const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(Object.keys(setArg).sort()).toEqual(['displayName']);
+    expect(Object.keys(setArg).sort()).toEqual(['displayName', 'displayNameKey']);
     expect(setArg).not.toHaveProperty('avatarUrl');
   });
 
@@ -382,5 +382,44 @@ describe('POST /api/user/profile/update', () => {
     expect(body).not.toHaveProperty('totpEnabledAt');
     expect(body).not.toHaveProperty('nextEmailChangeAvailableAt');
     expect(mocks.deriveSafeAddress).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/user/profile/update: unique display names (Joshua 2026-10-17)', () => {
+  it('writes the case-insensitive key with the name', async () => {
+    setupHappy();
+    const { POST } = await import('@/app/api/user/profile/update/route');
+    const res = await POST(makeRequest({ displayName: '  Jester   Z ' }));
+    expect(res.status).toBe(200);
+    expect(mocks.updateSet).toHaveBeenCalledWith({ displayName: 'Jester   Z', displayNameKey: 'jester z' });
+  });
+  it('a reserved name is refused before any write (400 name_reserved)', async () => {
+    setupHappy();
+    const { POST } = await import('@/app/api/user/profile/update/route');
+    for (const name of ['Mako', 'mako market', 'Mako_Market', 'ADMIN', 'Support']) {
+      const res = await POST(makeRequest({ displayName: name }));
+      expect(res.status, name).toBe(400);
+      expect(await res.json()).toEqual({ error: 'name_reserved' });
+    }
+    expect(mocks.updateSet).not.toHaveBeenCalled();
+  });
+  it('a name another account holds: the unique index refuses it, 409 name_taken (direct or wrapped in cause)', async () => {
+    const { POST } = await import('@/app/api/user/profile/update/route');
+    for (const err of [
+      { code: '23505', constraint: 'users_display_name_key_uniq' },
+      Object.assign(new Error('query failed'), { cause: { code: '23505', constraint_name: 'users_display_name_key_uniq' } }),
+    ]) {
+      setupHappy();
+      mocks.updateReturning.mockRejectedValueOnce(err);
+      const res = await POST(makeRequest({ displayName: 'Jester' }));
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: 'name_taken' });
+    }
+  });
+  it('any other database error is not mistaken for a taken name', async () => {
+    setupHappy();
+    mocks.updateReturning.mockRejectedValueOnce({ code: '23505', constraint: 'users_wallet_address_uniq' });
+    const { POST } = await import('@/app/api/user/profile/update/route');
+    await expect(POST(makeRequest({ displayName: 'Jester' }))).rejects.toBeTruthy();
   });
 });

@@ -200,6 +200,10 @@ export const users = pgTable('users', {
   /// display_name is mutable any time, validated server-side as
   /// [a-zA-Z0-9 ._-]{1,32}. Null = use email/EOA fallback in UI.
   displayName: text('display_name'),
+  /// The display name's comparison key (src/lib/display-name.ts displayNameKey), unique when set (partial index
+  /// users_display_name_key_uniq, migration 0017). Written with display_name on every name save; NULL when the name
+  /// is cleared, and for an account that shared a name before 0017 and was not its oldest holder.
+  displayNameKey: text('display_name_key'),
   /// avatar_url is a Vercel Blob URL produced by
   /// /api/user/avatar/upload (multipart → sharp resize 256x256 webp →
   /// blob put). The upload route is the ONLY non-null writer:
