@@ -28,6 +28,7 @@ import {
   type Time,
 } from 'lightweight-charts';
 
+import { DEFAULT_CHART_COLORS, type ChartColors } from '@/lib/chart-colors';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
 import type { Candle, Timeframe } from '@/types/chart';
 
@@ -41,6 +42,8 @@ interface Props {
   scrollWithPage?: boolean;
   showMA20?: boolean;
   showEMA50?: boolean;
+  /** Candle colours (TradingView's full set); TradingView's green and red when absent. */
+  candleColors?: ChartColors;
   /** Fires once the chart + candle series are constructed, so a
    *  parent overlay (e.g. DrawingCanvas) can subscribe to the same
    *  instances. Called with (null, null) on teardown. */
@@ -53,22 +56,14 @@ export interface ChartInnerHandle {
   fit: () => void;
 }
 
-/// The chart's palette in the redesign (2a/5a): yellow up and red down candles on the page canvas, text and lines from
-/// the canvas foreground, MA and EMA in teal and cyan so they never read as candles. Read from the chart's own
-/// container, so the theme the surrounding page sets (light or dark) is the one drawn.
+/// The chart's palette apart from the candles (whose colours are the `candleColors` prop): text and lines from the
+/// canvas foreground, MA and EMA in teal and cyan. Read from the chart's own container, so the theme the surrounding
+/// page sets (light or dark) is the one drawn.
 type BrandColors = {
   ink: string;
   paper: string;
-  up: string;
-  makoRed: string;
   ma: string;
   ema: string;
-  /// Candle outline and wicks: black in light mode so yellow stands out on cream (design --edge-c, --wick-up/-dn);
-  /// in dark mode the outline is the candle's own colour and the wicks are yellow and red.
-  upBorder: string;
-  downBorder: string;
-  wickUp: string;
-  wickDown: string;
   divider: string;
   grid: string;
   muted: string;
@@ -77,14 +72,8 @@ type BrandColors = {
 const FALLBACK: BrandColors = {
   ink:     '#EBE5D9',
   paper:   '#000000',
-  up:      '#FACC15',
-  makoRed: '#D94A3D',
   ma:      '#14B8A6',
   ema:     '#06B6D4',
-  upBorder: '#FACC15',
-  downBorder: '#D94A3D',
-  wickUp:  '#FACC15',
-  wickDown: '#D94A3D',
   divider: 'rgba(235, 229, 217, 0.12)',
   grid:    'rgba(235, 229, 217, 0.06)',
   muted:   'rgba(235, 229, 217, 0.45)',
@@ -107,20 +96,9 @@ function readBrandColors(el?: Element | null): BrandColors {
     return v || fallback;
   };
   const ink = pick('--mako-canvas-fg', FALLBACK.ink);
-  const up = pick('--mako-signal', FALLBACK.up);
-  const makoRed = pick('--mako-red', FALLBACK.makoRed);
-  // --edge-c is 'transparent' in dark mode: the candle is then outlined in its own colour.
-  const edge = pick('--edge-c', 'transparent');
-  const outlined = edge !== 'transparent' && edge !== '';
   return {
     ink,
     paper:   pick('--mako-canvas',  FALLBACK.paper),
-    up,
-    makoRed,
-    upBorder: outlined ? edge : up,
-    downBorder: outlined ? edge : makoRed,
-    wickUp:  pick('--wick-up', up),
-    wickDown: pick('--wick-dn', makoRed),
     ma:      pick('--mako-teal',    FALLBACK.ma),
     ema:     pick('--mako-cyan',    FALLBACK.ema),
     divider: withAlpha(ink, 0.12) ?? FALLBACK.divider,
@@ -152,6 +130,11 @@ function toChartData(candles: Candle[]): CandlestickData<Time>[] {
     low: c.low,
     close: c.close,
   }));
+}
+
+/// The candle series' colour options from a ChartColors set.
+export function candleOptions(c: ChartColors) {
+  return { upColor: c.upBody, downColor: c.downBody, borderUpColor: c.upBorder, borderDownColor: c.downBorder, wickUpColor: c.upWick, wickDownColor: c.downWick };
 }
 
 function toVolumeData(candles: Candle[], upColor: string, downColor: string): HistogramData<Time>[] {
@@ -211,9 +194,12 @@ function computeEMA(candles: Candle[], period: number): LineData<Time>[] {
 }
 
 const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
-  { candles, instrument: _instrument, assetClass, timeframe: _timeframe, height, showVolume, showMA20, showEMA50, scrollWithPage, onChartReady },
+  { candles, instrument: _instrument, assetClass, timeframe: _timeframe, height, showVolume, showMA20, showEMA50, scrollWithPage, onChartReady, candleColors = DEFAULT_CHART_COLORS },
   ref,
 ) {
+  // The latest candle colours, read by the creation and theme-flip paths, which run outside a render.
+  const candleColorsRef = useRef(candleColors);
+  candleColorsRef.current = candleColors;
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -261,14 +247,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
       timeScale:       { borderColor: c.divider },
       rightPriceScale: { borderColor: c.divider },
     });
-    series.applyOptions({
-      upColor:         c.up,
-      downColor:       c.makoRed,
-      borderUpColor:   c.upBorder,
-      borderDownColor: c.downBorder,
-      wickUpColor:     c.wickUp,
-      wickDownColor:   c.wickDown,
-    });
+    series.applyOptions(candleOptions(candleColorsRef.current));
     // Re-apply MA/EMA colors so they stay legible on theme flip.
     ma20Ref.current?.applyOptions({ color: c.ma });
     ema50Ref.current?.applyOptions({ color: c.ema });
@@ -318,12 +297,7 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
 
     const { precision, minMove } = derivePrecision(candles, assetClass);
     const series = chart.addCandlestickSeries({
-      upColor:         colors.up,
-      downColor:       colors.makoRed,
-      borderUpColor:   colors.upBorder,
-      borderDownColor: colors.downBorder,
-      wickUpColor:     colors.wickUp,
-      wickDownColor:   colors.wickDown,
+      ...candleOptions(candleColorsRef.current),
       priceFormat: { type: 'price', precision, minMove },
     });
 
@@ -458,10 +432,10 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
     });
     unique.sort((a, b) => a.timestamp - b.timestamp);
 
-    const colors = readBrandColors(containerRef.current);
     series.setData(toChartData(unique));
     if (volumeRef.current) {
-      volumeRef.current.setData(toVolumeData(unique, withAlpha(colors.up, 0.5) ?? colors.up, withAlpha(colors.makoRed, 0.5) ?? colors.makoRed));
+      const cc = candleColorsRef.current;
+      volumeRef.current.setData(toVolumeData(unique, withAlpha(cc.upBody, 0.5) ?? cc.upBody, withAlpha(cc.downBody, 0.5) ?? cc.downBody));
     }
     if (ma20Ref.current) {
       ma20Ref.current.setData(computeMA(unique, 20));
@@ -470,7 +444,12 @@ const ChartInner = forwardRef<ChartInnerHandle, Props>(function ChartInner(
       ema50Ref.current.setData(computeEMA(unique, 50));
     }
     chart?.timeScale().fitContent();
-  }, [candles, showVolume, showMA20, showEMA50]);
+  }, [candles, showVolume, showMA20, showEMA50, candleColors]);
+
+  // A change of candle colours (the colour panel) repaints the candles at once; the effect above repaints the volume.
+  useEffect(() => {
+    seriesRef.current?.applyOptions(candleOptions(candleColors));
+  }, [candleColors]);
 
   return (
     <div
