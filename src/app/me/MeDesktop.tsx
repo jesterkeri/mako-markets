@@ -85,7 +85,7 @@ function Identity(v: MeView) {
   const { user, account, name, label, initial, emailAccount, editing, draft, edit } = v;
   const invalid = editing ? validateDisplayName(draft) : null;
   const unchanged = draft.trim() === (name ?? '');
-  const check = useNameCheck(draft, name, editing);
+  const check = useNameCheck(draft, name, editing, account);
   const canSave = !invalid && !unchanged && !edit.nameBusy && check !== 'taken' && check !== 'reserved';
   const hint =
     invalid ??

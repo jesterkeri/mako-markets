@@ -471,9 +471,9 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
 }
 
 function NameDialog(v: MeView) {
-  const { edit, draft, name } = v;
+  const { edit, draft, name, account } = v;
   const invalid = validateDisplayName(draft);
-  const check = useNameCheck(draft, name, true);
+  const check = useNameCheck(draft, name, true, account);
   const canSave = !invalid && draft.trim() !== (name ?? '') && !edit.nameBusy && check !== 'taken' && check !== 'reserved';
   const hint =
     invalid ??
