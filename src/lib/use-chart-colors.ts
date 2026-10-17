@@ -25,7 +25,8 @@ export function useChartColors() {
     enabled: user !== null,
     staleTime: Infinity,
     queryFn: async (): Promise<ChartColors | null> => {
-      const res = await fetch('/api/user/chart-colors', { credentials: 'same-origin' });
+      // Names the account: a read under another account's cookie (a sign-in in another tab) is refused, never filed here.
+      const res = await fetch(`/api/user/chart-colors?account=${account}`, { credentials: 'same-origin' });
       if (!res.ok) throw new Error(`chart colours not loaded (${res.status})`);
       return ((await res.json()) as { colors: ChartColors | null }).colors;
     },
@@ -37,7 +38,11 @@ export function useChartColors() {
     // A save queued behind a slow one is dropped if another account signed in meanwhile; the server also refuses a
     // save for an account other than the session's (a sign-in in another tab changes the cookie under this one).
     mutationFn: async ({ account: made, colors }: Save) => {
-      if (accountNow.current !== made) return;
+      if (accountNow.current !== made) {
+        // Dropped: forget the optimistic colours too, so this account reloads what it really holds next time.
+        qc.removeQueries({ queryKey: ['chart-colors', made] });
+        return;
+      }
       const res = await fetch('/api/user/chart-colors', {
         method: 'POST',
         credentials: 'same-origin',
