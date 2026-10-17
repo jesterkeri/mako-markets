@@ -71,17 +71,22 @@ const floorDiv = (a: bigint, b: bigint): bigint => {
 /// Plan 3.3 classes. v3 is always fresh-open. v8: status 2 is fresh-open unless the price is strictly older than
 /// STALE_EXCLUDE_S (integer nanoseconds); status 1 closed; status 0, and any status the schema does not define,
 /// unknown (a gap, never a price).
+/// A v8 price's age at its report second, in integer nanoseconds (negative when stamped inside that second).
+const ageNs = (obs: number, lastUpdateNs: bigint): bigint => BigInt(obs) * NS - lastUpdateNs;
+
 export function classify(v: ValidEntry): InputClass {
   const r = v.report;
   if (r.schema === 3) return 'fresh-open';
-  if (r.marketStatus === 2) return BigInt(v.obs) * NS - r.lastUpdateTimestamp > BigInt(STALE_EXCLUDE_S) * NS ? 'stale-open' : 'fresh-open';
+  if (r.marketStatus === 2) return ageNs(v.obs, r.lastUpdateTimestamp) > BigInt(STALE_EXCLUDE_S) * NS ? 'stale-open' : 'fresh-open';
   if (r.marketStatus === 1) return 'closed';
   return 'unknown';
 }
 
+const byObsKey = (a: { obs: number; key: Hex }, b: { obs: number; key: Hex }) => a.obs - b.obs || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+
 /// keccak256 over (obs as 4 bytes || key) for each item, sorted by (obs, key). The empty set hashes the empty string.
 export function fingerprint(items: readonly { obs: number; key: Hex }[]): Hex {
-  const sorted = [...items].sort((a, b) => a.obs - b.obs || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const sorted = [...items].sort(byObsKey);
   return keccak256(concat(sorted.flatMap((x) => [numberToHex(x.obs, { size: 4 }), x.key])));
 }
 
@@ -125,29 +130,28 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
     // (raw_fp and n_raw stay this feed's).
     else if (!r) {
       const obs = jsonSecond(e.observationsTimestamp);
-      if (obs !== null && obs >= M && obs < end) foreign.add(JSON.stringify([e.feedID ?? null, obs, e.fullReport ?? null]));
+      const id = typeof e.feedID === 'string' ? e.feedID.toLowerCase() : (e.feedID ?? null);
+      if (obs !== null && obs >= M && obs < end) foreign.add(JSON.stringify([id, obs, e.fullReport ?? null]));
     }
     if (!v) continue;
     if (exhaustionWitness(v, end)) witness = true;
     if (candleInput(v, M)) valid.push(v);
   }
 
-  // Identical bytes at one second count once; two different valid reports at one second are a conflict.
-  const inputs = new Map<string, ValidEntry>();
-  const bySecond = new Map<number, Hex[]>();
-  for (const v of valid) {
-    const id = `${v.obs}:${v.key}`;
-    if (inputs.has(id)) continue;
-    inputs.set(id, v);
-    bySecond.set(v.obs, [...(bySecond.get(v.obs) ?? []), v.key]);
-  }
-  const uniq = [...inputs.values()].sort((a, b) => a.obs - b.obs);
-  const rejected = [...raw.values()].filter((x) => !x.valid).length + foreign.size;
+  if (!fetchOk || !witness) return base;
 
-  if (!fetchOk || !witness) return { ...base, state: 'incomplete' };
+  // Identical bytes at one second count once (sorted by second, then key); two different valid reports at one second
+  // are a conflict: the first key at that second against each later one.
+  const uniq = [...new Map(valid.map((v) => [`${v.obs}:${v.key}`, v])).values()].sort(byObsKey);
+  const rejected = [...raw.values()].filter((x) => !x.valid).length + foreign.size;
+  const conflicts: Conflict[] = [];
+  for (let i = 1, first = 0; i < uniq.length; i++) {
+    if (uniq[i].obs !== uniq[first].obs) first = i;
+    else conflicts.push({ obs: uniq[i].obs, keccakA: uniq[first].key, keccakB: uniq[i].key });
+  }
 
   const proven = {
-    n_reports: bySecond.size,
+    n_reports: new Set(uniq.map((v) => v.obs)).size,
     n_rejected: rejected,
     fp: fingerprint(uniq),
     n_valid: uniq.length,
@@ -155,20 +159,15 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
     n_raw: raw.size,
   };
 
-  const conflicts: Conflict[] = [];
-  for (const [obs, keys] of bySecond) {
-    const sorted = [...keys].sort();
-    for (let i = 1; i < sorted.length; i++) conflicts.push({ obs, keccakA: sorted[0], keccakB: sorted[i] });
-  }
-  if (conflicts.length > 0) return { ...base, ...proven, state: 'conflict', conflicts: conflicts.sort((a, b) => a.obs - b.obs) };
+  if (conflicts.length > 0) return { ...base, ...proven, state: 'conflict', conflicts };
   if (uniq.length === 0) return { ...base, ...proven, state: 'empty' };
 
-  const classes = uniq.map((v) => ({ v, cls: classify(v) }));
-  const fresh = classes.filter((x) => x.cls === 'fresh-open').map((x) => x.v);
+  const classes = uniq.map(classify);
+  const fresh = uniq.filter((_, i) => classes[i] === 'fresh-open');
   let maxStale: number | null = null;
   for (const v of uniq) {
     if (v.report.schema !== 8 || v.report.marketStatus !== 2) continue;
-    const s = Number(floorDiv(BigInt(v.obs) * NS - v.report.lastUpdateTimestamp, NS));
+    const s = Number(floorDiv(ageNs(v.obs, v.report.lastUpdateTimestamp), NS));
     maxStale = maxStale === null ? s : Math.max(maxStale, s);
   }
   const counted = { ...base, ...proven, n_open: fresh.length, max_stale_s: maxStale };
@@ -184,7 +183,7 @@ export function buildMinute(feed: Feed, M: number, entries: readonly PageEntry[]
     const last = fresh[fresh.length - 1];
     return { ...counted, state: 'open', o: first.price.toString(), h: hi.toString(), l: lo.toString(), c: last.price.toString(), open_obs: first.obs, close_obs: last.obs };
   }
-  if (classes.some((x) => x.cls === 'stale-open')) return { ...counted, state: 'stale' };
-  if (classes.some((x) => x.cls === 'unknown')) return { ...counted, state: 'unknown' };
+  if (classes.includes('stale-open')) return { ...counted, state: 'stale' };
+  if (classes.includes('unknown')) return { ...counted, state: 'unknown' };
   return { ...counted, state: 'closed' };
 }

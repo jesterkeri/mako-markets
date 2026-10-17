@@ -48,11 +48,14 @@ function rawId(obs: number, e: PageEntry): string {
   return JSON.stringify([obs, 'json', JSON.stringify(v)]);
 }
 
+/// The JSON second of an entry of `feed`, or null if the JSON feedID is another feed's or the second is malformed.
+const feedSecond = (e: PageEntry, feed: Feed): number | null =>
+  typeof e.feedID === 'string' && e.feedID.toLowerCase() === feed.feedId ? jsonSecond(e.observationsTimestamp) : null;
+
 /// The entry as raw_fp sees it: JSON feedID equals the feed and JSON observationsTimestamp is a second. Nothing else
 /// is read.
 export function rawEntry(e: PageEntry, feed: Feed): RawEntry | null {
-  if (typeof e.feedID !== 'string' || e.feedID.toLowerCase() !== feed.feedId) return null;
-  const obs = jsonSecond(e.observationsTimestamp);
+  const obs = feedSecond(e, feed);
   if (obs === null) return null;
   return { obs, key: reportKey(e.fullReport), id: rawId(obs, e) };
 }
@@ -63,8 +66,7 @@ export type ValidEntry = { obs: number; key: Hex; report: DecodedReport; price: 
 /// the feed's pinned schema through the resolver's decodeVerified; the decoded feedId and observationsTimestamp equal
 /// the JSON ones; validFrom <= observations; price > 0; for v8 0 < lastUpdateTimestamp < (obs + 1) * 1e9.
 export function validEntry(e: PageEntry, feed: Feed): ValidEntry | null {
-  if (typeof e.feedID !== 'string' || e.feedID.toLowerCase() !== feed.feedId) return null;
-  const obs = jsonSecond(e.observationsTimestamp);
+  const obs = feedSecond(e, feed);
   if (obs === null) return null;
   const blob = reportBlob(e.fullReport);
   if (blob === null) return null;

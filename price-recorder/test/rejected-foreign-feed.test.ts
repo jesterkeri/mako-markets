@@ -26,3 +26,15 @@ describe('n_rejected counts every invalid fetched entry in the minute (plan 3.1)
     expect(row.n_rejected).toBe(clean.n_rejected + 1);
   });
 });
+
+describe('another feed\'s entry is counted once whatever the case of its feedID (refactor pass on a9d1c9d)', () => {
+  it('derived (feedID changed): the same foreign entry in lower and upper case counts once in n_rejected', () => {
+    const page = capture('open-minute-BTC');
+    const M = obsOf(page[0]);
+    const e = at(page, M + 10);
+    const clean = buildMinute(feed('BTC'), M, page);
+    const lower = { ...e, feedID: feed('EURUSD').feedId };
+    const upper = { ...e, feedID: `0x${feed('EURUSD').feedId.slice(2).toUpperCase()}` };
+    expect(buildMinute(feed('BTC'), M, [...page, lower, upper]).n_rejected).toBe(clean.n_rejected + 1);
+  });
+});

@@ -1,7 +1,7 @@
 // Real captured pages (CHARTS_DS_PLAN 15.1), vendored under test/fixtures with SHA256SUMS and PROVENANCE.md. Cases a
 // capture never showed are built from a real report with ONE field changed, through `withWord`, and each test says
 // which file and which field (plan 15.1: no fabricated report bytes).
-import { decodeAbiParameters, encodeAbiParameters, numberToHex, type Hex } from 'viem';
+import { decodeAbiParameters, encodeAbiParameters, type Hex } from 'viem';
 
 import type { PageEntry } from '../src/entry';
 import { FEED_BY_SYMBOL, type Feed } from '../src/feeds';
@@ -15,7 +15,6 @@ export function capture(name: string): PageEntry[] {
   if (!c) throw new Error(`no capture ${name}`);
   return c.pages ? c.pages.flatMap((p) => p.reports) : (c.reports ?? []);
 }
-export const captureNames = (): string[] => Object.keys(captures).map((k) => k.replace('./fixtures/capture-2026-10-16/', '').replace('.json', ''));
 
 export function probePage(name: 'page-BTC' | 'page-EURUSD'): PageEntry[] {
   return probes[`./fixtures/probe-2026-09-18/${name}.json`].body.reports;
@@ -53,5 +52,3 @@ export const word = (e: PageEntry, i: number): bigint => {
   const blob = decodeAbiParameters(ENVELOPE, e.fullReport as Hex)[1] as Hex;
   return BigInt(`0x${blob.slice(2 + 64 * i, 2 + 64 * (i + 1))}`);
 };
-
-export const hexOf = (n: number): Hex => numberToHex(n);
