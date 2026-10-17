@@ -81,6 +81,6 @@ describe('adversary r2: candle colours with the real hook', () => {
     // A navigates away (the chart unmounts) 200 ms after the change.
     r.unmount();
     await tick(2000);
-    expect(posts).toEqual([{ colors: { ...SAVED, upBody: '#112233' } }]);
+    expect(posts.map((p) => p.colors)).toEqual([{ ...SAVED, upBody: '#112233' }]); // the body also names the account (r4)
   });
 });

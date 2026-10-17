@@ -47,6 +47,7 @@ vi.mock('@/db/client', () => ({
 }));
 afterEach(() => vi.clearAllMocks());
 
+const ACC = '0x00000000000000000000000000000000000000a1';
 const post = (body: unknown) => new Request('http://localhost/api/user/chart-colors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('/api/user/chart-colors', () => {
@@ -54,7 +55,7 @@ describe('/api/user/chart-colors', () => {
     mocks.session.mockResolvedValue(null);
     const { GET, POST } = await import('@/app/api/user/chart-colors/route');
     expect((await GET()).status).toBe(401);
-    expect((await POST(post({ colors: SIX }))).status).toBe(401);
+    expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(401);
     expect(mocks.set).not.toHaveBeenCalled();
   });
   it('GET: the stored set, or null for none or a malformed stored value', async () => {
@@ -71,14 +72,16 @@ describe('/api/user/chart-colors', () => {
     mocks.session.mockResolvedValue({ userId: 'u1' });
     mocks.returning.mockResolvedValue([{ id: 'u1' }]);
     const { POST } = await import('@/app/api/user/chart-colors/route');
-    expect((await POST(post({ colors: SIX }))).status).toBe(200);
+    expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(200);
     expect(mocks.set).toHaveBeenLastCalledWith({ chartColors: { ...SIX, upBody: '#26a69a' } });
-    expect((await POST(post({ colors: null }))).status).toBe(200);
+    expect((await POST(post({ account: ACC, colors: null }))).status).toBe(200);
     expect(mocks.set).toHaveBeenLastCalledWith({ chartColors: null });
     mocks.set.mockClear();
-    for (const bad of [{ colors: { upBody: '#000000' } }, {}, { colors: 'red' }]) expect((await POST(post(bad))).status, JSON.stringify(bad)).toBe(400);
+    for (const bad of [{ account: ACC, colors: { upBody: '#000000' } }, { account: ACC }, { account: ACC, colors: 'red' }, { colors: SIX }, { account: 'me', colors: SIX }]) expect((await POST(post(bad))).status, JSON.stringify(bad)).toBe(400);
     expect(mocks.set).not.toHaveBeenCalled();
     mocks.sameOrigin.mockReturnValueOnce({ ok: false });
-    expect((await POST(post({ colors: SIX }))).status).toBe(403);
+    expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(403);
+    mocks.returning.mockResolvedValueOnce([]); // the session is no longer that account
+    expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(409);
   });
 });
