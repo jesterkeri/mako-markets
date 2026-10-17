@@ -28,12 +28,13 @@ export function useChartColors() {
     queryKey: KEY,
     enabled: user !== null,
     staleTime: Infinity,
-    queryFn: async (): Promise<ChartColors | null> => {
+    queryFn: async ({ signal }): Promise<ChartColors | null> => {
       // Names the account: a read under another account's cookie (a sign-in in another tab) is refused, never filed here.
-      const res = await fetch(`/api/user/chart-colors?account=${account}`, { credentials: 'same-origin' });
+      const res = await fetch(`/api/user/chart-colors?account=${account}`, { credentials: 'same-origin', signal });
       if (!res.ok) throw new Error(`chart colours not loaded (${res.status})`);
       const { colors } = (await res.json()) as { colors: ChartColors | null };
-      if (account) confirmed.set(account, colors);
+      // A reload cancelled by a later save may still answer: its value predates that save, so it confirms nothing.
+      if (account && !signal.aborted) confirmed.set(account, colors);
       return colors;
     },
   });
@@ -67,7 +68,8 @@ export function useChartColors() {
     // already set the cache, and either would show the old colours over it. The put-back keeps the chart right when
     // the reload fails too (offline, or refused after a sign-in elsewhere).
     onError: (_e, { account: made }) => {
-      if (qc.isMutating({ mutationKey: ['chart-colors'] }) > 1) return;
+      // Only this account's saves count: another account's queued save never puts this account's colours back.
+      if (qc.isMutating({ mutationKey: ['chart-colors'], predicate: (m) => (m.state.variables as Save | undefined)?.account === made }) > 1) return;
       if (confirmed.has(made)) qc.setQueryData(['chart-colors', made], confirmed.get(made));
       void qc.invalidateQueries({ queryKey: ['chart-colors', made] });
     },
