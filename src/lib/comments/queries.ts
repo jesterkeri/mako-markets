@@ -175,7 +175,9 @@ function toWire(
     id: row.id,
     parentId: row.parentId ?? null,
     authorLabel: author?.authorLabel ?? 'anon',
-    avatarSeed: author?.avatarSeed ?? '',
+    // Hidden on a deleted row like the rest of the author's identity: the seed is a hash of the public address, so
+    // anyone could match it against the addresses on the leaderboard (adversary r3 on 06166a8).
+    avatarSeed: deleted ? '' : author?.avatarSeed ?? '',
     // Real photo when the author uploaded one (else null → glyph fallback).
     // Not shown for a deleted row (author identity is hidden there).
     avatarUrl: deleted ? null : author?.avatarUrl ?? null,

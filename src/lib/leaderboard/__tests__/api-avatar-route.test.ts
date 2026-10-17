@@ -69,14 +69,12 @@ describe('GET /api/avatar/<address>', () => {
     expect(blob).toHaveBeenCalledWith(photoOf('email'));
   });
 
-  it('a stale or missing version still gets the current photo, cached a minute', async () => {
-    await setPhoto('wallet', photoOf('wallet'));
-    blob.mockResolvedValue(image());
-    for (const v of ['000000000000', undefined]) {
-      const res = await get(WALLET, v);
-      expect(res.status).toBe(200);
-      expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
-    }
+  it('only the current version is served: an old (replaced) or made-up or missing v is a 404 with no Blob fetch', async () => {
+    await setPhoto('wallet', `https://${HOST}/avatars/${ids.wallet}/old.webp`);
+    const old = avatarVersion(`https://${HOST}/avatars/${ids.wallet}/old.webp`);
+    await setPhoto('wallet', photoOf('wallet')); // replaced
+    for (const v of [old, '000000000000', undefined]) expect((await get(WALLET, v)).status, String(v)).toBe(404);
+    expect(blob).not.toHaveBeenCalled();
   });
 
   it('a removed photo is a 404 at once; so are no account, a photo on another host, or a non-image reply', async () => {
@@ -88,21 +86,24 @@ describe('GET /api/avatar/<address>', () => {
     blob.mockClear();
     expect((await get(NOBODY)).status).toBe(404); // not a Mako Market account
     expect((await get(SAFE_LOWER)).status).toBe(404); // account without a photo
-    await setPhoto('wallet', 'https://attacker.example/x.png');
-    expect((await get(WALLET)).status).toBe(404);
-    await setPhoto('wallet', `https://${HOST}/avatars/${ids.email}/a.webp`); // another account's path
-    expect((await get(WALLET)).status).toBe(404);
+    // Each with the v of what is stored, so the 404 comes from the host and path checks, not from a wrong v.
+    for (const stored of ['https://attacker.example/x.png', `https://${HOST}/avatars/${ids.email}/a.webp`]) {
+      await setPhoto('wallet', stored);
+      expect((await get(WALLET, avatarVersion(stored))).status, stored).toBe(404);
+    }
     expect(blob).not.toHaveBeenCalled();
     await setPhoto('wallet', photoOf('wallet'));
+    const v = avatarVersion(photoOf('wallet'));
     blob.mockResolvedValueOnce(image('<html>', 'text/html'));
-    expect((await get(WALLET)).status).toBe(404);
+    expect((await get(WALLET, v)).status).toBe(404);
     blob.mockResolvedValueOnce(new Response('gone', { status: 404 }));
-    expect((await get(WALLET)).status).toBe(404);
+    expect((await get(WALLET, v)).status).toBe(404);
+    expect(blob).toHaveBeenCalledTimes(2);
   });
 
   it('not an address: 404 with no query and no fetch', async () => {
     currentDb = null; // any query would throw
-    for (const bad of ['kemi', '0x123', `${WALLET}00`]) expect((await get(bad)).status, bad).toBe(404);
+    for (const bad of ['kemi', '0x123', `${WALLET}00`]) expect((await get(bad, '000000000000')).status, bad).toBe(404);
     expect(blob).not.toHaveBeenCalled();
   });
 });

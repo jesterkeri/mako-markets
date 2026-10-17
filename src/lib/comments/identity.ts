@@ -10,7 +10,7 @@ import 'server-only';
 //   - authorLabel = display_name (trimmed) ?? formatAddress(on-chain address).
 //     When a display_name exists the raw address is NOT shown; when it doesn't,
 //     the truncated address IS the label (intended fallback, plan §2).
-//   - avatarSeed  = sha256(user_id) — stable, NON-REVERSIBLE, drives a glyph
+//   - avatarSeed  = sha256(public address) ('' without one; '' on a deleted row) — drives a glyph
 //     avatar. Never the raw address (a named author would leak it otherwise).
 //   - addressLower = the author's on-chain address, lowercased, for the
 //     position-badge join (Magic → deriveSafeAddress(magic_eoa); wallet →
@@ -98,8 +98,8 @@ export async function resolveCommentAuthors(
 
     out.set(r.id, {
       authorLabel,
-      // Seeded from the public address when there is one, so no per-account tag derived from the internal id is sent.
-      avatarSeed: seedFor(addressLower ?? r.id),
+      // Seeded from the public address, never the internal id; no address, no seed (the glyph takes a default colour).
+      avatarSeed: addressLower ? seedFor(addressLower) : '',
       avatarUrl,
       addressLower,
     });
