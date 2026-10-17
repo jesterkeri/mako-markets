@@ -21,7 +21,7 @@ vi.mock('@/db/client', () => ({
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: () => ({ ok: true }) }));
 vi.mock('@/lib/user-session', () => ({ getUserSession: async () => state.session }));
 
-import { POST } from '../../app/api/user/chart-colors/route';
+import { GET, POST } from '../../app/api/user/chart-colors/route';
 
 const DIR = join(__dirname, '../../db/migrations');
 const journal = JSON.parse(readFileSync(join(DIR, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
@@ -66,5 +66,16 @@ describe('a save lands only on the account it was made on', () => {
     await pg.query(`UPDATE users SET chart_colors = NULL WHERE id = $1`, [ids.wallet]);
     expect((await save('wallet', SAFE)).status).toBe(409);
     expect(await stored('wallet')).toBeNull();
+  });
+  it('a read names its account too: its own (wallet or Safe, any case) reads; another account is 409, nothing read', async () => {
+    const get = (who: 'wallet' | 'email', account: string) => {
+      state.session = { userId: ids[who] };
+      return GET(new Request(`http://localhost/api/user/chart-colors?account=${account}`));
+    };
+    await pg.query(`UPDATE users SET chart_colors = $1 WHERE id = $2`, [JSON.stringify(SET), ids.email]);
+    expect(await (await get('email', SAFE)).json()).toEqual({ colors: SET });
+    expect((await get('wallet', SAFE)).status).toBe(409);
+    expect((await get('email', WALLET)).status).toBe(409);
+    expect((await get('email', 'me')).status).toBe(400);
   });
 });

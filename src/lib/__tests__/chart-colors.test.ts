@@ -48,13 +48,14 @@ vi.mock('@/db/client', () => ({
 afterEach(() => vi.clearAllMocks());
 
 const ACC = '0x00000000000000000000000000000000000000a1';
+const get = (account: string = ACC) => new Request(`http://localhost/api/user/chart-colors?account=${account}`);
 const post = (body: unknown) => new Request('http://localhost/api/user/chart-colors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('/api/user/chart-colors', () => {
   it('signed out: 401 on GET and POST, nothing written', async () => {
     mocks.session.mockResolvedValue(null);
     const { GET, POST } = await import('@/app/api/user/chart-colors/route');
-    expect((await GET()).status).toBe(401);
+    expect((await GET(get())).status).toBe(401);
     expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(401);
     expect(mocks.set).not.toHaveBeenCalled();
   });
@@ -62,11 +63,11 @@ describe('/api/user/chart-colors', () => {
     mocks.session.mockResolvedValue({ userId: 'u1' });
     const { GET } = await import('@/app/api/user/chart-colors/route');
     mocks.stored.mockResolvedValueOnce([{ chartColors: SIX }]);
-    expect(await (await GET()).json()).toEqual({ colors: { ...SIX, upBody: '#26a69a' } });
+    expect(await (await GET(get())).json()).toEqual({ colors: { ...SIX, upBody: '#26a69a' } });
     mocks.stored.mockResolvedValueOnce([{ chartColors: null }]);
-    expect(await (await GET()).json()).toEqual({ colors: null });
+    expect(await (await GET(get())).json()).toEqual({ colors: null });
     mocks.stored.mockResolvedValueOnce([{ chartColors: { upBody: 'red' } }]);
-    expect(await (await GET()).json()).toEqual({ colors: null });
+    expect(await (await GET(get())).json()).toEqual({ colors: null });
   });
   it('POST: a valid set is stored lower-cased; null resets; anything else 400 with nothing written; cross-origin 403', async () => {
     mocks.session.mockResolvedValue({ userId: 'u1' });
