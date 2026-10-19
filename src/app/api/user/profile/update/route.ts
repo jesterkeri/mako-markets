@@ -4,6 +4,7 @@ import { del } from '@vercel/blob';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
+import { avatarPathname, markForSweep } from '@/lib/avatar-sweep';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
@@ -56,8 +57,8 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
 const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
 
-/// Thrown inside the transaction when the removed photo cannot be deleted, so the transaction rolls back.
-class PhotoNotRemoved extends Error {}
+/// Thrown inside the transaction when the removed photo cannot be recorded for the sweep, so the transaction rolls back.
+class SweepUnavailable extends Error {}
 
 type UpdatedRow = Pick<
   typeof users.$inferSelect,
@@ -149,24 +150,28 @@ export async function POST(req: Request) {
     setClause.avatarUrl = validated.avatarUrl ?? null;
   }
 
-  // Removing a photo deletes its file first, in one transaction with the account row locked from the read of its
-  // current photo to the commit (Joshua 2026-10-17, Codex PUBLIC_PROFILE R3 M1): an upload or a second removal from the
-  // same account waits and then sees this result, so no file is ever orphaned. Only this user's own upload is deleted,
-  // as the upload route does on replace; the app's token can only reach its own store. If the delete fails the
-  // transaction rolls back, nothing has changed (a name sent in the same request is not saved either) and the user is
-  // asked to try again.
+  // Removing a photo (Joshua 2026-10-19, owner decision Q-D, Codex PUBLIC_PROFILE R4 F1; src/lib/avatar-sweep.ts): with
+  // the row locked from the read of its current photo to the commit (Codex PUBLIC_PROFILE R3 M1), the file is recorded
+  // in the sweep set BEFORE the column is cleared, from the locked row, the one reliable record of what is being
+  // removed. If that cannot be written the transaction rolls back, nothing has changed (a name sent in the same request
+  // is not saved either) and the answer is 503. After the commit the file is recorded again and deleted, both best
+  // effort: the sweep deletes it within about 15 minutes whatever happens. Only this user's own upload is ever touched.
+  let removed: { url: string; pathname: string } | null = null;
   let updated: UpdatedRow[];
   try {
     updated = await db.transaction(async (tx) => {
       const [current] = await tx.select({ url: users.avatarUrl }).from(users).where(eq(users.id, session.userId)).for('update');
       if (!current) return [];
-      if (setClause.avatarUrl === null && current.url && isOwnedAvatarBlobUrl(current.url, session.userId)) {
+      const oldPath =
+        setClause.avatarUrl === null && current.url && isOwnedAvatarBlobUrl(current.url, session.userId) ? avatarPathname(current.url) : null;
+      if (current.url && oldPath) {
         try {
-          await del(current.url);
+          await markForSweep(oldPath);
         } catch (e) {
-          console.warn('[profile-update] removed photo delete failed, nothing changed', e);
-          throw new PhotoNotRemoved();
+          console.warn('[profile-update] sweep set unavailable, nothing changed', e instanceof Error ? e.name : 'error');
+          throw new SweepUnavailable();
         }
+        removed = { url: current.url, pathname: oldPath };
       }
       return tx
         .update(users)
@@ -183,8 +188,14 @@ export async function POST(req: Request) {
         });
     });
   } catch (e) {
-    if (e instanceof PhotoNotRemoved) return Response.json({ error: 'photo_not_removed' }, { status: 503 });
+    if (e instanceof SweepUnavailable) return Response.json({ error: 'sweep_unavailable' }, { status: 503 });
     throw e;
+  }
+
+  const old = removed as { url: string; pathname: string } | null;
+  if (updated.length > 0 && old) {
+    await markForSweep(old.pathname).catch((e) => console.warn('[profile-update] sweep re-mark failed', e instanceof Error ? e.name : 'error'));
+    await del(old.url).catch((e) => console.warn('[profile-update] removed blob delete failed, left to the sweep', e));
   }
 
   if (updated.length === 0) {

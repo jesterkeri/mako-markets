@@ -225,8 +225,9 @@ export function WalletEditableIdentity({ user }: { user: WalletAuthedUser }) {
           : res.status === 503 ? "Couldn't change your photo. Try again."
           : 'Upload failed. Please retry.',
         );
-        // A 502 can come after the old photo was deleted, leaving the account with none: refetch so the letter shows.
-        if (res.status === 502) void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
+        // A server error can leave the outcome unknown (a database write whose answer was lost): refetch so the page shows
+        // the photo the account really has.
+        if (res.status >= 500) void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
         setAvatarPhase('idle');
         return;
       }
@@ -271,7 +272,7 @@ export function WalletEditableIdentity({ user }: { user: WalletAuthedUser }) {
       });
       if (!mountedRef.current) return;
       if (!res.ok) {
-        // 503: the photo could not be deleted from storage, so it was kept (Codex PUBLIC_PROFILE R2 M1).
+        // 503: the removal could not be recorded for deletion, so nothing changed (Codex PUBLIC_PROFILE R4 F1).
         setAvatarError(res.status === 503 ? "Couldn't remove your photo. Try again." : 'Clear failed. Please retry.');
         setAvatarPhase('idle');
         return;

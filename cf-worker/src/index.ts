@@ -1709,7 +1709,8 @@ type VercelCronPath =
   | '/api/cron/aa-slow'
   | '/api/cron/pm-indexer'
   | '/api/cron/pm-maintenance'
-  | '/api/cron/leaderboard';
+  | '/api/cron/leaderboard'
+  | '/api/cron/avatar-sweep';
 
 /// Fire one HTTP cron tick against the Vercel app. Runs as a
 /// "fire and forget" inside ctx.waitUntil so a slow Vercel response
@@ -1767,6 +1768,8 @@ export default {
   //      BetPlaced/Claimed/CreatorFeePaid rows to the #186 event
   //      ledger; cold-start backfill is the seed script's job, not
   //      this cron's).
+  //   7. Avatar sweep (every 15 min, with aa-fast — deletes removed and
+  //      replaced profile photos no account points at).
   //
   // The Vercel pings live HERE (not in vercel.json) because Vercel
   // Hobby plan rejects sub-daily crons. The Worker fires them via
@@ -1804,8 +1807,11 @@ export default {
     // SENDING_RECOVERY_THRESHOLD_MS (5 min). Live bets/claims resolve inline
     // in /api/aa/send, so a 15-min cadence only delays cleanup of an
     // ABANDONED op; a user retry recovers it sooner.
+    // avatar-sweep rides the same tick (Joshua 2026-10-19, owner decision Q-D): deletes removed and replaced profile
+    // photos no account points at, so each is gone within about 15 minutes. No extra DB wakeup.
     if (minute % 15 === 0) {
       ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-fast'));
+      ctx.waitUntil(pingVercelCron(env, '/api/cron/avatar-sweep'));
     }
 
     // aa-slow + leaderboard — every 30 min (both were every 5 min), ALIGNED

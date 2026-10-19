@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { reserveAvatarFetch } from '@/lib/avatar-budget';
+import { reserveAvatarFetch, reserveAvatarVisitor, visitorIp } from '@/lib/avatar-budget';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { registeredAddresses, resolveStoredIdentities } from '@/lib/leaderboard/identity';
 import { avatarVersion } from '@/lib/public-avatar';
@@ -16,8 +16,9 @@ import { avatarVersion } from '@/lib/public-avatar';
 // One canonical path per photo version, so the CDN keeps one entry each (Codex PUBLIC_PROFILE R2 M2, R3 M2): a
 // lower-case address, a 12-hex version and no query string at all, each checked before any database query or Blob
 // fetch. Next rewrites some query keys before a route sees them (`?nxtPv=` arrives as `?v=`), so a version in the query
-// could not be trusted to be the URL the CDN saw; with no query accepted, any such key is still a 404. Whatever does
-// reach the database is then bounded by a site-wide budget (avatar-budget.ts).
+// could not be trusted to be the URL the CDN saw; with no query accepted, any such key is still a 404. Then, in this
+// order (Codex PUBLIC_PROFILE R4 F2, owner decision Q-E): a per-visitor limit, the account and version checks, and only
+// for a real photo the site-wide fetch budget (avatar-budget.ts), so made-up paths never spend it.
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 const VERSION_RE = /^[0-9a-f]{12}$/;
@@ -28,13 +29,15 @@ const notFound = () => new Response(null, { status: 404, headers: { 'cache-contr
 export async function GET(req: Request, { params }: { params: Promise<{ address: string; version: string }> }) {
   const { address, version } = await params;
   if (!ADDRESS_RE.test(address) || !VERSION_RE.test(version) || new URL(req.url).search !== '') return notFound();
-  // Over the site-wide cap, or the budget store down: the letter avatar, still before any database query.
-  if (!(await reserveAvatarFetch())) return notFound();
+  // Over this visitor's limit, or the store down: the letter avatar, before any database query.
+  if (!(await reserveAvatarVisitor(visitorIp(req)))) return notFound();
   // The cheap indexed check first, so a made-up address costs no identity query.
   if (!(await registeredAddresses(db, [address], MONAD_TESTNET_ID)).has(address)) return notFound();
   const stored = (await resolveStoredIdentities(db, [address], MONAD_TESTNET_ID)).get(address)?.avatarUrl;
   // Only the current photo's path is served: an old version (a replaced photo) or a made-up one is a 404 with no fetch.
   if (!stored || version !== avatarVersion(stored)) return notFound();
+  // A real photo: only now is the site-wide budget spent. Over it, or the store down: the letter avatar, no fetch.
+  if (!(await reserveAvatarFetch())) return notFound();
   const photo = await fetch(stored);
   const type = photo.headers.get('content-type') ?? '';
   if (!photo.ok || !photo.body || !type.startsWith('image/')) return notFound();

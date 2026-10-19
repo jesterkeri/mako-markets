@@ -7,11 +7,12 @@
 //   - MIME allowlist (image/png, image/jpeg, image/webp)
 //   - sharp magic-byte sniff: declared type must match decoded format
 //   - sharp resize pipeline invoked: rotate→resize 256x256 cover→webp
-//   - one transaction, row locked: the old photo is deleted BEFORE the
-//     new one is stored (Codex PUBLIC_PROFILE R3 M1, owner's fix
-//     2026-10-19); delete failure → rollback + 503, no put, no row
-//     change; put failure after the delete → 502 with the row cleared
-//   - blob put failure → 502 storage_unavailable
+//   - the sweep-set order (Codex PUBLIC_PROFILE R4 F1, owner decision
+//     Q-D 2026-10-19): the new pathname is recorded BEFORE put() (set
+//     down → 503, no put); the replaced file is recorded inside the
+//     locked transaction before the row changes, again after the commit,
+//     then deleted best effort; the row only ever moves to a stored photo
+//   - blob put failure → 502 storage_unavailable, account unchanged
 //   - SET clause writes the upload URL into avatar_url
 //   - prior blob cleanup ONLY when the prior URL is under
 //     `/avatars/<sessionUserId>/` on a Vercel Blob host. Cleanup must
@@ -29,6 +30,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { fakeSweepStore } from './helpers/fake-avatar-sweep';
+
 const mocks = vi.hoisted(() => ({
   checkSameOrigin: vi.fn(),
   getUserSession: vi.fn(),
@@ -45,9 +48,12 @@ const mocks = vi.hoisted(() => ({
   updateSet: vi.fn(),
   updateWhere: vi.fn(),
   updateReturning: vi.fn(),
-  // The order of Blob calls and transaction ends, e.g. ['del <url>', 'put', 'commit'].
+  // The order of sweep-set marks, Blob calls and transaction ends, e.g. ['mark <path>', 'put', 'commit'].
   log: [] as string[],
+  sweep: null as unknown as ReturnType<typeof fakeSweepStore>,
 }));
+mocks.sweep = fakeSweepStore(mocks.log);
+vi.mock('@/lib/envio-budget', () => ({ upstashCommand: (args: (string | number)[]) => mocks.sweep.upstash(args) }));
 
 // sharp() returns a chainable pipeline. The same instance must
 // support both metadata() and rotate().resize().webp().toBuffer().
@@ -74,6 +80,7 @@ vi.mock('@vercel/blob', () => ({
     mocks.log.push(`del ${String(args[0])}`);
     return mocks.blobDel(...args);
   },
+  BlobNotFoundError: class extends Error {},
 }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
@@ -147,11 +154,16 @@ vi.mock('drizzle-orm', () => ({
   eq: (a: unknown, b: unknown) => ({ a, b }),
   ne: (a: unknown, b: unknown) => ({ ne: [a, b] }),
   desc: (a: unknown) => ({ desc: a }),
+  inArray: (a: unknown, b: unknown) => ({ inArray: [a, b] }),
+  sql: () => ({}),
 }));
 
 afterEach(() => {
   vi.clearAllMocks();
   mocks.log.length = 0;
+  mocks.sweep.members.clear();
+  mocks.sweep.failMark.clear();
+  mocks.sweep.down = false;
 });
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
@@ -160,8 +172,13 @@ const EOA = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const SAFE = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const SESSION_ID = '11111111-1111-1111-1111-111111111111';
 
-const NEW_BLOB_URL =
-  `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/123-rand.webp`;
+const BLOB_HOST = 'abc.public.blob.vercel-storage.com';
+// The URL put() returns for a pathname: exactly that name (addRandomSuffix false).
+const blobUrlOf = (pathname: string) => `https://${BLOB_HOST}/${pathname}`;
+// The pathname and URL of the file the last put() stored.
+const putPath = () => String(mocks.blobPut.mock.calls.at(-1)?.[0]);
+const putUrl = () => blobUrlOf(putPath());
+const NEW_BLOB_URL = blobUrlOf(`avatars/${USER_ID}/123-rand.webp`);
 
 function makeRequest(file: File | null): Request {
   const fd = new FormData();
@@ -199,7 +216,7 @@ function setupHappy(opts: {
   mocks.deriveSafeAddress.mockReturnValue(SAFE);
   mocks.sharpMetadata.mockResolvedValue({ format: 'png' });
   mocks.sharpToBuffer.mockResolvedValue(Buffer.from('webp-bytes'));
-  mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
+  mocks.blobPut.mockImplementation(async (pathname: string) => ({ url: blobUrlOf(pathname) }));
   mocks.blobDel.mockResolvedValue(undefined);
   mocks.selectPriorSession.mockResolvedValue([]);
   mocks.selectCurrent.mockResolvedValue([{ url: opts.priorAvatarUrl ?? null }]);
@@ -295,15 +312,51 @@ describe('POST /api/user/avatar/upload', () => {
     expect(mocks.blobPut).not.toHaveBeenCalled();
   });
 
-  it('blob put rejection → 502 storage_unavailable', async () => {
-    setupHappy();
+  it('blob put rejection → 502 storage_unavailable, the account unchanged, the attempted file still in the sweep set', async () => {
+    setupHappy({ priorAvatarUrl: blobUrlOf(`avatars/${USER_ID}/old-rand.webp`) });
     mocks.blobPut.mockRejectedValue(new Error('blob api down'));
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { POST } = await import('../../app/api/user/avatar/upload/route');
     const res = await POST(makeRequest(makeImageFile({})));
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'storage_unavailable' });
-    // No prior photo was deleted, so no DB write.
+    // Nothing deleted, no DB write: the account keeps its photo.
+    expect(mocks.updateSet).not.toHaveBeenCalled();
+    expect(mocks.blobDel).not.toHaveBeenCalled();
+    expect([...mocks.sweep.members.keys()]).toEqual([putPath()]);
+    err.mockRestore();
+  });
+
+  it('the sweep set down before the upload → 503 sweep_unavailable: no put, no row write, nothing deleted', async () => {
+    setupHappy({ priorAvatarUrl: blobUrlOf(`avatars/${USER_ID}/old-rand.webp`) });
+    mocks.sweep.down = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { POST } = await import('../../app/api/user/avatar/upload/route');
+    const res = await POST(makeRequest(makeImageFile({})));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'sweep_unavailable' });
+    expect(mocks.blobPut).not.toHaveBeenCalled();
+    expect(mocks.blobDel).not.toHaveBeenCalled();
+    expect(mocks.updateSet).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('put() stores under the exact recorded name, recorded before the call: avatars/<userId>/<uuid>.webp, no random suffix', async () => {
+    setupHappy();
+    const { POST } = await import('../../app/api/user/avatar/upload/route');
+    expect((await POST(makeRequest(makeImageFile({})))).status).toBe(200);
+    const [pathname, , options] = mocks.blobPut.mock.calls[0] as [string, unknown, Record<string, unknown>];
+    expect(pathname).toMatch(new RegExp(`^avatars/${USER_ID}/[0-9a-f-]{36}\\.webp$`));
+    expect(options).toMatchObject({ access: 'public', contentType: 'image/webp', addRandomSuffix: false });
+    expect(mocks.log.slice(0, 2)).toEqual([`mark ${pathname}`, 'put']);
+  });
+
+  it('put() answering a URL under another name → 502, the account unchanged', async () => {
+    setupHappy();
+    mocks.blobPut.mockImplementation(async (pathname: string) => ({ url: blobUrlOf(pathname.replace('.webp', '-x.webp')) }));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { POST } = await import('../../app/api/user/avatar/upload/route');
+    expect((await POST(makeRequest(makeImageFile({})))).status).toBe(502);
     expect(mocks.updateSet).not.toHaveBeenCalled();
     err.mockRestore();
   });
@@ -323,7 +376,7 @@ describe('POST /api/user/avatar/upload', () => {
     expect(body).not.toHaveProperty('lastEmailChangedAt');
     // SET clause writes the new URL.
     const setArg = mocks.updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(setArg).toEqual({ avatarUrl: NEW_BLOB_URL });
+    expect(setArg).toEqual({ avatarUrl: putUrl() });
   });
 
   it('upload path uses avatars/<sessionUserId>/ prefix', async () => {
@@ -334,28 +387,30 @@ describe('POST /api/user/avatar/upload', () => {
     expect(putArg.startsWith(`avatars/${USER_ID}/`)).toBe(true);
   });
 
-  it('session points to a deleted user (locked read finds no row) → 401, nothing stored or deleted', async () => {
+  it('session points to a deleted user (locked read finds no row) → 401, nothing deleted, the stored file left to the sweep', async () => {
     setupHappy();
     mocks.selectCurrent.mockResolvedValue([]);
     const { POST } = await import('../../app/api/user/avatar/upload/route');
     const res = await POST(makeRequest(makeImageFile({})));
     expect(res.status).toBe(401);
-    expect(mocks.blobPut).not.toHaveBeenCalled();
+    expect([...mocks.sweep.members.keys()]).toEqual([putPath()]);
     expect(mocks.blobDel).not.toHaveBeenCalled();
     expect(mocks.updateSet).not.toHaveBeenCalled();
   });
 
   describe('prior-blob cleanup ownership scoping', () => {
-    it('deletes prior blob when path is /avatars/<sessionUserId>/..., BEFORE storing the new one, in one transaction', async () => {
+    it('own prior photo: recorded in the set inside the locked transaction, again after the commit, then deleted', async () => {
       const ownPrior =
         `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
+      const oldPath = `avatars/${USER_ID}/old-rand.webp`;
       setupHappy({ priorAvatarUrl: ownPrior });
       const { POST } = await import('../../app/api/user/avatar/upload/route');
       const res = await POST(makeRequest(makeImageFile({})));
       expect(res.status).toBe(200);
-      expect(mocks.log).toEqual([`del ${ownPrior}`, 'put', 'commit']);
+      expect(mocks.log).toEqual([`mark ${putPath()}`, 'put', `mark ${oldPath}`, 'commit', `mark ${oldPath}`, `del ${ownPrior}`]);
       expect(mocks.blobDel.mock.calls).toEqual([[ownPrior]]);
-      expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: NEW_BLOB_URL }]]);
+      expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: putUrl() }]]);
+      expect([...mocks.sweep.members.keys()].sort()).toEqual([oldPath, putPath()].sort());
     });
 
     it('REFUSES to delete a foreign-user blob URL (path is /avatars/<otherId>/...)', async () => {
@@ -409,55 +464,63 @@ describe('POST /api/user/avatar/upload', () => {
       expect(mocks.blobDel).not.toHaveBeenCalled();
     });
 
-    // A replaced photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R3 M1).
+    // Codex PUBLIC_PROFILE R4 F1: the photo is replaced through the sweep set, so no failure leaves a file untracked
+    // and the account only ever points at a stored photo.
     const ownPrior = `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
+    const oldPath = `avatars/${USER_ID}/old-rand.webp`;
 
-    it('a failed delete of the prior photo answers 503 and changes nothing: no put, no row write, rolled back', async () => {
+    it('the replaced file cannot be recorded: rolled back, 503, the account keeps its photo, the new file is in the set', async () => {
       setupHappy({ priorAvatarUrl: ownPrior });
-      mocks.blobDel.mockRejectedValueOnce(new Error('delete failed'));
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mocks.sweep.failMark.add(oldPath);
       const { POST } = await import('../../app/api/user/avatar/upload/route');
       const res = await POST(makeRequest(makeImageFile({})));
       expect(res.status).toBe(503);
-      expect(await res.json()).toEqual({ error: 'photo_not_replaced' });
-      expect(mocks.log).toEqual([`del ${ownPrior}`, 'rollback']);
-      expect(mocks.blobPut).not.toHaveBeenCalled();
+      expect(await res.json()).toEqual({ error: 'sweep_unavailable' });
+      expect(mocks.log).toEqual([`mark ${putPath()}`, 'put', `mark ${oldPath}`, 'rollback']);
       expect(mocks.updateSet).not.toHaveBeenCalled();
-      warn.mockRestore();
+      expect(mocks.blobDel).not.toHaveBeenCalled();
+      expect([...mocks.sweep.members.keys()]).toEqual([putPath()]);
     });
 
-    it('a failed put after the prior photo was deleted answers 502 and clears the row (committed)', async () => {
+    it('the cleanup delete fails after the commit: still 200, the old file stays in the set for the sweep', async () => {
       setupHappy({ priorAvatarUrl: ownPrior });
-      mocks.blobPut.mockRejectedValueOnce(new Error('blob api down'));
-      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const { POST } = await import('../../app/api/user/avatar/upload/route');
-      const res = await POST(makeRequest(makeImageFile({})));
-      expect(res.status).toBe(502);
-      expect(await res.json()).toEqual({ error: 'storage_unavailable' });
-      expect(mocks.log).toEqual([`del ${ownPrior}`, 'put', 'commit']);
-      expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: null }]]);
-      expect(mocks.updateWhere.mock.calls).toEqual([[{ a: 'users.id', b: USER_ID }]]);
-      err.mockRestore();
-    });
-
-    it('when the transaction fails after the put, the new file is deleted and the error propagates', async () => {
-      setupHappy({ priorAvatarUrl: ownPrior });
-      mocks.updateReturning.mockRejectedValueOnce(new Error('connection lost'));
-      const { POST } = await import('../../app/api/user/avatar/upload/route');
-      await expect(POST(makeRequest(makeImageFile({})))).rejects.toThrow('connection lost');
-      expect(mocks.log).toEqual([`del ${ownPrior}`, 'put', 'rollback', `del ${NEW_BLOB_URL}`]);
-    });
-
-    it('a failed delete of that new file is logged; the error still propagates', async () => {
-      setupHappy({ priorAvatarUrl: null });
-      mocks.updateReturning.mockRejectedValueOnce(new Error('connection lost'));
       mocks.blobDel.mockRejectedValueOnce(new Error('blob down'));
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { POST } = await import('../../app/api/user/avatar/upload/route');
-      await expect(POST(makeRequest(makeImageFile({})))).rejects.toThrow('connection lost');
-      expect(mocks.log).toEqual(['put', 'rollback', `del ${NEW_BLOB_URL}`]);
-      expect(warn).toHaveBeenCalledTimes(1);
+      expect((await POST(makeRequest(makeImageFile({})))).status).toBe(200);
+      expect(mocks.sweep.members.has(oldPath)).toBe(true);
       warn.mockRestore();
+    });
+
+    it('the re-mark and the delete both fail after the commit: still 200, the old file is in the set from inside the transaction', async () => {
+      setupHappy({ priorAvatarUrl: ownPrior });
+      const { POST } = await import('../../app/api/user/avatar/upload/route');
+      // The first mark of the old file (inside the transaction) lands; the second fails, and so does the delete.
+      let marks = 0;
+      const upstash = mocks.sweep.upstash;
+      mocks.sweep.upstash = async (args) => {
+        if (String(args[4]) === oldPath && ++marks === 2) throw new Error('upstash refused');
+        return upstash(args);
+      };
+      mocks.blobDel.mockRejectedValueOnce(new Error('blob down'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        expect((await POST(makeRequest(makeImageFile({})))).status).toBe(200);
+      } finally {
+        mocks.sweep.upstash = upstash;
+      }
+      expect(mocks.sweep.members.has(oldPath)).toBe(true);
+      warn.mockRestore();
+    });
+
+    it('the database write fails after the put: the error propagates, nothing is deleted, both files are in the set', async () => {
+      setupHappy({ priorAvatarUrl: ownPrior });
+      mocks.updateReturning.mockRejectedValueOnce(new Error('connection lost'));
+      const { POST } = await import('../../app/api/user/avatar/upload/route');
+      await expect(POST(makeRequest(makeImageFile({})))).rejects.toThrow('connection lost');
+      expect(mocks.log).toEqual([`mark ${putPath()}`, 'put', `mark ${oldPath}`, 'rollback']);
+      expect(mocks.blobDel).not.toHaveBeenCalled();
+      expect([...mocks.sweep.members.keys()].sort()).toEqual([oldPath, putPath()].sort());
     });
   });
 
@@ -477,7 +540,7 @@ describe('POST /api/user/avatar/upload', () => {
       });
       mocks.sharpMetadata.mockResolvedValue({ format: 'png' });
       mocks.sharpToBuffer.mockResolvedValue(Buffer.from('webp-bytes'));
-      mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
+      mocks.blobPut.mockImplementation(async (pathname: string) => ({ url: blobUrlOf(pathname) }));
       mocks.selectPriorSession.mockResolvedValue([]);
       mocks.selectCurrent.mockResolvedValue([{ url: null }]);
       // Same shape as Magic UPDATE projection — populated with leak-bait

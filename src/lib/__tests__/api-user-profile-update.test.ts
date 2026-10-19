@@ -12,8 +12,10 @@
 //     foreign-blob deletion via /avatar/upload cleanup path).
 //   - SET clause includes only the columns the body explicitly touched
 //   - removing a photo: one transaction, row locked, the owned file is
-//     deleted BEFORE the row is cleared; a failed delete rolls back
-//     (503 photo_not_removed, no row change) (Codex PUBLIC_PROFILE R3 M1)
+//     recorded in the sweep set BEFORE the row is cleared (set down →
+//     rollback, 503 sweep_unavailable, no row change), recorded again
+//     after the commit and deleted best effort (Codex PUBLIC_PROFILE R4
+//     F1, owner decision Q-D)
 //   - session-points-to-deleted-user → 401 unauthorized
 //   - cross_origin / unauthorized / bad_body gates
 //
@@ -23,6 +25,8 @@
 // ----------------------------------------------------------------------------
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { fakeSweepStore } from './helpers/fake-avatar-sweep';
 
 const mocks = vi.hoisted(() => ({
   checkSameOrigin: vi.fn(),
@@ -35,15 +39,19 @@ const mocks = vi.hoisted(() => ({
   selectPriorSession: vi.fn(),
   selectCurrent: vi.fn(),
   del: vi.fn(),
-  // The order of Blob deletes, row writes and transaction ends.
+  // The order of sweep-set marks, Blob deletes, row writes and transaction ends.
   log: [] as string[],
+  sweep: null as unknown as ReturnType<typeof fakeSweepStore>,
 }));
+mocks.sweep = fakeSweepStore(mocks.log);
+vi.mock('@/lib/envio-budget', () => ({ upstashCommand: (args: (string | number)[]) => mocks.sweep.upstash(args) }));
 
 vi.mock('@vercel/blob', () => ({
   del: (url: string) => {
     mocks.log.push(`del ${url}`);
     return mocks.del(url);
   },
+  BlobNotFoundError: class extends Error {},
 }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
@@ -119,11 +127,16 @@ vi.mock('drizzle-orm', () => ({
   isNull: (a: unknown) => ({ isNull: a }),
   ne: (a: unknown, b: unknown) => ({ ne: [a, b] }),
   desc: (a: unknown) => ({ desc: a }),
+  inArray: (a: unknown, b: unknown) => ({ inArray: [a, b] }),
+  sql: () => ({}),
 }));
 
 afterEach(() => {
   vi.clearAllMocks();
   mocks.log.length = 0;
+  mocks.sweep.members.clear();
+  mocks.sweep.failMark.clear();
+  mocks.sweep.down = false;
 });
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
@@ -281,20 +294,23 @@ describe('POST /api/user/profile/update', () => {
     expect(setArg).toEqual({ avatarUrl: null });
   });
 
-  it('removing a photo deletes its file from storage first, only when it is this user\'s own upload (Joshua 2026-10-17)', async () => {
+  it("removing a photo: recorded in the sweep set before the row is cleared, again after, then deleted; only this user's own upload", async () => {
     const { POST } = await import('../../app/api/user/profile/update/route');
     const own = `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`;
+    const path = `avatars/${USER_ID}/a.webp`;
     setupHappy({ avatarUrl: null }, own);
     mocks.del.mockResolvedValueOnce(undefined);
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
-    // Exactly the removed file, deleted before the row is cleared, in one transaction.
-    expect(mocks.log).toEqual([`del ${own}`, 'update', 'commit']);
+    expect(mocks.log).toEqual([`mark ${path}`, 'update', 'commit', `mark ${path}`, `del ${own}`]);
     expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: null }]]);
+    expect([...mocks.sweep.members.keys()]).toEqual([path]);
     mocks.log.length = 0;
+    mocks.sweep.members.clear();
     mocks.del.mockClear();
     setupHappy({ avatarUrl: null }, 'https://x.public.blob.vercel-storage.com/avatars/someone-else/a.webp');
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
     expect(mocks.del).not.toHaveBeenCalled();
+    expect(mocks.sweep.members.size).toBe(0);
   });
 
   it('a name-only save never deletes the photo', async () => {
@@ -302,20 +318,33 @@ describe('POST /api/user/profile/update', () => {
     setupHappy({ displayName: 'Joshua' }, `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`);
     expect((await POST(makeRequest({ displayName: 'Joshua' }))).status).toBe(200);
     expect(mocks.del).not.toHaveBeenCalled();
+    expect(mocks.sweep.members.size).toBe(0);
   });
 
-  it('a failed delete answers 503 photo_not_removed and changes nothing: no row write, rolled back (Codex R3 M1)', async () => {
+  it('the sweep set down: 503 sweep_unavailable and nothing changes: no row write, rolled back, nothing deleted', async () => {
+    const { POST } = await import('../../app/api/user/profile/update/route');
+    const own = `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`;
+    setupHappy({ avatarUrl: null }, own);
+    mocks.sweep.down = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await POST(makeRequest({ avatarUrl: null, displayName: 'Joshua' }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'sweep_unavailable' });
+    expect(mocks.log).toEqual(['rollback']);
+    expect(mocks.updateSet).not.toHaveBeenCalled();
+    expect(mocks.del).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('the delete after the commit fails: still 200, the removed file stays in the set for the sweep', async () => {
     const { POST } = await import('../../app/api/user/profile/update/route');
     const own = `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`;
     setupHappy({ avatarUrl: null }, own);
     mocks.del.mockRejectedValueOnce(new Error('blob down'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const res = await POST(makeRequest({ avatarUrl: null, displayName: 'Joshua' }));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'photo_not_removed' });
-    expect(mocks.log).toEqual([`del ${own}`, 'rollback']);
-    expect(mocks.updateSet).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalled();
+    expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
+    expect(mocks.sweep.members.has(`avatars/${USER_ID}/a.webp`)).toBe(true);
     warn.mockRestore();
   });
 

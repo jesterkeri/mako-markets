@@ -35,14 +35,14 @@ export function avatarUploadError(status: number): string {
   if (status === 400) return 'Image rejected. Try a different file.';
   if (status === 401) return 'Sign-in expired. Please refresh.';
   if (status === 502) return 'Upload service unavailable. Retry shortly.';
-  // The old photo could not be deleted, so nothing changed (Codex PUBLIC_PROFILE R2 M1).
+  // The new photo could not be recorded for cleanup, so nothing changed (Codex PUBLIC_PROFILE R4 F1).
   if (status === 503) return PHOTO_NOT_REPLACED;
   return 'Upload failed. Please retry.';
 }
 
 /// The message for a photo removal the server refused.
 export function avatarClearError(status: number): string {
-  // The photo could not be deleted from storage, so it was kept (Codex PUBLIC_PROFILE R2 M1).
+  // The removal could not be recorded for deletion, so the photo was kept (Codex PUBLIC_PROFILE R4 F1).
   return status === 503 ? PHOTO_NOT_REMOVED : 'Clear failed. Please retry.';
 }
 
