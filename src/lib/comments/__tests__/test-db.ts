@@ -58,6 +58,7 @@ const USERS_STUB_SQL = `
     "last_email_changed_at" timestamptz,
     "display_name"          text,
     "display_name_key"      text,
+    "chart_colors"          jsonb,
     "avatar_url"            text,
     "totp_secret"           text,
     "totp_enabled_at"       timestamptz,
