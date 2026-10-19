@@ -25,19 +25,22 @@ const VERSION_RE = /^[0-9a-f]{12}$/;
 const MINUTE = 'public, max-age=60, s-maxage=60';
 
 const notFound = () => new Response(null, { status: 404, headers: { 'cache-control': MINUTE } });
+// A refusal (a visitor's limit, the shared budget, the store down) lasts a minute at most and is about the caller, not
+// the photo: never cached, or one visitor could put the letter avatar in front of everyone for that minute.
+const refused = () => new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } });
 
 export async function GET(req: Request, { params }: { params: Promise<{ address: string; version: string }> }) {
   const { address, version } = await params;
   if (!ADDRESS_RE.test(address) || !VERSION_RE.test(version) || new URL(req.url).search !== '') return notFound();
   // Over this visitor's limit, or the store down: the letter avatar, before any database query.
-  if (!(await reserveAvatarVisitor(visitorIp(req)))) return notFound();
+  if (!(await reserveAvatarVisitor(visitorIp(req)))) return refused();
   // The cheap indexed check first, so a made-up address costs no identity query.
   if (!(await registeredAddresses(db, [address], MONAD_TESTNET_ID)).has(address)) return notFound();
   const stored = (await resolveStoredIdentities(db, [address], MONAD_TESTNET_ID)).get(address)?.avatarUrl;
   // Only the current photo's path is served: an old version (a replaced photo) or a made-up one is a 404 with no fetch.
   if (!stored || version !== avatarVersion(stored)) return notFound();
   // A real photo: only now is the site-wide budget spent. Over it, or the store down: the letter avatar, no fetch.
-  if (!(await reserveAvatarFetch())) return notFound();
+  if (!(await reserveAvatarFetch())) return refused();
   const photo = await fetch(stored);
   const type = photo.headers.get('content-type') ?? '';
   if (!photo.ok || !photo.body || !type.startsWith('image/')) return notFound();

@@ -164,7 +164,11 @@ describe('GET /api/avatar/<address>/<version>', () => {
     blob.mockResolvedValueOnce(image());
     expect((await get(WALLET, v)).status).toBe(200);
     blob.mockClear();
-    for (let i = 0; i < 3; i++) expect((await get(WALLET, v)).status).toBe(404);
+    for (let i = 0; i < 3; i++) {
+      const res = await get(WALLET, v);
+      expect(res.status).toBe(404);
+      expect(res.headers.get('cache-control')).toBe('no-store'); // a refusal is never cached for everyone
+    }
     expect(blob).not.toHaveBeenCalled();
   });
 
@@ -183,7 +187,9 @@ describe('GET /api/avatar/<address>/<version>', () => {
     for (let i = 0; i < AVATAR_VISITOR_PER_MINUTE; i++) expect((await get(fakeAddress(i + 1), v, '', '203.0.113.7')).status).toBe(404);
     const db = currentDb;
     currentDb = null; // any query would throw
-    expect((await get(WALLET, v, '', '203.0.113.7')).status).toBe(404); // even a real photo, for this visitor
+    const refusedRes = await get(WALLET, v, '', '203.0.113.7');
+    expect(refusedRes.status).toBe(404); // even a real photo, for this visitor
+    expect(refusedRes.headers.get('cache-control')).toBe('no-store'); // and not cached, so others still get the photo
     currentDb = db;
     blob.mockResolvedValueOnce(image());
     expect((await get(WALLET, v, '', '198.51.100.9')).status).toBe(200);
@@ -215,7 +221,9 @@ describe('GET /api/avatar/<address>/<version>', () => {
     const v = avatarVersion(photoOf('wallet'));
     currentDb = null; // any query would throw
     budget.upstash.mockRejectedValueOnce(new Error('unreachable'));
-    expect((await get(WALLET, v)).status).toBe(404);
+    const down = await get(WALLET, v);
+    expect(down.status).toBe(404);
+    expect(down.headers.get('cache-control')).toBe('no-store');
     for (const reply of ['OK', 0, 1.5, null, AVATAR_FETCHES_PER_MINUTE + 1, '1']) {
       budget.upstash.mockResolvedValueOnce(reply);
       expect((await get(WALLET, v)).status, String(reply)).toBe(404);
