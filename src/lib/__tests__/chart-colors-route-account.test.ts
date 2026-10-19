@@ -42,9 +42,9 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => pg.close());
 
-const save = (who: 'wallet' | 'email', account: string) => {
+const save = (who: 'wallet' | 'email', account: string, patch: Partial<typeof SET> | null = SET) => {
   state.session = { userId: ids[who] };
-  return POST(new Request('http://localhost/api/user/chart-colors', { method: 'POST', body: JSON.stringify({ account, colors: SET }) }));
+  return POST(new Request('http://localhost/api/user/chart-colors', { method: 'POST', body: JSON.stringify({ account, patch }) }));
 };
 const stored = async (who: string) => (await pg.query<{ chart_colors: unknown }>(`SELECT chart_colors FROM users WHERE id = $1`, [ids[who]])).rows[0].chart_colors;
 
@@ -77,5 +77,31 @@ describe('a save lands only on the account it was made on', () => {
     expect((await get('wallet', SAFE)).status).toBe(409);
     expect((await get('email', WALLET)).status).toBe(409);
     expect((await get('email', 'me')).status).toBe(400);
+  });
+});
+
+describe('a change is merged into what the account holds (adversary r10 on 2d48a79)', () => {
+  it('two tabs changing different colours both stick, and the answer is the merged set', async () => {
+    await pg.query(`UPDATE users SET chart_colors = $1 WHERE id = $2`, [JSON.stringify(SET), ids.wallet]);
+    const tab1 = await (await save('wallet', WALLET, { upBody: '#ff0000' })).json();
+    expect(tab1).toEqual({ colors: { ...SET, upBody: '#ff0000' } });
+    // Tab 2 still shows the old upBody but only sends its own change.
+    const tab2 = await (await save('wallet', WALLET, { downWick: '#112233' })).json();
+    expect(tab2).toEqual({ colors: { ...SET, upBody: '#ff0000', downWick: '#112233' } });
+    expect(await stored('wallet')).toEqual({ ...SET, upBody: '#ff0000', downWick: '#112233' });
+  });
+  it('a first change goes over the defaults; Reset stores null; upper-case is stored lower', async () => {
+    await pg.query(`UPDATE users SET chart_colors = NULL WHERE id = $1`, [ids.wallet]);
+    expect(await (await save('wallet', WALLET, { upWick: '#ABCDEF' })).json()).toEqual({ colors: { ...DEFAULT_CHART_COLORS, upWick: '#abcdef' } });
+    expect((await save('wallet', WALLET, null)).status).toBe(200);
+    expect(await stored('wallet')).toBeNull();
+  });
+  it('a malformed stored value is replaced by the change over the defaults', async () => {
+    for (const junk of [{ upBody: 'red' }, ['x'], 'oops']) {
+      await pg.query(`UPDATE users SET chart_colors = $1 WHERE id = $2`, [JSON.stringify(junk), ids.wallet]);
+      const res = await (await save('wallet', WALLET, { downBody: '#010203' })).json();
+      expect(res, JSON.stringify(junk)).toEqual({ colors: { ...DEFAULT_CHART_COLORS, downBody: '#010203' } });
+      expect(await stored('wallet')).toEqual({ ...DEFAULT_CHART_COLORS, downBody: '#010203' });
+    }
   });
 });

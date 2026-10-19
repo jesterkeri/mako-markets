@@ -21,6 +21,8 @@ vi.mock('@/components/chart/CandlestickChart', () => ({
 }));
 
 import { MarketChart } from '../../components/MarketChart';
+// (Builder: since adversary r10 a save sends only the changed colours and the server merges them; applySave models that.)
+import { applySave } from './chart-colors-fake';
 
 const CANDLES = JSON.stringify({ candles: [{ timestamp: 1_700_000_000_000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 0 }], source: 'x' });
 const SAVED_A = { ...DEFAULT_CHART_COLORS, upBody: '#0000ff' };
@@ -42,10 +44,10 @@ beforeEach(() => {
       if (String(url).includes('/api/user/chart-colors')) {
         const sender = who;
         if (init?.method === 'POST') {
-          const body = JSON.parse(String(init.body)) as { account: string; colors: unknown };
+          const body = JSON.parse(String(init.body)) as { account: string; patch?: null };
           if (body.account.toLowerCase() !== ADDR[sender]) return new Response(JSON.stringify({ error: 'account_changed' }), { status: 409 });
-          stored[sender] = body.colors;
-          return new Response(JSON.stringify({ colors: body.colors }), { status: 200 });
+          stored[sender] = applySave(stored[sender], body);
+          return new Response(JSON.stringify({ colors: stored[sender] }), { status: 200 });
         }
         // A GET that names an account is refused like a POST when it is not the session's (so a fix that scopes the
         // reload by account is modelled faithfully); a GET that names none reads the session's row, as the route does.

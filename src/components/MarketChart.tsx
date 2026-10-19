@@ -145,19 +145,19 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   const candleColors = candleDraft ? { ...candle.colors, ...candleDraft } : candle.colors;
   const { save: saveCandleColors } = candle;
   // The change still waiting for its save, so it is saved, not lost, if the chart closes inside the 500 ms.
-  const pendingCandle = useRef<ChartColors | null>(null);
+  const pendingCandle = useRef<Partial<ChartColors> | null>(null);
   useEffect(() => {
-    const full = candleDraft && { ...candle.colors, ...candleDraft };
-    pendingCandle.current = full;
-    if (!full) return;
-    // Handed to the save (which puts it in the cache at once) and cleared, so it is saved exactly once.
+    pendingCandle.current = candleDraft;
+    if (!candleDraft) return;
+    // Only the colours changed are sent (the server merges them); handed to the save, which puts the result in the
+    // cache at once, and cleared, so it is saved exactly once.
     const t = setTimeout(() => {
       pendingCandle.current = null;
-      saveCandleColors(full);
+      saveCandleColors(candleDraft);
       setDraft(null);
     }, 500);
     return () => clearTimeout(t);
-  }, [candleDraft, candle.colors, saveCandleColors]);
+  }, [candleDraft, saveCandleColors]);
   useEffect(
     () => () => {
       if (pendingCandle.current) saveCandleColors(pendingCandle.current);

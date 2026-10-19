@@ -27,6 +27,8 @@ vi.mock('@/components/chart/CandlestickChart', () => ({
 }));
 
 import { MarketChart } from '../../components/MarketChart';
+// (Builder: since adversary r10 a save sends only the changed colours and the server merges them; applySave models that.)
+import { applySave } from './chart-colors-fake';
 
 const CANDLES = JSON.stringify({ candles: [{ timestamp: 1_700_000_000_000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 0 }], source: 'x' });
 
@@ -65,7 +67,9 @@ beforeEach(() => {
           status = heldPostStatus;
         }
         if (status !== 200) return new Response(JSON.stringify({ error: 'x' }), { status });
-        const { account, colors } = JSON.parse(String(init.body)) as { account: string; colors: unknown };
+        const body = JSON.parse(String(init.body)) as { account: string; patch?: null };
+        const account = body.account;
+        const colors = applySave(stored[account], body);
         stored[account] = colors;
         return new Response(JSON.stringify({ colors }), { status: 200 });
       }

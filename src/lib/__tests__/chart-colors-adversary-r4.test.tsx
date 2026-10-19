@@ -22,6 +22,8 @@ vi.mock('@/components/chart/CandlestickChart', () => ({
 }));
 
 import { MarketChart } from '../../components/MarketChart';
+// (Builder: since adversary r10 a save sends only the changed colours and the server merges them; applySave models that.)
+import { applySave } from './chart-colors-fake';
 
 const CANDLES = JSON.stringify({ candles: [{ timestamp: 1_700_000_000_000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 0 }], source: 'x' });
 const SAVED_A = { ...DEFAULT_CHART_COLORS, upBody: '#0000ff' };
@@ -62,11 +64,11 @@ describe('adversary r4: a save queued behind a slow save, across an account swit
           const sender = who;
           if (sender === null) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 });
           if (init?.method === 'POST') {
-            const body = JSON.parse(String(init.body)) as { colors: unknown };
+            const colors = applySave(stored[sender], JSON.parse(String(init.body)));
             if (++postCount === 1) await gate;
-            posts.push({ who: sender, colors: body.colors });
-            stored[sender] = body.colors;
-            return new Response(JSON.stringify({ colors: body.colors }), { status: 200 });
+            posts.push({ who: sender, colors });
+            stored[sender] = colors;
+            return new Response(JSON.stringify({ colors }), { status: 200 });
           }
           return new Response(JSON.stringify({ colors: stored[sender] }), { status: 200 });
         }
@@ -119,11 +121,11 @@ describe('adversary r4: a change made while the reload after a failed save is st
       vi.fn(async (url: string, init?: RequestInit) => {
         if (String(url).includes('/api/user/chart-colors')) {
           if (init?.method === 'POST') {
-            const body = JSON.parse(String(init.body)) as { colors: unknown };
+            const colors = applySave(stored.A, JSON.parse(String(init.body)));
             if (++postCount === 1) return new Response(JSON.stringify({ error: 'boom' }), { status: 500 });
-            posts.push({ who: 'A', colors: body.colors });
-            stored.A = body.colors;
-            return new Response(JSON.stringify({ colors: body.colors }), { status: 200 });
+            posts.push({ who: 'A', colors });
+            stored.A = colors;
+            return new Response(JSON.stringify({ colors }), { status: 200 });
           }
           const snapshot = stored.A;
           if (++getCount === 2) await getGate;

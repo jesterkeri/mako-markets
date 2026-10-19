@@ -13,6 +13,8 @@ vi.mock('@/components/chart/CandlestickChart', () => ({
 }));
 
 import { MarketChart } from '../../components/MarketChart';
+// (Builder: since adversary r10 a save sends only the changed colours and the server merges them; applySave models that.)
+import { applySave } from './chart-colors-fake';
 
 // Account A saved a full custom set earlier: every colour differs from TradingView's.
 const SAVED = { upBody: '#0000ff', downBody: '#ff00ff', upBorder: '#00ff00', downBorder: '#ffff00', upWick: '#00ffff', downWick: '#888888' };
@@ -29,8 +31,9 @@ beforeEach(() => {
     vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).includes('/api/user/chart-colors')) {
         if (init?.method === 'POST') {
-          posts.push(JSON.parse(String(init.body)));
-          return new Response(JSON.stringify({ colors: null }), { status: 200 });
+          const body = JSON.parse(String(init.body));
+          posts.push(body);
+          return new Response(JSON.stringify({ colors: applySave(SAVED, body) }), { status: 200 });
         }
         await getGate;
         return new Response(JSON.stringify({ colors: SAVED }), { status: 200 });
@@ -68,7 +71,7 @@ describe('adversary r2: candle colours with the real hook', () => {
     await tick(50);
     await tick(1000);
     // Whatever is saved must keep the five colours A did not touch.
-    for (const p of posts) expect(p.colors).toEqual({ ...SAVED, downWick: '#112233' });
+    for (const p of posts) expect(applySave(SAVED, p as never)).toEqual({ ...SAVED, downWick: '#112233' });
   });
 
   it('a change followed by leaving the page inside 500 ms is still saved', async () => {
@@ -81,6 +84,6 @@ describe('adversary r2: candle colours with the real hook', () => {
     // A navigates away (the chart unmounts) 200 ms after the change.
     r.unmount();
     await tick(2000);
-    expect(posts.map((p) => p.colors)).toEqual([{ ...SAVED, upBody: '#112233' }]); // the body also names the account (r4)
+    expect(posts.map((p) => applySave(SAVED, p as never))).toEqual([{ ...SAVED, upBody: '#112233' }]); // the body also names the account (r4)
   });
 });

@@ -65,7 +65,7 @@ describe('candle colours in the chart menu', () => {
       await vi.advanceTimersByTimeAsync(500);
     });
     expect(hook.save).toHaveBeenCalledTimes(1);
-    expect(hook.save).toHaveBeenCalledWith({ ...DEFAULT_CHART_COLORS, upBody: '#445566' });
+    expect(hook.save).toHaveBeenCalledWith({ upBody: '#445566' }); // only the change; the server merges it
   });
   it('Reset to TradingView saves null and the chart goes back to the defaults', async () => {
     hook.colors = { ...DEFAULT_CHART_COLORS, downBody: '#000000' };

@@ -69,20 +69,31 @@ describe('/api/user/chart-colors', () => {
     mocks.stored.mockResolvedValueOnce([{ chartColors: { upBody: 'red' } }]);
     expect(await (await GET(get())).json()).toEqual({ colors: null });
   });
-  it('POST: a valid set is stored lower-cased; null resets; anything else 400 with nothing written; cross-origin 403', async () => {
+  it('POST: validation (a change of 1 to 6 known colours, or null); bad bodies 400 with nothing written; cross-origin 403; another account 409', async () => {
+    // What gets stored (the merge itself) is checked on real Postgres in chart-colors-route-account.test.ts.
     mocks.session.mockResolvedValue({ userId: 'u1' });
-    mocks.returning.mockResolvedValue([{ id: 'u1' }]);
+    mocks.returning.mockResolvedValue([{ chartColors: { ...SIX, upBody: '#26a69a' } }]);
     const { POST } = await import('@/app/api/user/chart-colors/route');
-    expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(200);
-    expect(mocks.set).toHaveBeenLastCalledWith({ chartColors: { ...SIX, upBody: '#26a69a' } });
-    expect((await POST(post({ account: ACC, colors: null }))).status).toBe(200);
-    expect(mocks.set).toHaveBeenLastCalledWith({ chartColors: null });
+    for (const ok of [{ account: ACC, patch: { upBody: '#00FF00' } }, { account: ACC, patch: SIX }, { account: ACC, patch: null }])
+      expect((await POST(post(ok))).status, JSON.stringify(ok)).toBe(200);
+    expect(mocks.set).toHaveBeenLastCalledWith({ chartColors: null }); // Reset
     mocks.set.mockClear();
-    for (const bad of [{ account: ACC, colors: { upBody: '#000000' } }, { account: ACC }, { account: ACC, colors: 'red' }, { colors: SIX }, { account: 'me', colors: SIX }]) expect((await POST(post(bad))).status, JSON.stringify(bad)).toBe(400);
+    for (const bad of [
+      { account: ACC, patch: {} },
+      { account: ACC, patch: { upBody: '#000000', extra: '#000000' } },
+      { account: ACC, patch: { upBody: 'red' } },
+      { account: ACC, patch: { upBody: '#fff' } },
+      { account: ACC, patch: ['#000000'] },
+      { account: ACC },
+      { account: ACC, colors: SIX },
+      { patch: SIX },
+      { account: 'me', patch: SIX },
+    ])
+      expect((await POST(post(bad))).status, JSON.stringify(bad)).toBe(400);
     expect(mocks.set).not.toHaveBeenCalled();
     mocks.sameOrigin.mockReturnValueOnce({ ok: false });
-    expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(403);
+    expect((await POST(post({ account: ACC, patch: SIX }))).status).toBe(403);
     mocks.returning.mockResolvedValueOnce([]); // the session is no longer that account
-    expect((await POST(post({ account: ACC, colors: SIX }))).status).toBe(409);
+    expect((await POST(post({ account: ACC, patch: SIX }))).status).toBe(409);
   });
 });

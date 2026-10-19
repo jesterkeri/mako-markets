@@ -21,6 +21,8 @@ vi.mock('@/components/chart/CandlestickChart', () => ({
 }));
 
 import { MarketChart } from '../../components/MarketChart';
+// (Builder: since adversary r10 a save sends only the changed colours and the server merges them; applySave models that.)
+import { applySave } from './chart-colors-fake';
 
 // The session cookie decides which account a request reads or writes: `who` stands in for it (null = signed out, 401).
 const SAVED_A = { ...DEFAULT_CHART_COLORS, upBody: '#0000ff' };
@@ -40,10 +42,10 @@ beforeEach(() => {
       if (String(url).includes('/api/user/chart-colors')) {
         if (who === null) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 });
         if (init?.method === 'POST') {
-          const body = JSON.parse(String(init.body)) as { colors: unknown };
-          posts.push({ who, colors: body.colors });
-          stored[who] = body.colors;
-          return new Response(JSON.stringify({ colors: body.colors }), { status: 200 });
+          const colors = applySave(stored[who], JSON.parse(String(init.body)));
+          posts.push({ who, colors });
+          stored[who] = colors;
+          return new Response(JSON.stringify({ colors }), { status: 200 });
         }
         return new Response(JSON.stringify({ colors: stored[who] }), { status: 200 });
       }
@@ -97,14 +99,14 @@ describe('adversary r3: a Reset queued behind a save that fails', () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         if (String(url).includes('/api/user/chart-colors')) {
           if (init?.method === 'POST') {
-            const body = JSON.parse(String(init.body)) as { colors: unknown };
+            const colors = applySave(stored.A, JSON.parse(String(init.body)));
             if (++postCount === 1) {
               await firstGate;
               return new Response(JSON.stringify({ error: 'boom' }), { status: 500 });
             }
-            posts.push({ who: 'A', colors: body.colors });
-            stored.A = body.colors;
-            return new Response(JSON.stringify({ colors: body.colors }), { status: 200 });
+            posts.push({ who: 'A', colors });
+            stored.A = colors;
+            return new Response(JSON.stringify({ colors }), { status: 200 });
           }
           return new Response(JSON.stringify({ colors: stored.A }), { status: 200 });
         }

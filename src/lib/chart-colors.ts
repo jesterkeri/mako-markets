@@ -41,3 +41,22 @@ export function parseChartColors(raw: unknown): ChartColors | null {
   }
   return out;
 }
+
+/// A submitted change: one to six of the keys, each a #rrggbb (lower-cased); null for anything else (an unknown or
+/// empty key set, a bad colour). Saves send only what changed, and the server merges it into what it holds, so a change
+/// in one tab never puts another tab's stale colours back (adversary r10 on 2d48a79).
+export function parseChartColorPatch(raw: unknown): Partial<ChartColors> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0) return null;
+  const out: Partial<ChartColors> = {};
+  for (const [k, v] of entries) {
+    if (!(CHART_COLOR_KEYS as readonly string[]).includes(k) || typeof v !== 'string' || !HEX.test(v.toLowerCase())) return null;
+    out[k as keyof ChartColors] = v.toLowerCase();
+  }
+  return out;
+}
+
+/// The set a change produces over what is held (TradingView's defaults when nothing is): the server's merge, and the
+/// browser's optimistic copy of it.
+export const mergeChartColors = (held: ChartColors | null, patch: Partial<ChartColors>): ChartColors => ({ ...(held ?? DEFAULT_CHART_COLORS), ...patch });
