@@ -1,11 +1,12 @@
 import { type Address } from 'viem';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { put, del } from '@vercel/blob';
 import sharp from 'sharp';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
+import { priorPhoto } from '@/lib/prior-photo';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
@@ -110,20 +111,14 @@ export async function POST(req: Request) {
     return Response.json({ error: 'storage_unavailable' }, { status: 502 });
   }
 
-  // Read prior URL so we can clean up the old blob after the DB row is
-  // updated. Done before the UPDATE so we capture the value being
-  // replaced even if the UPDATE returns the new value in `returning()`.
-  const priorRow = await db
-    .select({ avatarUrl: users.avatarUrl })
-    .from(users)
-    .where(eq(users.id, session.userId))
-    .limit(1);
-  const priorAvatarUrl = priorRow[0]?.avatarUrl ?? null;
-
+  // The photo this upload replaces is read in the same statement as the write, with the row locked (prior-photo.ts),
+  // so a removal or a second upload landing at the same moment never leaves an orphan behind.
+  const prior = priorPhoto(session.userId);
   const updated = await db
     .update(users)
     .set({ avatarUrl: uploadUrl })
-    .where(eq(users.id, session.userId))
+    .from(prior)
+    .where(and(eq(users.id, session.userId), eq(users.id, prior.id)))
     .returning({
       email: users.email,
       magicEoa: users.magicEoa,
@@ -132,7 +127,9 @@ export async function POST(req: Request) {
       totpSecret: users.totpSecret,
       totpEnabledAt: users.totpEnabledAt,
       lastEmailChangedAt: users.lastEmailChangedAt,
+      replacedPhoto: prior.url,
     });
+  const priorAvatarUrl = updated[0]?.replacedPhoto ?? null;
 
   if (updated.length === 0) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });

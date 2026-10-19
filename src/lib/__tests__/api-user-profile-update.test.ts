@@ -29,7 +29,6 @@ const mocks = vi.hoisted(() => ({
   updateSet: vi.fn(),
   updateReturning: vi.fn(),
   selectPriorSession: vi.fn(),
-  selectCurrentPhoto: vi.fn(),
   del: vi.fn(),
 }));
 
@@ -44,11 +43,9 @@ vi.mock('@/db/client', () => ({
     update: () => ({
       set: (...args: unknown[]) => {
         mocks.updateSet(...args);
-        return {
-          where: () => ({
-            returning: () => mocks.updateReturning(),
-          }),
-        };
+        const where = () => ({ returning: () => mocks.updateReturning() });
+        // UPDATE ... FROM priorPhoto(id): the replaced photo comes back in the returned row (replacedPhoto).
+        return { where, from: () => ({ where }) };
       },
     }),
     select: () => ({
@@ -57,7 +54,7 @@ vi.mock('@/db/client', () => ({
           orderBy: () => ({
             limit: () => mocks.selectPriorSession(),
           }),
-          limit: () => mocks.selectCurrentPhoto(),
+          for: () => ({ as: () => ({ id: 'prior.id', url: 'prior.url' }) }),
         }),
       }),
     }),
@@ -128,7 +125,6 @@ function setupHappy(rowOverrides: Record<string, unknown> = {}) {
     },
   ]);
   mocks.selectPriorSession.mockResolvedValue([]);
-  mocks.selectCurrentPhoto.mockResolvedValue([]);
 }
 
 describe('POST /api/user/profile/update', () => {
@@ -249,19 +245,16 @@ describe('POST /api/user/profile/update', () => {
   it('removing a photo deletes its file from storage, only when it is this user\'s own upload (Joshua 2026-10-17)', async () => {
     const { POST } = await import('../../app/api/user/profile/update/route');
     const own = `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`;
-    setupHappy({ avatarUrl: null });
-    mocks.selectCurrentPhoto.mockResolvedValueOnce([{ url: own }]);
+    setupHappy({ avatarUrl: null, replacedPhoto: own });
     mocks.del.mockResolvedValueOnce(undefined);
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
     expect(mocks.del).toHaveBeenCalledWith(own);
     mocks.del.mockClear();
-    setupHappy({ avatarUrl: null });
-    mocks.selectCurrentPhoto.mockResolvedValueOnce([{ url: 'https://x.public.blob.vercel-storage.com/avatars/someone-else/a.webp' }]);
+    setupHappy({ avatarUrl: null, replacedPhoto: 'https://x.public.blob.vercel-storage.com/avatars/someone-else/a.webp' });
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
     expect(mocks.del).not.toHaveBeenCalled();
     // A failed delete still answers 200: the link is gone and the failure is logged.
-    setupHappy({ avatarUrl: null });
-    mocks.selectCurrentPhoto.mockResolvedValueOnce([{ url: own }]);
+    setupHappy({ avatarUrl: null, replacedPhoto: own });
     mocks.del.mockRejectedValueOnce(new Error('blob down'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);

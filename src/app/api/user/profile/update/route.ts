@@ -1,11 +1,12 @@
 import { type Address } from 'viem';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { del } from '@vercel/blob';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
+import { priorPhoto } from '@/lib/prior-photo';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
@@ -141,16 +142,14 @@ export async function POST(req: Request) {
     setClause.avatarUrl = validated.avatarUrl ?? null;
   }
 
-  // Removing a photo deletes its file too, not only the link to it (Joshua 2026-10-17): read the current one first.
-  const removedPhoto =
-    setClause.avatarUrl === null
-      ? ((await db.select({ url: users.avatarUrl }).from(users).where(eq(users.id, session.userId)).limit(1))[0]?.url ?? null)
-      : null;
-
+  // Removing a photo deletes its file too (Joshua 2026-10-17): the photo a save replaces is read in the same statement,
+  // with the row locked, so an upload landing at the same moment is never left behind as an orphan.
+  const prior = priorPhoto(session.userId);
   const updated = await db
     .update(users)
     .set(setClause)
-    .where(eq(users.id, session.userId))
+    .from(prior)
+    .where(and(eq(users.id, session.userId), eq(users.id, prior.id)))
     .returning({
       email: users.email,
       magicEoa: users.magicEoa,
@@ -159,7 +158,9 @@ export async function POST(req: Request) {
       totpSecret: users.totpSecret,
       totpEnabledAt: users.totpEnabledAt,
       lastEmailChangedAt: users.lastEmailChangedAt,
+      replacedPhoto: prior.url,
     });
+  const removedPhoto = setClause.avatarUrl === null ? (updated[0]?.replacedPhoto ?? null) : null;
 
   if (updated.length === 0) {
     // Session points to a deleted user. Mirror /me semantics.

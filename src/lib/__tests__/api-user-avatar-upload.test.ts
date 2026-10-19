@@ -36,7 +36,6 @@ const mocks = vi.hoisted(() => ({
   blobPut: vi.fn(),
   blobDel: vi.fn(),
   // db chain spies
-  selectPriorAvatar: vi.fn(),
   selectPriorSession: vi.fn(),
   updateSet: vi.fn(),
   updateReturning: vi.fn(),
@@ -76,17 +75,15 @@ vi.mock('@/db/client', () => ({
     update: () => ({
       set: (...args: unknown[]) => {
         mocks.updateSet(...args);
-        return {
-          where: () => ({
-            returning: () => mocks.updateReturning(),
-          }),
-        };
+        const where = () => ({ returning: () => mocks.updateReturning() });
+        // UPDATE ... FROM priorPhoto(id): the replaced photo comes back in the returned row (replacedPhoto).
+        return { where, from: () => ({ where }) };
       },
     }),
     select: () => ({
       from: () => ({
         where: () => ({
-          limit: () => mocks.selectPriorAvatar(),
+          for: () => ({ as: () => ({ id: 'prior.id', url: 'prior.url' }) }),
           orderBy: () => ({
             limit: () => mocks.selectPriorSession(),
           }),
@@ -170,9 +167,6 @@ function setupHappy(opts: {
   mocks.sharpToBuffer.mockResolvedValue(Buffer.from('webp-bytes'));
   mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
   mocks.blobDel.mockResolvedValue(undefined);
-  mocks.selectPriorAvatar.mockResolvedValue([
-    { avatarUrl: opts.priorAvatarUrl ?? null },
-  ]);
   mocks.selectPriorSession.mockResolvedValue([]);
   mocks.updateReturning.mockResolvedValue([
     {
@@ -183,6 +177,7 @@ function setupHappy(opts: {
       totpSecret: null,
       totpEnabledAt: null,
       lastEmailChangedAt: null,
+      replacedPhoto: opts.priorAvatarUrl ?? null,
       ...(opts.rowOverrides ?? {}),
     },
   ]);
@@ -405,7 +400,6 @@ describe('POST /api/user/avatar/upload', () => {
       mocks.sharpMetadata.mockResolvedValue({ format: 'png' });
       mocks.sharpToBuffer.mockResolvedValue(Buffer.from('webp-bytes'));
       mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
-      mocks.selectPriorAvatar.mockResolvedValue([{ avatarUrl: null }]);
       mocks.selectPriorSession.mockResolvedValue([]);
       // Same shape as Magic UPDATE projection — populated with leak-bait
       // values so a regression that spreads `row` into the response
