@@ -72,13 +72,16 @@ const wait = (ms: number) =>
 
 beforeAll(async () => {
   pg = new PGlite();
-  const last = journal.entries[journal.entries.length - 1];
-  expect(last.tag).toBe('0017_display_name_key');
-  for (const e of journal.entries.slice(0, -1)) await apply(pg, e.tag);
+  // (Builder: 0017 found by name, not assumed to be the newest; later migrations run after it.)
+  const at = journal.entries.findIndex((e) => e.tag === '0017_display_name_key');
+  expect(at).toBeGreaterThan(0);
+  const last = journal.entries[at];
+  for (const e of journal.entries.slice(0, at)) await apply(pg, e.tag);
   // Before 0017: K set "Wren" first, L later set the same name.
   await addUser('K', 41, 'Wren', '2026-01-01T00:00:00Z');
   await addUser('L', 42, 'Wren', '2026-02-01T00:00:00Z');
   await apply(pg, last.tag);
+  for (const e of journal.entries.slice(at + 1)) await apply(pg, e.tag);
   state.db = drizzle(pg, { schema });
   vi.stubGlobal('fetch', async (url: string) => available(new Request(new URL(url, 'http://localhost').toString())));
 }, 60_000);
