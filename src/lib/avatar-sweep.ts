@@ -47,11 +47,16 @@ const PATHNAME_RE = /^avatars\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\.webp$/;
 const MARK_SCRIPT =
   "local t = redis.call('TIME') local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) " +
   "redis.call('ZADD', KEYS[1], now, ARGV[1]) return now";
-// The oldest members added at least ARGV[1] ms ago (Redis's time), at most ARGV[2], skipping the first ARGV[3] (those
-// this run already left in place), with their scores.
+// The oldest members added at least ARGV[1] ms ago (Redis's time), at most ARGV[2], with their scores.
 const READ_SCRIPT =
   "local t = redis.call('TIME') local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) " +
-  "return redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now - tonumber(ARGV[1]), 'WITHSCORES', 'LIMIT', tonumber(ARGV[3]), tonumber(ARGV[2]))";
+  "return redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now - tonumber(ARGV[1]), 'WITHSCORES', 'LIMIT', 0, tonumber(ARGV[2]))";
+// A failed delete goes to the back (Redis's time now, so past the grace again by the next run), only if nothing marked
+// it since: it never sits in front of later due files (adversary on f2b9a02).
+const DEFER_SCRIPT =
+  "if redis.call('ZSCORE', KEYS[1], ARGV[1]) == ARGV[2] then " +
+  "local t = redis.call('TIME') local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) " +
+  "redis.call('ZADD', KEYS[1], now, ARGV[1]) return 1 end return 0";
 // Remove the member only if it still has the score the sweep read: one added again since (a newer removal or
 // replacement of the same file) stays for the next sweep.
 const UNMARK_SCRIPT =
@@ -104,37 +109,42 @@ export async function deleteSettled(file: { url: string; pathname: string; score
 
 export type SweepResult = { checked: number; deleted: number; kept: number; failed: number; invalid: number; complete: boolean };
 
-/// One run (Codex PUBLIC_PROFILE R5 F1): batches of SWEEP_BATCH members past the grace until none is left or
-/// SWEEP_BUDGET_MS has gone; `complete` false means a backlog is left for the next run (the cron route reports it as
-/// an error). Never deletes a file any account's avatar_url points at.
+/// One run (Codex PUBLIC_PROFILE R5 F1): batches of SWEEP_BATCH members past the grace until none is due or
+/// SWEEP_BUDGET_MS has gone. Every member it handles leaves the due range (deleted or kept: off the set; a failed
+/// delete: to the back), so each read returns new members. `complete` is true only when nothing due is left and no
+/// delete failed; otherwise the cron route reports an error (a backlog, a storage outage, or a member the store keeps
+/// handing back). Never deletes a file any account's avatar_url points at.
 export async function sweepAvatars(now: () => number = Date.now): Promise<SweepResult> {
   const host = getAppBlobPublicHost();
   if (!host) throw new Error('avatar sweep: app Blob host unknown');
   const start = now();
   const total: SweepResult = { checked: 0, deleted: 0, kept: 0, failed: 0, invalid: 0, complete: false };
-  // Members this run left in place at their old score (failed deletes, failed unmarks) are still first in the range,
-  // so the next read skips them.
-  let skip = 0;
+  const seen = new Set<string>();
   for (;;) {
-    const { result, left, full } = await sweepBatch(host, skip);
+    const batch = await readBatch();
+    // A member handed back again means the store did not record what this run did to it: stop rather than loop.
+    if (batch.some((b) => seen.has(b.member))) return total;
+    for (const b of batch) seen.add(b.member);
+    const result = await settleBatch(host, batch);
     for (const k of ['checked', 'deleted', 'kept', 'failed', 'invalid'] as const) total[k] += result[k];
-    skip += left;
-    if (!full) return { ...total, complete: true };
+    if (batch.length < SWEEP_BATCH) return { ...total, complete: total.failed === 0 };
     if (now() - start >= SWEEP_BUDGET_MS) return total;
   }
 }
 
-async function sweepBatch(host: string, skip: number) {
-  const raw = await upstashCommand(['EVAL', READ_SCRIPT, 1, sweepKey(), GRACE_MS, SWEEP_BATCH, skip]);
+async function readBatch(): Promise<{ member: string; score: string }[]> {
+  const raw = await upstashCommand(['EVAL', READ_SCRIPT, 1, sweepKey(), GRACE_MS, SWEEP_BATCH]);
   if (!Array.isArray(raw) || raw.length % 2 !== 0 || raw.some((x) => typeof x !== 'string')) {
     throw new Error('avatar sweep: batch not usable');
   }
   const batch: { member: string; score: string }[] = [];
   for (let i = 0; i < raw.length; i += 2) batch.push({ member: raw[i] as string, score: raw[i + 1] as string });
+  return batch;
+}
+
+async function settleBatch(host: string, batch: { member: string; score: string }[]) {
   const result = { checked: batch.length, deleted: 0, kept: 0, failed: 0, invalid: 0 };
-  let left = 0;
-  const full = batch.length === SWEEP_BATCH;
-  if (batch.length === 0) return { result, left, full };
+  if (batch.length === 0) return result;
 
   const urlOf = (pathname: string) => `https://${host}/${pathname}`;
   const valid = batch.filter((b) => PATHNAME_RE.test(b.member));
@@ -150,16 +160,9 @@ async function sweepBatch(host: string, skip: number) {
   }
 
   const settle = async ({ member, score }: { member: string; score: string }) => {
-    // A failed unmark only leaves the member for the next run, which finds the same answer (a deleted file reads as
-    // not found), so it never stops the run; it is counted so this run's next read skips it. A 0 means the file was
-    // marked again since (a newer score, outside this run's range).
-    const unmark = async () => {
-      try {
-        await upstashCommand(['EVAL', UNMARK_SCRIPT, 1, sweepKey(), member, score]);
-      } catch {
-        left++;
-      }
-    };
+    // A failed unmark only leaves the member for a later read, which finds the same answer (a deleted file reads as not
+    // found); a 0 means the file was marked again since (a newer score, outside the due range).
+    const unmark = () => upstashCommand(['EVAL', UNMARK_SCRIPT, 1, sweepKey(), member, score]).catch(() => undefined);
     if (!PATHNAME_RE.test(member)) {
       // Not a pathname this app writes: nothing to delete.
       await unmark();
@@ -175,10 +178,10 @@ async function sweepBatch(host: string, skip: number) {
       await del(urlOf(member));
     } catch (e) {
       if (!(e instanceof BlobNotFoundError)) {
-        // Stays in the set: the next run tries again.
+        // Stays in the set, at the back: the next run tries again.
         console.warn('[avatar-sweep] delete failed, kept for the next sweep', member, e instanceof Error ? e.name : 'error');
         result.failed++;
-        left++;
+        await upstashCommand(['EVAL', DEFER_SCRIPT, 1, sweepKey(), member, score]).catch(() => undefined);
         return;
       }
     }
@@ -186,5 +189,5 @@ async function sweepBatch(host: string, skip: number) {
     result.deleted++;
   };
   for (let i = 0; i < batch.length; i += DELETE_CONCURRENCY) await Promise.all(batch.slice(i, i + DELETE_CONCURRENCY).map(settle));
-  return { result, left, full };
+  return result;
 }

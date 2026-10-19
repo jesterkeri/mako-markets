@@ -121,6 +121,9 @@ describe('GET /api/cron/avatar-sweep', () => {
     expect(await (await sweep()).json()).toMatchObject({ checked: 2, deleted: 1, failed: 1 });
     expect([...store.members.keys()]).toEqual([path('stuck')]);
     state.failDel.clear();
+    // The failed file went to the back of the set: not due again until its grace has passed once more.
+    expect(await (await sweep()).json()).toMatchObject({ checked: 0, complete: true });
+    store.now += GRACE_MS;
     expect(await (await sweep()).json()).toMatchObject({ checked: 1, deleted: 1, failed: 0 });
     expect(state.stored.size).toBe(0);
     expect(store.members.size).toBe(0);
@@ -165,7 +168,7 @@ describe('GET /api/cron/avatar-sweep', () => {
     expect(state.stored.size).toBe(0);
   });
 
-  it(`a removed photo behind more than ${SWEEP_BATCH} older failing deletes is still deleted in that run (Codex R5 F1)`, async () => {
+  it(`a removed photo behind more than ${SWEEP_BATCH} older failing deletes is still deleted in that run; the failures are reported (Codex R5 F1)`, async () => {
     for (let i = 0; i <= SWEEP_BATCH; i++) {
       file(`stuck${i}`);
       state.failDel.add(url(`stuck${i}`));
@@ -173,7 +176,8 @@ describe('GET /api/cron/avatar-sweep', () => {
     }
     file('removed');
     store.now += GRACE_MS;
-    expect(await (await sweep()).json()).toMatchObject({ checked: SWEEP_BATCH + 2, deleted: 1, failed: SWEEP_BATCH + 1, complete: true });
+    // Failed deletes leave the run incomplete, so the route reports them (adversary on f2b9a02).
+    expect(await (await sweep()).json()).toMatchObject({ checked: SWEEP_BATCH + 2, deleted: 1, failed: SWEEP_BATCH + 1, complete: false });
     expect(state.stored.has(url('removed'))).toBe(false);
     // The failures stay for the next run, each tried once in this one.
     expect(store.members.size).toBe(SWEEP_BATCH + 1);
@@ -200,7 +204,7 @@ describe('GET /api/cron/avatar-sweep', () => {
     const body = await (await sweep()).json();
     spy.mockRestore();
     expect(body).toMatchObject({ complete: false });
-    expect(console.error).toHaveBeenCalledWith('[cron/avatar-sweep] backlog left after the time budget', expect.objectContaining({ complete: false }));
+    expect(console.error).toHaveBeenCalledWith('[cron/avatar-sweep] run left files due', expect.objectContaining({ complete: false }));
   });
 
   it('no AVATAR_SWEEP_SCOPE, or a malformed one: 500 and nothing deleted (Codex R5 F2)', async () => {

@@ -34,17 +34,26 @@ export function fakeSweepStore(log: string[] = []): FakeSweepStore {
       primary ??= key;
       const members = key === primary ? s.members : s.others.get(key) ?? s.others.set(key, new Map()).get(key)!;
       if (script.includes('ZRANGEBYSCORE')) {
-        const [graceMs, limit, skip = 0] = argv.map(Number);
+        const [graceMs, limit] = argv.map(Number);
         return [...members]
           .filter(([, score]) => score <= s.now - graceMs)
           .sort((a, b) => a[1] - b[1])
-          .slice(skip, skip + limit)
+          .slice(0, limit)
           .flatMap(([m, score]) => [m, String(score)]);
       }
       if (script.includes('ZREM')) {
         const [member, score] = argv;
         if (members.has(member) && String(members.get(member)) === score) {
           members.delete(member);
+          return 1;
+        }
+        return 0;
+      }
+      if (script.includes('ZSCORE') && script.includes('ZADD')) {
+        // Defer: to the back at the store's time, only if the score is unchanged.
+        const [member, score] = argv;
+        if (members.has(member) && String(members.get(member)) === score) {
+          members.set(member, s.now);
           return 1;
         }
         return 0;

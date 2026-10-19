@@ -8,6 +8,7 @@ compatibility_date = "2026-09-01"
 
 # No public URL: the worker has no fetch handler and no workers.dev route.
 workers_dev = false
+preview_urls = false
 
 [triggers]
 crons = ["*/15 * * * *"]

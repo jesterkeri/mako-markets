@@ -22,8 +22,8 @@ export async function GET(req: Request) {
   }
   try {
     const result = await sweepAvatars();
-    // A backlog breaks the ~20-minute deletion bound: loud, so it is seen (Codex PUBLIC_PROFILE R5 F1).
-    if (!result.complete) console.error('[cron/avatar-sweep] backlog left after the time budget', result);
+    // A backlog or failed deletes break the ~20-minute deletion bound: loud, so it is seen (Codex PUBLIC_PROFILE R5 F1).
+    if (!result.complete) console.error('[cron/avatar-sweep] run left files due', result);
     return Response.json({ ok: true, ...result });
   } catch (err) {
     console.error('[cron/avatar-sweep] run failed:', err instanceof Error ? err.message : String(err));
