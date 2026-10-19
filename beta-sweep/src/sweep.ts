@@ -1,8 +1,8 @@
 // The one request this worker ever makes (owner decision Q-L, 2026-10-19): the exact beta host and sweep path, the
 // Vercel bypass secret in a header (never the query string), redirects never followed, and nothing secret in what it
 // returns or logs. The bypass secret opens every protected deployment of the project if it leaks, so it is treated as
-// a high-impact access secret: this worker's own token, used for nothing else, rotated when this worker changes or is
-// retired (README.md).
+// a high-impact access secret: this worker's own token, never the one Vercel exposes to deployments, used for nothing
+// else, rotated when this worker changes or is retired (README.md).
 
 export const BETA_SWEEP_URL = 'https://beta.makomarket.xyz/api/cron/avatar-sweep';
 

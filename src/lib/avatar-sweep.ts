@@ -107,7 +107,16 @@ export async function deleteSettled(file: { url: string; pathname: string; score
   await unmarkSettled(file.pathname, score);
 }
 
-export type SweepResult = { checked: number; deleted: number; kept: number; failed: number; invalid: number; complete: boolean };
+export type SweepResult = {
+  checked: number;
+  deleted: number;
+  kept: number;
+  failed: number;
+  invalid: number;
+  /// Set writes (unmark, defer) whose result is not known: the member may still be due.
+  unconfirmed: number;
+  complete: boolean;
+};
 
 /// One run (Codex PUBLIC_PROFILE R5 F1): batches of SWEEP_BATCH members past the grace until none is due or
 /// SWEEP_BUDGET_MS has gone. Every member it handles leaves the due range (deleted or kept: off the set; a failed
@@ -118,7 +127,7 @@ export async function sweepAvatars(now: () => number = Date.now): Promise<SweepR
   const host = getAppBlobPublicHost();
   if (!host) throw new Error('avatar sweep: app Blob host unknown');
   const start = now();
-  const total: SweepResult = { checked: 0, deleted: 0, kept: 0, failed: 0, invalid: 0, complete: false };
+  const total: SweepResult = { checked: 0, deleted: 0, kept: 0, failed: 0, invalid: 0, unconfirmed: 0, complete: false };
   const seen = new Set<string>();
   for (;;) {
     const batch = await readBatch();
@@ -126,8 +135,10 @@ export async function sweepAvatars(now: () => number = Date.now): Promise<SweepR
     if (batch.some((b) => seen.has(b.member))) return total;
     for (const b of batch) seen.add(b.member);
     const result = await settleBatch(host, batch);
-    for (const k of ['checked', 'deleted', 'kept', 'failed', 'invalid'] as const) total[k] += result[k];
-    if (batch.length < SWEEP_BATCH) return { ...total, complete: total.failed === 0 };
+    for (const k of ['checked', 'deleted', 'kept', 'failed', 'invalid', 'unconfirmed'] as const) total[k] += result[k];
+    // Complete only when every set write was acknowledged (Codex PUBLIC_PROFILE R6 F1): an unmark that never reached
+    // Redis leaves its member due, so the run must not say otherwise.
+    if (batch.length < SWEEP_BATCH) return { ...total, complete: total.failed === 0 && total.unconfirmed === 0 };
     if (now() - start >= SWEEP_BUDGET_MS) return total;
   }
 }
@@ -143,7 +154,7 @@ async function readBatch(): Promise<{ member: string; score: string }[]> {
 }
 
 async function settleBatch(host: string, batch: { member: string; score: string }[]) {
-  const result = { checked: batch.length, deleted: 0, kept: 0, failed: 0, invalid: 0 };
+  const result = { checked: batch.length, deleted: 0, kept: 0, failed: 0, invalid: 0, unconfirmed: 0 };
   if (batch.length === 0) return result;
 
   const urlOf = (pathname: string) => `https://${host}/${pathname}`;
@@ -160,9 +171,14 @@ async function settleBatch(host: string, batch: { member: string; score: string 
   }
 
   const settle = async ({ member, score }: { member: string; score: string }) => {
-    // A failed unmark only leaves the member for a later read, which finds the same answer (a deleted file reads as not
-    // found); a 0 means the file was marked again since (a newer score, outside the due range).
-    const unmark = () => upstashCommand(['EVAL', UNMARK_SCRIPT, 1, sweepKey(), member, score]).catch(() => undefined);
+    // A set write answers 1 or 0 (0: marked again since, a newer score outside the due range). Anything else, or no
+    // answer, leaves the member possibly still due: counted as unconfirmed, so the run is not complete. A later read
+    // finds the same answer (a deleted file reads as not found).
+    const write = async (script: string) => {
+      const n = await upstashCommand(['EVAL', script, 1, sweepKey(), member, score]).catch(() => undefined);
+      if (n !== 0 && n !== 1) result.unconfirmed++;
+    };
+    const unmark = () => write(UNMARK_SCRIPT);
     if (!PATHNAME_RE.test(member)) {
       // Not a pathname this app writes: nothing to delete.
       await unmark();
@@ -181,7 +197,7 @@ async function settleBatch(host: string, batch: { member: string; score: string 
         // Stays in the set, at the back: the next run tries again.
         console.warn('[avatar-sweep] delete failed, kept for the next sweep', member, e instanceof Error ? e.name : 'error');
         result.failed++;
-        await upstashCommand(['EVAL', DEFER_SCRIPT, 1, sweepKey(), member, score]).catch(() => undefined);
+        await write(DEFER_SCRIPT);
         return;
       }
     }

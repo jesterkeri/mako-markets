@@ -92,10 +92,10 @@ describe('GET /api/cron/avatar-sweep', () => {
   it('the 5-minute grace: a file added less than 5 minutes ago is left alone, at 5 minutes it is deleted', async () => {
     file('a');
     store.now += GRACE_MS - 1;
-    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 0, deleted: 0, kept: 0, failed: 0, invalid: 0, complete: true });
+    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 0, deleted: 0, kept: 0, failed: 0, invalid: 0, unconfirmed: 0, complete: true });
     expect(state.stored.has(url('a'))).toBe(true);
     store.now += 1;
-    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 1, deleted: 1, kept: 0, failed: 0, invalid: 0, complete: true });
+    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 1, deleted: 1, kept: 0, failed: 0, invalid: 0, unconfirmed: 0, complete: true });
     expect(state.stored.size).toBe(0);
     expect(store.members.size).toBe(0);
   });
@@ -205,6 +205,44 @@ describe('GET /api/cron/avatar-sweep', () => {
     spy.mockRestore();
     expect(body).toMatchObject({ complete: false });
     expect(console.error).toHaveBeenCalledWith('[cron/avatar-sweep] run left files due', expect.objectContaining({ complete: false }));
+  });
+
+  it('a set write that never reached Redis leaves the run incomplete, whatever the batch size (Codex R6 F1)', async () => {
+    for (const n of [1, 5]) {
+      store.members.clear();
+      state.stored.clear();
+      for (let i = 0; i < n; i++) {
+        file(`u${n}-${i}`);
+        store.now += 1;
+      }
+      // One of them is an active photo: kept, but its unmark fails before the write.
+      await client.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [url(`u${n}-0`), userId]);
+      store.now += GRACE_MS;
+      const upstash = store.upstash;
+      let failed = false;
+      store.upstash = async (args) => {
+        if (!failed && String(args[1]).includes('ZREM') && String(args[4]) === path(`u${n}-0`)) {
+          failed = true;
+          throw new Error('upstash unreachable');
+        }
+        return upstash(args);
+      };
+      const body = await (await sweep()).json();
+      store.upstash = upstash;
+      expect(body).toMatchObject({ checked: n, kept: 1, unconfirmed: 1, complete: false });
+      expect(store.members.has(path(`u${n}-0`))).toBe(true);
+      expect(console.error).toHaveBeenCalledWith('[cron/avatar-sweep] run left files due', expect.objectContaining({ complete: false }));
+    }
+  });
+
+  it('an unexpected set reply counts as unconfirmed too (Codex R6 F1)', async () => {
+    file('a');
+    store.now += GRACE_MS;
+    const upstash = store.upstash;
+    store.upstash = async (args) => (String(args[1]).includes('ZREM') ? 'OK' : upstash(args));
+    const body = await (await sweep()).json();
+    store.upstash = upstash;
+    expect(body).toMatchObject({ deleted: 1, unconfirmed: 1, complete: false });
   });
 
   it('no AVATAR_SWEEP_SCOPE, or a malformed one: 500 and nothing deleted (Codex R5 F2)', async () => {
