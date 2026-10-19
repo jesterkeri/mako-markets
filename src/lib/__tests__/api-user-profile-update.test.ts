@@ -11,6 +11,9 @@
 //     non-null avatar URLs (prevents URL-paste impersonation +
 //     foreign-blob deletion via /avatar/upload cleanup path).
 //   - SET clause includes only the columns the body explicitly touched
+//   - removing a photo: one transaction, row locked, the owned file is
+//     deleted BEFORE the row is cleared; a failed delete rolls back
+//     (503 photo_not_removed, no row change) (Codex PUBLIC_PROFILE R3 M1)
 //   - session-points-to-deleted-user → 401 unauthorized
 //   - cross_origin / unauthorized / bad_body gates
 //
@@ -30,40 +33,67 @@ const mocks = vi.hoisted(() => ({
   updateWhere: vi.fn(),
   updateReturning: vi.fn(),
   selectPriorSession: vi.fn(),
+  selectCurrent: vi.fn(),
   del: vi.fn(),
+  // The order of Blob deletes, row writes and transaction ends.
+  log: [] as string[],
 }));
 
-vi.mock('@vercel/blob', () => ({ del: mocks.del }));
+vi.mock('@vercel/blob', () => ({
+  del: (url: string) => {
+    mocks.log.push(`del ${url}`);
+    return mocks.del(url);
+  },
+}));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
 vi.mock('@/lib/user-session', () => ({ getUserSession: mocks.getUserSession }));
 vi.mock('@/lib/safe', () => ({ deriveSafeAddress: mocks.deriveSafeAddress }));
 
-vi.mock('@/db/client', () => ({
-  db: {
+// db.transaction runs its callback with `tx` and logs 'commit' or 'rollback' (a throw). Inside it:
+//   tx.select().from().where().for('update')  — the locked read of the current photo
+//   tx.update().set().where().returning()     — the row write
+// Outside it, db.select().from().where().orderBy().limit() is the prior-session lookup.
+vi.mock('@/db/client', () => {
+  const tx = {
+    select: () => ({ from: () => ({ where: () => ({ for: () => mocks.selectCurrent() }) }) }),
     update: () => ({
       set: (...args: unknown[]) => {
         mocks.updateSet(...args);
-        const where = (...w: unknown[]) => {
-          mocks.updateWhere(...w);
-          return { returning: () => mocks.updateReturning() };
+        mocks.log.push('update');
+        return {
+          where: (...w: unknown[]) => {
+            mocks.updateWhere(...w);
+            return { returning: () => mocks.updateReturning() };
+          },
         };
-        // UPDATE ... FROM priorPhoto(id): the replaced photo comes back in the returned row (replacedPhoto).
-        return { where, from: () => ({ where }) };
       },
     }),
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          orderBy: () => ({
-            limit: () => mocks.selectPriorSession(),
+  };
+  return {
+    db: {
+      transaction: async (fn: (t: typeof tx) => Promise<unknown>) => {
+        try {
+          const out = await fn(tx);
+          mocks.log.push('commit');
+          return out;
+        } catch (e) {
+          mocks.log.push('rollback');
+          throw e;
+        }
+      },
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            orderBy: () => ({
+              limit: () => mocks.selectPriorSession(),
+            }),
           }),
-          for: () => ({ as: () => ({ id: 'prior.id', url: 'prior.url' }) }),
         }),
       }),
-    }),
-  },
-}));
+    },
+  };
+});
 
 vi.mock('@/db/schema', () => ({
   users: {
@@ -91,7 +121,10 @@ vi.mock('drizzle-orm', () => ({
   desc: (a: unknown) => ({ desc: a }),
 }));
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  mocks.log.length = 0;
+});
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
 const EOA = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -106,7 +139,7 @@ function makeRequest(body: unknown): Request {
   });
 }
 
-function setupHappy(rowOverrides: Record<string, unknown> = {}) {
+function setupHappy(rowOverrides: Record<string, unknown> = {}, currentPhoto: string | null = null) {
   mocks.checkSameOrigin.mockReturnValue({ ok: true });
   mocks.getUserSession.mockResolvedValue({
     authType: 'magic',
@@ -130,6 +163,7 @@ function setupHappy(rowOverrides: Record<string, unknown> = {}) {
     },
   ]);
   mocks.selectPriorSession.mockResolvedValue([]);
+  mocks.selectCurrent.mockResolvedValue([{ url: currentPhoto }]);
 }
 
 describe('POST /api/user/profile/update', () => {
@@ -247,34 +281,52 @@ describe('POST /api/user/profile/update', () => {
     expect(setArg).toEqual({ avatarUrl: null });
   });
 
-  it('removing a photo deletes its file from storage, only when it is this user\'s own upload (Joshua 2026-10-17)', async () => {
+  it('removing a photo deletes its file from storage first, only when it is this user\'s own upload (Joshua 2026-10-17)', async () => {
     const { POST } = await import('../../app/api/user/profile/update/route');
     const own = `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`;
-    setupHappy({ avatarUrl: null, replacedPhoto: own });
+    setupHappy({ avatarUrl: null }, own);
     mocks.del.mockResolvedValueOnce(undefined);
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
-    // Exactly the removed file, and no put-back statement.
-    expect(mocks.del.mock.calls).toEqual([[own]]);
-    expect(mocks.updateSet).toHaveBeenCalledTimes(1);
+    // Exactly the removed file, deleted before the row is cleared, in one transaction.
+    expect(mocks.log).toEqual([`del ${own}`, 'update', 'commit']);
+    expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: null }]]);
+    mocks.log.length = 0;
     mocks.del.mockClear();
-    setupHappy({ avatarUrl: null, replacedPhoto: 'https://x.public.blob.vercel-storage.com/avatars/someone-else/a.webp' });
+    setupHappy({ avatarUrl: null }, 'https://x.public.blob.vercel-storage.com/avatars/someone-else/a.webp');
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
     expect(mocks.del).not.toHaveBeenCalled();
   });
 
-  it('a failed delete answers 503 photo_not_removed and puts the photo back, only while nothing else was set (Codex R2 M1)', async () => {
+  it('a name-only save never deletes the photo', async () => {
+    const { POST } = await import('../../app/api/user/profile/update/route');
+    setupHappy({ displayName: 'Joshua' }, `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`);
+    expect((await POST(makeRequest({ displayName: 'Joshua' }))).status).toBe(200);
+    expect(mocks.del).not.toHaveBeenCalled();
+  });
+
+  it('a failed delete answers 503 photo_not_removed and changes nothing: no row write, rolled back (Codex R3 M1)', async () => {
     const { POST } = await import('../../app/api/user/profile/update/route');
     const own = `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`;
-    setupHappy({ avatarUrl: null, replacedPhoto: own });
+    setupHappy({ avatarUrl: null }, own);
     mocks.del.mockRejectedValueOnce(new Error('blob down'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const res = await POST(makeRequest({ avatarUrl: null }));
+    const res = await POST(makeRequest({ avatarUrl: null, displayName: 'Joshua' }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'photo_not_removed' });
-    expect(mocks.updateSet.mock.calls[1][0]).toEqual({ avatarUrl: own });
-    expect(mocks.updateWhere.mock.calls[1][0]).toEqual({ args: [{ a: 'users.id', b: USER_ID }, { isNull: 'users.avatar_url' }] });
+    expect(mocks.log).toEqual([`del ${own}`, 'rollback']);
+    expect(mocks.updateSet).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it('session points to a deleted user (locked read finds no row) → 401, nothing deleted', async () => {
+    const { POST } = await import('../../app/api/user/profile/update/route');
+    setupHappy();
+    mocks.selectCurrent.mockResolvedValue([]);
+    const res = await POST(makeRequest({ avatarUrl: null }));
+    expect(res.status).toBe(401);
+    expect(mocks.del).not.toHaveBeenCalled();
+    expect(mocks.updateSet).not.toHaveBeenCalled();
   });
 
   it('updating only displayName does NOT touch avatar_url (SET clause has only displayName)', async () => {
@@ -394,6 +446,7 @@ describe('POST /api/user/profile/update', () => {
       },
     ]);
     mocks.selectPriorSession.mockResolvedValue([]);
+    mocks.selectCurrent.mockResolvedValue([{ url: null }]);
 
     const { POST } = await import('../../app/api/user/profile/update/route');
     const res = await POST(makeRequest({ displayName: 'WalletJoshua' }));

@@ -7,6 +7,10 @@
 //   - MIME allowlist (image/png, image/jpeg, image/webp)
 //   - sharp magic-byte sniff: declared type must match decoded format
 //   - sharp resize pipeline invoked: rotate→resize 256x256 cover→webp
+//   - one transaction, row locked: the old photo is deleted BEFORE the
+//     new one is stored (Codex PUBLIC_PROFILE R3 M1, owner's fix
+//     2026-10-19); delete failure → rollback + 503, no put, no row
+//     change; put failure after the delete → 502 with the row cleared
 //   - blob put failure → 502 storage_unavailable
 //   - SET clause writes the upload URL into avatar_url
 //   - prior blob cleanup ONLY when the prior URL is under
@@ -37,9 +41,12 @@ const mocks = vi.hoisted(() => ({
   blobDel: vi.fn(),
   // db chain spies
   selectPriorSession: vi.fn(),
+  selectCurrent: vi.fn(),
   updateSet: vi.fn(),
   updateWhere: vi.fn(),
   updateReturning: vi.fn(),
+  // The order of Blob calls and transaction ends, e.g. ['del <url>', 'put', 'commit'].
+  log: [] as string[],
 }));
 
 // sharp() returns a chainable pipeline. The same instance must
@@ -59,43 +66,63 @@ vi.mock('sharp', () => ({
 }));
 
 vi.mock('@vercel/blob', () => ({
-  put: (...args: unknown[]) => mocks.blobPut(...args),
-  del: (...args: unknown[]) => mocks.blobDel(...args),
+  put: (...args: unknown[]) => {
+    mocks.log.push('put');
+    return mocks.blobPut(...args);
+  },
+  del: (...args: unknown[]) => {
+    mocks.log.push(`del ${String(args[0])}`);
+    return mocks.blobDel(...args);
+  },
 }));
 
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
 vi.mock('@/lib/user-session', () => ({ getUserSession: mocks.getUserSession }));
 vi.mock('@/lib/safe', () => ({ deriveSafeAddress: mocks.deriveSafeAddress }));
 
-// Two distinct select chains:
-//   (A) select().from().where().limit()         — prior avatar lookup
-//   (B) select().from().where().orderBy().limit() — prior session lookup
-// Disambiguate by whether `orderBy` is reached.
-vi.mock('@/db/client', () => ({
-  db: {
+// db.transaction runs its callback with `tx` and logs 'commit' or 'rollback' (a throw). Inside it:
+//   tx.select().from().where().for('update')  — the locked read of the current photo
+//   tx.update().set().where()[.returning()]   — the row write
+// Outside it, db.select().from().where().orderBy().limit() is the prior-session lookup.
+vi.mock('@/db/client', () => {
+  const tx = {
+    select: () => ({ from: () => ({ where: () => ({ for: () => mocks.selectCurrent() }) }) }),
     update: () => ({
       set: (...args: unknown[]) => {
         mocks.updateSet(...args);
-        const where = (...w: unknown[]) => {
-          mocks.updateWhere(...w);
-          return { returning: () => mocks.updateReturning() };
+        return {
+          where: (...w: unknown[]) => {
+            mocks.updateWhere(...w);
+            return { returning: () => mocks.updateReturning(), then: (ok: (v: unknown) => unknown) => ok(undefined) };
+          },
         };
-        // UPDATE ... FROM priorPhoto(id): the replaced photo comes back in the returned row (replacedPhoto).
-        return { where, from: () => ({ where }) };
       },
     }),
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          for: () => ({ as: () => ({ id: 'prior.id', url: 'prior.url' }) }),
-          orderBy: () => ({
-            limit: () => mocks.selectPriorSession(),
+  };
+  return {
+    db: {
+      transaction: async (fn: (t: typeof tx) => Promise<unknown>) => {
+        try {
+          const out = await fn(tx);
+          mocks.log.push('commit');
+          return out;
+        } catch (e) {
+          mocks.log.push('rollback');
+          throw e;
+        }
+      },
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            orderBy: () => ({
+              limit: () => mocks.selectPriorSession(),
+            }),
           }),
         }),
       }),
-    }),
-  },
-}));
+    },
+  };
+});
 
 vi.mock('@/db/schema', () => ({
   users: {
@@ -122,7 +149,10 @@ vi.mock('drizzle-orm', () => ({
   desc: (a: unknown) => ({ desc: a }),
 }));
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  mocks.log.length = 0;
+});
 
 const USER_ID = '00000000-0000-0000-0000-0000000000aa';
 const OTHER_USER_ID = '00000000-0000-0000-0000-0000000000bb';
@@ -172,6 +202,7 @@ function setupHappy(opts: {
   mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
   mocks.blobDel.mockResolvedValue(undefined);
   mocks.selectPriorSession.mockResolvedValue([]);
+  mocks.selectCurrent.mockResolvedValue([{ url: opts.priorAvatarUrl ?? null }]);
   const rows = [
     {
       email: 'a@b.com',
@@ -181,7 +212,6 @@ function setupHappy(opts: {
       totpSecret: null,
       totpEnabledAt: null,
       lastEmailChangedAt: null,
-      replacedPhoto: opts.priorAvatarUrl ?? null,
       ...(opts.rowOverrides ?? {}),
     },
   ];
@@ -268,12 +298,14 @@ describe('POST /api/user/avatar/upload', () => {
   it('blob put rejection → 502 storage_unavailable', async () => {
     setupHappy();
     mocks.blobPut.mockRejectedValue(new Error('blob api down'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { POST } = await import('../../app/api/user/avatar/upload/route');
     const res = await POST(makeRequest(makeImageFile({})));
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'storage_unavailable' });
-    // No DB write attempted.
+    // No prior photo was deleted, so no DB write.
     expect(mocks.updateSet).not.toHaveBeenCalled();
+    err.mockRestore();
   });
 
   it('happy path: writes uploadUrl to avatar_url, returns wire envelope', async () => {
@@ -302,25 +334,28 @@ describe('POST /api/user/avatar/upload', () => {
     expect(putArg.startsWith(`avatars/${USER_ID}/`)).toBe(true);
   });
 
-  it('happy path: DB row missing (RETURNING []) → 401', async () => {
+  it('session points to a deleted user (locked read finds no row) → 401, nothing stored or deleted', async () => {
     setupHappy();
-    mocks.updateReturning.mockResolvedValue([]);
+    mocks.selectCurrent.mockResolvedValue([]);
     const { POST } = await import('../../app/api/user/avatar/upload/route');
     const res = await POST(makeRequest(makeImageFile({})));
     expect(res.status).toBe(401);
+    expect(mocks.blobPut).not.toHaveBeenCalled();
+    expect(mocks.blobDel).not.toHaveBeenCalled();
+    expect(mocks.updateSet).not.toHaveBeenCalled();
   });
 
   describe('prior-blob cleanup ownership scoping', () => {
-    it('deletes prior blob when path is /avatars/<sessionUserId>/...', async () => {
+    it('deletes prior blob when path is /avatars/<sessionUserId>/..., BEFORE storing the new one, in one transaction', async () => {
       const ownPrior =
         `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
       setupHappy({ priorAvatarUrl: ownPrior });
       const { POST } = await import('../../app/api/user/avatar/upload/route');
       const res = await POST(makeRequest(makeImageFile({})));
       expect(res.status).toBe(200);
-      // Awaited before answering: exactly the replaced file, and only one statement (no put-back).
+      expect(mocks.log).toEqual([`del ${ownPrior}`, 'put', 'commit']);
       expect(mocks.blobDel.mock.calls).toEqual([[ownPrior]]);
-      expect(mocks.updateSet).toHaveBeenCalledTimes(1);
+      expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: NEW_BLOB_URL }]]);
     });
 
     it('REFUSES to delete a foreign-user blob URL (path is /avatars/<otherId>/...)', async () => {
@@ -374,53 +409,54 @@ describe('POST /api/user/avatar/upload', () => {
       expect(mocks.blobDel).not.toHaveBeenCalled();
     });
 
-    // A replaced photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R2 M1).
-    it('a failed delete of the prior photo answers 503, puts the prior photo back and deletes the new file', async () => {
-      const ownPrior =
-        `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
-      const rows = setupHappy({ priorAvatarUrl: ownPrior });
-      mocks.updateReturning.mockResolvedValueOnce(rows).mockResolvedValueOnce([{ id: USER_ID }]);
-      mocks.blobDel.mockRejectedValueOnce(new Error('delete failed')).mockResolvedValueOnce(undefined);
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const { POST } = await import('../../app/api/user/avatar/upload/route');
-      const res = await POST(makeRequest(makeImageFile({})));
-      expect(res.status).toBe(503);
-      expect(await res.json()).toEqual({ error: 'photo_not_replaced' });
-      // The put-back is a compare-and-set: only while the row still holds this upload.
-      expect(mocks.updateSet.mock.calls[1][0]).toEqual({ avatarUrl: ownPrior });
-      expect(mocks.updateWhere.mock.calls[1][0]).toEqual({
-        args: [{ a: 'users.id', b: USER_ID }, { a: 'users.avatar_url', b: NEW_BLOB_URL }],
-      });
-      expect(mocks.blobDel.mock.calls).toEqual([[ownPrior], [NEW_BLOB_URL]]);
-      warn.mockRestore();
-    });
+    // A replaced photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R3 M1).
+    const ownPrior = `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
 
-    it('when the row has moved on before the put-back, the new file is left to whoever moved it (still 503)', async () => {
-      const ownPrior =
-        `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
-      const rows = setupHappy({ priorAvatarUrl: ownPrior });
-      mocks.updateReturning.mockResolvedValueOnce(rows).mockResolvedValueOnce([]);
+    it('a failed delete of the prior photo answers 503 and changes nothing: no put, no row write, rolled back', async () => {
+      setupHappy({ priorAvatarUrl: ownPrior });
       mocks.blobDel.mockRejectedValueOnce(new Error('delete failed'));
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { POST } = await import('../../app/api/user/avatar/upload/route');
       const res = await POST(makeRequest(makeImageFile({})));
       expect(res.status).toBe(503);
-      expect(mocks.blobDel.mock.calls).toEqual([[ownPrior]]);
+      expect(await res.json()).toEqual({ error: 'photo_not_replaced' });
+      expect(mocks.log).toEqual([`del ${ownPrior}`, 'rollback']);
+      expect(mocks.blobPut).not.toHaveBeenCalled();
+      expect(mocks.updateSet).not.toHaveBeenCalled();
       warn.mockRestore();
     });
 
-    it('a failed delete of the new file after the put-back is logged; the answer is still 503', async () => {
-      const ownPrior =
-        `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
-      const rows = setupHappy({ priorAvatarUrl: ownPrior });
-      mocks.updateReturning.mockResolvedValueOnce(rows).mockResolvedValueOnce([{ id: USER_ID }]);
-      mocks.blobDel.mockRejectedValue(new Error('blob down'));
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('a failed put after the prior photo was deleted answers 502 and clears the row (committed)', async () => {
+      setupHappy({ priorAvatarUrl: ownPrior });
+      mocks.blobPut.mockRejectedValueOnce(new Error('blob api down'));
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
       const { POST } = await import('../../app/api/user/avatar/upload/route');
       const res = await POST(makeRequest(makeImageFile({})));
-      expect(res.status).toBe(503);
-      expect(mocks.blobDel.mock.calls).toEqual([[ownPrior], [NEW_BLOB_URL]]);
-      expect(warn).toHaveBeenCalledTimes(2);
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ error: 'storage_unavailable' });
+      expect(mocks.log).toEqual([`del ${ownPrior}`, 'put', 'commit']);
+      expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: null }]]);
+      expect(mocks.updateWhere.mock.calls).toEqual([[{ a: 'users.id', b: USER_ID }]]);
+      err.mockRestore();
+    });
+
+    it('when the transaction fails after the put, the new file is deleted and the error propagates', async () => {
+      setupHappy({ priorAvatarUrl: ownPrior });
+      mocks.updateReturning.mockRejectedValueOnce(new Error('connection lost'));
+      const { POST } = await import('../../app/api/user/avatar/upload/route');
+      await expect(POST(makeRequest(makeImageFile({})))).rejects.toThrow('connection lost');
+      expect(mocks.log).toEqual([`del ${ownPrior}`, 'put', 'rollback', `del ${NEW_BLOB_URL}`]);
+    });
+
+    it('a failed delete of that new file is logged; the error still propagates', async () => {
+      setupHappy({ priorAvatarUrl: null });
+      mocks.updateReturning.mockRejectedValueOnce(new Error('connection lost'));
+      mocks.blobDel.mockRejectedValueOnce(new Error('blob down'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { POST } = await import('../../app/api/user/avatar/upload/route');
+      await expect(POST(makeRequest(makeImageFile({})))).rejects.toThrow('connection lost');
+      expect(mocks.log).toEqual(['put', 'rollback', `del ${NEW_BLOB_URL}`]);
+      expect(warn).toHaveBeenCalledTimes(1);
       warn.mockRestore();
     });
   });
@@ -443,6 +479,7 @@ describe('POST /api/user/avatar/upload', () => {
       mocks.sharpToBuffer.mockResolvedValue(Buffer.from('webp-bytes'));
       mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
       mocks.selectPriorSession.mockResolvedValue([]);
+      mocks.selectCurrent.mockResolvedValue([{ url: null }]);
       // Same shape as Magic UPDATE projection — populated with leak-bait
       // values so a regression that spreads `row` into the response
       // would surface here.

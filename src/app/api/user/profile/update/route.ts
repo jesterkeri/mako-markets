@@ -1,12 +1,11 @@
 import { type Address } from 'viem';
-import { and, eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { del } from '@vercel/blob';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
-import { priorPhoto } from '@/lib/prior-photo';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
@@ -56,6 +55,14 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // ----------------------------------------------------------------------------
 
 const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
+
+/// Thrown inside the transaction when the removed photo cannot be deleted, so the transaction rolls back.
+class PhotoNotRemoved extends Error {}
+
+type UpdatedRow = Pick<
+  typeof users.$inferSelect,
+  'email' | 'magicEoa' | 'displayName' | 'avatarUrl' | 'totpSecret' | 'totpEnabledAt' | 'lastEmailChangedAt'
+>;
 
 type UpdateInput = {
   displayName?: string | null;
@@ -142,48 +149,49 @@ export async function POST(req: Request) {
     setClause.avatarUrl = validated.avatarUrl ?? null;
   }
 
-  // Removing a photo deletes its file too (Joshua 2026-10-17): the photo a save replaces is read in the same statement,
-  // with the row locked, so an upload landing at the same moment is never left behind as an orphan.
-  const prior = priorPhoto(session.userId);
-  const updated = await db
-    .update(users)
-    .set(setClause)
-    .from(prior)
-    .where(and(eq(users.id, session.userId), eq(users.id, prior.id)))
-    .returning({
-      email: users.email,
-      magicEoa: users.magicEoa,
-      displayName: users.displayName,
-      avatarUrl: users.avatarUrl,
-      totpSecret: users.totpSecret,
-      totpEnabledAt: users.totpEnabledAt,
-      lastEmailChangedAt: users.lastEmailChangedAt,
-      replacedPhoto: prior.url,
+  // Removing a photo deletes its file first, in one transaction with the account row locked from the read of its
+  // current photo to the commit (Joshua 2026-10-17, Codex PUBLIC_PROFILE R3 M1): an upload or a second removal from the
+  // same account waits and then sees this result, so no file is ever orphaned. Only this user's own upload is deleted,
+  // as the upload route does on replace; the app's token can only reach its own store. If the delete fails the
+  // transaction rolls back, nothing has changed (a name sent in the same request is not saved either) and the user is
+  // asked to try again.
+  let updated: UpdatedRow[];
+  try {
+    updated = await db.transaction(async (tx) => {
+      const [current] = await tx.select({ url: users.avatarUrl }).from(users).where(eq(users.id, session.userId)).for('update');
+      if (!current) return [];
+      if (setClause.avatarUrl === null && current.url && isOwnedAvatarBlobUrl(current.url, session.userId)) {
+        try {
+          await del(current.url);
+        } catch (e) {
+          console.warn('[profile-update] removed photo delete failed, nothing changed', e);
+          throw new PhotoNotRemoved();
+        }
+      }
+      return tx
+        .update(users)
+        .set(setClause)
+        .where(eq(users.id, session.userId))
+        .returning({
+          email: users.email,
+          magicEoa: users.magicEoa,
+          displayName: users.displayName,
+          avatarUrl: users.avatarUrl,
+          totpSecret: users.totpSecret,
+          totpEnabledAt: users.totpEnabledAt,
+          lastEmailChangedAt: users.lastEmailChangedAt,
+        });
     });
-  const removedPhoto = setClause.avatarUrl === null ? (updated[0]?.replacedPhoto ?? null) : null;
+  } catch (e) {
+    if (e instanceof PhotoNotRemoved) return Response.json({ error: 'photo_not_removed' }, { status: 503 });
+    throw e;
+  }
 
   if (updated.length === 0) {
     // Session points to a deleted user. Mirror /me semantics.
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
   const row = updated[0];
-
-  // Only this user's own upload, as the upload route does on replace; the app's token can only reach its own store.
-  // A removed photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R2 M1): when the delete
-  // fails the photo is put back, unless something else has been set since, and the user is asked to try again. A name
-  // change sent in the same request stays saved.
-  if (removedPhoto && isOwnedAvatarBlobUrl(removedPhoto, session.userId)) {
-    try {
-      await del(removedPhoto);
-    } catch (e) {
-      console.warn('[profile-update] removed photo delete failed, photo put back', e);
-      await db
-        .update(users)
-        .set({ avatarUrl: removedPhoto })
-        .where(and(eq(users.id, session.userId), isNull(users.avatarUrl)));
-      return Response.json({ error: 'photo_not_removed' }, { status: 503 });
-    }
-  }
 
   // Read prior-session createdAt for the eager cache write in the
   // client (so the response can be written into the ['user'] cache

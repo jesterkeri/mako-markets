@@ -363,6 +363,8 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
             : res.status === 503 ? "Couldn't change your photo. Try again."
             : 'Upload failed. Please retry.',
         );
+        // A 502 can come after the old photo was deleted, leaving the account with none: refetch so the letter shows.
+        if (res.status === 502) void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
         setAvatarPhase('idle');
         return;
       }

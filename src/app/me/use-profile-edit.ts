@@ -68,6 +68,8 @@ export function useProfileEdit() {
       const res = await fetch('/api/user/avatar/upload', { method: 'POST', credentials: 'same-origin', body: fd });
       if (!res.ok) {
         setPhotoError(avatarUploadError(res.status));
+        // A 502 can come after the old photo was deleted, leaving the account with none: refetch so the letter shows.
+        if (res.status === 502) void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
         return;
       }
       const body = (await res.json()) as Partial<AuthedUser>;

@@ -21,7 +21,15 @@ const state = vi.hoisted(() => ({
   userId: '',
   stored: new Set<string>(),
   deleted: [] as string[],
+  puts: [] as string[],
   failDel: new Set<string>(),
+  // A URL here fails its next delete only, after waiting for its gate when one is set.
+  failDelOnce: new Set<string>(),
+  delGate: new Map<string, Promise<void>>(),
+  delStarted: [] as string[],
+  failPut: false,
+  // Each put takes the next URL from here, else putUrl.
+  putQueue: [] as string[],
   putUrl: '',
 }));
 
@@ -38,11 +46,21 @@ vi.mock('@/lib/last-sign-in', () => ({ readLastSignIn: async () => null }));
 vi.mock('@/lib/safe', () => ({ deriveSafeAddress: () => '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195' }));
 vi.mock('@vercel/blob', () => ({
   put: async () => {
-    state.stored.add(state.putUrl);
-    return { url: state.putUrl };
+    if (state.failPut) throw new Error('blob down');
+    const url = state.putQueue.shift() ?? state.putUrl;
+    state.puts.push(url);
+    state.stored.add(url);
+    return { url };
   },
   del: async (url: string) => {
+    state.delStarted.push(url);
+    const gate = state.delGate.get(url);
+    if (gate) {
+      state.delGate.delete(url);
+      await gate;
+    }
     if (state.failDel.has(url)) throw new Error('blob down');
+    if (state.failDelOnce.delete(url)) throw new Error('blob down');
     state.deleted.push(url);
     state.stored.delete(url);
   },
@@ -65,7 +83,13 @@ beforeEach(async () => {
   state.db = drizzle(client, { schema });
   state.stored.clear();
   state.deleted.length = 0;
+  state.puts.length = 0;
   state.failDel.clear();
+  state.failDelOnce.clear();
+  state.delGate.clear();
+  state.delStarted.length = 0;
+  state.failPut = false;
+  state.putQueue.length = 0;
 });
 afterEach(async () => {
   await client.close();
@@ -154,14 +178,62 @@ describe('when storage cannot delete the old photo', () => {
     expect([...state.stored]).toEqual([photo('a')]);
   });
 
-  it('a replacement answers 503, the account still points at the prior photo, and the new file is deleted', async () => {
+  it('a replacement answers 503, the account still points at the prior photo, and no new file is ever stored', async () => {
     state.failDel.add(photo('a'));
     const res = await uploadPhoto(await uploadRequest());
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'photo_not_replaced' });
     expect(await rowPhoto()).toBe(photo('a'));
-    expect(state.deleted).toEqual([photo('b')]);
+    expect(state.puts).toEqual([]);
+    expect(state.deleted).toEqual([]);
     expect([...state.stored]).toEqual([photo('a')]);
+  });
+
+  it('a replacement whose new file cannot be stored after the old one was deleted answers 502 and clears the account', async () => {
+    state.failPut = true;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await uploadPhoto(await uploadRequest());
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'storage_unavailable' });
+    expect(await rowPhoto()).toBeNull();
+    expect(state.deleted).toEqual([photo('a')]);
+    expect(state.stored.size).toBe(0);
+  });
+
+  // Codex PUBLIC_PROFILE R3 M1, the exact interleaving: account on A; upload B's delete of A is slow and then fails;
+  // upload C arrives while it is pending. C must wait for B (the row is locked), then delete A itself and store its
+  // own file. Afterwards the store holds exactly the row's current photo: A is never stranded.
+  it('a failed replacement racing a second upload leaves no file but the current photo', async () => {
+    let release!: () => void;
+    state.delGate.set(photo('a'), new Promise<void>((r) => (release = r)));
+    state.failDelOnce.add(photo('a'));
+    state.putQueue.push(photo('b'), photo('c'));
+    const [reqB, reqC] = [await uploadRequest(), await uploadRequest()];
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const b = uploadPhoto(reqB);
+    while (!state.delStarted.includes(photo('a'))) await sleep(5);
+    const c = uploadPhoto(reqC);
+    await Promise.race([c, sleep(500)]); // C runs as far as it can while B's delete is pending
+    release();
+    const [resB, resC] = await Promise.all([b, c]);
+
+    const row = await rowPhoto();
+    expect([...state.stored]).toEqual([row]);
+    expect([resB.status, resC.status]).toEqual([503, 200]);
+    expect(row).toBe(photo('b')); // B never stored a file, so C's is the first put
+    expect(state.deleted).toEqual([photo('a')]);
+  });
+
+  it('the same race with a removal in it too: still no file but the current photo', async () => {
+    state.failDelOnce.add(photo('a'));
+    state.putQueue.push(photo('b'), photo('c'));
+    const [reqB, reqC] = [await uploadRequest(), await uploadRequest()];
+    const results = await Promise.all([uploadPhoto(reqB), removePhoto(removeRequest()), uploadPhoto(reqC)]);
+    expect(results.some((r) => r.status === 503)).toBe(true);
+    const row = await rowPhoto();
+    expect([...state.stored]).toEqual(row ? [row] : []);
+    expect(state.stored.has(photo('a'))).toBe(false);
   });
 
   it('once storage works, the replacement deletes exactly the replaced file and the removal exactly the removed one', async () => {

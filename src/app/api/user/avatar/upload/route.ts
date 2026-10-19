@@ -1,12 +1,11 @@
 import { type Address } from 'viem';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { put, del } from '@vercel/blob';
 import sharp from 'sharp';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
-import { priorPhoto } from '@/lib/prior-photo';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
@@ -27,15 +26,21 @@ import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
 //   3. Decode with sharp.metadata() — magic-byte sniff. Reject if format
 //      mismatches the declared content type (anti–MIME-spoof).
 //   4. Resize cover 256×256, output webp, strip EXIF (sharp default).
-//   5. put() to Vercel Blob at avatars/<userId>/<unique>.webp, public.
-//   6. If prior avatar_url is a Vercel Blob URL UNDER THIS USER'S
-//      avatars/<userId>/ prefix, del() the old blob. The path-prefix
-//      check is load-bearing — without it a caller could paste another
-//      user's blob URL via /api/user/profile/update and then trigger an
-//      upload to delete it. If that delete fails, the prior URL is put
-//      back, the new blob is deleted and the request answers 503
-//      photo_not_replaced, so a replaced photo never stays public.
-//   7. Update users.avatar_url to the new URL.
+//   5. In ONE transaction, with the account row locked (SELECT ... FOR
+//      UPDATE) from the read of its current photo to the commit:
+//      a. if the current photo is a Vercel Blob URL UNDER THIS USER'S
+//         avatars/<userId>/ prefix, del() it first. The path-prefix
+//         check is load-bearing: without it a caller could paste another
+//         user's blob URL via /api/user/profile/update and then trigger
+//         an upload to delete it. If the delete fails, the transaction
+//         rolls back, nothing has changed: 503 photo_not_replaced.
+//      b. put() the new file to avatars/<userId>/<unique>.webp, public.
+//         If that fails after the old file was deleted, avatar_url is set
+//         to NULL (the old file is gone) and committed: 502
+//         storage_unavailable.
+//      c. Update users.avatar_url to the new URL and commit.
+//      A replaced photo is therefore deleted, never left public (Joshua
+//      2026-10-17, Codex PUBLIC_PROFILE R3 M1, owner's fix 2026-10-19).
 //
 // Vercel route body limit is 4.5 MB. We cap at 4 MB to leave headroom
 // for multipart envelope overhead.
@@ -49,6 +54,14 @@ const SHARP_FORMAT_BY_MIME: Record<string, string> = {
   'image/jpeg': 'jpeg',
   'image/webp': 'webp',
 };
+
+/// Thrown inside the transaction when the replaced photo cannot be deleted, so the transaction rolls back.
+class PhotoNotReplaced extends Error {}
+
+type UpdatedRow = Pick<
+  typeof users.$inferSelect,
+  'email' | 'magicEoa' | 'displayName' | 'avatarUrl' | 'totpSecret' | 'totpEnabledAt' | 'lastEmailChangedAt'
+>;
 
 export async function POST(req: Request) {
   const origin = checkSameOrigin(req);
@@ -98,64 +111,70 @@ export async function POST(req: Request) {
     return Response.json({ error: 'bad_image' }, { status: 400 });
   }
 
-  const path = `avatars/${session.userId}/${Date.now()}.webp`;
-  let uploadUrl: string;
+  // The row stays locked from the read of the current photo to the commit, so a second upload or a removal from the
+  // same account waits here and then sees this one's result: each request deletes exactly the file it replaced and no
+  // file is ever orphaned (Codex PUBLIC_PROFILE R3 M1).
+  const uploaded: { url?: string } = {};
+  let result: 'unauthorized' | 'storage_unavailable' | UpdatedRow | undefined;
   try {
-    const blob = await put(path, resized, {
-      access: 'public',
-      contentType: 'image/webp',
-      addRandomSuffix: true,
+    result = await db.transaction(async (tx) => {
+      const [current] = await tx.select({ url: users.avatarUrl }).from(users).where(eq(users.id, session.userId)).for('update');
+      if (!current) return 'unauthorized';
+
+      // Delete first: a failure rolls the transaction back and nothing has changed.
+      const replaced = current.url && isOwnedAvatarBlobUrl(current.url, session.userId) ? current.url : null;
+      if (replaced) {
+        try {
+          await del(replaced);
+        } catch (e) {
+          console.warn('[avatar-upload] prior blob delete failed, nothing changed', e);
+          throw new PhotoNotReplaced();
+        }
+      }
+
+      try {
+        const blob = await put(`avatars/${session.userId}/${Date.now()}.webp`, resized, {
+          access: 'public',
+          contentType: 'image/webp',
+          addRandomSuffix: true,
+        });
+        uploaded.url = blob.url;
+      } catch (e) {
+        console.error('[avatar-upload] blob put failed', e);
+        // The old file is already gone, so the account no longer has a photo.
+        if (replaced) await tx.update(users).set({ avatarUrl: null }).where(eq(users.id, session.userId));
+        return 'storage_unavailable';
+      }
+
+      const [updated] = await tx
+        .update(users)
+        .set({ avatarUrl: uploaded.url })
+        .where(eq(users.id, session.userId))
+        .returning({
+          email: users.email,
+          magicEoa: users.magicEoa,
+          displayName: users.displayName,
+          avatarUrl: users.avatarUrl,
+          totpSecret: users.totpSecret,
+          totpEnabledAt: users.totpEnabledAt,
+          lastEmailChangedAt: users.lastEmailChangedAt,
+        });
+      return updated;
     });
-    uploadUrl = blob.url;
   } catch (e) {
-    console.error('[avatar-upload] blob put failed', e);
-    return Response.json({ error: 'storage_unavailable' }, { status: 502 });
+    if (e instanceof PhotoNotReplaced) return Response.json({ error: 'photo_not_replaced' }, { status: 503 });
+    // The new file was stored but never committed to the account: delete it (best effort).
+    if (uploaded.url) await del(uploaded.url).catch((err) => console.warn('[avatar-upload] new blob delete failed after rollback', err));
+    throw e;
   }
 
-  // The photo this upload replaces is read in the same statement as the write, with the row locked (prior-photo.ts),
-  // so a removal or a second upload landing at the same moment never leaves an orphan behind.
-  const prior = priorPhoto(session.userId);
-  const updated = await db
-    .update(users)
-    .set({ avatarUrl: uploadUrl })
-    .from(prior)
-    .where(and(eq(users.id, session.userId), eq(users.id, prior.id)))
-    .returning({
-      email: users.email,
-      magicEoa: users.magicEoa,
-      displayName: users.displayName,
-      avatarUrl: users.avatarUrl,
-      totpSecret: users.totpSecret,
-      totpEnabledAt: users.totpEnabledAt,
-      lastEmailChangedAt: users.lastEmailChangedAt,
-      replacedPhoto: prior.url,
-    });
-  const priorAvatarUrl = updated[0]?.replacedPhoto ?? null;
-
-  if (updated.length === 0) {
+  if (result === 'unauthorized' || result === undefined) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const row = updated[0];
-
-  // A replaced photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R2 M1). When the delete
-  // fails the prior photo is put back (only while the row still holds this upload) and the new file, then unused, is
-  // deleted; if the row has already moved on, whoever moved it owns the new file, so it is left alone.
-  if (priorAvatarUrl && isOwnedAvatarBlobUrl(priorAvatarUrl, session.userId)) {
-    try {
-      await del(priorAvatarUrl);
-    } catch (e) {
-      console.warn('[avatar-upload] prior blob delete failed, prior photo put back', e);
-      const restored = await db
-        .update(users)
-        .set({ avatarUrl: priorAvatarUrl })
-        .where(and(eq(users.id, session.userId), eq(users.avatarUrl, uploadUrl)))
-        .returning({ id: users.id });
-      if (restored.length > 0) {
-        await del(uploadUrl).catch((err) => console.warn('[avatar-upload] new blob delete failed after put-back', err));
-      }
-      return Response.json({ error: 'photo_not_replaced' }, { status: 503 });
-    }
+  if (result === 'storage_unavailable') {
+    return Response.json({ error: 'storage_unavailable' }, { status: 502 });
   }
+  const row = result;
 
   const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);
 

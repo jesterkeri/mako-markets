@@ -1,6 +1,7 @@
-// GET /api/avatar/<address> (Joshua 2026-10-17, Codex PUBLIC_PROFILE R1 M2): streams an account's own uploaded photo by
-// public address, so the stored URL (whose path carries the internal id) is never sent. Real route over the
-// leaderboard's PGlite harness; the Blob store is a stubbed fetch.
+// GET /api/avatar/<address>/<version> (Joshua 2026-10-17, Codex PUBLIC_PROFILE R1 M2): streams an account's own
+// uploaded photo by public address, so the stored URL (whose path carries the internal id) is never sent. One canonical
+// path per photo version and a site-wide fetch budget (Codex PUBLIC_PROFILE R2 M2, R3 M2). Real route over the
+// leaderboard's PGlite harness; the Blob store is a stubbed fetch and the budget store a faithful INCR model.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { avatarVersion } from '@/lib/public-avatar';
@@ -13,13 +14,29 @@ vi.mock('@/db/client', () => ({
   },
 }));
 
-const { GET } = await import('@/app/api/avatar/[address]/route');
+// A faithful model of the budget script: INCR the one key (its window starts on the first call), -1 over the cap,
+// else the count including this call.
+const budget = vi.hoisted(() => {
+  const counts = new Map<string, number>();
+  const upstash = vi.fn(async (args: (string | number)[]): Promise<unknown> => {
+    const [, , , key, , cap] = args;
+    const n = (counts.get(String(key)) ?? 0) + 1;
+    counts.set(String(key), n);
+    return n > Number(cap) ? -1 : n;
+  });
+  return { counts, upstash };
+});
+vi.mock('@/lib/envio-budget', () => ({ upstashCommand: budget.upstash }));
+
+const { GET } = await import('@/app/api/avatar/[address]/[version]/route');
+const { AVATAR_FETCHES_PER_MINUTE } = await import('@/lib/avatar-budget');
 
 const HOST = 'store123.public.blob.vercel-storage.com';
 const SAFE = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
 const SAFE_LOWER = SAFE.toLowerCase();
 const WALLET = '0x000000000000000000000000000000000000b22d';
 const NOBODY = '0x000000000000000000000000000000000000c33e';
+const KEY = 'mako:avatar:fetch';
 
 let t: TestDb | null = null;
 let savedToken: string | undefined;
@@ -30,6 +47,8 @@ beforeEach(async () => {
   savedToken = process.env.BLOB_READ_WRITE_TOKEN;
   process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_store123_secret';
   blob.mockReset();
+  budget.counts.clear();
+  budget.upstash.mockClear();
   vi.stubGlobal('fetch', blob);
   t = await createTestDb();
   currentDb = t.db;
@@ -51,17 +70,15 @@ afterEach(async () => {
 
 const photoOf = (who: string) => `https://${HOST}/avatars/${ids[who]}/a.webp`;
 const setPhoto = (who: string, url: string | null) => t!.client.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [url, ids[who]]);
-const get = (address: string, v?: string) =>
-  GET(new Request(`http://localhost/api/avatar/${address}${v ? `?v=${v}` : ''}`), { params: Promise.resolve({ address }) });
-const getRaw = (address: string, query: string) =>
-  GET(new Request(`http://localhost/api/avatar/${address}${query}`), { params: Promise.resolve({ address }) });
+const get = (address: string, version: string, query = '') =>
+  GET(new Request(`http://localhost/api/avatar/${address}/${version}${query}`), { params: Promise.resolve({ address, version }) });
 const image = (bytes = 'PNGDATA', type = 'image/webp') => new Response(bytes, { status: 200, headers: { 'content-type': type } });
 
-describe('GET /api/avatar/<address>', () => {
-  it("streams the account's own photo, by its Safe in any case, cached a minute at most", async () => {
+describe('GET /api/avatar/<address>/<version>', () => {
+  it("streams the account's own photo at its canonical path, cached a minute at most", async () => {
     await setPhoto('email', photoOf('email'));
     blob.mockResolvedValueOnce(image());
-    const res = await get(SAFE, avatarVersion(photoOf('email')));
+    const res = await get(SAFE_LOWER, avatarVersion(photoOf('email')));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('PNGDATA');
     expect(res.headers.get('content-type')).toBe('image/webp');
@@ -69,13 +86,14 @@ describe('GET /api/avatar/<address>', () => {
     expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
     expect(res.headers.get('location')).toBeNull(); // streamed, never redirected to the stored URL
     expect(blob).toHaveBeenCalledWith(photoOf('email'));
+    expect(budget.counts.get(KEY)).toBe(1);
   });
 
-  it('only the current version is served: an old (replaced) or made-up or missing v is a 404 with no Blob fetch', async () => {
+  it('only the current version is served: an old (replaced) or made-up version is a 404 with no Blob fetch', async () => {
     await setPhoto('wallet', `https://${HOST}/avatars/${ids.wallet}/old.webp`);
     const old = avatarVersion(`https://${HOST}/avatars/${ids.wallet}/old.webp`);
     await setPhoto('wallet', photoOf('wallet')); // replaced
-    for (const v of [old, '000000000000', undefined]) expect((await get(WALLET, v)).status, String(v)).toBe(404);
+    for (const v of [old, '000000000000']) expect((await get(WALLET, v)).status, v).toBe(404);
     expect(blob).not.toHaveBeenCalled();
   });
 
@@ -88,7 +106,7 @@ describe('GET /api/avatar/<address>', () => {
     blob.mockClear();
     expect((await get(NOBODY, '000000000000')).status).toBe(404); // not a Mako Market account
     expect((await get(SAFE_LOWER, '000000000000')).status).toBe(404); // account without a photo
-    // Each with the v of what is stored, so the 404 comes from the host and path checks, not from a wrong v.
+    // Each with the version of what is stored, so the 404 comes from the host and path checks, not a wrong version.
     for (const stored of ['https://attacker.example/x.png', `https://${HOST}/avatars/${ids.email}/a.webp`]) {
       await setPhoto('wallet', stored);
       expect((await get(WALLET, avatarVersion(stored))).status, stored).toBe(404);
@@ -103,33 +121,59 @@ describe('GET /api/avatar/<address>', () => {
     expect(blob).toHaveBeenCalledTimes(2);
   });
 
-  it('only the one canonical query string reaches the database: any other key, a second v or another spelling is a 404 with no query and no fetch (Codex R2 M2)', async () => {
+  it('only the canonical path reaches the budget or the database: any other spelling or any query is a 404 (Codex R3 M2)', async () => {
     await setPhoto('wallet', photoOf('wallet'));
     const v = avatarVersion(photoOf('wallet'));
+    currentDb = null; // any query would throw
+    const variants: [string, string, string][] = [
+      [SAFE, v, ''], // mixed-case address
+      [WALLET.toUpperCase().replace('0X', '0x'), v, ''],
+      [WALLET, v.toUpperCase(), ''],
+      [WALLET, `${v}0`, ''],
+      [WALLET, v.slice(0, -1), ''],
+      [WALLET, 'zzzzzzzzzzzz', ''],
+      [WALLET, v, '?x=1'],
+      [WALLET, v, `?v=${v}`],
+      [WALLET, v, `?nxtPv=${v}`], // Next rewrites this key to `v` before the route sees it
+      [WALLET, v, `?nxtIv=${v}`],
+      [WALLET, v, '?&'],
+      [WALLET, v, '?='],
+      ['kemi', v, ''],
+      ['0x123', v, ''],
+      [`${WALLET}00`, v, ''],
+    ];
+    for (const [address, version, query] of variants) {
+      const res = await get(address, version, query);
+      expect(res.status, `${address}/${version}${query}`).toBe(404);
+      expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
+    }
+    expect(blob).not.toHaveBeenCalled();
+    expect(budget.upstash).not.toHaveBeenCalled();
+    expect(budget.counts.size).toBe(0);
+  });
+
+  it('the site-wide budget: the last fetch under the cap is served, the next is a 404 with no database query', async () => {
+    await setPhoto('wallet', photoOf('wallet'));
+    const v = avatarVersion(photoOf('wallet'));
+    budget.counts.set(KEY, AVATAR_FETCHES_PER_MINUTE - 1);
     blob.mockResolvedValueOnce(image());
-    expect((await getRaw(WALLET, `?v=${v}`)).status).toBe(200); // the canonical one still works
+    expect((await get(WALLET, v)).status).toBe(200);
     currentDb = null; // any query would throw
     blob.mockClear();
-    const variants = [
-      `?v=${v}&x=1`,
-      `?x=1&v=${v}`,
-      `?v=${v}&v=${v}`,
-      `?v=${v}&`,
-      `?&v=${v}`,
-      `?v=${v.slice(0, -1)}%${v.charCodeAt(v.length - 1).toString(16)}`, // same value, percent-encoded
-      `?v=${v.toUpperCase()}`,
-      `?v=${v}0`,
-      `?V=${v}`,
-      '',
-      '?v=',
-    ];
-    for (const q of variants) expect((await getRaw(WALLET, q)).status, q).toBe(404);
+    for (let i = 0; i < 3; i++) expect((await get(WALLET, v)).status).toBe(404);
     expect(blob).not.toHaveBeenCalled();
   });
 
-  it('not an address: 404 with no query and no fetch', async () => {
+  it('the budget store down or answering nonsense: 404 with no database query and no fetch, never unlimited', async () => {
+    await setPhoto('wallet', photoOf('wallet'));
+    const v = avatarVersion(photoOf('wallet'));
     currentDb = null; // any query would throw
-    for (const bad of ['kemi', '0x123', `${WALLET}00`]) expect((await get(bad, '000000000000')).status, bad).toBe(404);
+    budget.upstash.mockRejectedValueOnce(new Error('unreachable'));
+    expect((await get(WALLET, v)).status).toBe(404);
+    for (const reply of ['OK', 0, 1.5, null, AVATAR_FETCHES_PER_MINUTE + 1, '1']) {
+      budget.upstash.mockResolvedValueOnce(reply);
+      expect((await get(WALLET, v)).status, String(reply)).toBe(404);
+    }
     expect(blob).not.toHaveBeenCalled();
   });
 });
