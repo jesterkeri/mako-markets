@@ -181,21 +181,19 @@ describe('pool page', () => {
       expect([...v.container.querySelectorAll('.mk-flash')].some((e) => /^\d+\.\d\dx$/.test(e.textContent ?? '')), 'the odds are wrapped').toBe(true);
     });
 
-  it('desktop: a re-poll that moves the odds flashes them up and down, totals by direction, counts neutral', () => {
+  it('desktop: a re-poll that moves the odds flashes them neutral, totals by direction, counts neutral', () => {
     const v = page(true);
     const desk = v.container.querySelector('.mk-desk')!;
     // 30 / 10 -> 30 / 20: YES pays more, NO pays less, NO total up, a new NO bettor.
     Object.assign(pool, { no: 20n, noN: 2 });
     v.rerender(<PoolClient id={7n} initialSide={null} />);
-    const yesOdds = desk.querySelector<HTMLElement>('.mk-flash-up');
-    expect(yesOdds, 'something flashed up').not.toBeNull();
     const ups = flashing(desk).filter((e) => e.classList.contains('mk-flash-up')).map((e) => e.textContent);
     const downs = flashing(desk).filter((e) => e.classList.contains('mk-flash-down')).map((e) => e.textContent);
     const neutral = flashing(desk).filter((e) => e.classList.contains('mk-flash-neutral')).map((e) => e.textContent);
-    expect(ups).toContain('1.62x'); // YES odds
-    expect(ups).toContain('20.00'); // NO total
-    expect(downs).toContain('2.42x'); // NO odds
-    expect(neutral).toEqual(expect.arrayContaining(['60%', '40%', '2', '4'])); // split labels, NO bettors, header bettors
+    expect(ups).toEqual(['20.00']); // NO total, the only directional flash
+    expect(downs).toEqual([]);
+    // Odds are a price, not good or bad news (owner 2026-10-17): neutral, like split labels and bettor counts.
+    expect(neutral).toEqual(expect.arrayContaining(['1.62x', '2.42x', '60%', '40%', '2', '4']));
     // Unchanged values stay still.
     expect(flashing(desk).map((e) => e.textContent)).not.toContain('30.00');
   });
