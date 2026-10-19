@@ -17,6 +17,11 @@ const confirmed = new Map<string, ChartColors | null>();
 // sends only its own colours (adversary r11 on 5828775). Cleared once sent successfully, by Reset, or when the last save
 // in the queue fails (then "Not saved" shows and the server's colours come back).
 const carried = new Map<string, Partial<ChartColors>>();
+const withCarried = (account: string, patch: Partial<ChartColors>): Partial<ChartColors> => ({ ...carried.get(account), ...patch });
+
+/// One account's colours in the query cache (the mutation key stays plain ['chart-colors']: laterSaveQueued filters on
+/// it across accounts).
+const colorsKey = (account: string | null) => ['chart-colors', account] as const;
 
 /// The candle colours for the signed-in user (saved to the account), or TradingView's defaults. `save` stores a change
 /// (the colours changed), or null to go back to the defaults; the cache updates first so the chart changes at once.
@@ -25,13 +30,12 @@ export function useChartColors() {
   const qc = useQueryClient();
   // Keyed by account, so another account signing in on the same tab never sees (or saves) this one's colours.
   const account = user ? (user.authType === 'magic' ? user.safeAddress : user.walletAddress) : null;
-  const KEY = ['chart-colors', account];
   const accountNow = useRef(account);
   useEffect(() => {
     accountNow.current = account;
   }, [account]);
   const query = useQuery({
-    queryKey: KEY,
+    queryKey: colorsKey(account),
     enabled: user !== null,
     staleTime: Infinity,
     queryFn: async ({ signal }): Promise<ChartColors | null> => {
@@ -54,11 +58,11 @@ export function useChartColors() {
       if (accountNow.current !== made) {
         // Dropped: forget the optimistic colours and anything carried too, so this account reloads what it really
         // holds next time and never resends a change it saw fail (adversary r12 on 0260e2a).
-        qc.removeQueries({ queryKey: ['chart-colors', made] });
+        qc.removeQueries({ queryKey: colorsKey(made) });
         carried.delete(made);
         return undefined;
       }
-      const sent = patch === null ? null : { ...carried.get(made), ...patch };
+      const sent = patch === null ? null : withCarried(made, patch);
       const res = await fetch('/api/user/chart-colors', {
         method: 'POST',
         credentials: 'same-origin',
@@ -73,14 +77,14 @@ export function useChartColors() {
     },
     // A reload still in flight (after a failed save) is cancelled, so its older answer never lands over this save.
     onMutate: async ({ account: made, patch }: Save) => {
-      await qc.cancelQueries({ queryKey: ['chart-colors', made] });
-      qc.setQueryData<ChartColors | null>(['chart-colors', made], (held) => (patch === null ? null : mergeChartColors(held ?? null, patch)));
+      await qc.cancelQueries({ queryKey: colorsKey(made) });
+      qc.setQueryData<ChartColors | null>(colorsKey(made), (held) => (patch === null ? null : mergeChartColors(held ?? null, patch)));
     },
     // The server's merged set (it may include another tab's change) replaces the optimistic one, unless a later save
     // for this account is still queued: that one has already put its own change in the cache.
     onSuccess: (colors, { account: made }) => {
       if (colors === undefined || laterSaveQueued(made)) return;
-      qc.setQueryData(['chart-colors', made], colors);
+      qc.setQueryData(colorsKey(made), colors);
     },
     // Put back what the server last confirmed and reload, but only when no later save is queued: a queued Reset has
     // already set the cache, and either would show the old colours over it. The put-back keeps the chart right when
@@ -89,12 +93,12 @@ export function useChartColors() {
       if (laterSaveQueued(made)) {
         // The next save carries this change. A failed Reset is carried as the full default set, so that save sends a
         // reset followed by its own change, never a colour reset away (adversary r12 on 0260e2a).
-        carried.set(made, patch ? { ...carried.get(made), ...patch } : { ...DEFAULT_CHART_COLORS });
+        carried.set(made, patch ? withCarried(made, patch) : { ...DEFAULT_CHART_COLORS });
         return;
       }
       carried.delete(made);
-      if (confirmed.has(made)) qc.setQueryData(['chart-colors', made], confirmed.get(made));
-      void qc.invalidateQueries({ queryKey: ['chart-colors', made] });
+      if (confirmed.has(made)) qc.setQueryData(colorsKey(made), confirmed.get(made));
+      void qc.invalidateQueries({ queryKey: colorsKey(made) });
     },
   });
   const { mutate } = mutation;

@@ -28,6 +28,9 @@ export const DEFAULT_CHART_COLORS: ChartColors = {
 
 const HEX = /^#[0-9a-f]{6}$/;
 
+/// A colour as stored: #rrggbb, lower-cased; null for anything else.
+const toHex = (v: unknown): string | null => (typeof v === 'string' && HEX.test(v.toLowerCase()) ? v.toLowerCase() : null);
+
 /// A stored or submitted value, exactly the six keys as lower-case #rrggbb; null for anything else.
 export function parseChartColors(raw: unknown): ChartColors | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
@@ -35,9 +38,9 @@ export function parseChartColors(raw: unknown): ChartColors | null {
   if (Object.keys(o).length !== CHART_COLOR_KEYS.length) return null;
   const out = {} as ChartColors;
   for (const k of CHART_COLOR_KEYS) {
-    const v = o[k];
-    if (typeof v !== 'string' || !HEX.test(v.toLowerCase())) return null;
-    out[k] = v.toLowerCase();
+    const v = toHex(o[k]);
+    if (!v) return null;
+    out[k] = v;
   }
   return out;
 }
@@ -51,8 +54,9 @@ export function parseChartColorPatch(raw: unknown): Partial<ChartColors> | null 
   if (entries.length === 0) return null;
   const out: Partial<ChartColors> = {};
   for (const [k, v] of entries) {
-    if (!(CHART_COLOR_KEYS as readonly string[]).includes(k) || typeof v !== 'string' || !HEX.test(v.toLowerCase())) return null;
-    out[k as keyof ChartColors] = v.toLowerCase();
+    const hex = toHex(v);
+    if (!(CHART_COLOR_KEYS as readonly string[]).includes(k) || !hex) return null;
+    out[k as keyof ChartColors] = hex;
   }
   return out;
 }
