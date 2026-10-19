@@ -40,7 +40,8 @@ export function useProfileEdit() {
         body: JSON.stringify({ displayName: value.trim() }),
       });
       if (!res.ok) {
-        setNameError(nameSaveError(res.status));
+        const code = ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
+        setNameError(nameSaveError(res.status, code));
         return false;
       }
       const body = (await res.json()) as Partial<AuthedUser>;
