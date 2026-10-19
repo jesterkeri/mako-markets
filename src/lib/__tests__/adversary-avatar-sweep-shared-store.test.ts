@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // These tests import whole route modules afresh (seconds alone); under the full suite's parallel load that passes
 // vitest's 5 s default, so they get room. Their assertions are deterministic.
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 import * as schema from '@/db/schema';
 import { fakeSweepStore } from './helpers/fake-avatar-sweep';

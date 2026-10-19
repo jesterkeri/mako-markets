@@ -99,7 +99,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Vercel runs this app on Node 24.x (vercel project inspect, 2026-10-20); Node 20 is deprecated there.
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -165,7 +166,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Vercel runs this app on Node 24.x (vercel project inspect, 2026-10-20); Node 20 is deprecated there.
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
