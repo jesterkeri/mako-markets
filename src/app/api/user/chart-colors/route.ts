@@ -51,13 +51,20 @@ export async function POST(req: Request) {
     patch === null
       ? null
       : sql`COALESCE(${users.chartColors}, ${JSON.stringify(DEFAULT_CHART_COLORS)}::jsonb) || ${JSON.stringify(patch)}::jsonb`;
-  const updated = await db.update(users).set({ chartColors: merged }).where(where).returning({ chartColors: users.chartColors });
-  if (updated.length === 0) return Response.json({ error: 'account_changed' }, { status: 409 });
-  if (patch === null) return Response.json({ colors: null });
-  const colors = parseChartColors(updated[0].chartColors);
-  if (colors) return Response.json({ colors });
-  // A malformed stored value merged into junk: replace it with the change over the defaults.
-  const repaired = mergeChartColors(null, patch);
-  await db.update(users).set({ chartColors: repaired }).where(where);
-  return Response.json({ colors: repaired });
+  for (let attempt = 0; ; attempt++) {
+    const updated = await db.update(users).set({ chartColors: merged }).where(where).returning({ chartColors: users.chartColors });
+    if (updated.length === 0) return Response.json({ error: 'account_changed' }, { status: 409 });
+    if (patch === null) return Response.json({ colors: null });
+    const colors = parseChartColors(updated[0].chartColors);
+    if (colors) return Response.json({ colors });
+    // A malformed stored value merged into junk: replace it with the change over the defaults, only if it is still that
+    // junk (compare and set); if another save got there first, merge again onto what it wrote, once.
+    const repaired = mergeChartColors(null, patch);
+    const fixed = await db
+      .update(users)
+      .set({ chartColors: repaired })
+      .where(and(where, sql`${users.chartColors} = ${JSON.stringify(updated[0].chartColors)}::jsonb`))
+      .returning({ id: users.id });
+    if (fixed.length > 0 || attempt > 0) return Response.json({ colors: repaired });
+  }
 }

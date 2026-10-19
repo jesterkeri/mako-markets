@@ -13,6 +13,10 @@ type Save = { account: string; patch: Partial<ChartColors> | null };
 // The colours the server last confirmed for each account (a load, or a save it accepted). A failed save puts these back:
 // the cache may hold several unsaved changes queued one behind another, and only the server's word is safe to show.
 const confirmed = new Map<string, ChartColors | null>();
+// A failed change with a later save for the same account queued behind it: that save carries it too, since each save
+// sends only its own colours (adversary r11 on 5828775). Cleared once sent successfully, by Reset, or when the last save
+// in the queue fails (then "Not saved" shows and the server's colours come back).
+const carried = new Map<string, Partial<ChartColors>>();
 
 /// The candle colours for the signed-in user (saved to the account), or TradingView's defaults. `save` stores a change
 /// (the colours changed), or null to go back to the defaults; the cache updates first so the chart changes at once.
@@ -52,13 +56,15 @@ export function useChartColors() {
         qc.removeQueries({ queryKey: ['chart-colors', made] });
         return undefined;
       }
+      const sent = patch === null ? null : { ...carried.get(made), ...patch };
       const res = await fetch('/api/user/chart-colors', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ account: made, patch }),
+        body: JSON.stringify({ account: made, patch: sent }),
       });
       if (!res.ok) throw new Error(`chart colours not saved (${res.status})`);
+      carried.delete(made);
       const { colors } = (await res.json()) as { colors: ChartColors | null };
       confirmed.set(made, colors);
       return colors;
@@ -77,8 +83,13 @@ export function useChartColors() {
     // Put back what the server last confirmed and reload, but only when no later save is queued: a queued Reset has
     // already set the cache, and either would show the old colours over it. The put-back keeps the chart right when
     // the reload fails too (offline, or refused after a sign-in elsewhere).
-    onError: (_e, { account: made }) => {
-      if (laterSaveQueued(made)) return;
+    onError: (_e, { account: made, patch }) => {
+      if (laterSaveQueued(made)) {
+        // The next save carries this change (a Reset queued behind it simply drops it).
+        if (patch) carried.set(made, { ...carried.get(made), ...patch });
+        return;
+      }
+      carried.delete(made);
       if (confirmed.has(made)) qc.setQueryData(['chart-colors', made], confirmed.get(made));
       void qc.invalidateQueries({ queryKey: ['chart-colors', made] });
     },
