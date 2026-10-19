@@ -154,6 +154,10 @@ async function expectStorageMatchesRow() {
   expect({ row, stored: [...state.stored].sort() }).toEqual({ row, stored: row ? [row] : [] });
 }
 
+// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+afterEach(() => vi.unstubAllEnvs());
+
 describe('interleavings of removal and uploads from one account', () => {
   it('a removal that lands while an upload is between its put and its row write', async () => {
     const g = gate();

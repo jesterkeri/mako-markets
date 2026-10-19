@@ -24,7 +24,7 @@
 // don't accidentally clobber a column the body didn't touch.
 // ----------------------------------------------------------------------------
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fakeSweepStore } from './helpers/fake-avatar-sweep';
 
@@ -178,6 +178,10 @@ function setupHappy(rowOverrides: Record<string, unknown> = {}, currentPhoto: st
   mocks.selectPriorSession.mockResolvedValue([]);
   mocks.selectCurrent.mockResolvedValue([{ url: currentPhoto }]);
 }
+
+// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+afterEach(() => vi.unstubAllEnvs());
 
 describe('POST /api/user/profile/update', () => {
   it('rejects cross-origin (403 cross_origin)', async () => {

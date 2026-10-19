@@ -57,6 +57,9 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 
 const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
 
+// Cut off well inside the avatar sweep's 5-minute grace, so a removal still in its transaction is never swept early.
+export const maxDuration = 60;
+
 /// Thrown inside the transaction when the removed photo cannot be recorded for the sweep, so the transaction rolls back.
 class SweepUnavailable extends Error {}
 
@@ -155,7 +158,7 @@ export async function POST(req: Request) {
   // in the sweep set BEFORE the column is cleared, from the locked row, the one reliable record of what is being
   // removed. If that cannot be written the transaction rolls back, nothing has changed (a name sent in the same request
   // is not saved either) and the answer is 503. After the commit the file is recorded again and deleted, both best
-  // effort: the sweep deletes it within about 15 minutes whatever happens. Only this user's own upload is ever touched.
+  // effort: the sweep deletes it within about 20 minutes whatever happens. Only this user's own upload is ever touched.
   let removed: { url: string; pathname: string } | null = null;
   let updated: UpdatedRow[];
   try {

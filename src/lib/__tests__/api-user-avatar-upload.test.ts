@@ -28,7 +28,7 @@
 // sharp is told to behave as if a valid PNG was decoded.
 // ----------------------------------------------------------------------------
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fakeSweepStore } from './helpers/fake-avatar-sweep';
 
@@ -235,6 +235,10 @@ function setupHappy(opts: {
   mocks.updateReturning.mockResolvedValue(rows);
   return rows;
 }
+
+// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+afterEach(() => vi.unstubAllEnvs());
 
 describe('POST /api/user/avatar/upload', () => {
   it('rejects cross-origin (403)', async () => {

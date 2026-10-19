@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHash } from 'node:crypto';
+
 import { BlobNotFoundError, del } from '@vercel/blob';
 import { inArray, sql } from 'drizzle-orm';
 
@@ -8,20 +10,30 @@ import { users } from '@/db/schema';
 import { getAppBlobPublicHost } from '@/lib/avatar-url';
 import { upstashCommand } from '@/lib/envio-budget';
 
-// A removed or replaced profile photo is deleted from storage within about 15 minutes, guaranteed (Joshua 2026-10-19,
+// A removed or replaced profile photo is deleted from storage within about 20 minutes, guaranteed (Joshua 2026-10-19,
 // owner decision Q-D, Codex PUBLIC_PROFILE R4 F1). The Blob store and the database cannot change in one atomic step,
 // so the routes never try: they record every file that may need deleting in a durable "check these files" set FIRST,
 // then change storage and the row, then delete best effort. The sweep (/api/cron/avatar-sweep, every 15 minutes from
 // the Cloudflare cron) settles the rest: a file in the set that no account points at is deleted; one an account does
 // point at is only taken off the set. Whatever fails in between, a file is either pointed at by its account or in the
-// set, so it is deleted at the next sweep at most.
+// set, so it is deleted at the first sweep after its GRACE_MS: within about 20 minutes (a 15-minute cadence plus the
+// 5-minute grace), never sooner than the grace.
 //
 // The set is a sorted set in the Upstash store the Envio budget already uses: members are Blob pathnames
 // (`avatars/<userId>/<name>.webp`), scored by when they were added on Redis's own clock (TIME), never an app clock. A
 // member younger than GRACE_MS is left alone, so an upload still between its put() and its database write (bounded by
-// the upload route's maxDuration, well under the grace) is never swept.
+// the upload and profile-update routes' maxDuration of 60 s, well under the grace) is never swept.
 
-export const SWEEP_KEY = 'mako:avatar:sweep';
+// One set per database (adversary on 63642aa): production and beta share the Upstash store and the Blob store but
+// not the database, so a shared set let production's sweep delete a beta account's current photo (production's
+// database has no row pointing at it). Named from a hash of the database host and name, never the credentials. With no
+// database configured nothing can be recorded, so nothing is changed or deleted.
+export function sweepKey(): string {
+  const url = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+  if (!url) throw new Error('avatar sweep: no database configured');
+  const { hostname, pathname } = new URL(url);
+  return `mako:avatar:sweep:${createHash('sha256').update(`${hostname.toLowerCase()}${pathname}`).digest('hex').slice(0, 16)}`;
+}
 export const GRACE_MS = 5 * 60_000;
 export const SWEEP_BATCH = 200;
 
@@ -53,7 +65,7 @@ export function avatarPathname(url: string): string | null {
 /// Record a file the sweep must check. Throws when the store cannot record it: callers that need the record (before
 /// put(), before a row change) must not go ahead.
 export async function markForSweep(pathname: string): Promise<void> {
-  const n = await upstashCommand(['EVAL', MARK_SCRIPT, 1, SWEEP_KEY, pathname]);
+  const n = await upstashCommand(['EVAL', MARK_SCRIPT, 1, sweepKey(), pathname]);
   if (typeof n !== 'number' || !Number.isSafeInteger(n) || n <= 0) throw new Error('avatar sweep: mark not confirmed');
 }
 
@@ -63,7 +75,7 @@ export type SweepResult = { checked: number; deleted: number; kept: number; fail
 export async function sweepAvatars(): Promise<SweepResult> {
   const host = getAppBlobPublicHost();
   if (!host) throw new Error('avatar sweep: app Blob host unknown');
-  const raw = await upstashCommand(['EVAL', READ_SCRIPT, 1, SWEEP_KEY, GRACE_MS, SWEEP_BATCH]);
+  const raw = await upstashCommand(['EVAL', READ_SCRIPT, 1, sweepKey(), GRACE_MS, SWEEP_BATCH]);
   if (!Array.isArray(raw) || raw.length % 2 !== 0 || raw.some((x) => typeof x !== 'string')) {
     throw new Error('avatar sweep: batch not usable');
   }
@@ -88,7 +100,7 @@ export async function sweepAvatars(): Promise<SweepResult> {
   for (const { member, score } of batch) {
     // A failed unmark only leaves the member for the next sweep, which finds the same answer (a deleted file reads as
     // not found), so it never stops the run.
-    const unmark = () => upstashCommand(['EVAL', UNMARK_SCRIPT, 1, SWEEP_KEY, member, score]).catch(() => undefined);
+    const unmark = () => upstashCommand(['EVAL', UNMARK_SCRIPT, 1, sweepKey(), member, score]).catch(() => undefined);
     if (!PATHNAME_RE.test(member)) {
       // Not a pathname this app writes: nothing to delete.
       await unmark();

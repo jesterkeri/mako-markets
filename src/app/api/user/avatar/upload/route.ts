@@ -30,7 +30,7 @@ import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
 //      mismatches the declared content type (anti–MIME-spoof).
 //   4. Resize cover 256×256, output webp, strip EXIF (sharp default).
 //   5. Replace the photo so a failure anywhere leaves at most files no account points at, which the avatar sweep
-//      deletes within about 15 minutes, and the account always points at a stored photo (Joshua 2026-10-19, owner
+//      deletes within about 20 minutes, and the account always points at a stored photo (Joshua 2026-10-19, owner
 //      decision Q-D, Codex PUBLIC_PROFILE R4 F1; src/lib/avatar-sweep.ts):
 //      a. choose the new pathname, avatars/<userId>/<uuid>.webp, and record it in the sweep set BEFORE put(). If the
 //         set cannot be written, nothing has happened: 503 sweep_unavailable.

@@ -76,6 +76,10 @@ function file(name: string) {
 }
 const sweep = (auth = `Bearer ${CRON_SECRET}`) => GET(new Request('http://localhost/api/cron/avatar-sweep', { headers: { authorization: auth } }));
 
+// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+afterEach(() => vi.unstubAllEnvs());
+
 describe('GET /api/cron/avatar-sweep', () => {
   it('cron auth exactly like the other cron routes: no or a wrong bearer is a 403 and touches nothing', async () => {
     file('a');
