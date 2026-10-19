@@ -52,8 +52,10 @@ export function useChartColors() {
     // save for an account other than the session's (a sign-in in another tab changes the cookie under this one).
     mutationFn: async ({ account: made, patch }: Save): Promise<ChartColors | null | undefined> => {
       if (accountNow.current !== made) {
-        // Dropped: forget the optimistic colours too, so this account reloads what it really holds next time.
+        // Dropped: forget the optimistic colours and anything carried too, so this account reloads what it really
+        // holds next time and never resends a change it saw fail (adversary r12 on 0260e2a).
         qc.removeQueries({ queryKey: ['chart-colors', made] });
+        carried.delete(made);
         return undefined;
       }
       const sent = patch === null ? null : { ...carried.get(made), ...patch };
@@ -85,8 +87,9 @@ export function useChartColors() {
     // the reload fails too (offline, or refused after a sign-in elsewhere).
     onError: (_e, { account: made, patch }) => {
       if (laterSaveQueued(made)) {
-        // The next save carries this change (a Reset queued behind it simply drops it).
-        if (patch) carried.set(made, { ...carried.get(made), ...patch });
+        // The next save carries this change. A failed Reset is carried as the full default set, so that save sends a
+        // reset followed by its own change, never a colour reset away (adversary r12 on 0260e2a).
+        carried.set(made, patch ? { ...carried.get(made), ...patch } : { ...DEFAULT_CHART_COLORS });
         return;
       }
       carried.delete(made);
