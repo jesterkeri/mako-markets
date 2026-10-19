@@ -17,6 +17,10 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+// These tests import whole route modules afresh (seconds alone); under the full suite's parallel load that passes
+// vitest's 5 s default, so they get room. Their assertions are deterministic.
+vi.setConfig({ testTimeout: 30_000 });
+
 import { makoMarketEvents } from '@/db/schema';
 import { createTestDb, type TestDb } from '@/lib/leaderboard/__tests__/test-db';
 

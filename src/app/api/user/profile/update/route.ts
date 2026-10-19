@@ -6,6 +6,8 @@ import { users } from '@/db/schema';
 import { avatarPathname, deleteSettled, markForSweep } from '@/lib/avatar-sweep';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
+import { DISPLAY_NAME_RE, displayNameKey, isReservedDisplayName } from '@/lib/display-name';
+import { nameHeldByOther } from '@/lib/display-name-holder';
 import { readLastSignIn } from '@/lib/last-sign-in';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
@@ -54,8 +56,6 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // missing-vs-null safe at the type level.
 // ----------------------------------------------------------------------------
 
-const DISPLAY_NAME_RE = /^[A-Za-z0-9 ._-]{1,32}$/;
-
 // Cut off well inside the avatar sweep's 5-minute grace, so a removal still in its transaction is never swept early.
 export const maxDuration = 60;
 
@@ -98,6 +98,7 @@ function validateBody(raw: unknown): ValidatedFields | { error: string } {
       const trimmed = v.trim();
       if (trimmed.length === 0) return { error: 'bad_body' };
       if (!DISPLAY_NAME_RE.test(trimmed)) return { error: 'bad_body' };
+      if (isReservedDisplayName(trimmed)) return { error: 'name_reserved' };
       out.displayName = trimmed;
     } else {
       return { error: 'bad_body' };
@@ -144,12 +145,19 @@ export async function POST(req: Request) {
   // Build the SET clause from the validated fields. Skipping a key
   // entirely (vs. setting to null) is what makes the update touch only
   // the columns the body asked for.
-  const setClause: { displayName?: string | null; avatarUrl?: string | null } = {};
+  const setClause: { displayName?: string | null; displayNameKey?: string | null; avatarUrl?: string | null } = {};
   if (Object.prototype.hasOwnProperty.call(validated, 'displayName')) {
     setClause.displayName = validated.displayName ?? null;
+    // Names are unique case-insensitively: the key's unique index (migration 0017) refuses a name another account holds.
+    setClause.displayNameKey = validated.displayName ? displayNameKey(validated.displayName) : null;
   }
   if (Object.prototype.hasOwnProperty.call(validated, 'avatarUrl')) {
     setClause.avatarUrl = validated.avatarUrl ?? null;
+  }
+
+  // A name another account holds or still shows (kept from before migration 0017) is refused before the write.
+  if (setClause.displayNameKey && (await nameHeldByOther(setClause.displayNameKey, session.userId))) {
+    return Response.json({ error: 'name_taken' }, { status: 409 });
   }
 
   // Removing a photo (Joshua 2026-10-19, owner decision Q-D, Codex PUBLIC_PROFILE R4 F1; src/lib/avatar-sweep.ts): with
@@ -192,6 +200,8 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     if (e instanceof SweepUnavailable) return Response.json({ error: 'sweep_unavailable' }, { status: 503 });
+    if (refusedBy(e, '23505', 'users_display_name_key_uniq')) return Response.json({ error: 'name_taken' }, { status: 409 });
+    if (refusedBy(e, '23514', 'users_display_name_reserved')) return Response.json({ error: 'name_reserved' }, { status: 400 });
     throw e;
   }
 
@@ -242,4 +252,13 @@ export async function POST(req: Request) {
     ...walletUserToWire(row, session.walletAddress),
     lastSignInAt,
   });
+}
+
+/// The database refused the write with this code and constraint (the name index or trigger: 23505 taken, 23514
+/// reserved), directly or wrapped by drizzle in `cause`.
+function refusedBy(err: unknown, code: string, constraint: string): boolean {
+  for (let e = err as { code?: string; constraint?: string; constraint_name?: string; cause?: unknown } | undefined; e; e = e.cause as typeof e) {
+    if (e.code === code && (e.constraint ?? e.constraint_name) === constraint) return true;
+  }
+  return false;
 }
