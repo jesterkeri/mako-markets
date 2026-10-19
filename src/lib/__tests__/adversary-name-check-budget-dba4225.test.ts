@@ -18,7 +18,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ session: vi.fn(), held: vi.fn(), upstash: vi.fn() }));
 vi.mock('server-only', () => ({}));
-vi.mock('@/lib/user-session', () => ({ getUserSession: mocks.session }));
+// (Builder, Codex UNIQUE_NAMES R2: the cap is charged to the signed session cookie before any database query.)
+vi.mock('next/headers', () => ({ cookies: async () => ({ get: () => ({ value: 'signed-sid' }) }) }));
+vi.mock('@/lib/user-session', () => ({
+  getUserSession: mocks.session,
+  USER_SESSION_COOKIE: 'mako_user_session',
+  verifySessionToken: (t: string) => (t ? { sid: t } : null),
+}));
 vi.mock('@/lib/display-name-holder', () => ({ nameHeldByOther: mocks.held }));
 vi.mock('@/lib/envio-budget', () => ({ upstashCommand: mocks.upstash }));
 
