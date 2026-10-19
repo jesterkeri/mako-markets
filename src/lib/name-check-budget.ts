@@ -19,8 +19,10 @@ export async function reserveNameCheck(userId: string): Promise<'ok' | 'limited'
   // Hashed: the store never holds the internal account id.
   const key = `mako:namecheck:${createHash('sha256').update(userId).digest('hex').slice(0, 32)}`;
   try {
-    const n = Number(await upstashCommand(['EVAL', SCRIPT, 1, key, 60_000]));
-    if (!Number.isFinite(n)) return 'unavailable';
+    const n = await upstashCommand(['EVAL', SCRIPT, 1, key, 60_000]);
+    // The script always counts this call, so anything but a whole number from 1 up is a broken reply: refuse, never
+    // read it as 0 (adversary r13 on dba4225; envio-budget.ts is as strict).
+    if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1) return 'unavailable';
     return n <= NAME_CHECKS_PER_MINUTE ? 'ok' : 'limited';
   } catch {
     return 'unavailable';
