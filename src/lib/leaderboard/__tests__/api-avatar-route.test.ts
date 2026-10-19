@@ -53,6 +53,8 @@ const photoOf = (who: string) => `https://${HOST}/avatars/${ids[who]}/a.webp`;
 const setPhoto = (who: string, url: string | null) => t!.client.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [url, ids[who]]);
 const get = (address: string, v?: string) =>
   GET(new Request(`http://localhost/api/avatar/${address}${v ? `?v=${v}` : ''}`), { params: Promise.resolve({ address }) });
+const getRaw = (address: string, query: string) =>
+  GET(new Request(`http://localhost/api/avatar/${address}${query}`), { params: Promise.resolve({ address }) });
 const image = (bytes = 'PNGDATA', type = 'image/webp') => new Response(bytes, { status: 200, headers: { 'content-type': type } });
 
 describe('GET /api/avatar/<address>', () => {
@@ -84,8 +86,8 @@ describe('GET /api/avatar/<address>', () => {
     await setPhoto('wallet', null); // removed
     expect((await get(WALLET, avatarVersion(photoOf('wallet')))).status).toBe(404);
     blob.mockClear();
-    expect((await get(NOBODY)).status).toBe(404); // not a Mako Market account
-    expect((await get(SAFE_LOWER)).status).toBe(404); // account without a photo
+    expect((await get(NOBODY, '000000000000')).status).toBe(404); // not a Mako Market account
+    expect((await get(SAFE_LOWER, '000000000000')).status).toBe(404); // account without a photo
     // Each with the v of what is stored, so the 404 comes from the host and path checks, not from a wrong v.
     for (const stored of ['https://attacker.example/x.png', `https://${HOST}/avatars/${ids.email}/a.webp`]) {
       await setPhoto('wallet', stored);
@@ -99,6 +101,30 @@ describe('GET /api/avatar/<address>', () => {
     blob.mockResolvedValueOnce(new Response('gone', { status: 404 }));
     expect((await get(WALLET, v)).status).toBe(404);
     expect(blob).toHaveBeenCalledTimes(2);
+  });
+
+  it('only the one canonical query string reaches the database: any other key, a second v or another spelling is a 404 with no query and no fetch (Codex R2 M2)', async () => {
+    await setPhoto('wallet', photoOf('wallet'));
+    const v = avatarVersion(photoOf('wallet'));
+    blob.mockResolvedValueOnce(image());
+    expect((await getRaw(WALLET, `?v=${v}`)).status).toBe(200); // the canonical one still works
+    currentDb = null; // any query would throw
+    blob.mockClear();
+    const variants = [
+      `?v=${v}&x=1`,
+      `?x=1&v=${v}`,
+      `?v=${v}&v=${v}`,
+      `?v=${v}&`,
+      `?&v=${v}`,
+      `?v=${v.slice(0, -1)}%${v.charCodeAt(v.length - 1).toString(16)}`, // same value, percent-encoded
+      `?v=${v.toUpperCase()}`,
+      `?v=${v}0`,
+      `?V=${v}`,
+      '',
+      '?v=',
+    ];
+    for (const q of variants) expect((await getRaw(WALLET, q)).status, q).toBe(404);
+    expect(blob).not.toHaveBeenCalled();
   });
 
   it('not an address: 404 with no query and no fetch', async () => {

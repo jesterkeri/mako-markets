@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   // db chain spies
   selectPriorSession: vi.fn(),
   updateSet: vi.fn(),
+  updateWhere: vi.fn(),
   updateReturning: vi.fn(),
 }));
 
@@ -75,7 +76,10 @@ vi.mock('@/db/client', () => ({
     update: () => ({
       set: (...args: unknown[]) => {
         mocks.updateSet(...args);
-        const where = () => ({ returning: () => mocks.updateReturning() });
+        const where = (...w: unknown[]) => {
+          mocks.updateWhere(...w);
+          return { returning: () => mocks.updateReturning() };
+        };
         // UPDATE ... FROM priorPhoto(id): the replaced photo comes back in the returned row (replacedPhoto).
         return { where, from: () => ({ where }) };
       },
@@ -168,7 +172,7 @@ function setupHappy(opts: {
   mocks.blobPut.mockResolvedValue({ url: NEW_BLOB_URL });
   mocks.blobDel.mockResolvedValue(undefined);
   mocks.selectPriorSession.mockResolvedValue([]);
-  mocks.updateReturning.mockResolvedValue([
+  const rows = [
     {
       email: 'a@b.com',
       magicEoa: EOA,
@@ -180,7 +184,9 @@ function setupHappy(opts: {
       replacedPhoto: opts.priorAvatarUrl ?? null,
       ...(opts.rowOverrides ?? {}),
     },
-  ]);
+  ];
+  mocks.updateReturning.mockResolvedValue(rows);
+  return rows;
 }
 
 describe('POST /api/user/avatar/upload', () => {
@@ -312,10 +318,9 @@ describe('POST /api/user/avatar/upload', () => {
       const { POST } = await import('../../app/api/user/avatar/upload/route');
       const res = await POST(makeRequest(makeImageFile({})));
       expect(res.status).toBe(200);
-      // Wait one microtask for the void del() to fire.
-      await new Promise((r) => setImmediate(r));
-      expect(mocks.blobDel).toHaveBeenCalledTimes(1);
-      expect(mocks.blobDel).toHaveBeenCalledWith(ownPrior);
+      // Awaited before answering: exactly the replaced file, and only one statement (no put-back).
+      expect(mocks.blobDel.mock.calls).toEqual([[ownPrior]]);
+      expect(mocks.updateSet).toHaveBeenCalledTimes(1);
     });
 
     it('REFUSES to delete a foreign-user blob URL (path is /avatars/<otherId>/...)', async () => {
@@ -369,17 +374,54 @@ describe('POST /api/user/avatar/upload', () => {
       expect(mocks.blobDel).not.toHaveBeenCalled();
     });
 
-    it('del() failure is swallowed (request still succeeds)', async () => {
+    // A replaced photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R2 M1).
+    it('a failed delete of the prior photo answers 503, puts the prior photo back and deletes the new file', async () => {
       const ownPrior =
         `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
-      setupHappy({ priorAvatarUrl: ownPrior });
-      mocks.blobDel.mockRejectedValue(new Error('delete failed'));
+      const rows = setupHappy({ priorAvatarUrl: ownPrior });
+      mocks.updateReturning.mockResolvedValueOnce(rows).mockResolvedValueOnce([{ id: USER_ID }]);
+      mocks.blobDel.mockRejectedValueOnce(new Error('delete failed')).mockResolvedValueOnce(undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { POST } = await import('../../app/api/user/avatar/upload/route');
       const res = await POST(makeRequest(makeImageFile({})));
-      expect(res.status).toBe(200);
-      await new Promise((r) => setImmediate(r));
-      // Was attempted — and rejected — but the route still 200s.
-      expect(mocks.blobDel).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'photo_not_replaced' });
+      // The put-back is a compare-and-set: only while the row still holds this upload.
+      expect(mocks.updateSet.mock.calls[1][0]).toEqual({ avatarUrl: ownPrior });
+      expect(mocks.updateWhere.mock.calls[1][0]).toEqual({
+        args: [{ a: 'users.id', b: USER_ID }, { a: 'users.avatar_url', b: NEW_BLOB_URL }],
+      });
+      expect(mocks.blobDel.mock.calls).toEqual([[ownPrior], [NEW_BLOB_URL]]);
+      warn.mockRestore();
+    });
+
+    it('when the row has moved on before the put-back, the new file is left to whoever moved it (still 503)', async () => {
+      const ownPrior =
+        `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
+      const rows = setupHappy({ priorAvatarUrl: ownPrior });
+      mocks.updateReturning.mockResolvedValueOnce(rows).mockResolvedValueOnce([]);
+      mocks.blobDel.mockRejectedValueOnce(new Error('delete failed'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { POST } = await import('../../app/api/user/avatar/upload/route');
+      const res = await POST(makeRequest(makeImageFile({})));
+      expect(res.status).toBe(503);
+      expect(mocks.blobDel.mock.calls).toEqual([[ownPrior]]);
+      warn.mockRestore();
+    });
+
+    it('a failed delete of the new file after the put-back is logged; the answer is still 503', async () => {
+      const ownPrior =
+        `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
+      const rows = setupHappy({ priorAvatarUrl: ownPrior });
+      mocks.updateReturning.mockResolvedValueOnce(rows).mockResolvedValueOnce([{ id: USER_ID }]);
+      mocks.blobDel.mockRejectedValue(new Error('blob down'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { POST } = await import('../../app/api/user/avatar/upload/route');
+      const res = await POST(makeRequest(makeImageFile({})));
+      expect(res.status).toBe(503);
+      expect(mocks.blobDel.mock.calls).toEqual([[ownPrior], [NEW_BLOB_URL]]);
+      expect(warn).toHaveBeenCalledTimes(2);
+      warn.mockRestore();
     });
   });
 

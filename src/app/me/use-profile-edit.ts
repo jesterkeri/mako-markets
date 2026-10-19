@@ -5,7 +5,7 @@ import { useState } from 'react';
 
 import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 
-import { AVATAR_CLEAR_ERROR, avatarFileError, avatarUploadError, NETWORK_ERROR, nameSaveError, validateDisplayName } from './profile-rules';
+import { avatarClearError, avatarFileError, avatarUploadError, NETWORK_ERROR, nameSaveError, validateDisplayName } from './profile-rules';
 
 type UserCache = AuthedUser | { authed: false } | undefined;
 
@@ -90,7 +90,7 @@ export function useProfileEdit() {
         body: JSON.stringify({ avatarUrl: null }),
       });
       if (!res.ok) {
-        setPhotoError(AVATAR_CLEAR_ERROR);
+        setPhotoError(avatarClearError(res.status));
         return;
       }
       await merge({ avatarUrl: null });

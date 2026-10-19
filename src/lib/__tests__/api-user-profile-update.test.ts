@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   deriveSafeAddress: vi.fn(),
   // db chain spies
   updateSet: vi.fn(),
+  updateWhere: vi.fn(),
   updateReturning: vi.fn(),
   selectPriorSession: vi.fn(),
   del: vi.fn(),
@@ -43,7 +44,10 @@ vi.mock('@/db/client', () => ({
     update: () => ({
       set: (...args: unknown[]) => {
         mocks.updateSet(...args);
-        const where = () => ({ returning: () => mocks.updateReturning() });
+        const where = (...w: unknown[]) => {
+          mocks.updateWhere(...w);
+          return { returning: () => mocks.updateReturning() };
+        };
         // UPDATE ... FROM priorPhoto(id): the replaced photo comes back in the returned row (replacedPhoto).
         return { where, from: () => ({ where }) };
       },
@@ -82,6 +86,7 @@ vi.mock('@/db/schema', () => ({
 vi.mock('drizzle-orm', () => ({
   and: (...args: unknown[]) => ({ args }),
   eq: (a: unknown, b: unknown) => ({ a, b }),
+  isNull: (a: unknown) => ({ isNull: a }),
   ne: (a: unknown, b: unknown) => ({ ne: [a, b] }),
   desc: (a: unknown) => ({ desc: a }),
 }));
@@ -248,16 +253,26 @@ describe('POST /api/user/profile/update', () => {
     setupHappy({ avatarUrl: null, replacedPhoto: own });
     mocks.del.mockResolvedValueOnce(undefined);
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
-    expect(mocks.del).toHaveBeenCalledWith(own);
+    // Exactly the removed file, and no put-back statement.
+    expect(mocks.del.mock.calls).toEqual([[own]]);
+    expect(mocks.updateSet).toHaveBeenCalledTimes(1);
     mocks.del.mockClear();
     setupHappy({ avatarUrl: null, replacedPhoto: 'https://x.public.blob.vercel-storage.com/avatars/someone-else/a.webp' });
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
     expect(mocks.del).not.toHaveBeenCalled();
-    // A failed delete still answers 200: the link is gone and the failure is logged.
+  });
+
+  it('a failed delete answers 503 photo_not_removed and puts the photo back, only while nothing else was set (Codex R2 M1)', async () => {
+    const { POST } = await import('../../app/api/user/profile/update/route');
+    const own = `https://x.public.blob.vercel-storage.com/avatars/${USER_ID}/a.webp`;
     setupHappy({ avatarUrl: null, replacedPhoto: own });
     mocks.del.mockRejectedValueOnce(new Error('blob down'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
+    const res = await POST(makeRequest({ avatarUrl: null }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'photo_not_removed' });
+    expect(mocks.updateSet.mock.calls[1][0]).toEqual({ avatarUrl: own });
+    expect(mocks.updateWhere.mock.calls[1][0]).toEqual({ args: [{ a: 'users.id', b: USER_ID }, { isNull: 'users.avatar_url' }] });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });

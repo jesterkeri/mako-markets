@@ -1,5 +1,5 @@
 import { type Address } from 'viem';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { del } from '@vercel/blob';
 
 import { db } from '@/db/client';
@@ -169,8 +169,20 @@ export async function POST(req: Request) {
   const row = updated[0];
 
   // Only this user's own upload, as the upload route does on replace; the app's token can only reach its own store.
+  // A removed photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R2 M1): when the delete
+  // fails the photo is put back, unless something else has been set since, and the user is asked to try again. A name
+  // change sent in the same request stays saved.
   if (removedPhoto && isOwnedAvatarBlobUrl(removedPhoto, session.userId)) {
-    await del(removedPhoto).catch((e) => console.warn('[profile-update] removed photo delete failed', e));
+    try {
+      await del(removedPhoto);
+    } catch (e) {
+      console.warn('[profile-update] removed photo delete failed, photo put back', e);
+      await db
+        .update(users)
+        .set({ avatarUrl: removedPhoto })
+        .where(and(eq(users.id, session.userId), isNull(users.avatarUrl)));
+      return Response.json({ error: 'photo_not_removed' }, { status: 503 });
+    }
   }
 
   // Read prior-session createdAt for the eager cache write in the

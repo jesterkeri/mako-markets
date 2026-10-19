@@ -35,8 +35,17 @@ export function avatarUploadError(status: number): string {
   if (status === 400) return 'Image rejected. Try a different file.';
   if (status === 401) return 'Sign-in expired. Please refresh.';
   if (status === 502) return 'Upload service unavailable. Retry shortly.';
+  // The old photo could not be deleted, so nothing changed (Codex PUBLIC_PROFILE R2 M1).
+  if (status === 503) return PHOTO_NOT_REPLACED;
   return 'Upload failed. Please retry.';
 }
 
+/// The message for a photo removal the server refused.
+export function avatarClearError(status: number): string {
+  // The photo could not be deleted from storage, so it was kept (Codex PUBLIC_PROFILE R2 M1).
+  return status === 503 ? PHOTO_NOT_REMOVED : 'Clear failed. Please retry.';
+}
+
+export const PHOTO_NOT_REPLACED = "Couldn't change your photo. Try again.";
+export const PHOTO_NOT_REMOVED = "Couldn't remove your photo. Try again.";
 export const NETWORK_ERROR = 'Network error. Please retry.';
-export const AVATAR_CLEAR_ERROR = 'Clear failed. Please retry.';

@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   userId: '',
   stored: new Set<string>(),
   deleted: [] as string[],
+  failDel: new Set<string>(),
   putUrl: '',
 }));
 
@@ -41,6 +42,7 @@ vi.mock('@vercel/blob', () => ({
     return { url: state.putUrl };
   },
   del: async (url: string) => {
+    if (state.failDel.has(url)) throw new Error('blob down');
     state.deleted.push(url);
     state.stored.delete(url);
   },
@@ -63,6 +65,7 @@ beforeEach(async () => {
   state.db = drizzle(client, { schema });
   state.stored.clear();
   state.deleted.length = 0;
+  state.failDel.clear();
 });
 afterEach(async () => {
   await client.close();
@@ -120,5 +123,54 @@ describe('removing a photo while a new one uploads', () => {
     // that was never deleted, kept public at a URL whose path carries the internal account id.
     const orphans = [...state.stored].filter((url) => url !== row.avatar_url);
     expect({ row: row.avatar_url, orphans }).toEqual({ row: row.avatar_url, orphans: [] });
+  });
+});
+
+// Codex PUBLIC_PROFILE R2 M1: a photo that cannot be deleted from storage must not be reported as removed or replaced.
+describe('when storage cannot delete the old photo', () => {
+  const rowPhoto = async () =>
+    (await client.query<{ avatar_url: string | null }>(`SELECT avatar_url FROM users WHERE id = $1`, [state.userId])).rows[0].avatar_url;
+  const removeRequest = () =>
+    new Request('http://localhost/api/user/profile/update', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ avatarUrl: null }),
+    });
+
+  beforeEach(async () => {
+    state.stored.add(photo('a'));
+    await client.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [photo('a'), state.userId]);
+    state.putUrl = photo('b');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('a removal answers 503 and the account still points at its photo', async () => {
+    state.failDel.add(photo('a'));
+    const res = await removePhoto(removeRequest());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'photo_not_removed' });
+    expect(await rowPhoto()).toBe(photo('a'));
+    expect([...state.stored]).toEqual([photo('a')]);
+  });
+
+  it('a replacement answers 503, the account still points at the prior photo, and the new file is deleted', async () => {
+    state.failDel.add(photo('a'));
+    const res = await uploadPhoto(await uploadRequest());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'photo_not_replaced' });
+    expect(await rowPhoto()).toBe(photo('a'));
+    expect(state.deleted).toEqual([photo('b')]);
+    expect([...state.stored]).toEqual([photo('a')]);
+  });
+
+  it('once storage works, the replacement deletes exactly the replaced file and the removal exactly the removed one', async () => {
+    expect((await uploadPhoto(await uploadRequest())).status).toBe(200);
+    expect(await rowPhoto()).toBe(photo('b'));
+    expect(state.deleted).toEqual([photo('a')]);
+    expect((await removePhoto(removeRequest())).status).toBe(200);
+    expect(await rowPhoto()).toBeNull();
+    expect(state.deleted).toEqual([photo('a'), photo('b')]);
+    expect(state.stored.size).toBe(0);
   });
 });

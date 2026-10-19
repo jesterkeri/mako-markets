@@ -13,19 +13,24 @@ import { avatarVersion } from '@/lib/public-avatar';
 // shows the letter avatar.
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+// The whole query string, raw: exactly `?v=` and a 12-hex version (avatarVersion). Any other key, a second `v`, a
+// percent-encoded spelling or a trailing `&` would be a separate CDN entry, so each would reach the Blob store again
+// (Codex PUBLIC_PROFILE R2 M2): all are a 404 before any database query.
+const QUERY_RE = /^\?v=[0-9a-f]{12}$/;
 const MINUTE = 'public, max-age=60, s-maxage=60';
 
 const notFound = () => new Response(null, { status: 404, headers: { 'cache-control': MINUTE } });
 
 export async function GET(req: Request, { params }: { params: Promise<{ address: string }> }) {
   const raw = (await params).address;
-  if (!ADDRESS_RE.test(raw)) return notFound();
+  const query = new URL(req.url).search;
+  if (!ADDRESS_RE.test(raw) || !QUERY_RE.test(query)) return notFound();
   const address = raw.toLowerCase();
   // The cheap indexed check first, so a made-up address costs no identity query.
   if (!(await registeredAddresses(db, [address], MONAD_TESTNET_ID)).has(address)) return notFound();
   const stored = (await resolveStoredIdentities(db, [address], MONAD_TESTNET_ID)).get(address)?.avatarUrl;
   // Only the current photo's path is served: an old `v` (a replaced photo) or a made-up one is a 404 with no Blob fetch.
-  if (!stored || new URL(req.url).searchParams.get('v') !== avatarVersion(stored)) return notFound();
+  if (!stored || query.slice(3) !== avatarVersion(stored)) return notFound();
   const photo = await fetch(stored);
   const type = photo.headers.get('content-type') ?? '';
   if (!photo.ok || !photo.body || !type.startsWith('image/')) return notFound();

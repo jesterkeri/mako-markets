@@ -32,8 +32,9 @@ import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
 //      avatars/<userId>/ prefix, del() the old blob. The path-prefix
 //      check is load-bearing — without it a caller could paste another
 //      user's blob URL via /api/user/profile/update and then trigger an
-//      upload to delete it. Failures are logged but don't fail the
-//      request; orphans are cleaned by a later cron (out of scope).
+//      upload to delete it. If that delete fails, the prior URL is put
+//      back, the new blob is deleted and the request answers 503
+//      photo_not_replaced, so a replaced photo never stays public.
 //   7. Update users.avatar_url to the new URL.
 //
 // Vercel route body limit is 4.5 MB. We cap at 4 MB to leave headroom
@@ -136,10 +137,24 @@ export async function POST(req: Request) {
   }
   const row = updated[0];
 
+  // A replaced photo must be deleted, not just unlinked (Joshua 2026-10-17, Codex PUBLIC_PROFILE R2 M1). When the delete
+  // fails the prior photo is put back (only while the row still holds this upload) and the new file, then unused, is
+  // deleted; if the row has already moved on, whoever moved it owns the new file, so it is left alone.
   if (priorAvatarUrl && isOwnedAvatarBlobUrl(priorAvatarUrl, session.userId)) {
-    void del(priorAvatarUrl).catch((e) => {
-      console.warn('[avatar-upload] prior blob delete failed', e);
-    });
+    try {
+      await del(priorAvatarUrl);
+    } catch (e) {
+      console.warn('[avatar-upload] prior blob delete failed, prior photo put back', e);
+      const restored = await db
+        .update(users)
+        .set({ avatarUrl: priorAvatarUrl })
+        .where(and(eq(users.id, session.userId), eq(users.avatarUrl, uploadUrl)))
+        .returning({ id: users.id });
+      if (restored.length > 0) {
+        await del(uploadUrl).catch((err) => console.warn('[avatar-upload] new blob delete failed after put-back', err));
+      }
+      return Response.json({ error: 'photo_not_replaced' }, { status: 503 });
+    }
   }
 
   const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);

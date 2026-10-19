@@ -360,6 +360,7 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
           res.status === 400 ? 'Image rejected. Try a different file.'
             : res.status === 401 ? 'Sign-in expired. Please refresh.'
             : res.status === 502 ? 'Upload service unavailable. Retry shortly.'
+            : res.status === 503 ? "Couldn't change your photo. Try again."
             : 'Upload failed. Please retry.',
         );
         setAvatarPhase('idle');
@@ -406,7 +407,8 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
       });
       if (!mountedRef.current) return;
       if (!res.ok) {
-        setAvatarError('Clear failed. Please retry.');
+        // 503: the photo could not be deleted from storage, so it was kept (Codex PUBLIC_PROFILE R2 M1).
+        setAvatarError(res.status === 503 ? "Couldn't remove your photo. Try again." : 'Clear failed. Please retry.');
         setAvatarPhase('idle');
         return;
       }
