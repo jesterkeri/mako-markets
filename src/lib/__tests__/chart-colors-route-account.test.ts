@@ -97,11 +97,31 @@ describe('a change is merged into what the account holds (adversary r10 on 2d48a
     expect(await stored('wallet')).toBeNull();
   });
   it('a malformed stored value is replaced by the change over the defaults', async () => {
-    for (const junk of [{ upBody: 'red' }, ['x'], 'oops']) {
+    const extraKey = { ...SET, extra: '#000000' };
+    const nonString = { ...SET, upBody: 5 };
+    const badHex = { ...SET, upBody: '#12345' };
+    const missingKey = { upBody: '#000000', downBody: '#000000', upBorder: '#000000', downBorder: '#000000', upWick: '#000000' };
+    for (const junk of [{ upBody: 'red' }, ['x'], 'oops', 5, extraKey, nonString, badHex, missingKey]) {
       await pg.query(`UPDATE users SET chart_colors = $1 WHERE id = $2`, [JSON.stringify(junk), ids.wallet]);
       const res = await (await save('wallet', WALLET, { downBody: '#010203' })).json();
       expect(res, JSON.stringify(junk)).toEqual({ colors: { ...DEFAULT_CHART_COLORS, downBody: '#010203' } });
       expect(await stored('wallet')).toEqual({ ...DEFAULT_CHART_COLORS, downBody: '#010203' });
     }
+  });
+  it('two writers on a malformed row: neither change disappears, and no answer claims a set the database does not hold (Codex CHART_COLORS R1 F1)', async () => {
+    await pg.query(`UPDATE users SET chart_colors = $1 WHERE id = $2`, [JSON.stringify(['junk']), ids.wallet]);
+    const [a, b] = await Promise.all([
+      save('wallet', WALLET, { upBody: '#aa0000' }).then((r) => r.json()),
+      save('wallet', WALLET, { downWick: '#00bb00' }).then((r) => r.json()),
+    ]);
+    const final = await stored('wallet');
+    expect(final).toEqual({ ...DEFAULT_CHART_COLORS, upBody: '#aa0000', downWick: '#00bb00' });
+    // Each answer is what its statement wrote; the later one is the final row.
+    expect([a.colors, b.colors]).toContainEqual(final);
+    for (const c of [a.colors, b.colors]) expect(Object.keys(c).sort()).toEqual([...Object.keys(DEFAULT_CHART_COLORS)].sort());
+  });
+  it('a stored set with upper-case hex is a valid set and is kept', async () => {
+    await pg.query(`UPDATE users SET chart_colors = $1 WHERE id = $2`, [JSON.stringify({ ...SET, upBody: '#ABCDEF' }), ids.wallet]);
+    expect(await (await save('wallet', WALLET, { downWick: '#010101' })).json()).toEqual({ colors: { ...SET, upBody: '#abcdef', downWick: '#010101' } });
   });
 });

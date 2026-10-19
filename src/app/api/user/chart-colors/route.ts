@@ -2,7 +2,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { users, userSafes } from '@/db/schema';
-import { DEFAULT_CHART_COLORS, mergeChartColors, parseChartColorPatch, parseChartColors } from '@/lib/chart-colors';
+import { CHART_COLOR_KEYS, DEFAULT_CHART_COLORS, parseChartColorPatch, parseChartColors } from '@/lib/chart-colors';
 import { checkSameOrigin } from '@/lib/csrf';
 import { getUserSession } from '@/lib/user-session';
 
@@ -45,26 +45,24 @@ export async function POST(req: Request) {
   const patch = body?.patch === null ? null : parseChartColorPatch(body?.patch);
   if (body?.patch !== null && patch === null) return Response.json({ error: 'bad_body' }, { status: 400 });
   if (typeof body.account !== 'string' || !ADDRESS_RE.test(body.account)) return Response.json({ error: 'bad_body' }, { status: 400 });
-  const where = ownRow(session.userId, body.account);
   // Merged in the database, in the one statement, so two tabs (or two devices) changing different colours both stick.
-  const merged =
-    patch === null
-      ? null
-      : sql`COALESCE(${users.chartColors}, ${JSON.stringify(DEFAULT_CHART_COLORS)}::jsonb) || ${JSON.stringify(patch)}::jsonb`;
-  for (let attempt = 0; ; attempt++) {
-    const updated = await db.update(users).set({ chartColors: merged }).where(where).returning({ chartColors: users.chartColors });
-    if (updated.length === 0) return Response.json({ error: 'account_changed' }, { status: 409 });
-    if (patch === null) return Response.json({ colors: null });
-    const colors = parseChartColors(updated[0].chartColors);
-    if (colors) return Response.json({ colors });
-    // A malformed stored value merged into junk: replace it with the change over the defaults, only if it is still that
-    // junk (compare and set); if another save got there first, merge again onto what it wrote, once.
-    const repaired = mergeChartColors(null, patch);
-    const fixed = await db
-      .update(users)
-      .set({ chartColors: repaired })
-      .where(and(where, sql`${users.chartColors} = ${JSON.stringify(updated[0].chartColors)}::jsonb`))
-      .returning({ id: users.id });
-    if (fixed.length > 0 || attempt > 0) return Response.json({ colors: repaired });
-  }
+  // The stored value counts only if it is a complete valid set; anything else (null, or a malformed legacy value) is
+  // replaced by the defaults inside the same statement, so there is no separate repair step to race (Codex
+  // CHART_COLORS R1 F1). Nested CASE: the key checks run only on a JSON object.
+  const held = sql`CASE WHEN jsonb_typeof(${users.chartColors}) = 'object' THEN (CASE WHEN ${users.chartColors} ?& ${sql.raw(`array['${CHART_COLOR_KEYS.join("','")}']`)}
+      AND (SELECT count(*) FROM jsonb_object_keys(${users.chartColors})) = ${CHART_COLOR_KEYS.length}
+      AND NOT EXISTS (SELECT 1 FROM jsonb_each(${users.chartColors}) e WHERE jsonb_typeof(e.value) <> 'string' OR (e.value #>> '{}') !~* '^#[0-9a-f]{6}$')
+    THEN ${users.chartColors} ELSE ${JSON.stringify(DEFAULT_CHART_COLORS)}::jsonb END) ELSE ${JSON.stringify(DEFAULT_CHART_COLORS)}::jsonb END`;
+  const merged = patch === null ? null : sql`(${held}) || ${JSON.stringify(patch)}::jsonb`;
+  const updated = await db
+    .update(users)
+    .set({ chartColors: merged })
+    .where(ownRow(session.userId, body.account))
+    .returning({ chartColors: users.chartColors });
+  if (updated.length === 0) return Response.json({ error: 'account_changed' }, { status: 409 });
+  if (patch === null) return Response.json({ colors: null });
+  const colors = parseChartColors(updated[0].chartColors);
+  // Cannot happen (a valid set or the defaults, merged with a validated patch); never answer a set that was not written.
+  if (!colors) return Response.json({ error: 'not_saved' }, { status: 500 });
+  return Response.json({ colors });
 }
