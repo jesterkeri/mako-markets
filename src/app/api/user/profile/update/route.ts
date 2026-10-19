@@ -1,10 +1,9 @@
 import { type Address } from 'viem';
 import { eq } from 'drizzle-orm';
-import { del } from '@vercel/blob';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
-import { avatarPathname, markForSweep } from '@/lib/avatar-sweep';
+import { avatarPathname, deleteSettled, markForSweep } from '@/lib/avatar-sweep';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
@@ -159,7 +158,7 @@ export async function POST(req: Request) {
   // removed. If that cannot be written the transaction rolls back, nothing has changed (a name sent in the same request
   // is not saved either) and the answer is 503. After the commit the file is recorded again and deleted, both best
   // effort: the sweep deletes it within about 20 minutes whatever happens. Only this user's own upload is ever touched.
-  let removed: { url: string; pathname: string } | null = null;
+  let removed: { url: string; pathname: string; score: number } | null = null;
   let updated: UpdatedRow[];
   try {
     updated = await db.transaction(async (tx) => {
@@ -168,13 +167,14 @@ export async function POST(req: Request) {
       const oldPath =
         setClause.avatarUrl === null && current.url && isOwnedAvatarBlobUrl(current.url, session.userId) ? avatarPathname(current.url) : null;
       if (current.url && oldPath) {
+        let score: number;
         try {
-          await markForSweep(oldPath);
+          score = await markForSweep(oldPath);
         } catch (e) {
           console.warn('[profile-update] sweep set unavailable, nothing changed', e instanceof Error ? e.name : 'error');
           throw new SweepUnavailable();
         }
-        removed = { url: current.url, pathname: oldPath };
+        removed = { url: current.url, pathname: oldPath, score };
       }
       return tx
         .update(users)
@@ -195,11 +195,8 @@ export async function POST(req: Request) {
     throw e;
   }
 
-  const old = removed as { url: string; pathname: string } | null;
-  if (updated.length > 0 && old) {
-    await markForSweep(old.pathname).catch((e) => console.warn('[profile-update] sweep re-mark failed', e instanceof Error ? e.name : 'error'));
-    await del(old.url).catch((e) => console.warn('[profile-update] removed blob delete failed, left to the sweep', e));
-  }
+  const old = removed as { url: string; pathname: string; score: number } | null;
+  if (updated.length > 0 && old) await deleteSettled(old, 'profile-update');
 
   if (updated.length === 0) {
     // Session points to a deleted user. Mirror /me semantics.

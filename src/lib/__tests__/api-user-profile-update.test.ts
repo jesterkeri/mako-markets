@@ -179,8 +179,8 @@ function setupHappy(rowOverrides: Record<string, unknown> = {}, currentPhoto: st
   mocks.selectCurrent.mockResolvedValue([{ url: currentPhoto }]);
 }
 
-// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
-beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+// The sweep set is named per environment (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('AVATAR_SWEEP_SCOPE', 'test'));
 afterEach(() => vi.unstubAllEnvs());
 
 describe('POST /api/user/profile/update', () => {
@@ -307,7 +307,8 @@ describe('POST /api/user/profile/update', () => {
     expect((await POST(makeRequest({ avatarUrl: null }))).status).toBe(200);
     expect(mocks.log).toEqual([`mark ${path}`, 'update', 'commit', `mark ${path}`, `del ${own}`]);
     expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: null }]]);
-    expect([...mocks.sweep.members.keys()]).toEqual([path]);
+    // Deleted, so it leaves the set: nothing waits for the sweep (Codex R5 F1).
+    expect([...mocks.sweep.members.keys()]).toEqual([]);
     mocks.log.length = 0;
     mocks.sweep.members.clear();
     mocks.del.mockClear();

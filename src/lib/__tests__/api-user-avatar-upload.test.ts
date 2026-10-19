@@ -236,8 +236,8 @@ function setupHappy(opts: {
   return rows;
 }
 
-// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
-beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+// The sweep set is named per environment (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('AVATAR_SWEEP_SCOPE', 'test'));
 afterEach(() => vi.unstubAllEnvs());
 
 describe('POST /api/user/avatar/upload', () => {
@@ -403,7 +403,7 @@ describe('POST /api/user/avatar/upload', () => {
   });
 
   describe('prior-blob cleanup ownership scoping', () => {
-    it('own prior photo: recorded in the set inside the locked transaction, again after the commit, then deleted', async () => {
+    it('own prior photo: recorded in the set inside the locked transaction, again after the commit, then deleted; both files leave the set once settled', async () => {
       const ownPrior =
         `https://abc.public.blob.vercel-storage.com/avatars/${USER_ID}/old-rand.webp`;
       const oldPath = `avatars/${USER_ID}/old-rand.webp`;
@@ -414,7 +414,8 @@ describe('POST /api/user/avatar/upload', () => {
       expect(mocks.log).toEqual([`mark ${putPath()}`, 'put', `mark ${oldPath}`, 'commit', `mark ${oldPath}`, `del ${ownPrior}`]);
       expect(mocks.blobDel.mock.calls).toEqual([[ownPrior]]);
       expect(mocks.updateSet.mock.calls).toEqual([[{ avatarUrl: putUrl() }]]);
-      expect([...mocks.sweep.members.keys()].sort()).toEqual([oldPath, putPath()].sort());
+      // Settled: the row points at the new file and the old one is deleted, so nothing waits for the sweep (Codex R5 F1).
+      expect([...mocks.sweep.members.keys()]).toEqual([]);
     });
 
     it('REFUSES to delete a foreign-user blob URL (path is /avatars/<otherId>/...)', async () => {

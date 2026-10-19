@@ -1,0 +1,20 @@
+name = "mako-beta-sweep"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Fires beta.makomarket.xyz's /api/cron/avatar-sweep every 15 minutes (owner decisions Q-J and Q-L, 2026-10-19).
+# Secrets (wrangler secret put): BETA_CRON_SECRET (beta's CRON_SECRET, Vercel Preview/staging) and
+# VERCEL_PROTECTION_BYPASS (a bypass token made for this worker only). See README.md.
+
+# No public URL: the worker has no fetch handler and no workers.dev route.
+workers_dev = false
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+[limits]
+cpu_ms = 1000
+subrequests = 2
+
+[observability]
+enabled = true

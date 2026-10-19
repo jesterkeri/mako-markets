@@ -34,11 +34,11 @@ export function fakeSweepStore(log: string[] = []): FakeSweepStore {
       primary ??= key;
       const members = key === primary ? s.members : s.others.get(key) ?? s.others.set(key, new Map()).get(key)!;
       if (script.includes('ZRANGEBYSCORE')) {
-        const [graceMs, limit] = argv.map(Number);
+        const [graceMs, limit, skip = 0] = argv.map(Number);
         return [...members]
           .filter(([, score]) => score <= s.now - graceMs)
           .sort((a, b) => a[1] - b[1])
-          .slice(0, limit)
+          .slice(skip, skip + limit)
           .flatMap(([m, score]) => [m, String(score)]);
       }
       if (script.includes('ZREM')) {

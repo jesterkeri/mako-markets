@@ -35,7 +35,7 @@ vi.mock('@vercel/blob', () => ({
 }));
 
 const { GET } = await import('@/app/api/cron/avatar-sweep/route');
-const { GRACE_MS, SWEEP_BATCH } = await import('@/lib/avatar-sweep');
+const { GRACE_MS, SWEEP_BATCH, SWEEP_BUDGET_MS, sweepAvatars } = await import('@/lib/avatar-sweep');
 
 let client: PGlite;
 let store: ReturnType<typeof fakeSweepStore>;
@@ -76,8 +76,8 @@ function file(name: string) {
 }
 const sweep = (auth = `Bearer ${CRON_SECRET}`) => GET(new Request('http://localhost/api/cron/avatar-sweep', { headers: { authorization: auth } }));
 
-// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
-beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+// The sweep set is named per environment (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('AVATAR_SWEEP_SCOPE', 'test'));
 afterEach(() => vi.unstubAllEnvs());
 
 describe('GET /api/cron/avatar-sweep', () => {
@@ -92,10 +92,10 @@ describe('GET /api/cron/avatar-sweep', () => {
   it('the 5-minute grace: a file added less than 5 minutes ago is left alone, at 5 minutes it is deleted', async () => {
     file('a');
     store.now += GRACE_MS - 1;
-    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 0, deleted: 0, kept: 0, failed: 0, invalid: 0 });
+    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 0, deleted: 0, kept: 0, failed: 0, invalid: 0, complete: true });
     expect(state.stored.has(url('a'))).toBe(true);
     store.now += 1;
-    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 1, deleted: 1, kept: 0, failed: 0, invalid: 0 });
+    expect(await (await sweep()).json()).toEqual({ ok: true, checked: 1, deleted: 1, kept: 0, failed: 0, invalid: 0, complete: true });
     expect(state.stored.size).toBe(0);
     expect(store.members.size).toBe(0);
   });
@@ -154,14 +154,64 @@ describe('GET /api/cron/avatar-sweep', () => {
     expect(store.members.size).toBe(0);
   });
 
-  it(`at most ${SWEEP_BATCH} a run, oldest first`, async () => {
+  it(`one run clears more than ${SWEEP_BATCH} (Codex R5 F1)`, async () => {
     for (let i = 0; i < SWEEP_BATCH + 5; i++) {
       file(`f${i}`);
       store.now += 1;
     }
     store.now += GRACE_MS;
-    expect(await (await sweep()).json()).toMatchObject({ checked: SWEEP_BATCH, deleted: SWEEP_BATCH });
-    expect([...store.members.keys()].sort()).toEqual([200, 201, 202, 203, 204].map((i) => path(`f${i}`)).sort());
+    expect(await (await sweep()).json()).toMatchObject({ checked: SWEEP_BATCH + 5, deleted: SWEEP_BATCH + 5, complete: true });
+    expect(store.members.size).toBe(0);
+    expect(state.stored.size).toBe(0);
+  });
+
+  it(`a removed photo behind more than ${SWEEP_BATCH} older failing deletes is still deleted in that run (Codex R5 F1)`, async () => {
+    for (let i = 0; i <= SWEEP_BATCH; i++) {
+      file(`stuck${i}`);
+      state.failDel.add(url(`stuck${i}`));
+      store.now += 1;
+    }
+    file('removed');
+    store.now += GRACE_MS;
+    expect(await (await sweep()).json()).toMatchObject({ checked: SWEEP_BATCH + 2, deleted: 1, failed: SWEEP_BATCH + 1, complete: true });
+    expect(state.stored.has(url('removed'))).toBe(false);
+    // The failures stay for the next run, each tried once in this one.
+    expect(store.members.size).toBe(SWEEP_BATCH + 1);
+    expect(state.deletes.filter((u) => u === url('stuck0'))).toHaveLength(1);
+  });
+
+  it('a run stops at its time budget and reports the backlog; the route logs it as an error (Codex R5 F1)', async () => {
+    for (let i = 0; i < SWEEP_BATCH * 2; i++) {
+      file(`f${i}`);
+      store.now += 1;
+    }
+    store.now += GRACE_MS;
+    let t = 0;
+    const clock = () => (t += SWEEP_BUDGET_MS); // the budget is spent after the first batch
+    expect(await sweepAvatars(clock)).toMatchObject({ checked: SWEEP_BATCH, deleted: SWEEP_BATCH, complete: false });
+    expect(store.members.size).toBe(SWEEP_BATCH);
+    let d = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => (d += SWEEP_BUDGET_MS));
+    for (let i = 0; i < SWEEP_BATCH + 1; i++) {
+      file(`g${i}`);
+      store.now += 1;
+    }
+    store.now += GRACE_MS;
+    const body = await (await sweep()).json();
+    spy.mockRestore();
+    expect(body).toMatchObject({ complete: false });
+    expect(console.error).toHaveBeenCalledWith('[cron/avatar-sweep] backlog left after the time budget', expect.objectContaining({ complete: false }));
+  });
+
+  it('no AVATAR_SWEEP_SCOPE, or a malformed one: 500 and nothing deleted (Codex R5 F2)', async () => {
+    file('a');
+    store.now += GRACE_MS;
+    vi.stubEnv('AVATAR_SWEEP_SCOPE', '');
+    expect((await sweep()).status).toBe(500);
+    vi.stubEnv('AVATAR_SWEEP_SCOPE', 'Prod/../x');
+    expect((await sweep()).status).toBe(500);
+    vi.stubEnv('AVATAR_SWEEP_SCOPE', 'test');
+    expect(state.deletes).toEqual([]);
   });
 
   it('no Blob host (token missing) or the set store down: 500 and nothing deleted', async () => {

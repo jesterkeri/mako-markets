@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import { type Address } from 'viem';
 import { eq } from 'drizzle-orm';
-import { put, del } from '@vercel/blob';
+import { put } from '@vercel/blob';
 import sharp from 'sharp';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
-import { avatarPathname, markForSweep } from '@/lib/avatar-sweep';
+import { avatarPathname, deleteSettled, markForSweep, unmarkSettled } from '@/lib/avatar-sweep';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
@@ -39,7 +39,8 @@ import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
 //      c. one transaction, the row locked: read the current photo; if it is this user's own upload (the path-prefix
 //         check is load-bearing, so a pasted foreign URL can never get another user's file deleted) record it in the
 //         set too (failure: rolled back, 503); point the row at the new photo; commit.
-//      d. record the replaced file again (best effort) and e. del() it (best effort). 200 once (c) committed.
+//      d. take the new file off the set, record the replaced file again and e. del() it, then take it off the set
+//         (each best effort). 200 once (c) committed.
 //      The row only ever moves to a photo already stored, so the active photo is never broken.
 //
 // Vercel route body limit is 4.5 MB. We cap at 4 MB to leave headroom
@@ -117,8 +118,9 @@ export async function POST(req: Request) {
 
   // a. The new file is in the sweep set before it exists, so no failure from here on can leave it untracked.
   const pathname = `avatars/${session.userId}/${randomUUID()}.webp`;
+  let newScore: number;
   try {
-    await markForSweep(pathname);
+    newScore = await markForSweep(pathname);
   } catch (e) {
     console.warn('[avatar-upload] sweep set unavailable, nothing changed', e instanceof Error ? e.name : 'error');
     return Response.json({ error: 'sweep_unavailable' }, { status: 503 });
@@ -138,15 +140,16 @@ export async function POST(req: Request) {
   // c. The row is locked from the read of the current photo to the commit, so two requests from one account each
   // replace exactly the photo the other left (Codex PUBLIC_PROFILE R3 M1). A database failure here propagates: the new
   // file is in the set (swept unless the row turns out to point at it) and so is the replaced one.
-  let result: { row: UpdatedRow; replaced: { url: string; pathname: string } | null } | undefined;
+  let result: { row: UpdatedRow; replaced: { url: string; pathname: string; score: number } | null } | undefined;
   try {
     result = await db.transaction(async (tx) => {
       const [current] = await tx.select({ url: users.avatarUrl }).from(users).where(eq(users.id, session.userId)).for('update');
       if (!current) return undefined;
       const oldPath = current.url && isOwnedAvatarBlobUrl(current.url, session.userId) ? avatarPathname(current.url) : null;
+      let oldScore = 0;
       if (oldPath) {
         try {
-          await markForSweep(oldPath);
+          oldScore = await markForSweep(oldPath);
         } catch {
           throw new SweepUnavailable();
         }
@@ -164,7 +167,7 @@ export async function POST(req: Request) {
           totpEnabledAt: users.totpEnabledAt,
           lastEmailChangedAt: users.lastEmailChangedAt,
         });
-      return { row: updated, replaced: current.url && oldPath ? { url: current.url, pathname: oldPath } : null };
+      return { row: updated, replaced: current.url && oldPath ? { url: current.url, pathname: oldPath, score: oldScore } : null };
     });
   } catch (e) {
     if (e instanceof SweepUnavailable) return Response.json({ error: 'sweep_unavailable' }, { status: 503 });
@@ -176,11 +179,10 @@ export async function POST(req: Request) {
   }
   const { row, replaced: old } = result;
 
-  // d, e. Committed: the old file goes now if storage allows, else at the next sweep.
-  if (old) {
-    await markForSweep(old.pathname).catch((e) => console.warn('[avatar-upload] sweep re-mark failed', e instanceof Error ? e.name : 'error'));
-    await del(old.url).catch((e) => console.warn('[avatar-upload] replaced blob delete failed, left to the sweep', e));
-  }
+  // d, e. Committed: the row points at the new file, so it leaves the set; the old file goes now if storage allows,
+  // else at the next sweep (Codex PUBLIC_PROFILE R5 F1: settled files never wait in the set).
+  await unmarkSettled(pathname, newScore);
+  if (old) await deleteSettled(old, 'avatar-upload');
 
   const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);
 

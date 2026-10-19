@@ -74,7 +74,7 @@ type Deployment = {
   env: Record<string, string>;
 };
 
-const ENV_KEYS = ['BLOB_READ_WRITE_TOKEN', 'CRON_SECRET', 'VERCEL_ENV', 'DATABASE_URL', 'VERCEL_GIT_COMMIT_REF', 'VERCEL_URL'];
+const ENV_KEYS = ['AVATAR_SWEEP_SCOPE', 'BLOB_READ_WRITE_TOKEN', 'CRON_SECRET', 'VERCEL_ENV', 'DATABASE_URL', 'VERCEL_GIT_COMMIT_REF', 'VERCEL_URL'];
 const saved: Record<string, string | undefined> = {};
 let store: ReturnType<typeof fakeSweepStore>;
 let prod: Deployment;
@@ -127,6 +127,7 @@ beforeEach(async () => {
   prod = await newDeployment({
     ...shared,
     VERCEL_ENV: 'production',
+    AVATAR_SWEEP_SCOPE: 'production',
     DATABASE_URL: 'postgres://prod.invalid/neondb',
     VERCEL_GIT_COMMIT_REF: 'main',
     VERCEL_URL: 'mako-markets-prod.vercel.app',
@@ -134,6 +135,7 @@ beforeEach(async () => {
   beta = await newDeployment({
     ...shared,
     VERCEL_ENV: 'preview',
+    AVATAR_SWEEP_SCOPE: 'beta',
     DATABASE_URL: 'postgres://dev.invalid/neondb',
     VERCEL_GIT_COMMIT_REF: 'staging',
     VERCEL_URL: 'mako-markets-beta.vercel.app',

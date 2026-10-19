@@ -154,8 +154,8 @@ async function expectStorageMatchesRow() {
   expect({ row, stored: [...state.stored].sort() }).toEqual({ row, stored: row ? [row] : [] });
 }
 
-// The sweep set is named per database (avatar-sweep.ts sweepKey), so the module needs one configured.
-beforeEach(() => vi.stubEnv('DATABASE_URL', 'postgres://test.invalid/mako'));
+// The sweep set is named per environment (avatar-sweep.ts sweepKey), so the module needs one configured.
+beforeEach(() => vi.stubEnv('AVATAR_SWEEP_SCOPE', 'test'));
 afterEach(() => vi.unstubAllEnvs());
 
 describe('interleavings of removal and uploads from one account', () => {
