@@ -2,6 +2,7 @@
 // site-wide ceiling BEFORE any database query (the session row included); invalid and reserved names are answered with
 // no session, store or database at all; the store down is a refusal, never unlimited.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// (Codex UNIQUE_NAMES R3: the session window is charged before the session row is read; the site-wide one only after.)
 
 const mocks = vi.hoisted(() => ({ session: vi.fn(), held: vi.fn(), upstash: vi.fn(), cookie: { value: 'sid-1' as string | undefined } }));
 vi.mock('server-only', () => ({}));
@@ -20,7 +21,7 @@ import { GET } from '@/app/api/user/profile/name-available/route';
 
 const ask = (name: string) => GET(new Request(`http://localhost/api/user/profile/name-available?name=${encodeURIComponent(name)}`));
 
-// A faithful model of the script: INCR the session key and the site-wide key, -1 / -2 over a cap, else the session count.
+// A faithful model of the script: INCR the one key, -1 over its cap, else the count.
 const counts = new Map<string, number>();
 beforeEach(() => {
   counts.clear();
@@ -28,14 +29,10 @@ beforeEach(() => {
   mocks.session.mockResolvedValue({ userId: 'u-1' });
   mocks.held.mockResolvedValue(false);
   mocks.upstash.mockImplementation(async (args: (string | number)[]) => {
-    const [, , , key, all, , capA, capG] = args;
-    const a = (counts.get(String(key)) ?? 0) + 1;
-    const g = (counts.get(String(all)) ?? 0) + 1;
-    counts.set(String(key), a);
-    counts.set(String(all), g);
-    if (a > Number(capA)) return -1;
-    if (g > Number(capG)) return -2;
-    return a;
+    const [, , , key, , cap] = args;
+    const n = (counts.get(String(key)) ?? 0) + 1;
+    counts.set(String(key), n);
+    return n > Number(cap) ? -1 : n;
   });
 });
 afterEach(() => vi.clearAllMocks());
@@ -88,5 +85,20 @@ describe('GET /api/user/profile/name-available, the cap', () => {
   it('the store never holds the raw session id', async () => {
     await ask('Anyone');
     for (const key of counts.keys()) expect(key).not.toContain('sid-');
+  });
+  it('a session over its own cap never spends the site-wide ceiling (R3 M1)', async () => {
+    for (let i = 0; i < 300; i++) await ask(`Hog${i}`);
+    expect(counts.get('mako:namecheck:all')).toBe(NAME_CHECKS_PER_MINUTE);
+    mocks.cookie.value = 'sid-other';
+    expect((await ask('Fair')).status).toBe(200);
+  });
+
+  it('a revoked session (valid signature, no session row) never spends the site-wide ceiling (R3 M2)', async () => {
+    mocks.session.mockResolvedValue(null);
+    for (let i = 0; i < 40; i++) expect((await ask(`Stale${i}`)).status).toBeGreaterThanOrEqual(401);
+    expect(counts.get('mako:namecheck:all') ?? 0).toBe(0);
+    // Its own window still bounds the session-row reads it can cause.
+    expect(mocks.session).toHaveBeenCalledTimes(NAME_CHECKS_PER_MINUTE);
+    expect(mocks.held).not.toHaveBeenCalled();
   });
 });

@@ -90,7 +90,7 @@ describe('shared rules', () => {
 
 const mocks = vi.hoisted(() => ({ session: vi.fn(), holder: vi.fn() }));
 // (Builder: the per-account name-check cap, Codex UNIQUE_NAMES R1 M2, is its own test; here it always allows.)
-vi.mock('@/lib/name-check-budget', () => ({ reserveNameCheck: async () => 'ok' }));
+vi.mock('@/lib/name-check-budget', () => ({ reserveSessionCheck: async () => 'ok', reserveSiteCheck: async () => 'ok' }));
 vi.mock('@/lib/user-session', () => ({ getUserSession: mocks.session }));
 vi.mock('@/db/client', () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: () => mocks.holder() }) }) }) } }));
 
