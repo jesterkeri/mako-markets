@@ -1,9 +1,10 @@
 import { cookies } from 'next/headers';
 import { type Address } from 'viem';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { sessions, users } from '@/db/schema';
+import { totpStepGuard } from '@/lib/totp-step-guard';
 import {
   consumeSigninChallengeInTx,
   validateSigninChallenge,
@@ -338,12 +339,7 @@ export async function POST(req: Request) {
             totpFailedAttempts: 0,
             totpLockedUntil: null,
           })
-          .where(
-            and(
-              eq(users.id, user.id),
-              sql`${users.totpLastUsedStep} IS NULL OR ${users.totpLastUsedStep} < ${verifyResult.step}`,
-            ),
-          )
+          .where(totpStepGuard(user.id, verifyResult.step))
           .returning({ id: users.id });
         if (updated.length === 0) {
           // Replay caught: this exact step has already been consumed.
