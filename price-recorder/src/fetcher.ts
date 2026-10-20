@@ -40,7 +40,7 @@ export type Chain = { minutes: number[]; entries: PageEntry[]; ok: boolean };
 /// Why a feed's work stopped early, if it did: an answer that was not a page (its kind), a page that broke the
 /// ordering checks, or the limiter's refusal. Null when it stopped because its minutes were proven, its cap was
 /// reached, or Chainlink had nothing newer.
-export type Stop = Exclude<PageResult['kind'], 'ok'> | 'disordered' | Refusal | null;
+export type Stop = Exclude<PageResult['kind'], 'ok' | 'unsent'> | 'disordered' | Refusal | null;
 
 export type FeedFetch = {
   chains: Chain[];
@@ -139,8 +139,9 @@ export async function fetchMinutes(ctx: FetchContext, feed: Feed, targets: reado
       if (maxValid >= last + MINUTE_S) break; // every minute of this chain has its witness
       if (out.pages >= cap) break;
       const res = await ctx.limiter.run(() => ctx.client(feed.feedId, S));
-      if (!res.ran) {
-        out.stop = res.refusal;
+      if (!res.ran || res.value.kind === 'unsent') {
+        if (res.ran) ctx.limiter.notSent(); // halted while signing: granted, never sent
+        out.stop = res.ran ? 'halted' : res.refusal;
         // A chain the limiter refused before its first page was never attempted: its minutes are not built (a
         // retried minute keeps its tries; the caller builds the live minute as incomplete anyway).
         if (!chainAsked) out.chains.pop();

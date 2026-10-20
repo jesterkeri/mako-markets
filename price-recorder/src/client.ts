@@ -33,7 +33,9 @@ export const pagePath = (feedId: string, start: number, limit = PAGE_LIMIT): str
 export type PageResult =
   | { kind: 'ok'; status: 200; reports: PageEntry[]; requestId: string | null }
   | { kind: 'feed_refused' | 'key_failure' | 'rate_limited'; status: number; requestId: string | null }
-  | { kind: 'failed'; status: number; reason: 'server_error' | 'bad_status' | 'bad_body' | 'network'; requestId: string | null };
+  | { kind: 'failed'; status: number; reason: 'server_error' | 'bad_status' | 'bad_body' | 'network'; requestId: string | null }
+  /// Not sent: the tick was halted while the request was being signed (mayStart).
+  | { kind: 'unsent'; status: 0; requestId: null };
 
 export type PageClient = (feedId: string, start: number) => Promise<PageResult>;
 
@@ -124,6 +126,9 @@ export type ClientDeps = {
   /// Told each answer's status as soon as it arrives, before its body is read or cancelled (a 429 must halt the tick
   /// before any other call can start, plan 4.1).
   onStatus?: (status: number) => void;
+  /// Asked after signing, just before the request goes out: false (the tick was halted meanwhile, plan 4.1) means
+  /// nothing is sent.
+  mayStart?: () => boolean;
 };
 
 /// One page request, never throwing.
@@ -133,6 +138,7 @@ export function pageClient(d: ClientDeps): PageClient {
     const path = pagePath(feedId, start);
     try {
       const headers = await reportHeaders(path, d.creds.apiKey, d.creds.secret, String(d.now()), d.hmac ?? hmacSha256Hex);
+      if (d.mayStart && !d.mayStart()) return { kind: 'unsent', status: 0, requestId: null };
       const res = await d.fetchImpl(`${base}${path}`, { headers, signal: AbortSignal.timeout(d.timeoutMs ?? REPORT_TIMEOUT_MS) });
       d.onStatus?.(res.status);
       return await classify(res);

@@ -211,7 +211,8 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     const onStatus = (s: number) => {
       if (s === 429) limiter.halt('rate_limited');
     };
-    const raw = pageClient({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, now: () => clock.now(), hmac: deps.hmac, timeoutMs: deps.timeoutMs, onStatus });
+    const mayStart = () => limiter.halted === null;
+    const raw = pageClient({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, now: () => clock.now(), hmac: deps.hmac, timeoutMs: deps.timeoutMs, onStatus, mayStart });
     const client: PageClient = async (feedId, start) => {
       const r = await raw(feedId, start);
       if (r.kind === 'key_failure' || r.kind === 'rate_limited') limiter.halt(r.kind);

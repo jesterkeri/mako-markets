@@ -48,8 +48,14 @@ export class Limiter {
     private readonly maxCalls: number = MAX_PAGES_PER_TICK,
   ) {}
 
+  /// Calls granted and sent. A granted call that was not sent (notSent) keeps its place in the pacing window.
   get calls(): number {
-    return this.starts.length;
+    return this.starts.length - this.unsentN;
+  }
+
+  private unsentN = 0;
+  notSent(): void {
+    this.unsentN++;
   }
 
   get halted(): string | null {
