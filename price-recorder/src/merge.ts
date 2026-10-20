@@ -189,6 +189,12 @@ export function mergeMinute(stored: StoredMinute | null, fresh: MinuteRow): Minu
   if (fresh.state === 'conflict') {
     const evidence = sameSecond(fresh.symbol, fresh.t, fresh, fresh.conflicts);
     if (stored?.state === 'conflict') return out(null, 'kept', evidence);
+    // A proven row whose re-fetch now holds a same-second contradiction also changed its upstream bytes: record the
+    // refetch with both raw fingerprints, so the evidence the served candle was built from is kept (plan 3.5 step 4;
+    // adversary on eda38c7).
+    if (stored && isProven(stored.state) && stored.raw_rule === fresh.raw_rule && stored.raw_fp !== fresh.raw_fp) {
+      evidence.push(refetch(stored, fresh));
+    }
     return out(toStored(fresh, tries), 'conflict', evidence);
   }
 

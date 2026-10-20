@@ -101,7 +101,13 @@ describe('row: proven', () => {
     expect(m.write).toMatchObject({ state: 'conflict', o: null, h: null, l: null, c: null });
     expect(m.becameConflict).toBe(true);
     expect(m.evidence[0]).toMatchObject({ kind: 'same_second', fp_old: null, raw_fp_old: null, raw_fp_new: conflictOf(page, BTC, M, M + 7, 6).raw_fp });
-    expect(m.evidence).toEqual(mergeMinute(null, conflictOf(page, BTC, M, M + 7, 6)).evidence);
+    // The same-second evidence is what a fresh conflict records; the proven row's re-fetch adds a refetch record with
+    // both raw fingerprints (plan 3.5 step 4).
+    const fresh = mergeMinute(null, conflictOf(page, BTC, M, M + 7, 6)).evidence;
+    expect(m.evidence.slice(0, fresh.length)).toEqual(fresh);
+    expect(m.evidence.slice(fresh.length)).toEqual([
+      expect.objectContaining({ kind: 'refetch_mismatch', raw_fp_old: open().raw_fp, raw_fp_new: conflictOf(page, BTC, M, M + 7, 6).raw_fp }),
+    ]);
   });
 
   it('closed, then a same-second conflict -> conflict', () => {

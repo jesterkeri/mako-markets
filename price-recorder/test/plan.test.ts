@@ -146,7 +146,8 @@ describe('a conflict makes every bucket holding the minute a gap, with exact cou
     const d = rollupDay('AAPL', D15, [...store.hours.filter((h) => h.t !== H20), p.hours[0]], FAR);
     expect(p.days[0]).toEqual(d);
     expect(p.days[0].o).toBe(m1959.o);
-    expect(p.evidence).toHaveLength(1);
+    // The same-second evidence and, since the stored row was proven, the refetch with both raw fingerprints (3.5 step 4).
+    expect(p.evidence.map((e) => e.kind)).toEqual(['same_second', 'refetch_mismatch']);
   });
 });
 

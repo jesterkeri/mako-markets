@@ -121,8 +121,12 @@ describe('conflicts in D1 (3.4, 3.5)', () => {
     await tick([conflict()]);
     await tick([conflict()]);
     expect(await rows(`SELECT state, o FROM candles_1m WHERE feed = 'AAPL' AND t = ${T}`)).toEqual([{ state: 'conflict', o: null }]);
-    const ev = await rows('SELECT feed, kind, minute, obs, typeof(seen_at) AS s FROM conflicts');
-    expect(ev).toEqual([{ feed: 'AAPL', kind: 'same_second', minute: T, obs: T + 3, s: 'integer' }]);
+    const ev = await rows('SELECT feed, kind, minute, obs, typeof(seen_at) AS s FROM conflicts ORDER BY kind DESC');
+    // Each kind once, however often re-fetched: the same-second pair, and the refetch of the proven row (3.5 step 4).
+    expect(ev).toEqual([
+      { feed: 'AAPL', kind: 'same_second', minute: T, obs: T + 3, s: 'integer' },
+      { feed: 'AAPL', kind: 'refetch_mismatch', minute: T, obs: null, s: 'integer' },
+    ]);
     expect(await rows(`SELECT n_min_gap, o FROM candles_1h WHERE feed = 'AAPL' AND t = ${T}`)).toEqual([{ n_min_gap: 59, o: null }]);
     await invariant();
   });
