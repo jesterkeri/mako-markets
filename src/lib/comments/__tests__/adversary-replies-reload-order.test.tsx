@@ -9,10 +9,11 @@
 // reply (spec #193 (c), (d)) or bring back a reply the viewer just deleted
 // (spec #193 (b)).
 //
-// The third case covers spec (a) for a reply by someone else: once the thread
-// is expanded to its end, the 60 s poll returns the same window and cursor, so
-// a reply posted past the window afterwards must still become reachable. The
-// fourth is the same for someone else's delete of a reply in the expanded list.
+// The later cases cover spec (a) for a reply by someone else: once the thread
+// is expanded to its end, the 60 s poll returns the same window and cursor, and
+// only the live reply count moves. Nothing updates under the reader on its own:
+// VIEW N NEW REPLIES appears and re-reads the list when tapped. SHOW FEWER
+// REPLIES returns an expanded thread to its first window.
 //
 // The data hooks are mocked the way comments-replies-reconcile.test.tsx does.
 // ----------------------------------------------------------------------------
@@ -172,47 +173,83 @@ describe('#193 adversary r2: re-reads after a reply land out of order', () => {
     expect(screen.queryByText('body r4')).toBeNull();
   });
 
-  // Was skipped as a known limit of #193; closed by the live reply count in the window key (owner's call, 2026-10-20).
-  it("someone else's reply posted after the thread was expanded to its end becomes reachable after the poll", async () => {
+  // Replaces the test skipped as a known limit of #193 (owner's design, 2026-10-20).
+  it("someone else's reply after the thread was expanded to its end shows VIEW 1 NEW REPLY, which loads it", async () => {
     setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 4));
     h.pages.set('c3', { comments: [reply('r4')], nextCursor: null });
     const { rerender } = render(ui());
     await act(async () => fireEvent.click(screen.getByText('VIEW MORE REPLIES')));
     expect(screen.queryByText('VIEW MORE REPLIES')).toBeNull();
+    expect(screen.queryByText(/NEW REPL/)).toBeNull();
 
-    // Another user posts r5. The 60 s poll returns the same window and cursor (r5 lies past r4); only the count moves.
+    // Another user posts r5. The 60 s poll returns the same window and cursor; only the count moves.
     h.pages.set('c3', { comments: [reply('r4'), reply('r5')], nextCursor: null });
     setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 5));
     await act(async () => {
       rerender(ui());
     });
 
-    const reachable = screen.queryByText('body r5') !== null || screen.queryByText('VIEW MORE REPLIES') !== null;
-    expect(reachable).toBe(true);
+    // Nothing changes under the reader, and the poll alone made no request.
+    expect(screen.getByText('body r4')).toBeTruthy();
+    expect(screen.queryByText('body r5')).toBeNull();
+    expect(h.calls).toEqual(['c3']);
+
+    await act(async () => fireEvent.click(screen.getByText('VIEW 1 NEW REPLY')));
+    for (const id of ['r1', 'r2', 'r3', 'r4', 'r5']) expect(screen.getAllByText(`body ${id}`)).toHaveLength(1);
+    expect(screen.queryByText(/NEW REPL/)).toBeNull();
+    expect(h.calls).toEqual(['c3', 'c3']);
   });
 
-  it("someone else's delete of a reply in the expanded list removes it after the poll", async () => {
-    // Server: window r1 r2 r3 (cursor c3), then r4 and r5, both by another user. The viewer expands to the end.
-    setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 5));
-    h.pages.set('c3', { comments: [reply('r4'), reply('r5')], nextCursor: null });
+  it('the new-replies label counts them', async () => {
+    setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 4));
+    h.pages.set('c3', { comments: [reply('r4')], nextCursor: null });
     const { rerender } = render(ui());
+    await act(async () => fireEvent.click(screen.getByText('VIEW MORE REPLIES')));
+
+    setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 6));
+    await act(async () => {
+      rerender(ui());
+    });
+    expect(screen.getByText('VIEW 2 NEW REPLIES')).toBeTruthy();
+  });
+
+  it('a count change on a thread that is not expanded shows no new-replies button and makes no request', async () => {
+    setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 4));
+    const { rerender } = render(ui());
+    setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 5));
+    await act(async () => {
+      rerender(ui());
+    });
+    expect(screen.queryByText(/NEW REPL/)).toBeNull();
+    expect(screen.getByText('VIEW MORE REPLIES')).toBeTruthy();
+    expect(h.calls).toEqual([]);
+  });
+
+  it('SHOW FEWER REPLIES returns to the window, and a page in flight then lands stale', async () => {
+    setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 5));
+    h.pages.set('c3', { comments: [reply('r4')], nextCursor: 'c4' });
+    render(ui());
+    expect(screen.queryByText('SHOW FEWER REPLIES')).toBeNull();
     await act(async () => fireEvent.click(screen.getByText('VIEW MORE REPLIES')));
     expect(screen.getByText('body r4')).toBeTruthy();
 
-    // r4's author deletes it. The poll returns the same window and cursor; the count drops to 4.
-    h.pages.set('c3', { comments: [reply('r5')], nextCursor: null });
-    setThread(thread([reply('r1'), reply('r2'), reply('r3')], 'c3', 4));
-    await act(async () => {
-      rerender(ui());
-    });
-
-    // The thread falls back to the server's window and its VIEW MORE: the deleted reply is gone.
+    // Back to the window: the button is a real button, and VIEW MORE shows again.
+    expect(screen.getByRole('button', { name: 'SHOW FEWER REPLIES' })).toBeTruthy();
+    fireEvent.click(screen.getByText('SHOW FEWER REPLIES'));
     expect(screen.queryByText('body r4')).toBeNull();
+    expect(screen.queryByText('SHOW FEWER REPLIES')).toBeNull();
     expect(screen.getByText('VIEW MORE REPLIES')).toBeTruthy();
 
-    // VIEW MORE reaches what is left past the window, without the deleted reply.
+    // Expand again, ask for the next page, and show fewer while it is in flight.
     await act(async () => fireEvent.click(screen.getByText('VIEW MORE REPLIES')));
-    expect(screen.getByText('body r5')).toBeTruthy();
+    let release!: (p: Page) => void;
+    h.held.set('c4', new Promise<Page>((res) => (release = res)));
+    await act(async () => fireEvent.click(screen.getByText('VIEW MORE REPLIES')));
+    fireEvent.click(screen.getByText('SHOW FEWER REPLIES'));
+    await act(async () => release({ comments: [reply('r5')], nextCursor: null }));
+
     expect(screen.queryByText('body r4')).toBeNull();
+    expect(screen.queryByText('body r5')).toBeNull();
+    expect(screen.getByText('VIEW MORE REPLIES')).toBeTruthy();
   });
 });

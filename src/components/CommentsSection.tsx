@@ -211,9 +211,9 @@ function CommentThread({
   // replies is deleted, so a list from another window is ignored and the thread shows the server's window and its
   // VIEW MORE again (nothing twice, nothing lost). A page or re-read that lands after the list changed is dropped. A
   // reply deleted from the list leaves it (reply pages never include deleted ones); the viewer's own reply re-reads it.
-  // The window also records the thread's live reply count from the server, so another user's reply past the window,
-  // or another user's delete of a reply in the list, changes it at the next poll: the list is ignored and the server's
-  // window and its VIEW MORE show again, which reach the new reply and leave the deleted one out.
+  // Nothing past the window updates under the reader on its own. When the list reached its end and the server's live
+  // reply count (polled with the list) is higher than the replies shown, VIEW N NEW REPLIES takes VIEW MORE's place and
+  // re-reads the list. A reply someone else deleted stays until a reload or a re-read; SHOW FEWER returns to the window.
   type More = { replies: CommentWire[]; cursor: string | null; pages: number; window: string };
   // A fresh "nothing loaded" value: its window matches no real window, so the thread shows the server's window, and
   // being a new object it makes any page already in flight land as stale.
@@ -222,10 +222,12 @@ function CommentThread({
   const [loadingMore, setLoadingMore] = useState(false);
   const post = usePostComment(target);
 
-  const windowKey = `${comment.replies.map((r) => r.id).join(',')}|${comment.repliesNextCursor ?? ''}|${comment.repliesCount}`;
+  const windowKey = `${comment.replies.map((r) => r.id).join(',')}|${comment.repliesNextCursor ?? ''}`;
   const more = stored && stored.window === windowKey ? stored : null;
   const replies = more ? [...comment.replies, ...more.replies] : comment.replies;
   const replyCursor = more ? more.cursor : comment.repliesNextCursor;
+  // Replies the server counts beyond a list expanded to its end: posted by someone else since it was read.
+  const newReplies = more && !more.cursor && comment.repliesNextCursor ? comment.repliesCount - replies.length : 0;
 
   async function loadMoreReplies() {
     if (!replyCursor || loadingMore) return;
@@ -276,6 +278,10 @@ function CommentThread({
     }
   }
 
+  function viewNewReplies() {
+    if (more && comment.repliesNextCursor) void reloadMore(comment.repliesNextCursor, more.pages + 1);
+  }
+
   const dropReply = (id: string) =>
     setMore((prev) => (prev ? { ...prev, replies: prev.replies.filter((r) => r.id !== id) } : prev));
 
@@ -318,16 +324,37 @@ function CommentThread({
           {replies.map((r) => (
             <Row key={r.id} comment={r} target={target} canModerate={canModerate} viewerCanReply={false} isReply onDeleted={dropReply} />
           ))}
-          {replyCursor && (
-            <button
-              type="button"
-              onClick={loadMoreReplies}
-              disabled={loadingMore}
-              className="mako-label text-[10px] text-muted hover:text-ink transition-colors mt-3 disabled:opacity-40"
-            >
-              {loadingMore ? 'LOADING…' : 'VIEW MORE REPLIES'}
-            </button>
-          )}
+          <div className="flex flex-wrap gap-x-4">
+            {replyCursor ? (
+              <button
+                type="button"
+                onClick={loadMoreReplies}
+                disabled={loadingMore}
+                className="mako-label text-[10px] text-muted hover:text-ink transition-colors mt-3 disabled:opacity-40"
+              >
+                {loadingMore ? 'LOADING…' : 'VIEW MORE REPLIES'}
+              </button>
+            ) : newReplies > 0 ? (
+              <button
+                type="button"
+                onClick={viewNewReplies}
+                disabled={loadingMore}
+                className="mako-label text-[10px] text-muted hover:text-ink transition-colors mt-3 disabled:opacity-40"
+              >
+                {loadingMore ? 'LOADING…' : newReplies === 1 ? 'VIEW 1 NEW REPLY' : `VIEW ${newReplies} NEW REPLIES`}
+              </button>
+            ) : null}
+            {more && (
+              // Back to the server's window; a fresh value makes any page or re-read in flight land as stale.
+              <button
+                type="button"
+                onClick={() => setMore(NOTHING_LOADED)}
+                className="mako-label text-[10px] text-muted hover:text-ink transition-colors mt-3 disabled:opacity-40"
+              >
+                SHOW FEWER REPLIES
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
