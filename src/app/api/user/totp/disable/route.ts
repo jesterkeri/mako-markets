@@ -1,7 +1,8 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { recoveryCodes, users } from '@/db/schema';
+import { totpStepGuard } from '@/lib/totp-step-guard';
 import { checkSameOrigin } from '@/lib/csrf';
 import { verifyAndConsumeRecoveryCode } from '@/lib/recovery-codes';
 import {
@@ -140,12 +141,7 @@ export async function POST(req: Request) {
         const replayCheck = await tx
           .update(users)
           .set({ totpLastUsedStep: verifyResult.step })
-          .where(
-            and(
-              eq(users.id, user.id),
-              sql`${users.totpLastUsedStep} IS NULL OR ${users.totpLastUsedStep} < ${verifyResult.step}`,
-            ),
-          )
+          .where(totpStepGuard(user.id, verifyResult.step))
           .returning({ id: users.id });
         if (replayCheck.length === 0) {
           throw new FactorFailure();
