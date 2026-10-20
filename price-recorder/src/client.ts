@@ -121,6 +121,9 @@ export type ClientDeps = {
   now: () => number;
   hmac?: HmacHex;
   timeoutMs?: number;
+  /// Told each answer's status as soon as it arrives, before its body is read or cancelled (a 429 must halt the tick
+  /// before any other call can start, plan 4.1).
+  onStatus?: (status: number) => void;
 };
 
 /// One page request, never throwing.
@@ -131,6 +134,7 @@ export function pageClient(d: ClientDeps): PageClient {
     try {
       const headers = await reportHeaders(path, d.creds.apiKey, d.creds.secret, String(d.now()), d.hmac ?? hmacSha256Hex);
       const res = await d.fetchImpl(`${base}${path}`, { headers, signal: AbortSignal.timeout(d.timeoutMs ?? REPORT_TIMEOUT_MS) });
+      d.onStatus?.(res.status);
       return await classify(res);
     } catch {
       return { kind: 'failed', status: 0, reason: 'network', requestId: null };

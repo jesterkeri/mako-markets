@@ -205,9 +205,13 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     const stored = await readMinutesOfHours(db, windowHours);
     const storedBy = new Map<string, StoredMinute>(stored.map((m) => [`${m.feed}:${m.t}`, m]));
 
-    // Step 3: fetch. A 429 or a whole-key failure halts the limiter, so every chain still waiting stops.
+    // Step 3: fetch. A 429 or a whole-key failure halts the limiter, so every chain still waiting stops. A 429 halts on
+    // its status, before its body is cancelled, so no call in flight can free a slot for another call first.
     const limiter = new Limiter(clock, t0);
-    const raw = pageClient({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, now: () => clock.now(), hmac: deps.hmac, timeoutMs: deps.timeoutMs });
+    const onStatus = (s: number) => {
+      if (s === 429) limiter.halt('rate_limited');
+    };
+    const raw = pageClient({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, now: () => clock.now(), hmac: deps.hmac, timeoutMs: deps.timeoutMs, onStatus });
     const client: PageClient = async (feedId, start) => {
       const r = await raw(feedId, start);
       if (r.kind === 'key_failure' || r.kind === 'rate_limited') limiter.halt(r.kind);
