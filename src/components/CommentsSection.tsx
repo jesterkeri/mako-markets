@@ -211,9 +211,13 @@ function CommentThread({
   // replies is deleted, so a list from another window is ignored and the thread shows the server's window and its
   // VIEW MORE again (nothing twice, nothing lost). A page or re-read that lands after the list changed is dropped. A
   // reply deleted from the list leaves it (reply pages never include deleted ones); the viewer's own reply re-reads it.
-  // Known limit: another user's reply that arrives after the list reached its end shows only after a remount, since
-  // the list query's poll does not change when only replies past the window change.
+  // Known limit: another user's reply that arrives after the list reached its end, or another user's delete of a
+  // reply in the list, shows only after a remount, since the list query's poll does not change when only replies past
+  // the window change.
   type More = { replies: CommentWire[]; cursor: string | null; pages: number; window: string };
+  // A fresh "nothing loaded" value: its window matches no real window, so the thread shows the server's window, and
+  // being a new object it makes any page already in flight land as stale.
+  const NOTHING_LOADED: More = { replies: [], cursor: null, pages: 0, window: '' };
   const [stored, setMore] = useState<More | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const post = usePostComment(target);
@@ -225,14 +229,14 @@ function CommentThread({
 
   async function loadMoreReplies() {
     if (!replyCursor || loadingMore) return;
-    const from = more;
+    const from = stored;
     const win = windowKey;
     setLoadingMore(true);
     try {
       const page = await fetchMoreReplies(target, comment.id, replyCursor);
       setMore((prev) => {
+        if (prev !== from) return prev; // the list changed meanwhile (a post, a delete, a re-read): this page may be stale
         const current = prev && prev.window === win ? prev : null;
-        if (current !== from) return prev; // the list changed meanwhile: this page may overlap it
         return {
           replies: [...(current?.replies ?? []), ...page.comments],
           cursor: page.nextCursor,
@@ -300,6 +304,7 @@ function CommentThread({
                   onSuccess: () => {
                     setReplyOpen(false);
                     if (more && comment.repliesNextCursor) void reloadMore(comment.repliesNextCursor, more.pages + 1);
+                    else setMore(NOTHING_LOADED); // a first VIEW MORE still in flight predates this reply: drop it
                   },
                 },
               )
