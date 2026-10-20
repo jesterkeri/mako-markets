@@ -20,6 +20,15 @@ run by Joshua 2026-10-16 19:11 UTC; CHARTS_DS_PLAN 15.1). Copied byte for byte. 
 | `weekend-EURUSD.json` | 2026-10-10 12:00 UTC: a weekend minute (closed) |
 | `live-page-{BTC,EURUSD}.json` | one page of 100 from 2026-10-16 19:09:00 UTC, as the live tick fetches it |
 
+## capture-followup-2026-10-16/
+
+`summary.json` from `mako-design/bench/recorder-capture-followup/2026-10-16T20-06-30-078Z/` (the follow-up capture run
+by Joshua 2026-10-16 20:06 UTC; CHARTS_DS_PLAN 1 and 15.1), copied byte for byte. It holds no report bytes, only
+answers: `now-BAC.page` and `now-MA.page` are the real `/reports/page` refusals, status 401, body
+`{"error":"feeds not authorized"}` (the `error` field is the body text as received); `limit-*` are real 400 bodies.
+The tick tests (`test/tick*.test.ts`) answer with these exact bodies. Where a test gives one of them another status
+(a 403 with the refusal body) or another feed (AAPL refused instead of BAC), the test name says "synthetic status".
+
 ## probe-2026-09-18/
 
 From `mako-design/bench/datastreams-probe/2026-09-18T12-44-34-398Z-p2/` (`page-BTC.json`, `page-EURUSD.json`), the

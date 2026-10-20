@@ -3,11 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
 # Mako Market price recorder (mako-design/CHARTS_DS_PLAN.md). Records one-minute candles from Chainlink Data Streams
-# for the charts. Units (a) and (b) of the build: decoding, the candle builder, the D1 schema, rollups and retention.
-# No cron and no secrets yet; the tick (unit c) and the read API (unit e) come in later commits. Nothing here settles
-# a pool, and it has no binding to, or shared storage with, mako-auto-resolver.
+# for the charts. Units (a) to (c): decoding, the candle builder, the D1 schema, rollups and retention, and the minute
+# tick (fetcher, limiter, lease). The read API (unit e) comes later. Nothing here settles a pool, and it has no binding
+# to, or shared storage with, mako-auto-resolver.
+# One tick a minute (plan 4.2). Migration 0001 seeds record = 0, so a deployed Worker calls nothing until the operator
+# turns recording on (plan 11, 16 step 4). Secrets, set by the owner with `wrangler secret put` (plan 16 step 4):
+# DATASTREAMS_API_KEY and DATASTREAMS_API_SECRET; DATASTREAMS_URL is optional (the resolver's testnet host by default).
 [triggers]
-crons = []
+crons = ["* * * * *"]
 
 # The decoder is the resolver's own file (cf-worker/src/datastreams.ts, plan 3.1), outside this package; its `viem`
 # import resolves to the copy here, pinned to the resolver's locked version (the bundling spike, `pnpm bundle:spike`,
