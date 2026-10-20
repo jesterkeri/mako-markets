@@ -74,10 +74,10 @@ export function rawEntry(e: PageEntry, feed: Feed): RawEntry | null {
 
 export type ValidEntry = { obs: number; key: Hex; report: DecodedReport; price: bigint };
 
-/// Plan 3.1 validEntry: the entry is the requested feed's; `fullReport` splits into the envelope; the blob decodes with
-/// the feed's pinned schema through the resolver's decodeVerified; the decoded feedId and observationsTimestamp equal
-/// the JSON ones; validFrom <= observations; price > 0; for v8 0 < lastUpdateTimestamp < (obs + 1) * 1e9.
-export function validEntry(e: PageEntry, feed: Feed): ValidEntry | null {
+/// The first half of validEntry: `fullReport` splits into the envelope, the blob decodes with the feed's pinned schema,
+/// and the decoded feedId and observationsTimestamp equal the JSON ones. Such an entry's second is carried by its own
+/// bytes, whatever its prices say, so it may move a page restart (fetcher.ts); only a valid entry is evidence.
+export function anchoredEntry(e: PageEntry, feed: Feed): { obs: number; report: DecodedReport } | null {
   const obs = feedSecond(e, feed);
   if (obs === null) return null;
   const blob = reportBlob(e.fullReport);
@@ -85,6 +85,15 @@ export function validEntry(e: PageEntry, feed: Feed): ValidEntry | null {
   const report = decodeVerified(blob, feed.schema);
   if (report === null) return null;
   if (report.feedId !== feed.feedId || report.observationsTimestamp !== obs) return null;
+  return { obs, report };
+}
+
+/// Plan 3.1 validEntry: anchoredEntry; validFrom <= observations; price > 0; for v8
+/// 0 < lastUpdateTimestamp < (obs + 1) * 1e9.
+export function validEntry(e: PageEntry, feed: Feed): ValidEntry | null {
+  const a = anchoredEntry(e, feed);
+  if (a === null) return null;
+  const { obs, report } = a;
   if (report.validFromTimestamp > report.observationsTimestamp) return null;
   const price = report.schema === 3 ? report.price : report.midPrice;
   if (price <= 0n) return null;

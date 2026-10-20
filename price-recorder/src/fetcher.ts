@@ -8,10 +8,11 @@
 //   * each page must be non-decreasing in `obs` and its first `obs` must be >= S, judged over the page's entries of
 //     this feed (JSON feedID equal, a JSON second); otherwise the chain is broken and every minute it was fetching is
 //     `incomplete` (fetchOk = false for the candle builder);
-//   * the next page restarts at S = the greatest `obs` of a VALID entry of this feed seen so far (inclusive restart,
-//     plan 3.4 and the 2026-10-16 capture). A valid entry is used, not any entry, so an invalid entry with a far
-//     JSON second cannot move the restart past reports that were never fetched; a page that does not move S is no
-//     progress and ends the chain;
+//   * the next page restarts at S = the greatest `obs` of an ANCHORED entry of this feed seen so far (entry.ts: its
+//     bytes decode to this feed at that second; inclusive restart, plan 3.4 and the 2026-10-16 capture). Not any
+//     entry, so junk bytes with a far JSON second cannot move the restart past reports that were never fetched; not
+//     only valid ones, so a full page of real reports that fail the price rules is still progress (adversary,
+//     unit c); a page that does not move S is no progress and ends the chain;
 //   * a target minute t joins the chain when the chain has fetched up to it (t <= S); a later target that the chain
 //     has not reached when the earlier ones are proven starts a new chain at its own start;
 //   * a minute [t, t + 60) is proven only by a fetched valid entry with obs >= t + 60 (the exhaustion witness), which
@@ -27,7 +28,7 @@
 
 import type { PageClient, PageResult } from './client';
 import { PAGE_LIMIT } from './client';
-import { jsonSecond, rawEntry, validEntry, type PageEntry, type ValidEntry } from './entry';
+import { anchoredEntry, jsonSecond, rawEntry, validEntry, type PageEntry, type ValidEntry } from './entry';
 import type { Feed } from './feeds';
 import type { Limiter, Refusal } from './limiter';
 import { MINUTE_S } from './rules';
@@ -49,7 +50,7 @@ export type FeedFetch = {
   answers: PageResult[];
 };
 
-export type PageCheck = { ordered: boolean; maxValid: number | null };
+export type PageCheck = { ordered: boolean; maxValid: number | null; maxAnchored: number | null };
 
 const isObject = (e: unknown): e is PageEntry => e !== null && typeof e === 'object' && !Array.isArray(e);
 
@@ -63,24 +64,38 @@ export function validOnce(e: PageEntry, feed: Feed): ValidEntry | null {
   return v;
 }
 
-/// Plan 3.4 page checks over this feed's entries (JSON fields only), and the greatest valid obs on the page: on an
-/// ordered page that is the last valid entry, so entries are decoded from the end until one is valid.
+/// The greatest anchored obs among `reports`, decoded from the end until one is anchored (on an ordered page that is
+/// the greatest).
+function lastAnchored(feed: Feed, reports: readonly PageEntry[]): number | null {
+  for (let i = reports.length - 1; i >= 0; i--) {
+    const e = reports[i];
+    if (!isObject(e)) continue;
+    const a = anchoredEntry(e, feed);
+    if (a !== null) return a.obs;
+  }
+  return null;
+}
+
+/// Plan 3.4 page checks over this feed's entries (JSON fields only), the greatest valid obs on the page (on an
+/// ordered page that is the last valid entry, so entries are decoded from the end until one is valid), and the
+/// greatest anchored obs, which the restart uses.
 export function checkPage(feed: Feed, reports: readonly PageEntry[], start: number): PageCheck {
   let prev: number | null = null;
   for (const e of reports) {
     if (!isObject(e)) continue;
     const r = rawEntry(e, feed);
     if (r === null) continue;
-    if (prev === null ? r.obs < start : r.obs < prev) return { ordered: false, maxValid: null };
+    if (prev === null ? r.obs < start : r.obs < prev) return { ordered: false, maxValid: null, maxAnchored: null };
     prev = r.obs;
   }
   for (let i = reports.length - 1; i >= 0; i--) {
     const e = reports[i];
     if (!isObject(e)) continue;
     const v = validOnce(e, feed);
-    if (v !== null) return { ordered: true, maxValid: v.obs };
+    // A valid entry is anchored; on an ordered page only the invalid tail after it can hold a greater anchored second.
+    if (v !== null) return { ordered: true, maxValid: v.obs, maxAnchored: Math.max(v.obs, lastAnchored(feed, reports.slice(i + 1)) ?? v.obs) };
   }
-  return { ordered: true, maxValid: null };
+  return { ordered: true, maxValid: null, maxAnchored: lastAnchored(feed, reports) };
 }
 
 /// What the candle builder needs of a chain's entries for minute t: every entry whose JSON second lies in [t, t + 60)
@@ -116,6 +131,7 @@ export async function fetchMinutes(ctx: FetchContext, feed: Feed, targets: reado
     out.chains.push(chain);
     let S = targets[j];
     let maxValid = -1;
+    let maxAnchored = -1;
     let chainAsked = false;
     for (;;) {
       while (j < targets.length && targets[j] <= S) chain.minutes.push(targets[j++]);
@@ -146,7 +162,8 @@ export async function fetchMinutes(ctx: FetchContext, feed: Feed, targets: reado
         break;
       }
       if (c.maxValid !== null && c.maxValid > maxValid) maxValid = c.maxValid;
-      const next = Math.max(S, maxValid);
+      if (c.maxAnchored !== null && c.maxAnchored > maxAnchored) maxAnchored = c.maxAnchored;
+      const next = Math.max(S, maxAnchored);
       while (j < targets.length && targets[j] <= next) chain.minutes.push(targets[j++]);
       if (maxValid >= chain.minutes[chain.minutes.length - 1] + MINUTE_S) {
         S = next;
