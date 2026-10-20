@@ -3,10 +3,11 @@ import 'server-only';
 // ----------------------------------------------------------------------------
 // src/lib/comments/queries.ts
 //
-// Read path for the comments system. Two queries, no N+1:
+// Read path for the comments system. Three queries, no N+1:
 //   1. top-level comments, newest-first, keyset-paginated over (created_at, id);
 //   2. their replies, windowed to REPLY_PAGE per parent (deleted filtered
-//      INSIDE the window so deleted replies never consume a slot).
+//      INSIDE the window so deleted replies never consume a slot);
+//   3. each parent's live reply count, one grouped query for the page.
 // Then identity + position-badge resolution and assembly to CommentWire[].
 //
 // Soft-delete display rule: a deleted top-level is shown (as `deleted`, empty
@@ -115,6 +116,21 @@ async function fetchRepliesWindow(
   }));
 }
 
+/** Live (not deleted) reply count per top-level id, in one grouped query. Deleted replies are excluded exactly as
+ * the window excludes them. The client keys a thread's VIEW MORE list on it, so a reply added or deleted past the
+ * window changes the list query too (#193). */
+async function fetchLiveReplyCounts(db: DbOrTx, parentIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (parentIds.length === 0) return out;
+  const rows = await db
+    .select({ parentId: marketComments.parentId, n: sql<number>`count(*)::int` })
+    .from(marketComments)
+    .where(and(inArray(marketComments.parentId, parentIds), isNull(marketComments.deletedAt)))
+    .groupBy(marketComments.parentId);
+  for (const r of rows) if (r.parentId) out.set(r.parentId, Number(r.n));
+  return out;
+}
+
 /** Position badges for main-scope markets: aggregate the bet ledger per actor.
  * lower()-both-sides is already handled — actors are stored lowercase and the
  * addresses passed in are lowercased by the identity resolver. PM badges are
@@ -168,6 +184,7 @@ function toWire(
   deleted: boolean,
   replies: CommentWire[],
   repliesNextCursor: string | null,
+  repliesCount: number,
 ): CommentWire {
   const author = authors.get(row.userId);
   const addr = author?.addressLower ?? null;
@@ -191,6 +208,7 @@ function toWire(
     createdAt: row.createdAt.toISOString(),
     replies,
     repliesNextCursor,
+    repliesCount,
   };
 }
 
@@ -227,6 +245,7 @@ export async function getCommentsPage(
 
   const topIds = pageRows.map((r) => r.id);
   const replyRows = await fetchRepliesWindow(db, topIds, REPLY_PAGE + 1);
+  const replyCounts = await fetchLiveReplyCounts(db, topIds);
 
   const repliesByParent = new Map<string, ReplyRow[]>();
   for (const rr of replyRows) {
@@ -261,7 +280,7 @@ export async function getCommentsPage(
     if (deleted && kept.length === 0) continue;
 
     const replyWires = kept.map((rr) =>
-      toWire(rr, authors, badges, viewerUserId, false, [], null),
+      toWire(rr, authors, badges, viewerUserId, false, [], null, 0),
     );
     const lastReply = kept[kept.length - 1];
     const repliesNextCursor =
@@ -269,7 +288,9 @@ export async function getCommentsPage(
         ? encodeCursor({ createdAt: lastReply.createdAt, id: lastReply.id })
         : null;
     comments.push(
-      toWire(top, authors, badges, viewerUserId, deleted, replyWires, repliesNextCursor),
+      toWire(
+        top, authors, badges, viewerUserId, deleted, replyWires, repliesNextCursor, replyCounts.get(top.id) ?? 0,
+      ),
     );
   }
 
@@ -337,7 +358,7 @@ export async function getRepliesPage(
       : new Map<string, CommentPosition>();
 
   const comments = page.map((r) =>
-    toWire(r, authors, badges, viewerUserId, false, [], null),
+    toWire(r, authors, badges, viewerUserId, false, [], null, 0),
   );
   return { comments, nextCursor };
 }

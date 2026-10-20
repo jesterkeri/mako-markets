@@ -54,6 +54,7 @@ const comment = (over: Partial<CommentWire> = {}): CommentWire => ({
   createdAt: new Date('2026-07-04T12:00:00Z').toISOString(),
   replies: [],
   repliesNextCursor: null,
+  repliesCount: 0,
   ...over,
 });
 

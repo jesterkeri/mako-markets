@@ -211,9 +211,9 @@ function CommentThread({
   // replies is deleted, so a list from another window is ignored and the thread shows the server's window and its
   // VIEW MORE again (nothing twice, nothing lost). A page or re-read that lands after the list changed is dropped. A
   // reply deleted from the list leaves it (reply pages never include deleted ones); the viewer's own reply re-reads it.
-  // Known limit: another user's reply that arrives after the list reached its end, or another user's delete of a
-  // reply in the list, shows only after a remount, since the list query's poll does not change when only replies past
-  // the window change.
+  // The window also records the thread's live reply count from the server, so another user's reply past the window,
+  // or another user's delete of a reply in the list, changes it at the next poll: the list is ignored and the server's
+  // window and its VIEW MORE show again, which reach the new reply and leave the deleted one out.
   type More = { replies: CommentWire[]; cursor: string | null; pages: number; window: string };
   // A fresh "nothing loaded" value: its window matches no real window, so the thread shows the server's window, and
   // being a new object it makes any page already in flight land as stale.
@@ -222,7 +222,7 @@ function CommentThread({
   const [loadingMore, setLoadingMore] = useState(false);
   const post = usePostComment(target);
 
-  const windowKey = `${comment.replies.map((r) => r.id).join(',')}|${comment.repliesNextCursor ?? ''}`;
+  const windowKey = `${comment.replies.map((r) => r.id).join(',')}|${comment.repliesNextCursor ?? ''}|${comment.repliesCount}`;
   const more = stored && stored.window === windowKey ? stored : null;
   const replies = more ? [...comment.replies, ...more.replies] : comment.replies;
   const replyCursor = more ? more.cursor : comment.repliesNextCursor;

@@ -46,7 +46,9 @@ export type CommentPosition = 'yes' | 'no' | 'both' | null;
 /// wire" (name + betting-side badge are already public; user_id is an identifier,
 /// not a capability). Users without a photo leak nothing new.
 /// `body` is '' on a deleted row. `replies` + `repliesNextCursor` are populated
-/// on TOP-LEVEL comments only (empty / null on a reply).
+/// on TOP-LEVEL comments only (empty / null on a reply). `repliesCount` is the
+/// top-level comment's number of live (not deleted) replies, all of them, not
+/// only the window (0 on a reply); reply rows are public, so it reveals nothing new.
 export interface CommentWire {
   id: string;
   parentId: string | null;
@@ -63,6 +65,7 @@ export interface CommentWire {
   createdAt: string; // ISO 8601
   replies: CommentWire[];
   repliesNextCursor: string | null;
+  repliesCount: number;
 }
 
 /// GET response envelope for a market's top-level comments.

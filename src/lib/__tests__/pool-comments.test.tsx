@@ -85,6 +85,7 @@ const comment = (over: Partial<CommentWire> = {}): CommentWire => ({
   createdAt: new Date(Date.now() - 4 * 60_000).toISOString(),
   replies: [],
   repliesNextCursor: null,
+  repliesCount: 0,
   ...over,
 });
 

@@ -28,6 +28,7 @@ const reply = (id: string): CommentWire => ({
   createdAt: '2026-10-02T10:00:00.000Z',
   replies: [],
   repliesNextCursor: null,
+  repliesCount: 0,
 });
 const parent: CommentWire = { ...reply('p'), parentId: null, replies: [reply('r1')], repliesNextCursor: 'c1' };
 const target = { scope: 'main' as const, marketId: '7' };

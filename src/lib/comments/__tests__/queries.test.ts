@@ -5,7 +5,8 @@
 // (pglite). Covers the security-load-bearing behavior: badge casing
 // (checksummed safe vs lowercase actor — the #186 trap), wire-shape privacy,
 // soft-delete display rules, depth-1 / parent-mismatch / parent-deleted,
-// BOLA delete, keyset + reply-window pagination, and parentBelongsToTarget.
+// BOLA delete, keyset + reply-window pagination, the live reply count, and
+// parentBelongsToTarget.
 // ----------------------------------------------------------------------------
 
 import { createHash } from 'node:crypto';
@@ -415,6 +416,50 @@ describe('keyset pagination + reply window', () => {
     );
     const all = [...page.comments[0].replies, ...more.comments].map((r) => r.body);
     expect(all).toEqual(['r0', 'r1', 'r2', 'r3', 'r4']);
+  });
+});
+
+describe('repliesCount (live replies per thread, #193)', () => {
+  it('counts every live reply, past the window too; not deleted ones, not other threads; 0 with none and on a reply', async () => {
+    const { userId } = await seedMagicUser(eoa(1));
+    const a = await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 'a' });
+    const b = await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 'b' });
+    const c = await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 'c' });
+    if (!a.ok || !b.ok || !c.ok) throw new Error('setup');
+    // a: 5 replies (past the REPLY_PAGE window), 2 of them deleted, one inside the window and one past it.
+    const aReplies: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await createComment(db(), { target: MARKET_5, userId, parentId: a.id, body: `a${i}` });
+      if (!r.ok) throw new Error('setup');
+      aReplies.push(r.id);
+    }
+    await softDeleteOwn(db(), aReplies[1], userId);
+    await softDeleteOwn(db(), aReplies[4], userId);
+    // b: 2 live replies. c: none.
+    await createComment(db(), { target: MARKET_5, userId, parentId: b.id, body: 'b0' });
+    await createComment(db(), { target: MARKET_5, userId, parentId: b.id, body: 'b1' });
+
+    const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
+    const byBody = new Map(page.comments.map((t) => [t.body, t]));
+    expect(byBody.get('a')!.repliesCount).toBe(3);
+    expect(byBody.get('a')!.replies.map((r) => r.body)).toEqual(['a0', 'a2', 'a3']);
+    expect(byBody.get('b')!.repliesCount).toBe(2);
+    expect(byBody.get('c')!.repliesCount).toBe(0);
+    for (const t of page.comments) for (const r of t.replies) expect(r.repliesCount).toBe(0);
+
+    const more = await getRepliesPage(db(), MARKET_5, b.id, null, 30, null);
+    expect(more.comments.map((r) => r.repliesCount)).toEqual([0, 0]);
+  });
+
+  it('a deleted top-level shown for its live replies carries their count', async () => {
+    const { userId } = await seedMagicUser(eoa(1));
+    const top = await createComment(db(), { target: MARKET_5, userId, parentId: null, body: 't' });
+    if (!top.ok) throw new Error('setup');
+    await createComment(db(), { target: MARKET_5, userId, parentId: top.id, body: 'r' });
+    await softDeleteOwn(db(), top.id, userId);
+    const page = await getCommentsPage(db(), MARKET_5, null, 30, null);
+    expect(page.comments[0].deleted).toBe(true);
+    expect(page.comments[0].repliesCount).toBe(1);
   });
 });
 
