@@ -10,7 +10,8 @@
     "rules-version": "node scripts/gen-rules-version.mjs",
     "bundle": "node scripts/gen-rules-version.mjs --check && wrangler deploy --dry-run --outdir dist",
     "bundle:spike": "wrangler deploy --dry-run --outdir dist-spike --name mako-price-recorder-spike src/bundle-spike.ts && node scripts/run-spike.mjs",
-    "reference": "python3 -I scripts/reference_ohlc.py"
+    "reference": "python3 -I scripts/reference_ohlc.py",
+    "reference:rollups": "python3 -I scripts/reference_rollups.py"
   },
   "dependencies": {
     "viem": "2.50.4"

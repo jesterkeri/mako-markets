@@ -323,6 +323,9 @@ jobs:
       - name: Independent Python reference is current
         run: python3 -I scripts/reference_ohlc.py --check
 
+      - name: Independent Python rollup reference is current
+        run: python3 -I scripts/reference_rollups.py --check
+
       - name: Typecheck
         run: pnpm typecheck
 

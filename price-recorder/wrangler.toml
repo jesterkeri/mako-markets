@@ -3,9 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
 # Mako Market price recorder (mako-design/CHARTS_DS_PLAN.md). Records one-minute candles from Chainlink Data Streams
-# for the charts. Unit (a) of the build: decoding and the candle builder only. No cron, no storage and no secrets yet;
-# the tick (unit c), D1 (unit b) and the read API (unit e) come in later commits. Nothing here settles a pool, and it
-# has no binding to, or shared storage with, mako-auto-resolver.
+# for the charts. Units (a) and (b) of the build: decoding, the candle builder, the D1 schema, rollups and retention.
+# No cron and no secrets yet; the tick (unit c) and the read API (unit e) come in later commits. Nothing here settles
+# a pool, and it has no binding to, or shared storage with, mako-auto-resolver.
 [triggers]
 crons = []
 
@@ -14,3 +14,12 @@ crons = []
 # proves it). Same pattern as keeper/ and rounds-watch/.
 [alias]
 "viem" = "./node_modules/viem"
+
+# Plan 5.2. The database does not exist yet: the owner creates it (`npx wrangler d1 create mako-price-recorder`, plan 16
+# step 4), adds the `database_id` it prints here, then applies `migrations/` (`npx wrangler d1 migrations apply
+# mako-price-recorder --remote`). Migration 0001 seeds config with serve = 0 and record = 0, so the Worker deploys dark.
+# Tests run against a local D1 that miniflare creates from this binding.
+[[d1_databases]]
+binding = "DB"
+database_name = "mako-price-recorder"
+migrations_dir = "migrations"
