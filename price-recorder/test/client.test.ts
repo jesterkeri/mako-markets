@@ -52,16 +52,22 @@ describe('classify (plan 4.1)', () => {
     for (const s of [400, 404, 418, 302]) expect(await classify(res(s, OTHER_ERROR_BODY))).toMatchObject({ kind: 'failed', reason: 'bad_status', status: s });
   });
 
-  it('a 200 is a page only with a JSON object holding a reports array; the elements pass through untouched', async () => {
+  it('a 200 is a page only with a JSON object holding a reports array; each element keeps exactly the fields entry.ts reads', async () => {
     const page = capture('live-page-BTC');
     const ok = await classify(res(200, JSON.stringify({ reports: page })));
-    expect(ok.kind === 'ok' && ok.reports).toEqual(page);
+    const read = (e: Record<string, unknown>) => ({ feedID: e.feedID, observationsTimestamp: e.observationsTimestamp, fullReport: e.fullReport });
+    expect(ok.kind === 'ok' && ok.reports).toEqual(page.map(read));
     for (const body of ['', 'null', '[]', '{}', '{"reports":{}}', '{"reports":"x"}', '[{"reports":[]}]', 'not json'])
       expect(await classify(res(200, body)), body).toMatchObject({ kind: 'failed', reason: 'bad_body' });
     expect(parsePage('{"reports":[1,null,"x"]}')).toEqual([1, null, 'x']);
     // At most PAGE_LIMIT entries: 100 is a page, 101 is not (Codex unit C R1, C2).
     expect(parsePage(JSON.stringify({ reports: Array(100).fill({}) }))).toHaveLength(100);
     expect(parsePage(JSON.stringify({ reports: Array(101).fill({}) }))).toBeNull();
+    // Only the fields entry.ts reads are kept; an absent fullReport stays absent.
+    expect(parsePage('{"reports":[{"feedID":"f","observationsTimestamp":1,"fullReport":"0x","pad":"xxxx"},{"feedID":"f"}]}')).toEqual([
+      { feedID: 'f', observationsTimestamp: 1, fullReport: '0x' },
+      { feedID: 'f' },
+    ]);
   });
 
   it('a 200 body over the page size cap is not read further and is not a page', async () => {

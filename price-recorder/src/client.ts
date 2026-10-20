@@ -24,7 +24,9 @@ export const PAGE_LIMIT = 100;
 /// A refusal body is classified from at most this many bytes (plan 4.1).
 export const REFUSAL_BODY_BYTES = 200;
 /// A page of 100 reports is about 170 KB (plan 1); anything far larger is not a page and is not read further.
-export const MAX_PAGE_BYTES = 2_000_000;
+/// A real page of 100 reports is about 164 KB (2026-10-16 capture); 200,000 bytes leaves about 20% and bounds a tick's
+/// retained pages at 330 x 200 KB = 66 MB, under the Worker's 128 MB (plan 3.4, 4.3; adversary on r22).
+export const MAX_PAGE_BYTES = 200_000;
 export const FEEDS_NOT_AUTHORIZED = 'feeds not authorized';
 
 export const pagePath = (feedId: string, start: number, limit = PAGE_LIMIT): string =>
@@ -81,6 +83,16 @@ export function isFeedRefusal(text: string): boolean {
   }
 }
 
+/// The only fields of an entry anything reads (entry.ts); the rest is dropped so it is not kept for the whole tick. A
+/// field that is absent stays absent (raw_fp tells an absent fullReport from any value).
+const READ_FIELDS = ['feedID', 'observationsTimestamp', 'fullReport'] as const;
+function keepRead(e: unknown): unknown {
+  if (e === null || typeof e !== 'object' || Array.isArray(e)) return e;
+  const out: Record<string, unknown> = {};
+  for (const k of READ_FIELDS) if (Object.prototype.hasOwnProperty.call(e, k)) out[k] = (e as Record<string, unknown>)[k];
+  return out;
+}
+
 /// Pure: a 200 body is a page iff it is a JSON object holding a `reports` array.
 export function parsePage(text: string): PageEntry[] | null {
   try {
@@ -88,7 +100,7 @@ export function parsePage(text: string): PageEntry[] | null {
     if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
     const reports = (v as { reports?: unknown }).reports;
     // More entries than asked for is not a page: the per-tick work bound assumes at most PAGE_LIMIT (Codex unit C R1, C2).
-    return Array.isArray(reports) && reports.length <= PAGE_LIMIT ? (reports as PageEntry[]) : null;
+    return Array.isArray(reports) && reports.length <= PAGE_LIMIT ? (reports.map(keepRead) as PageEntry[]) : null;
   } catch {
     return null;
   }
