@@ -29,9 +29,9 @@ import type { CommentsPage, CommentScope } from '@/lib/comments/types';
 // CU/s while awake either way, so lighter load only lowers CU when it avoids
 // scaling UP). The poll refreshes new comments AND viewer-dependent fields
 // (isOwn, author name, position badges) on existing rows; a user's own
-// top-level post/delete invalidates the list at once, but replies pulled via
-// "load more" live in local component state and reconcile only on remount
-// (tracked in #193).
+// top-level post/delete invalidates the list at once. Replies pulled via
+// "load more" live in the thread's own state and are reconciled there
+// (CommentsSection.tsx CommentThread, #193); the poll does not refresh them.
 const REFETCH_MS = 60_000;
 
 export interface CommentTargetParams {
