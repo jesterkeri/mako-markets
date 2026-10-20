@@ -105,7 +105,8 @@ function keepRead(e: unknown): unknown {
 function flat(v: unknown): unknown {
   if (v === null || typeof v === 'number' || typeof v === 'boolean') return v;
   if (typeof v === 'string' && /^[\x20-\x7e]*$/.test(v)) return v;
-  const [kind, text] = typeof v === 'string' ? ['text', v] : ['json', typed(v)];
+  // JSON.stringify escapes a lone surrogate, which a UTF-8 encoding would turn into U+FFFD (two values, one tag).
+  const [kind, text] = typeof v === 'string' ? ['text', JSON.stringify(v)] : ['json', typed(v)];
   return `\u0000${kind}:${keccak256(stringToBytes(text))}`;
 }
 
