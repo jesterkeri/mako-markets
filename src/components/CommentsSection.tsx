@@ -209,8 +209,10 @@ function CommentThread({
   // Replies past the server's first window, once VIEW MORE was used (#193). They are not in the list query, so they are
   // reconciled here. Each list records the window it continues: the server refills the window when one of its
   // replies is deleted, so a list from another window is ignored and the thread shows the server's window and its
-  // VIEW MORE again (nothing twice, nothing lost). A page that lands after the list changed is dropped. A reply
-  // deleted from the list leaves it (reply pages never include deleted ones); the viewer's own reply re-reads it.
+  // VIEW MORE again (nothing twice, nothing lost). A page or re-read that lands after the list changed is dropped. A
+  // reply deleted from the list leaves it (reply pages never include deleted ones); the viewer's own reply re-reads it.
+  // Known limit: another user's reply that arrives after the list reached its end shows only after a remount, since
+  // the list query's poll does not change when only replies past the window change.
   type More = { replies: CommentWire[]; cursor: string | null; pages: number; window: string };
   const [stored, setMore] = useState<More | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -248,6 +250,7 @@ function CommentThread({
   // Re-reads everything past the window, from its cursor, up to the pages already shown plus one. On failure the
   // list is dropped, so the server's window and its VIEW MORE show again.
   async function reloadMore(start: string, pages: number) {
+    const from = stored;
     const win = windowKey;
     setLoadingMore(true);
     try {
@@ -259,7 +262,9 @@ function CommentThread({
         out.push(...page.comments);
         cursor = page.nextCursor;
       }
-      setMore({ replies: out, cursor, pages: read, window: win });
+      // A list changed while this re-read ran (another re-read, a delete) is newer than this answer: drop both, and the
+      // server's window and its VIEW MORE show again.
+      setMore((prev) => (prev === from ? { replies: out, cursor, pages: read, window: win } : null));
     } catch {
       setMore(null);
     } finally {
