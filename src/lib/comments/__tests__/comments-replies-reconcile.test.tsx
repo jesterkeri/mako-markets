@@ -137,4 +137,21 @@ describe('#193 replies past the first window', () => {
     expect(screen.getAllByText('body r4')).toHaveLength(1);
     expect(h.calls).toEqual(['c3', 'c3']);
   });
+
+  it('a failed re-read after posting falls back to the window and its VIEW MORE, so the new reply stays reachable', async () => {
+    setThread(thread(WINDOW, 'c3'));
+    setPage('c3', { comments: [reply('r4')], nextCursor: null });
+    render(<CommentsSection scope="main" marketId="5" />);
+    await act(async () => fireEvent.click(screen.getByText('VIEW MORE REPLIES')));
+    expect(screen.queryByText('VIEW MORE REPLIES')).toBeNull();
+
+    h.pages.delete('c3'); // the re-read fails
+    fireEvent.click(screen.getAllByText('REPLY')[0]);
+    fireEvent.change(screen.getByPlaceholderText(/Reply to/), { target: { value: 'my reply' } });
+    const posts = screen.getAllByRole('button', { name: /^POST/ });
+    await act(async () => fireEvent.click(posts[posts.length - 1]));
+
+    expect(screen.queryByText('body r4')).toBeNull();
+    expect(screen.getByText('VIEW MORE REPLIES')).toBeTruthy();
+  });
 });

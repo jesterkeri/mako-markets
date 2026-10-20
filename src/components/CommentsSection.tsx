@@ -206,22 +206,38 @@ function CommentThread({
   writable: boolean;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
-  // Replies past the server's first window, once VIEW MORE was used. They are not in the list query, so they are
-  // reconciled here (#193): until the thread is expanded the cursor comes from the latest server data; a deleted reply
-  // leaves the list (reply pages never include deleted ones); the viewer's own reply reloads the expanded list.
-  const [more, setMore] = useState<{ replies: CommentWire[]; cursor: string | null; pages: number } | null>(null);
+  // Replies past the server's first window, once VIEW MORE was used (#193). They are not in the list query, so they are
+  // reconciled here. Each list records the window it continues: the server refills the window when one of its
+  // replies is deleted, so a list from another window is ignored and the thread shows the server's window and its
+  // VIEW MORE again (nothing twice, nothing lost). A page that lands after the list changed is dropped. A reply
+  // deleted from the list leaves it (reply pages never include deleted ones); the viewer's own reply re-reads it.
+  type More = { replies: CommentWire[]; cursor: string | null; pages: number; window: string };
+  const [stored, setMore] = useState<More | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const post = usePostComment(target);
 
+  const windowKey = `${comment.replies.map((r) => r.id).join(',')}|${comment.repliesNextCursor ?? ''}`;
+  const more = stored && stored.window === windowKey ? stored : null;
   const replies = more ? [...comment.replies, ...more.replies] : comment.replies;
   const replyCursor = more ? more.cursor : comment.repliesNextCursor;
 
   async function loadMoreReplies() {
     if (!replyCursor || loadingMore) return;
+    const from = more;
+    const win = windowKey;
     setLoadingMore(true);
     try {
       const page = await fetchMoreReplies(target, comment.id, replyCursor);
-      setMore((prev) => ({ replies: [...(prev?.replies ?? []), ...page.comments], cursor: page.nextCursor, pages: (prev?.pages ?? 0) + 1 }));
+      setMore((prev) => {
+        const current = prev && prev.window === win ? prev : null;
+        if (current !== from) return prev; // the list changed meanwhile: this page may overlap it
+        return {
+          replies: [...(current?.replies ?? []), ...page.comments],
+          cursor: page.nextCursor,
+          pages: (current?.pages ?? 0) + 1,
+          window: win,
+        };
+      });
     } catch {
       /* leave the button; the viewer can try again */
     } finally {
@@ -229,9 +245,10 @@ function CommentThread({
     }
   }
 
-  // Re-reads everything past the window, from the window's own cursor (the window's replies never change, so its
-  // cursor does not either), up to the pages already shown plus one.
+  // Re-reads everything past the window, from its cursor, up to the pages already shown plus one. On failure the
+  // list is dropped, so the server's window and its VIEW MORE show again.
   async function reloadMore(start: string, pages: number) {
+    const win = windowKey;
     setLoadingMore(true);
     try {
       const out: CommentWire[] = [];
@@ -242,9 +259,9 @@ function CommentThread({
         out.push(...page.comments);
         cursor = page.nextCursor;
       }
-      setMore({ replies: out, cursor, pages: read });
+      setMore({ replies: out, cursor, pages: read, window: win });
     } catch {
-      /* keep what is shown */
+      setMore(null);
     } finally {
       setLoadingMore(false);
     }
