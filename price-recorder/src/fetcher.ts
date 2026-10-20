@@ -11,8 +11,9 @@
 //   * the next page restarts at S = the greatest `obs` of an ANCHORED entry of this feed seen so far (entry.ts: its
 //     bytes decode to this feed at that second; inclusive restart, plan 3.4 and the 2026-10-16 capture). Not any
 //     entry, so junk bytes with a far JSON second cannot move the restart past reports that were never fetched; not
-//     only valid ones, so a full page of real reports that fail the price rules is still progress (adversary,
-//     unit c); a page that does not move S is no progress and ends the chain;
+//     only valid ones, so a full page of real reports that fail the value rules (price, validFrom, lastUpdate) is still
+//     progress (adversary, unit c); a page that does not move S is no progress and ends the feed's fetching for this
+//     tick (minutes already proven stay proven; the rest are retried by later ticks);
 //   * a target minute t joins the chain when the chain has fetched up to it (t <= S); a later target that the chain
 //     has not reached when the earlier ones are proven starts a new chain at its own start;
 //   * a minute [t, t + 60) is proven only by a fetched valid entry with obs >= t + 60 (the exhaustion witness), which

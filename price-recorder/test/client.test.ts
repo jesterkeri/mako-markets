@@ -59,7 +59,13 @@ describe('classify (plan 4.1)', () => {
     expect(ok.kind === 'ok' && ok.reports).toEqual(page.map(read));
     for (const body of ['', 'null', '[]', '{}', '{"reports":{}}', '{"reports":"x"}', '[{"reports":[]}]', 'not json'])
       expect(await classify(res(200, body)), body).toMatchObject({ kind: 'failed', reason: 'bad_body' });
-    expect(parsePage('{"reports":[1,null,"x"]}')).toEqual([1, null, 'x']);
+    expect(parsePage('{"reports":[1,null,"x",[[[]]]]}')).toEqual([null, null, null, null]); // never read, kept as null
+    // Fields that are not flat printable values become a fixed tag; different values stay different.
+    const [a, b] = parsePage('{"reports":[{"fullReport":[[[]]],"feedID":"\\u00e9"},{"fullReport":[[]],"feedID":"x"}]}') as Record<string, string>[];
+    expect(a.fullReport).toMatch(/^\u0000json:0x[0-9a-f]{64}$/);
+    expect(a.feedID).toMatch(/^\u0000text:0x[0-9a-f]{64}$/);
+    expect(b.fullReport).not.toBe(a.fullReport);
+    expect(b.feedID).toBe('x');
     // At most PAGE_LIMIT entries: 100 is a page, 101 is not (Codex unit C R1, C2).
     expect(parsePage(JSON.stringify({ reports: Array(100).fill({}) }))).toHaveLength(100);
     expect(parsePage(JSON.stringify({ reports: Array(101).fill({}) }))).toBeNull();
