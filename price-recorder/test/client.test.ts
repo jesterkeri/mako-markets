@@ -69,7 +69,11 @@ describe('classify (plan 4.1)', () => {
     const deep = (x: number) => '['.repeat(5000) + x + ']'.repeat(5000);
     expect(parsePage(`{"reports":[{"feedID":"f","observationsTimestamp":1,"fullReport":${deep(0)}},{"feedID":"f","observationsTimestamp":1,"fullReport":${deep(1)}}]}`)).toBeNull();
     for (const field of ['feedID', 'observationsTimestamp', 'fullReport'])
-      for (const v of ['[]', '{}', '[[1]]', '{"a":{}}']) expect(parsePage(`{"reports":[{"${field}":${v}}]}`), `${field}=${v}`).toBeNull();
+      for (const v of ['[]', '{}', '[[1]]', '{"a":{}}', 'null', 'true', '1.5', '1e400', '9007199254740993'])
+        expect(parsePage(`{"reports":[{"${field}":${v}}]}`), `${field}=${v}`).toBeNull();
+    for (const field of ['feedID', 'fullReport']) expect(parsePage(`{"reports":[{"${field}":1}]}`), `${field}=1`).toBeNull();
+    // The captured forms pass: strings, and a safe-integer second.
+    expect(parsePage('{"reports":[{"feedID":"0xab","observationsTimestamp":1792070940,"fullReport":"0x00"},{"observationsTimestamp":"1792070941"}]}')).toHaveLength(2);
     expect(parsePage('{"reports":[{"feedID":"f","other":{"deep":[[]]}}]}')).toEqual([{ feedID: 'f' }]); // fields never read may be anything
     // At most PAGE_LIMIT entries: 100 is a page, 101 is not (Codex unit C R1, C2).
     expect(parsePage(JSON.stringify({ reports: Array(100).fill({}) }))).toHaveLength(100);

@@ -98,14 +98,23 @@ function keepRead(e: unknown): unknown {
   return out;
 }
 
-const hasComplexField = (e: unknown): boolean =>
-  e !== null && typeof e === 'object' && !Array.isArray(e) && READ_FIELDS.some((k) => { const v = (e as Record<string, unknown>)[k]; return v !== null && typeof v === 'object'; });
+/// The captured forms (every entry of the 2026-10-16 captures): feedID and fullReport strings, observationsTimestamp a
+/// string or a safe integer. An absent field stays allowed (raw_fp records its absence).
+function hasOddField(e: unknown): boolean {
+  if (e === null || typeof e !== 'object' || Array.isArray(e)) return false;
+  const o = e as Record<string, unknown>;
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(o, k);
+  if (has('feedID') && typeof o.feedID !== 'string') return true;
+  if (has('fullReport') && typeof o.fullReport !== 'string') return true;
+  const t = o.observationsTimestamp;
+  return has('observationsTimestamp') && typeof t !== 'string' && !(typeof t === 'number' && Number.isSafeInteger(t));
+}
 
 /// A kept value is a number, a boolean, null, or a printable ASCII string, so what a tick holds stays about the body's
 /// size (V8 stores such a string one byte a character). A string with another character becomes a fixed tag holding
 /// the keccak of its JSON text, so two different strings stay different for raw_fp (entry.ts) and junk costs no more
 /// than the tag; JSON.stringify escapes a lone surrogate, which a UTF-8 encoding would turn into U+FFFD. The tag starts
-/// with U+0000, which no kept string can contain. Objects and arrays never get here (hasComplexField refuses the page).
+/// with U+0000, which no kept string can contain. Only strings and safe integers get here (hasOddField refuses the rest).
 function flat(v: unknown): unknown {
   if (typeof v !== 'string' || /^[\x20-\x7e]*$/.test(v)) return v;
   return `\u0000text:${keccak256(stringToBytes(JSON.stringify(v)))}`;
@@ -119,9 +128,10 @@ export function parsePage(text: string): PageEntry[] | null {
     const reports = (v as { reports?: unknown }).reports;
     // More entries than asked for is not a page: the per-tick work bound assumes at most PAGE_LIMIT (Codex unit C R1, C2).
     if (!Array.isArray(reports) || reports.length > PAGE_LIMIT) return null;
-    // A read field holding an object or an array is not a page either: no real report has one, and such a value has no
-    // bounded exact identity for raw_fp, so the page fails closed (a gap) instead (Codex B/C R2, F1).
-    if (reports.some(hasComplexField)) return null;
+    // A read field in any other form than the captured ones is not a page either: such a value may have no exact identity
+    // for raw_fp once parsed (an object too deep to print, a number JSON.parse rounds), so the page fails closed, a gap
+    // (Codex B/C R2, F1, and the adversary pass after it).
+    if (reports.some(hasOddField)) return null;
     return reports.map(keepRead) as PageEntry[];
   } catch {
     return null;
