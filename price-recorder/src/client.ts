@@ -20,7 +20,7 @@
 import { hmacSha256Hex, REPORT_TIMEOUT_MS, reportHeaders, type HmacHex, type ReportCredentials } from '../../cf-worker/src/datastreams';
 import { keccak256, stringToBytes } from 'viem';
 
-import { typed, type PageEntry } from './entry';
+import type { PageEntry } from './entry';
 
 /// The measured maximum `limit` of /reports/page (plan 1, captures of 2026-10-16).
 export const PAGE_LIMIT = 100;
@@ -98,16 +98,17 @@ function keepRead(e: unknown): unknown {
   return out;
 }
 
+const hasComplexField = (e: unknown): boolean =>
+  e !== null && typeof e === 'object' && !Array.isArray(e) && READ_FIELDS.some((k) => { const v = (e as Record<string, unknown>)[k]; return v !== null && typeof v === 'object'; });
+
 /// A kept value is a number, a boolean, null, or a printable ASCII string, so what a tick holds stays about the body's
-/// size (V8 stores such a string one byte a character, and no nested value is kept). Anything else (an object, an array,
-/// a string with another character) becomes a fixed tag holding its keccak, so two different values stay different for
-/// raw_fp (entry.ts) and junk costs no more than the tag. The tag starts with U+0000, which no kept string can contain.
+/// size (V8 stores such a string one byte a character). A string with another character becomes a fixed tag holding
+/// the keccak of its JSON text, so two different strings stay different for raw_fp (entry.ts) and junk costs no more
+/// than the tag; JSON.stringify escapes a lone surrogate, which a UTF-8 encoding would turn into U+FFFD. The tag starts
+/// with U+0000, which no kept string can contain. Objects and arrays never get here (hasComplexField refuses the page).
 function flat(v: unknown): unknown {
-  if (v === null || typeof v === 'number' || typeof v === 'boolean') return v;
-  if (typeof v === 'string' && /^[\x20-\x7e]*$/.test(v)) return v;
-  // JSON.stringify escapes a lone surrogate, which a UTF-8 encoding would turn into U+FFFD (two values, one tag).
-  const [kind, text] = typeof v === 'string' ? ['text', JSON.stringify(v)] : ['json', typed(v)];
-  return `\u0000${kind}:${keccak256(stringToBytes(text))}`;
+  if (typeof v !== 'string' || /^[\x20-\x7e]*$/.test(v)) return v;
+  return `\u0000text:${keccak256(stringToBytes(JSON.stringify(v)))}`;
 }
 
 /// Pure: a 200 body is a page iff it is a JSON object holding a `reports` array.
@@ -117,7 +118,11 @@ export function parsePage(text: string): PageEntry[] | null {
     if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
     const reports = (v as { reports?: unknown }).reports;
     // More entries than asked for is not a page: the per-tick work bound assumes at most PAGE_LIMIT (Codex unit C R1, C2).
-    return Array.isArray(reports) && reports.length <= PAGE_LIMIT ? (reports.map(keepRead) as PageEntry[]) : null;
+    if (!Array.isArray(reports) || reports.length > PAGE_LIMIT) return null;
+    // A read field holding an object or an array is not a page either: no real report has one, and such a value has no
+    // bounded exact identity for raw_fp, so the page fails closed (a gap) instead (Codex B/C R2, F1).
+    if (reports.some(hasComplexField)) return null;
+    return reports.map(keepRead) as PageEntry[];
   } catch {
     return null;
   }

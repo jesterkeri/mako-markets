@@ -60,12 +60,17 @@ describe('classify (plan 4.1)', () => {
     for (const body of ['', 'null', '[]', '{}', '{"reports":{}}', '{"reports":"x"}', '[{"reports":[]}]', 'not json'])
       expect(await classify(res(200, body)), body).toMatchObject({ kind: 'failed', reason: 'bad_body' });
     expect(parsePage('{"reports":[1,null,"x",[[[]]]]}')).toEqual([null, null, null, null]); // never read, kept as null
-    // Fields that are not flat printable values become a fixed tag; different values stay different.
-    const [a, b] = parsePage('{"reports":[{"fullReport":[[[]]],"feedID":"\\u00e9"},{"fullReport":[[]],"feedID":"x"}]}') as Record<string, string>[];
-    expect(a.fullReport).toMatch(/^\u0000json:0x[0-9a-f]{64}$/);
+    // A string that is not printable ASCII becomes a fixed tag; different strings stay different.
+    const [a, b] = parsePage('{"reports":[{"fullReport":"0x","feedID":"\\u00e9"},{"fullReport":"0x","feedID":"\\u00e8"}]}') as Record<string, string>[];
     expect(a.feedID).toMatch(/^\u0000text:0x[0-9a-f]{64}$/);
-    expect(b.fullReport).not.toBe(a.fullReport);
-    expect(b.feedID).toBe('x');
+    expect(b.feedID).not.toBe(a.feedID);
+    // A read field holding an object or an array refuses the whole page (Codex B/C R2, F1): no real report has one, and
+    // such a value has no bounded exact identity. Data: the scenario of the review, two values nested 5,000 deep.
+    const deep = (x: number) => '['.repeat(5000) + x + ']'.repeat(5000);
+    expect(parsePage(`{"reports":[{"feedID":"f","observationsTimestamp":1,"fullReport":${deep(0)}},{"feedID":"f","observationsTimestamp":1,"fullReport":${deep(1)}}]}`)).toBeNull();
+    for (const field of ['feedID', 'observationsTimestamp', 'fullReport'])
+      for (const v of ['[]', '{}', '[[1]]', '{"a":{}}']) expect(parsePage(`{"reports":[{"${field}":${v}}]}`), `${field}=${v}`).toBeNull();
+    expect(parsePage('{"reports":[{"feedID":"f","other":{"deep":[[]]}}]}')).toEqual([{ feedID: 'f' }]); // fields never read may be anything
     // At most PAGE_LIMIT entries: 100 is a page, 101 is not (Codex unit C R1, C2).
     expect(parsePage(JSON.stringify({ reports: Array(100).fill({}) }))).toHaveLength(100);
     expect(parsePage(JSON.stringify({ reports: Array(101).fill({}) }))).toBeNull();
