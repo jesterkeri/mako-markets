@@ -134,6 +134,7 @@ function Row({
   viewerCanReply,
   onReply,
   isReply,
+  onDeleted,
 }: {
   comment: CommentWire;
   target: CommentTargetParams;
@@ -141,6 +142,7 @@ function Row({
   viewerCanReply: boolean;
   onReply?: () => void;
   isReply?: boolean;
+  onDeleted?: (id: string) => void;
 }) {
   const del = useDeleteComment(target);
   const showDelete = !comment.deleted && (comment.isOwn || canModerate);
@@ -175,7 +177,7 @@ function Row({
           {showDelete && (
             <button
               type="button"
-              onClick={() => del.mutate(comment.id)}
+              onClick={() => del.mutate(comment.id, { onSuccess: () => onDeleted?.(comment.id) })}
               disabled={del.isPending}
               className="mako-label text-[10px] text-muted hover:text-mako-red transition-colors disabled:opacity-40"
             >
@@ -204,26 +206,52 @@ function CommentThread({
   writable: boolean;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
-  const [extraReplies, setExtraReplies] = useState<CommentWire[]>([]);
-  const [replyCursor, setReplyCursor] = useState<string | null>(comment.repliesNextCursor);
+  // Replies past the server's first window, once VIEW MORE was used. They are not in the list query, so they are
+  // reconciled here (#193): until the thread is expanded the cursor comes from the latest server data; a deleted reply
+  // leaves the list (reply pages never include deleted ones); the viewer's own reply reloads the expanded list.
+  const [more, setMore] = useState<{ replies: CommentWire[]; cursor: string | null; pages: number } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const post = usePostComment(target);
 
-  const replies = [...comment.replies, ...extraReplies];
+  const replies = more ? [...comment.replies, ...more.replies] : comment.replies;
+  const replyCursor = more ? more.cursor : comment.repliesNextCursor;
 
   async function loadMoreReplies() {
     if (!replyCursor || loadingMore) return;
     setLoadingMore(true);
     try {
       const page = await fetchMoreReplies(target, comment.id, replyCursor);
-      setExtraReplies((prev) => [...prev, ...page.comments]);
-      setReplyCursor(page.nextCursor);
+      setMore((prev) => ({ replies: [...(prev?.replies ?? []), ...page.comments], cursor: page.nextCursor, pages: (prev?.pages ?? 0) + 1 }));
     } catch {
-      /* leave the button; a later poll refresh will reconcile */
+      /* leave the button; the viewer can try again */
     } finally {
       setLoadingMore(false);
     }
   }
+
+  // Re-reads everything past the window, from the window's own cursor (the window's replies never change, so its
+  // cursor does not either), up to the pages already shown plus one.
+  async function reloadMore(start: string, pages: number) {
+    setLoadingMore(true);
+    try {
+      const out: CommentWire[] = [];
+      let cursor: string | null = start;
+      let read = 0;
+      for (; read < pages && cursor; read++) {
+        const page = await fetchMoreReplies(target, comment.id, cursor);
+        out.push(...page.comments);
+        cursor = page.nextCursor;
+      }
+      setMore({ replies: out, cursor, pages: read });
+    } catch {
+      /* keep what is shown */
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  const dropReply = (id: string) =>
+    setMore((prev) => (prev ? { ...prev, replies: prev.replies.filter((r) => r.id !== id) } : prev));
 
   return (
     <div className="bg-paper border-2 border-ink rounded-2xl p-4 shadow-[3px_3px_0_0_var(--mako-ink)]">
@@ -244,7 +272,15 @@ function CommentThread({
             error={post.error}
             placeholder={`Reply to ${comment.deleted ? 'this thread' : comment.authorLabel}…`}
             onSubmit={(body) =>
-              post.mutate({ body, parentId: comment.id }, { onSuccess: () => setReplyOpen(false) })
+              post.mutate(
+                { body, parentId: comment.id },
+                {
+                  onSuccess: () => {
+                    setReplyOpen(false);
+                    if (more && comment.repliesNextCursor) void reloadMore(comment.repliesNextCursor, more.pages + 1);
+                  },
+                },
+              )
             }
           />
         </div>
@@ -253,7 +289,7 @@ function CommentThread({
       {replies.length > 0 && (
         <div className="ml-9 mt-2 border-l-2 border-ink/15 pl-4">
           {replies.map((r) => (
-            <Row key={r.id} comment={r} target={target} canModerate={canModerate} viewerCanReply={false} isReply />
+            <Row key={r.id} comment={r} target={target} canModerate={canModerate} viewerCanReply={false} isReply onDeleted={dropReply} />
           ))}
           {replyCursor && (
             <button
