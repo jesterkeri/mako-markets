@@ -149,6 +149,7 @@ export const PRUNE_SQL: Readonly<Record<PruneTarget, string>> = {
   candles_1m: candlePrune('candles_1m'),
   candles_15m: candlePrune('candles_15m'),
   runs: `DELETE FROM runs WHERE t IN (SELECT t FROM runs WHERE t < ?1 LIMIT ${PRUNE_BATCH})`,
+  live_stats: `DELETE FROM live_stats WHERE (feed, hour) IN (SELECT feed, hour FROM live_stats WHERE hour < ?1 LIMIT ${PRUNE_BATCH})`,
   checker_result: `DELETE FROM checker_result WHERE (cycle_id, ordinal) IN (SELECT cycle_id, ordinal FROM checker_result WHERE cycle_id IN (${finished}) LIMIT ${PRUNE_BATCH})`,
   checker_shard: `DELETE FROM checker_shard WHERE (cycle_id, ordinal) IN (SELECT cycle_id, ordinal FROM checker_shard WHERE cycle_id IN (${finished}) LIMIT ${PRUNE_BATCH})`,
   checker_cycle:

@@ -12,6 +12,13 @@ import { BASE, CREDS, FakeStreams, OTHER_ERROR_BODY, REFUSAL_BODY, REFUSAL_STATU
 const res = (status: number, body: string | null, headers: Record<string, string> = {}) => new Response(body, { status, headers });
 
 describe('classify (plan 4.1)', () => {
+  it('a 200 with more than PAGE_LIMIT real reports is bad_body, not a page (data: nyse-open-AAPL capture, its first 101 reports)', async () => {
+    const aapl = capture('nyse-open-AAPL');
+    expect(aapl.length).toBeGreaterThan(100);
+    expect(await classify(res(200, JSON.stringify({ reports: aapl.slice(0, 101) })))).toMatchObject({ kind: 'failed', reason: 'bad_body' });
+    expect(await classify(res(200, JSON.stringify({ reports: aapl.slice(0, 100) })))).toMatchObject({ kind: 'ok' });
+  });
+
   it('the captured refusal body is 401 {"error":"feeds not authorized"}', () => {
     expect(REFUSAL_STATUS).toBe(401);
     expect(REFUSAL_BODY).toBe('{"error":"feeds not authorized"}');
@@ -52,6 +59,9 @@ describe('classify (plan 4.1)', () => {
     for (const body of ['', 'null', '[]', '{}', '{"reports":{}}', '{"reports":"x"}', '[{"reports":[]}]', 'not json'])
       expect(await classify(res(200, body)), body).toMatchObject({ kind: 'failed', reason: 'bad_body' });
     expect(parsePage('{"reports":[1,null,"x"]}')).toEqual([1, null, 'x']);
+    // At most PAGE_LIMIT entries: 100 is a page, 101 is not (Codex unit C R1, C2).
+    expect(parsePage(JSON.stringify({ reports: Array(100).fill({}) }))).toHaveLength(100);
+    expect(parsePage(JSON.stringify({ reports: Array(101).fill({}) }))).toBeNull();
   });
 
   it('a 200 body over the page size cap is not read further and is not a page', async () => {

@@ -19,7 +19,7 @@ const GUARDED_DELETE = "DELETE FROM feed_holds WHERE symbol = 'AAPL' AND EXISTS 
 describe('migration 0001', () => {
   it('creates exactly the plan 5.2 tables', async () => {
     const names = (await all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name <> 'd1_migrations' ORDER BY name")).map((r) => r.name);
-    expect(names).toEqual(['candles_15m', 'candles_1d', 'candles_1h', 'candles_1m', 'checker_cycle', 'checker_result', 'checker_shard', 'config', 'conflicts', 'feed_holds', 'latest', 'lease', 'lease_guard', 'runs', 'todo']);
+    expect(names).toEqual(['candles_15m', 'candles_1d', 'candles_1h', 'candles_1m', 'checker_cycle', 'checker_result', 'checker_shard', 'config', 'conflicts', 'feed_holds', 'latest', 'lease', 'lease_guard', 'live_stats', 'runs', 'todo']);
   });
 
   it('has no secondary index: only the ones primary keys and the checker_shard UNIQUE create', async () => {

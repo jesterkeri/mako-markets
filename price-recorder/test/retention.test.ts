@@ -5,7 +5,7 @@ import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
 import { pruneStatement, PRUNE_SQL } from '../src/db';
-import { KEEP_15M_S, KEEP_1M_S, KEEP_CHECKER_S, KEEP_RUNS_S, ODD_ROTATION, PRUNE_BATCH, pruneCutoff, pruneTarget, REPAIR_HORIZON_S, type PruneTarget } from '../src/retention';
+import { KEEP_15M_S, KEEP_1M_S, KEEP_CHECKER_S, KEEP_LIVE_STATS_S, KEEP_RUNS_S, ODD_ROTATION, PRUNE_BATCH, pruneCutoff, pruneTarget, REPAIR_HORIZON_S, type PruneTarget } from '../src/retention';
 import { align, DAY, HOUR } from '../src/rollup';
 
 const db = () => env.DB;
@@ -26,18 +26,19 @@ async function insert(table: string, objs: Record<string, unknown>[]) {
 const day1d = (feed: string, t: number) => ({ feed, t: align(t, DAY), n_min_open: 0, n_min_closed: 1440, n_min_gap: 0, n_min_retry: 0 });
 
 describe('schedule (pure)', () => {
-  it('even hours prune candles_1m, odd hours rotate through the rest, each every 10 hours', () => {
+  it('even hours prune candles_1m, odd hours rotate through the rest, each every 12 hours', () => {
     expect(pruneTarget(NOW_EVEN)).toBe('candles_1m');
     expect(pruneTarget(NOW_EVEN + 3599)).toBe('candles_1m');
-    const odd = Array.from({ length: 10 }, (_, i) => pruneTarget(NOW_ODD + 2 * HOUR * i));
+    const odd = Array.from({ length: 12 }, (_, i) => pruneTarget(NOW_ODD + 2 * HOUR * i));
     expect(new Set(odd)).toEqual(new Set(ODD_ROTATION));
-    for (let i = 0; i < 5; i++) expect(odd[i]).toBe(odd[i + 5]);
+    for (let i = 0; i < 6; i++) expect(odd[i]).toBe(odd[i + 6]);
     // checker_cycle never comes before its shards and results within one rotation.
     expect(ODD_ROTATION.indexOf('checker_cycle')).toBeGreaterThan(ODD_ROTATION.indexOf('checker_shard'));
     expect(ODD_ROTATION.indexOf('checker_cycle')).toBeGreaterThan(ODD_ROTATION.indexOf('checker_result'));
   });
 
-  it('cutoffs: 35 days, 120 days, 7 days', () => {
+  it('cutoffs: 35 days, 120 days, 7 days, live_stats 30 days', () => {
+    expect(pruneCutoff('live_stats', NOW_EVEN)).toBe(NOW_EVEN - 30 * DAY);
     expect(pruneCutoff('candles_1m', NOW_EVEN)).toBe(NOW_EVEN - 35 * DAY);
     expect(pruneCutoff('candles_15m', NOW_EVEN)).toBe(NOW_EVEN - 120 * DAY);
     expect(pruneCutoff('runs', NOW_EVEN)).toBe(NOW_EVEN - 7 * DAY);
@@ -59,6 +60,7 @@ describe('schedule (pure)', () => {
       candles_1m: 34 * 60, // one row per feed per minute
       candles_15m: 34 * 4,
       runs: 60, // one per tick
+      live_stats: 34, // one per feed per hour (plan 8.3)
       checker_result: 60, // one shard per tick
       checker_shard: Math.ceil((1054 * 24) / 17.6 / 24), // 1,054 per cycle, a cycle every ~17.6 h
       checker_cycle: 1,
@@ -67,7 +69,7 @@ describe('schedule (pure)', () => {
     for (const t of Object.keys(perHour) as PruneTarget[]) expect(perHour[t] * interval(t), t).toBeLessThan(PRUNE_BATCH);
     // A whole cycle's shards fit one batch, so a completed cycle's shards go in one turn.
     expect(1054).toBeLessThan(PRUNE_BATCH);
-    expect([KEEP_1M_S, KEEP_15M_S, KEEP_RUNS_S, KEEP_CHECKER_S]).toEqual([35 * DAY, 120 * DAY, 7 * DAY, 7 * DAY]);
+    expect([KEEP_1M_S, KEEP_15M_S, KEEP_RUNS_S, KEEP_CHECKER_S, KEEP_LIVE_STATS_S]).toEqual([35 * DAY, 120 * DAY, 7 * DAY, 7 * DAY, 30 * DAY]);
   });
 });
 
@@ -108,6 +110,16 @@ describe('pruning on local D1', () => {
     expect(target).toBe('candles_15m');
     expect((await stmt.run()).meta.changes).toBe(1);
     expect(await count('candles_15m')).toBe(1);
+  });
+
+  it('live_stats at 30 days', async () => {
+    const now = [...Array(12).keys()].map((i) => NOW_ODD + 2 * HOUR * i).find((t) => pruneTarget(t) === 'live_stats')!;
+    const cut = now - KEEP_LIVE_STATS_S;
+    const zero = 'expected, exact, missing, other_second, invalid, regress, conflict, publisher_gap, unresolved, boundary, backoff, failed, refused, max_gap_s';
+    for (const hour of [align(cut, HOUR) - HOUR, align(cut, HOUR) + HOUR])
+      await db().prepare(`INSERT INTO live_stats (feed, hour, ${zero}) VALUES ('BTC', ?1, 0,0,0,0,0,0,0,0,0,0,0,0,0,0)`).bind(hour).run();
+    expect((await pruneStatement(db(), now).stmt.run()).meta.changes).toBe(1);
+    expect((await rows('SELECT hour FROM live_stats')).map((r) => r.hour)).toEqual([align(cut, HOUR) + HOUR]);
   });
 
   it('runs at 7 days', async () => {

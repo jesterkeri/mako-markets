@@ -86,6 +86,28 @@ CREATE TABLE latest (
   market_status INTEGER
 );
 
+-- Hourly per-feed liveness counters of the live layer (5.2, 8.3): written by its finalizer from finalized records, one
+-- row per feed and hour, kept 30 days (5.3). Created here so the schema is complete before the live layer ships.
+CREATE TABLE live_stats (
+  feed TEXT NOT NULL,
+  hour INTEGER NOT NULL CHECK (hour % 3600 = 0),
+  expected INTEGER NOT NULL CHECK (expected >= 0),
+  exact INTEGER NOT NULL CHECK (exact >= 0),
+  missing INTEGER NOT NULL CHECK (missing >= 0),
+  other_second INTEGER NOT NULL CHECK (other_second >= 0),
+  invalid INTEGER NOT NULL CHECK (invalid >= 0),
+  regress INTEGER NOT NULL CHECK (regress >= 0),
+  conflict INTEGER NOT NULL CHECK (conflict >= 0),
+  publisher_gap INTEGER NOT NULL CHECK (publisher_gap >= 0),
+  unresolved INTEGER NOT NULL CHECK (unresolved >= 0),
+  boundary INTEGER NOT NULL CHECK (boundary >= 0),
+  backoff INTEGER NOT NULL CHECK (backoff >= 0),
+  failed INTEGER NOT NULL CHECK (failed >= 0),
+  refused INTEGER NOT NULL CHECK (refused >= 0),
+  max_gap_s INTEGER NOT NULL CHECK (max_gap_s >= 0),
+  PRIMARY KEY (feed, hour)
+) WITHOUT ROWID;
+
 -- The kill switch and the operator settings (section 11). Exactly one row, id = 1, integers only. serve and record
 -- carry no declared type on purpose: an INTEGER column converts the text '1' to the integer 1 before any CHECK runs,
 -- so the typeof CHECK could never reject it. Without a type the value is stored as given and '1' is refused.

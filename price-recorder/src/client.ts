@@ -87,7 +87,8 @@ export function parsePage(text: string): PageEntry[] | null {
     const v: unknown = JSON.parse(text);
     if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
     const reports = (v as { reports?: unknown }).reports;
-    return Array.isArray(reports) ? (reports as PageEntry[]) : null;
+    // More entries than asked for is not a page: the per-tick work bound assumes at most PAGE_LIMIT (Codex unit C R1, C2).
+    return Array.isArray(reports) && reports.length <= PAGE_LIMIT ? (reports as PageEntry[]) : null;
   } catch {
     return null;
   }
