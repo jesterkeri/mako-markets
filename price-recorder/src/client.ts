@@ -98,14 +98,15 @@ function keepRead(e: unknown): unknown {
   return out;
 }
 
-/// The captured forms (every entry of the 2026-10-16 captures): feedID and fullReport strings, observationsTimestamp a
-/// string or a safe integer. An absent field stays allowed (raw_fp records its absence).
+/// The captured forms (every entry of the 2026-10-16 captures): feedID a string, fullReport present and 0x hex (so
+/// raw_fp's key is always the plain keccak of its bytes and two kinds of value can never share one), observationsTimestamp
+/// a string or a safe integer. An absent feedID or second stays allowed (such an entry is never this feed's).
 function hasOddField(e: unknown): boolean {
   if (e === null || typeof e !== 'object' || Array.isArray(e)) return false;
   const o = e as Record<string, unknown>;
   const has = (k: string) => Object.prototype.hasOwnProperty.call(o, k);
   if (has('feedID') && typeof o.feedID !== 'string') return true;
-  if (has('fullReport') && typeof o.fullReport !== 'string') return true;
+  if (typeof o.fullReport !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(o.fullReport)) return true;
   const t = o.observationsTimestamp;
   return has('observationsTimestamp') && typeof t !== 'string' && !(typeof t === 'number' && Number.isSafeInteger(t));
 }

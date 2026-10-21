@@ -11,6 +11,8 @@
 // Data: capture-2026-10-16/nyse-open-AAPL.json, its first real report, unchanged, as the exhaustion witness. Derived
 // (labelled, not report bytes): two junk entries of the AAPL feed at the minute before it, fullReport "\ud800" and
 // "�" written as JSON escapes, which are plain ASCII bytes in the body.
+// [d0bb0e4+] A non-hex fullReport now refuses the page (bad_body, the minute a gap), which closes this case more
+// strongly than keeping the two strings apart: the assertions below were changed to that outcome by the main session.
 import { describe, expect, it } from 'vitest';
 
 import { buildMinute } from '../src/candle';
@@ -30,17 +32,12 @@ async function page(reports: unknown[]) {
 }
 
 describe('adversary: flat() tags must keep two different junk strings apart (client.ts, plan r22 3.4)', () => {
-  it('fullReport "\\ud800" and "\\ufffd" at one second stay two raw entries', async () => {
-    expect(JSON.stringify('\ud800')).not.toBe(JSON.stringify('�')); // different bytes on the wire
-    const both = buildMinute(AAPL, M, await page([junk('\ud800'), junk('�'), real]));
-    expect(both.state).not.toBe('incomplete'); // proven by the real witness, so raw_fp is computed
-    expect(both.n_raw, 'two different fullReport values at one second').toBe(2);
-    expect(both.n_rejected).toBe(2);
+  it('fullReport "\\ud800" and "\\ufffd" at one second: the page is refused, so nothing is merged', async () => {
+    expect(JSON.stringify('\ud800')).not.toBe(JSON.stringify('\ufffd')); // different bytes on the wire
+    await expect(page([junk('\ud800'), junk('\ufffd'), real])).rejects.toThrow('not a page: failed');
   });
 
-  it('a refetch with one of them removed changes raw_fp (plan 3.5 refetch_mismatch)', async () => {
-    const first = buildMinute(AAPL, M, await page([junk('\ud800'), junk('�'), real]));
-    const refetch = buildMinute(AAPL, M, await page([junk('�'), real]));
-    expect(refetch.raw_fp, 'one raw entry removed under the same rules').not.toBe(first.raw_fp);
+  it('a refetch with one of them removed is refused as well, so it never stands as evidence', async () => {
+    await expect(page([junk('\ufffd'), real])).rejects.toThrow('not a page: failed');
   });
 });

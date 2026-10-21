@@ -72,16 +72,18 @@ describe('classify (plan 4.1)', () => {
       for (const v of ['[]', '{}', '[[1]]', '{"a":{}}', 'null', 'true', '1.5', '1e400', '9007199254740993'])
         expect(parsePage(`{"reports":[{"${field}":${v}}]}`), `${field}=${v}`).toBeNull();
     for (const field of ['feedID', 'fullReport']) expect(parsePage(`{"reports":[{"${field}":1}]}`), `${field}=1`).toBeNull();
+    // fullReport must be present and 0x hex (adversary on d0bb0e4): another kind could share raw_fp's key with a hex value.
+    for (const e of ['{"feedID":"0xab"}', '{"fullReport":"zz"}', '{"fullReport":"0x0"}', '{"fullReport":""}']) expect(parsePage(`{"reports":[${e}]}`), e).toBeNull();
     // The captured forms pass: strings, and a safe-integer second.
-    expect(parsePage('{"reports":[{"feedID":"0xab","observationsTimestamp":1792070940,"fullReport":"0x00"},{"observationsTimestamp":"1792070941"}]}')).toHaveLength(2);
-    expect(parsePage('{"reports":[{"feedID":"f","other":{"deep":[[]]}}]}')).toEqual([{ feedID: 'f' }]); // fields never read may be anything
+    expect(parsePage('{"reports":[{"feedID":"0xab","observationsTimestamp":1792070940,"fullReport":"0x00"},{"observationsTimestamp":"1792070941","fullReport":"0x01"}]}')).toHaveLength(2);
+    expect(parsePage('{"reports":[{"feedID":"f","fullReport":"0x","other":{"deep":[[]]}}]}')).toEqual([{ feedID: 'f', fullReport: '0x' }]); // fields never read may be anything
     // At most PAGE_LIMIT entries: 100 is a page, 101 is not (Codex unit C R1, C2).
-    expect(parsePage(JSON.stringify({ reports: Array(100).fill({}) }))).toHaveLength(100);
-    expect(parsePage(JSON.stringify({ reports: Array(101).fill({}) }))).toBeNull();
-    // Only the fields entry.ts reads are kept; an absent fullReport stays absent.
-    expect(parsePage('{"reports":[{"feedID":"f","observationsTimestamp":1,"fullReport":"0x","pad":"xxxx"},{"feedID":"f"}]}')).toEqual([
+    expect(parsePage(JSON.stringify({ reports: Array(100).fill({ fullReport: '0x' }) }))).toHaveLength(100);
+    expect(parsePage(JSON.stringify({ reports: Array(101).fill({ fullReport: '0x' }) }))).toBeNull();
+    // Only the fields entry.ts reads are kept; an absent feedID or second stays absent.
+    expect(parsePage('{"reports":[{"feedID":"f","observationsTimestamp":1,"fullReport":"0x","pad":"xxxx"},{"fullReport":"0x"}]}')).toEqual([
       { feedID: 'f', observationsTimestamp: 1, fullReport: '0x' },
-      { feedID: 'f' },
+      { fullReport: '0x' },
     ]);
   });
 
