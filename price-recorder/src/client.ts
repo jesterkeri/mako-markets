@@ -147,7 +147,8 @@ export async function classify(res: Response, limit = PAGE_LIMIT): Promise<PageR
   const requestId = header !== null && REQUEST_ID.test(header) ? header : null;
   const status = res.status;
   if (status === 401 || status === 403) {
-    const { text } = await readCapped(res, REFUSAL_BODY_BYTES);
+    // A body that cannot be read is "no body": a whole-key failure, never a network failure (plan 4.1).
+    const text = await readCapped(res, REFUSAL_BODY_BYTES).then((r) => r.text, () => '');
     return { kind: isFeedRefusal(text) ? 'feed_refused' : 'key_failure', status, requestId };
   }
   if (status === 429) {
