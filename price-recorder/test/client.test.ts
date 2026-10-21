@@ -76,6 +76,18 @@ describe('classify (plan 4.1)', () => {
       `{"feedID":"${F}","fullReport":"zz"}`, `{"feedID":"${F}","fullReport":"0x0"}`, `{"feedID":"${F}"}`, // not hex, odd, absent
       `{"feedID":"${F}","observationsTimestamp":"1792070940","fullReport":"0x"}`, // second as a string
     ]) expect(parsePage(`{"reports":[${e}]}`), e).toBeNull();
+    // A duplicate key, or any escape, refuses the page (Codex B/C R4): JSON.parse would keep the last value or read the
+    // escape as the plain key, so a non-canonical body could look canonical.
+    for (const body of [
+      `{"reports":[{"feedID":"${F}","observationsTimestamp":"1792070940","observationsTimestamp":1792070940,"fullReport":"0x"}]}`,
+      `{"reports":[{"feedID":"${F}","feedID":"${F}","fullReport":"0x"}]}`,
+      `{"reports":[{"feedID":"${F}","fullReport":"0xab","fullReport":"0x"}]}`,
+      `{"reports":[{"feedID":"${F}","fullReport":"0x"}],"reports":[{"feedID":"${F}","fullReport":"0x"}]}`,
+      `{"reports":[{"feedID":"${F}","feed\\u0049D":"${F}","fullReport":"0x"}]}`,
+      `{"reports":[{"feedID":"${F}","fullReport":"0x","note":"a\\nb"}]}`,
+    ]) expect(parsePage(body), body).toBeNull();
+    // A read key inside a field nobody reads would also miscount, so it refuses too (fails closed).
+    expect(parsePage(`{"reports":[{"feedID":"${F}","fullReport":"0x","other":{"fullReport":"0x"}}]}`)).toBeNull();
     // The captured form passes; an absent feed id or second is allowed.
     expect(parsePage(`{"reports":[{"feedID":"${F}","observationsTimestamp":1792070940,"fullReport":"0x00"},{"fullReport":"0x01"}]}`)).toHaveLength(2);
     expect(parsePage(`{"reports":[{"feedID":"${F}","fullReport":"0x","other":{"deep":[[]]}}]}`)).toEqual([{ feedID: F, fullReport: '0x' }]); // fields never read may be anything

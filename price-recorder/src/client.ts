@@ -122,6 +122,14 @@ export function parsePage(text: string): PageEntry[] | null {
     // for raw_fp once parsed (an object too deep to print, a number JSON.parse rounds), so the page fails closed, a gap
     // (Codex B/C R2, F1, and the adversary pass after it).
     if (reports.some(hasOddField)) return null;
+    // JSON.parse keeps only the last of two equal keys, and reads an escaped key as the plain one, so a malformed body
+    // could look canonical once parsed (Codex B/C R4). A real page has no escape at all (hex and integers only), and each
+    // read key appears in the text exactly as often as in the parsed entries; anything else is not a page.
+    if (text.includes('\\')) return null;
+    const count = (key: string) => (text.match(new RegExp(`"${key}"\\s*:`, 'g')) ?? []).length;
+    if (count('reports') !== 1) return null;
+    for (const k of READ_FIELDS)
+      if (count(k) !== reports.filter((e) => e !== null && typeof e === 'object' && !Array.isArray(e) && Object.prototype.hasOwnProperty.call(e, k)).length) return null;
     return reports.map(keepRead) as PageEntry[];
   } catch {
     return null;
