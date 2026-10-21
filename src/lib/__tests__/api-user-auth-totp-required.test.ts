@@ -48,7 +48,9 @@ vi.mock('@/lib/allowlist', () => ({
 vi.mock('@/lib/safe', () => ({
   deriveSafeAddress: mocks.deriveSafeAddress,
 }));
-vi.mock('@/lib/user-upsert', () => ({
+vi.mock('@/lib/account-locks', async () => (await import('./helpers/gate-pass')).accountLocksPassing());
+vi.mock('@/lib/user-upsert', async () => ({
+  ...(await import('./helpers/gate-pass')).upsertStandIn(mocks.upsertEmbeddedUser),
   upsertEmbeddedUser: mocks.upsertEmbeddedUser,
   IdentityConflictError: class IdentityConflictError extends Error {},
 }));

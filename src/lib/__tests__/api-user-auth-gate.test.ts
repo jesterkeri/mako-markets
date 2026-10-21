@@ -14,6 +14,8 @@ const EMAIL = 'owner@example.com';
 const NONCE = 'N'.repeat(43);
 
 const mocks = vi.hoisted(() => ({
+  // Set by a test whose lock wait moves the database's clock: the time `t` a transaction reads after its locks.
+  dbNowAfterLock: { value: null as number | null },
   read: vi.fn(),
   readById: vi.fn(),
   upsert: vi.fn(),
@@ -41,7 +43,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // The checkpoint's clock (db-clock.ts) reads the test's own clock here; the real query is covered by db-clock.test.ts.
-vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => Date.now() }));
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => mocks.dbNowAfterLock.value ?? Date.now() }));
 vi.mock('@/lib/csrf', () => ({ checkSameOrigin: () => ({ ok: true }) }));
 vi.mock('@/lib/allowlist', () => ({ isAllowedForCurrentStage: async () => true }));
 vi.mock('@/lib/privy-server', async (orig) => ({
@@ -53,7 +55,11 @@ vi.mock('@/lib/privy-server', async (orig) => ({
 }));
 vi.mock('@/lib/privy-proof', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-proof')>()),
-  consumeProofNonce: mocks.consume,
+  // The stand-in answers true or false as before; the route reads the reason (`ok`, `reused`, `expired`, `unknown`).
+  consumeProofNonce: async (...a: unknown[]) => {
+    const r = await mocks.consume(...a);
+    return r === true ? 'ok' : r === false ? 'reused' : r;
+  },
   issueProofNonce: mocks.issue,
 }));
 vi.mock('@/lib/privy-admission', async (orig) => ({
@@ -72,7 +78,9 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   detectEmailMismatch: mocks.detect,
 }));
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: mocks.recordMismatch }));
-vi.mock('@/lib/user-upsert', () => ({
+vi.mock('@/lib/account-locks', async () => (await import('./helpers/gate-pass')).accountLocksPassing());
+vi.mock('@/lib/user-upsert', async () => ({
+  ...(await import('./helpers/gate-pass')).upsertStandIn(mocks.upsert),
   upsertEmbeddedUser: mocks.upsert,
   IdentityConflictError: class IdentityConflictError extends Error {
     constructor(public readonly reason: string) {
@@ -277,7 +285,7 @@ describe('POST /api/user/auth/proof', () => {
   }
   it('issues a nonce bound to the Privy user and wallet only when the gate passes', async () => {
     expect(await nonceFor()).toEqual({ status: 200, json: { ok: true, status: 'proof_required', nonce: NONCE } });
-    expect(mocks.issue).toHaveBeenCalledWith(expect.anything(), 'did:privy:owner', WALLET, expect.any(Number));
+    expect(mocks.issue).toHaveBeenCalledWith(expect.anything(), 'did:privy:owner', WALLET);
   });
   it('a refused user gets only its status and no nonce', async () => {
     mocks.read.mockResolvedValue(privyRead({ totpAt: null, linkedAt: null }));
@@ -578,11 +586,13 @@ describe('Start over and a first admission take turns on the Privy user (adversa
     // The wait for the lock: the checkpoint expires while this request queues behind the other.
     mocks.lock.mockImplementation(async (_tx: unknown, id: string) => {
       order.push(`lock:${id}`);
+      mocks.dbNowAfterLock.value = clock + 60_000; // `t`, read after every lock [r27]
       return clock + 60_000; // the database's clock after the wait; the instance's own clock does not move
     });
   });
   afterEach(() => {
     vi.mocked(Date.now).mockRestore();
+    mocks.dbNowAfterLock.value = null;
   });
 
   it('/api/user/auth judges the checkpoint after the lock, at the time after the wait: expired there, nothing binds', async () => {

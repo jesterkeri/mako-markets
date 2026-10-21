@@ -123,14 +123,28 @@ describe('migration 0014: the enrollment checkpoint, bound to the browser', () =
 describe('proof nonces', () => {
   it('are consumed once, only by their own Privy user and wallet, and only before they expire', async () => {
     const wallet = OWNER.address;
-    const n1 = await issueProofNonce(asDb(pdb), 'did:privy:a', wallet, NOW);
+    // The expiry is stamped on the database's clock at issue [r27], so the consume is judged against that clock too.
+    const dbNow = async () => (await pg.query<{ ms: number }>(`SELECT (extract(epoch from clock_timestamp()) * 1000)::float8 AS ms`)).rows[0].ms;
+    const n1 = await issueProofNonce(asDb(pdb), 'did:privy:a', wallet);
     expect(n1).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:b', wallet, nowMs: NOW })).toBe(false);
-    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:a', wallet: OTHER.address, nowMs: NOW })).toBe(false);
-    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:a', wallet, nowMs: NOW })).toBe(true);
-    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:a', wallet, nowMs: NOW })).toBe(false);
-    const n2 = await issueProofNonce(asDb(pdb), 'did:privy:a', wallet, NOW);
-    expect(await consumeProofNonce(asDb(pdb), { nonce: n2, privyUserId: 'did:privy:a', wallet, nowMs: NOW + PROOF_TTL_MS })).toBe(false);
+    const now = await dbNow();
+    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:b', wallet, nowMs: now })).toBe('unknown');
+    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:a', wallet: OTHER.address, nowMs: now })).toBe('unknown');
+    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:a', wallet, nowMs: now })).toBe('ok');
+    expect(await consumeProofNonce(asDb(pdb), { nonce: n1, privyUserId: 'did:privy:a', wallet, nowMs: now })).toBe('reused');
+    const n2 = await issueProofNonce(asDb(pdb), 'did:privy:a', wallet);
+    const later = (await dbNow()) + PROOF_TTL_MS + 1_000;
+    expect(await consumeProofNonce(asDb(pdb), { nonce: n2, privyUserId: 'did:privy:a', wallet, nowMs: later })).toBe('expired');
+    // Expired is never consumed: it stays unused.
+    expect((await pg.query(`SELECT consumed_at FROM privy_proof_nonces WHERE nonce = $1`, [n2])).rows).toEqual([{ consumed_at: null }]);
+  });
+
+  it('are stamped on the database clock at issue: expires_at is clock_timestamp() plus five minutes', async () => {
+    const before = (await pg.query<{ ms: number }>(`SELECT (extract(epoch from clock_timestamp()) * 1000)::float8 AS ms`)).rows[0].ms;
+    const n = await issueProofNonce(asDb(pdb), 'did:privy:a', OWNER.address);
+    const row = (await pg.query<{ exp: Date }>(`SELECT expires_at AS exp FROM privy_proof_nonces WHERE nonce = $1`, [n])).rows[0];
+    expect(row.exp.getTime() - before).toBeGreaterThanOrEqual(PROOF_TTL_MS - 1);
+    expect(row.exp.getTime() - before).toBeLessThan(PROOF_TTL_MS + 5_000);
   });
 });
 
@@ -200,8 +214,9 @@ describe('the proof message and signature', () => {
       checkProofSignature({ message: msg, signature, wallet: OWNER.address, site: SITE, nowMs: NOW, ...o }).then((r) => (r.ok ? 'ok' : r.reason));
     expect(await check({ wallet: OTHER.address })).toBe('wrong_signer');
     expect(await check({ site: 'evil.example' })).toBe('wrong_site');
-    expect(await check({ nowMs: NOW + PROOF_TTL_MS })).toBe('stale');
-    expect(await check({ nowMs: issued.getTime() - 61_000 })).toBe('stale');
+    // Older than its five minutes: proof_expired at the route; dated more than a minute ahead: clock_skew (r13).
+    expect(await check({ nowMs: NOW + PROOF_TTL_MS })).toBe('expired');
+    expect(await check({ nowMs: issued.getTime() - 61_000 })).toBe('clock_skew');
     expect(await check({ message: msg.replace(NONCE, 'B'.repeat(43)) })).toBe('wrong_signer');
     expect(await check({ signature: '0x1234' })).toBe('bad_signature');
   });

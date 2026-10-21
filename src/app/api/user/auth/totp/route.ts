@@ -1,18 +1,20 @@
 import { cookies } from 'next/headers';
 import { type Address } from 'viem';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { sessions, users } from '@/db/schema';
-import { totpStepGuard } from '@/lib/totp-step-guard';
+import { lockoutClearable, totpStepGuard } from '@/lib/totp-step-guard';
 import {
+  challengeLiveAt,
   consumeSigninChallengeInTx,
   validateSigninChallenge,
   TOTP_SIGNIN_MOVE_PURPOSE,
 } from '@/lib/auth-challenges';
+import { lockChallenges, lockSafeRows, lockSessions, lockUserRow } from '@/lib/account-locks';
 import { checkSameOrigin } from '@/lib/csrf';
 import { checkpointHashFrom } from '@/lib/enrollment-checkpoint';
-import { verifyAndConsumeRecoveryCode } from '@/lib/recovery-codes';
+import { consumeRecoveryCodeMatch, findRecoveryCodeMatch } from '@/lib/recovery-codes';
 import { deriveSafeAddress } from '@/lib/safe';
 import {
   TotpAuthTagMismatch,
@@ -102,6 +104,14 @@ class ChallengeInvalid extends Error {
   constructor() {
     super('challenge_invalid');
     this.name = 'ChallengeInvalid';
+  }
+}
+
+/// A lockout is active on the users row this transaction locked (r26): refused with no strike.
+class LockedOut extends Error {
+  constructor(public readonly until: Date) {
+    super('totp_locked');
+    this.name = 'LockedOut';
   }
 }
 
@@ -293,12 +303,35 @@ export async function POST(req: Request) {
 
   try {
     success = await db.transaction(async (tx): Promise<SuccessPayload> => {
-      // Takes turns with Start over for this Privy user (see /api/user/auth). A first admission re-reads its checkpoint
-      // on the database's clock after the wait, so one that expired since the gate above binds nothing.
-      const lockedNowMs = await lockPrivyUser(tx, privyId);
-      if (admission === null && (await readCheckpoint(tx, privyId, checkpointHashFrom(req), lockedNowMs)) === null) {
+      // Every lock first, in the account lock order (src/lib/account-locks.ts), then one live database time `t`
+      // (SIGNIN_REMEMBERED_BROWSER_PLAN r29 [r27], [r28]); nothing after `t` waits on another transaction.
+      //
+      // (1) Takes turns with Start over, and with every sign-in, for this Privy user (see /api/user/auth).
+      await lockPrivyUser(tx, privyId);
+      // (2) The users row, and the lockout judged on clock_timestamp() once the row is held (r23, r26): with the row
+      // held no lockout can start, so a "not active" answer holds for the rest of this transaction; an active one
+      // refuses at once, mints nothing and costs no strike.
+      const locked = await lockUserRow(tx, user.id);
+      if (!locked) throw new ChallengeInvalid();
+      if (locked.lockedNow && locked.totpLockedUntil) throw new LockedOut(locked.totpLockedUntil);
+      // (2a) [r28] The account's unused recovery codes, matched now (bcrypt, up to about 2.5 s) under their lock but
+      // acted on only after the challenge is judged; and on a move, the Safe rows the move rewrites.
+      const recoveryMatch = recoveryStr !== null ? await findRecoveryCodeMatch({ tx, userId: user.id, code: recoveryStr }) : null;
+      if (moveTo !== null) await lockSafeRows(tx, user.id);
+      // (4) The exact challenge row.
+      const [lockedChallenge] = await lockChallenges(tx, { ids: [challengeId] });
+      // (5) On a move, the session rows it deletes.
+      if (moveTo !== null) await lockSessions(tx, { userId: user.id });
+
+      const t = await databaseNowMs(tx);
+
+      // A first admission re-reads its checkpoint on `t`, so one that expired since the gate above binds nothing.
+      if (admission === null && (await readCheckpoint(tx, privyId, checkpointHashFrom(req), t)) === null) {
         throw new CheckpointGone();
       }
+      // [r28] The challenge is judged on `t` BEFORE the code: one that expired while this request waited is refused
+      // with challenge_invalid and costs no strike (Codex R14 F1).
+      if (!challengeLiveAt(lockedChallenge, { userId: user.id, purpose: challenge.purpose, nowMs: t })) throw new ChallengeInvalid();
 
       if (codeStr !== null) {
         // -- TOTP code path --
@@ -331,7 +364,7 @@ export async function POST(req: Request) {
         }
 
         // Replay-guarded success: enforce
-        // last_used_step IS NULL OR < matchedStep atomically.
+        // last_used_step IS NULL OR < matchedStep atomically. It clears only an expired lockout (r22).
         const updated = await tx
           .update(users)
           .set({
@@ -339,7 +372,7 @@ export async function POST(req: Request) {
             totpFailedAttempts: 0,
             totpLockedUntil: null,
           })
-          .where(totpStepGuard(user.id, verifyResult.step))
+          .where(and(totpStepGuard(user.id, verifyResult.step), lockoutClearable()))
           .returning({ id: users.id });
         if (updated.length === 0) {
           // Replay caught: this exact step has already been consumed.
@@ -349,26 +382,27 @@ export async function POST(req: Request) {
           throw new FactorFailure();
         }
       } else {
-        // -- Recovery code path --
-        const result = await verifyAndConsumeRecoveryCode({
-          tx,
-          userId: user.id,
-          code: recoveryStr!,
-        });
+        // -- Recovery code path -- (matched above, under its lock)
+        if (!recoveryMatch) {
+          throw new FactorFailure();
+        }
+        const result = await consumeRecoveryCodeMatch(tx, recoveryMatch);
         if (!result.ok) {
           throw new FactorFailure();
         }
-        await tx
+        const cleared = await tx
           .update(users)
           .set({
             totpFailedAttempts: 0,
             totpLockedUntil: null,
           })
-          .where(eq(users.id, user.id));
+          .where(and(eq(users.id, user.id), lockoutClearable()))
+          .returning({ id: users.id });
+        if (cleared.length === 0) throw new FactorFailure();
       }
 
       // Step 5: factor verified + state reset. Consume the challenge
-      // atomically inside the same transaction; race-loss → throw and
+      // atomically inside the same transaction, on `t`; race-loss → throw and
       // ROLLBACK so the recovery code (if any) returns to unused state
       // and the user's state-reset is undone.
       const consumed = await consumeSigninChallengeInTx({
@@ -376,6 +410,7 @@ export async function POST(req: Request) {
         challengeId,
         userId: user.id,
         purpose: challenge.purpose,
+        nowMs: t,
       });
       if (!consumed) throw new ChallengeInvalid();
 
@@ -434,6 +469,9 @@ export async function POST(req: Request) {
   } catch (err) {
     if (err instanceof FactorFailure) {
       factorFailed = true;
+    } else if (err instanceof LockedOut) {
+      // A lockout committed while this request waited for the row: refused before any write, no strike (r26).
+      return Response.json({ error: 'totp_locked', retryAt: err.until.toISOString() }, { status: 429 });
     } else if (err instanceof ChallengeInvalid) {
       return Response.json({ error: 'challenge_invalid' }, { status: 401 });
     } else if (err instanceof CheckpointGone) {
@@ -447,8 +485,9 @@ export async function POST(req: Request) {
   }
 
   if (factorFailed) {
+    // The writer's own after-state, judged on its own `t` (r27): never this instance's clock.
     const post = await bumpTotpFailedAttempts({ userId: user.id });
-    if (isLockoutActive(post.lockedUntil)) {
+    if (post.active && post.lockedUntil) {
       return Response.json(
         {
           error: 'totp_locked',

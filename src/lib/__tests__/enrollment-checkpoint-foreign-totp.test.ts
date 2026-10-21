@@ -61,7 +61,11 @@ vi.mock('@/lib/privy-server', async (orig) => ({
 }));
 vi.mock('@/lib/privy-proof', async (orig) => ({
   ...(await orig<typeof import('@/lib/privy-proof')>()),
-  consumeProofNonce: mocks.consume,
+  // The stand-in answers true or false as before; the route reads the reason (`ok`, `reused`, `expired`, `unknown`).
+  consumeProofNonce: async (...a: unknown[]) => {
+    const r = await mocks.consume(...a);
+    return r === true ? 'ok' : r === false ? 'reused' : r;
+  },
   issueProofNonce: mocks.issue,
 }));
 vi.mock('@/lib/privy-admission', async (orig) => ({
@@ -83,7 +87,9 @@ vi.mock('@/lib/privy-admission', async (orig) => ({
   detectEmailMismatch: mocks.detect,
 }));
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: mocks.recordMismatch }));
-vi.mock('@/lib/user-upsert', () => ({
+vi.mock('@/lib/account-locks', async () => (await import('./helpers/gate-pass')).accountLocksPassing());
+vi.mock('@/lib/user-upsert', async () => ({
+  ...(await import('./helpers/gate-pass')).upsertStandIn(mocks.upsert),
   upsertEmbeddedUser: mocks.upsert,
   IdentityConflictError: class IdentityConflictError extends Error {},
 }));

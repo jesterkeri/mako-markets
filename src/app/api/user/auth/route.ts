@@ -30,7 +30,8 @@ import {
   USER_SESSION_MAX_AGE_SEC,
 } from '@/lib/user-session';
 import { refFromCookieHeader } from '@/lib/ref-tag';
-import { IdentityConflictError, upsertEmbeddedUser } from '@/lib/user-upsert';
+import { lockSafeRows, lockSessions } from '@/lib/account-locks';
+import { finishEmbeddedUser, IdentityConflictError, prepareEmbeddedUser } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
@@ -187,9 +188,10 @@ export async function POST(req: Request) {
   // to the host serving it. So a proof signed on another site (or another deployment) is refused, and each deployment
   // (production, beta, a preview) accepts proofs made on itself.
   const site = new URL(req.headers.get('origin') as string).host;
-  const nowMs = Date.now();
-  const signed = await checkProofSignature({ ...proof, wallet: verdict.wallet, site, nowMs });
-  if (!signed.ok || !signed.nonce) return refusal('mfa_proof_required');
+  // The signed message's own date (its 5 minutes and the 60 s future bound) is judged on this instance's clock before
+  // any transaction opens, so no lock wait comes between this read and its decision [r27, exempt].
+  const signed = await checkProofSignature({ ...proof, wallet: verdict.wallet, site, nowMs: Date.now() });
+  if (!signed.ok || !signed.nonce) return refusal(proofRefusal(signed.ok ? null : signed.reason));
 
   if (!(await isAllowedForCurrentStage(email))) {
     return Response.json({ error: 'not_allowlisted' }, { status: 403 });
@@ -223,23 +225,34 @@ export async function POST(req: Request) {
   let outcome: Outcome;
   try {
     outcome = await db.transaction(async (tx): Promise<Outcome> => {
-      // Takes turns with Start over for this Privy user, and judges the checkpoint on the database's clock read AFTER the
-      // wait: a sign-in that began before the checkpoint expired is refused once it has (adversary on 5c8d81c), whatever
-      // this instance's own clock says (8b4caaf), and Start over can never delete this Privy user between this
-      // transaction's checks and its commit.
-      const checkpointNowMs = await lockPrivyUser(tx, read.privyUserId);
+      // Every lock first, in the account lock order (src/lib/account-locks.ts), then one live database time `t` that
+      // every expiry below is judged on (SIGNIN_REMEMBERED_BROWSER_PLAN r29, Codex R13 to R15): nothing after `t` can
+      // wait on another transaction, so a credential cannot expire between its check and the commit.
+      //
+      // (1) Takes turns with Start over, and with every other sign-in, for this Privy user.
+      await lockPrivyUser(tx, read.privyUserId);
 
-      // Single use, bound to this Privy user and this wallet, unexpired. Consumed inside the transaction, so a replay
-      // finds it gone and a sign-in that fails later rolls the consumption back with everything else.
-      const fresh = await consumeProofNonce(tx, { nonce: signed.nonce as string, privyUserId: read.privyUserId, wallet: verdict.wallet, nowMs });
-      if (!fresh) throw new GateRefused('mfa_proof_required');
-
-      // [J2] The account is looked up by email, wallet AND Privy user, and its admitted email is never rewritten: a
-      // Privy email that moved (C4) lands in IdentityConflictError below and becomes email_changed.
-      const { user, moved, pendingMoveTo, created } = await upsertEmbeddedUser(tx, email, [verdict.wallet], read.privyUserId, {
+      // (2) [J2] The account is looked up by email, wallet AND Privy user, every match locked in id order, and its
+      // admitted email is never rewritten: a Privy email that moved (C4) lands in IdentityConflictError below and
+      // becomes email_changed. A new account's row is inserted here, before `t`.
+      const prepared = await prepareEmbeddedUser(tx, email, [verdict.wallet], read.privyUserId, {
         deferMoveIfTotp: true,
         ref: refFromCookieHeader(req.headers.get('cookie')),
       });
+      // (2a) Its Safe rows: a reuse inserts missing chains, a move rewrites them.
+      await lockSafeRows(tx, prepared.user.id);
+      // (5) A direct move (a Magic-era account without Mako's own TOTP) deletes every session of the account.
+      if (prepared.directMove) await lockSessions(tx, { userId: prepared.user.id });
+
+      const t = await databaseNowMs(tx);
+
+      // Single use, bound to this Privy user and this wallet, unexpired at `t` [r27]. Consumed inside the transaction,
+      // so a replay finds it gone, and a sign-in that fails later, or a nonce that expired while this route waited,
+      // rolls everything back: nothing moved, nothing deleted, no session.
+      const fresh = await consumeProofNonce(tx, { nonce: signed.nonce as string, privyUserId: read.privyUserId, wallet: verdict.wallet, nowMs: t });
+      if (fresh !== 'ok') throw new GateRefused(fresh === 'expired' ? 'proof_expired' : 'mfa_proof_required');
+
+      const { user, moved, pendingMoveTo, created } = await finishEmbeddedUser(tx, prepared);
       if (!user.email || !user.magicEoa) {
         throw new Error('[user-auth] embedded row missing email/magic_eoa post-upsert');
       }
@@ -247,7 +260,7 @@ export async function POST(req: Request) {
       // A 2FA account due to move to its Privy wallet: nothing changes yet. The challenge records the wallet
       // it moves TO, and /api/user/auth/totp moves it only after the second factor passes.
       if (pendingMoveTo) {
-        const pendingVerdict = judgeAccount(read, null, await readCheckpoint(tx, read.privyUserId, checkpointHash, checkpointNowMs));
+        const pendingVerdict = judgeAccount(read, null, await readCheckpoint(tx, read.privyUserId, checkpointHash, t));
         if (!pendingVerdict.ok) throw new GateRefused(pendingVerdict.status);
         const challengeId = await createSigninChallenge({
           tx,
@@ -255,14 +268,15 @@ export async function POST(req: Request) {
           magicEoa: pendingMoveTo,
           purpose: TOTP_SIGNIN_MOVE_PURPOSE,
           privyUserId: read.privyUserId,
+          nowMs: t,
         });
         return { kind: 'totp_required', challengeId };
       }
       // Re-judge against the row this transaction holds: the order rule runs only at first admission ([G1]). Written
       // only for an account bound to this Privy wallet; a pending move is admitted by /api/user/auth/totp after it moves.
       const admitted = admissionOf(user);
-      // The checkpoint, read in this transaction, decides a first admission (migration 0014).
-      const inTx = judgeAccount(read, admitted, admitted ? null : await readCheckpoint(tx, read.privyUserId, checkpointHash, checkpointNowMs));
+      // The checkpoint, read in this transaction and judged on `t`, decides a first admission (migration 0014).
+      const inTx = judgeAccount(read, admitted, admitted ? null : await readCheckpoint(tx, read.privyUserId, checkpointHash, t));
       if (!inTx.ok) throw new GateRefused(inTx.status);
       const admission: GateAdmission = admitted ?? { wallet: inTx.wallet, totpVerifiedAt: inTx.totpVerifiedAt };
       const keyExportedAt = inTx.exportedAtMs === null ? null : new Date(inTx.exportedAtMs);
@@ -293,6 +307,7 @@ export async function POST(req: Request) {
           tx,
           userId: user.id,
           magicEoa: eoa,
+          nowMs: t,
         });
         return { kind: 'totp_required', challengeId };
       }
@@ -390,6 +405,15 @@ export async function POST(req: Request) {
     firstSignIn: outcome.firstSignIn,
     nextEmailChangeAvailableAt: outcome.nextEmailChangeAvailableAt,
   });
+}
+
+/// The refusal for a proof that failed its signature check (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.2): a message older
+/// than its five minutes is `proof_expired` (the dialog retries once with a fresh proof), one dated more than a minute
+/// ahead is `clock_skew` (the device clock is wrong; never retried); anything else is a bad proof.
+function proofRefusal(reason: string | null): string {
+  if (reason === 'expired') return 'proof_expired';
+  if (reason === 'clock_skew') return 'clock_skew';
+  return 'mfa_proof_required';
 }
 
 function parseProofBody(proof: unknown): { message: string; signature: string } | null {

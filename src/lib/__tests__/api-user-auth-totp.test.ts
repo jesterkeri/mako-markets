@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => {
     validateSigninChallenge: vi.fn(),
     consumeSigninChallengeInTx: vi.fn(),
     verifyAndConsumeRecoveryCode: vi.fn(),
+    lockedRow: vi.fn(async () => ({ privyUserId: null, totpFailedAttempts: 0, totpLockedUntil: null as Date | null, lockedNow: false, privyEmailVerifiedSeen: null })),
+    challengeLive: vi.fn(() => true),
     verifyTotpCode: vi.fn(),
     decryptTotpSecret: vi.fn(),
     deriveSafeAddress: vi.fn(),
@@ -77,12 +79,28 @@ vi.mock('@/lib/csrf', () => ({
 vi.mock('@/lib/user-upsert', () => ({ applyEmbeddedMove: mocks.applyEmbeddedMove }));
 vi.mock('@/lib/auth-challenges', () => ({
   TOTP_SIGNIN_MOVE_PURPOSE: 'totp_signin_move',
+  challengeLiveAt: () => mocks.challengeLive(),
   validateSigninChallenge: mocks.validateSigninChallenge,
   consumeSigninChallengeInTx: mocks.consumeSigninChallengeInTx,
 }));
 
 vi.mock('@/lib/recovery-codes', () => ({
-  verifyAndConsumeRecoveryCode: mocks.verifyAndConsumeRecoveryCode,
+  // The route matches the code under its lock (2a) and consumes it after the challenge check; both halves stand in
+  // for the one helper these tests drive.
+  findRecoveryCodeMatch: async (args: unknown) => {
+    const r = (await mocks.verifyAndConsumeRecoveryCode(args)) as { ok: boolean; consumedId?: string } | undefined;
+    return r?.ok ? (r.consumedId ?? 'rc') : null;
+  },
+  consumeRecoveryCodeMatch: async (_tx: unknown, id: string) => ({ ok: true, consumedId: id }),
+}));
+
+// The lock-order helpers (src/lib/account-locks.ts): the users row is held with no lockout active and the locked
+// challenge is live, unless a test says otherwise.
+vi.mock('@/lib/account-locks', () => ({
+  lockUserRow: async () => mocks.lockedRow(),
+  lockChallenges: async () => [{}],
+  lockSafeRows: async () => {},
+  lockSessions: async () => {},
 }));
 
 vi.mock('@/lib/totp', () => ({
@@ -166,7 +184,8 @@ vi.mock('@/db/client', () => {
           returning: () => {
             const order = ++mocks.nextInvocation;
             mocks.updateUserSuccessInvocation.calls.push(order);
-            return mocks.updateUserSuccess();
+            // Unset: the guarded update matched the one row (the recovery path's lockout clear).
+            return mocks.updateUserSuccess() ?? Promise.resolve([{ id: 'u' }]);
           },
         }),
       }),
@@ -549,7 +568,7 @@ describe('POST /api/user/auth/totp', () => {
     mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
     mocks.verifyTotpCode.mockReturnValue({ ok: false });
     const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 5, lockedUntil });
+    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 5, lockedUntil, active: true });
 
     const { POST } = await import('../../app/api/user/auth/totp/route');
     const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
@@ -832,14 +851,16 @@ describe('POST /api/user/auth/totp', () => {
       mocks.selectUser.mockResolvedValue(userRow({ privyUserId: null, privyTotpAdmittedAt: null }));
       mocks.verifyTotpCode.mockReturnValue({ ok: true, step: 56666666n });
       const order: string[] = [];
-      const DB_NOW = Date.UTC(2030, 0, 1); // the database's clock after the wait, far from this instance's
+      // The database's clock read as `t` after every lock [r27], far from this instance's; the time lockPrivyUser
+      // returns is read before the users-row wait and is not used.
+      const DB_NOW = Date.UTC(2030, 0, 1);
       mocks.lockPrivyUser.mockImplementationOnce(async (_tx: unknown, id: string) => {
         order.push(`lock:${id}`);
-        return DB_NOW;
+        return 0;
       });
-      // Live for the gate before the transaction; gone when re-read after the lock. Both judged at the database's time.
+      // Live for the gate before the transaction; gone when re-read on `t`. Both judged at the database's time.
       const DB_PRE = Date.UTC(2029, 0, 1);
-      mocks.dbNow.mockResolvedValueOnce(DB_PRE);
+      mocks.dbNow.mockResolvedValueOnce(DB_PRE).mockResolvedValueOnce(DB_NOW);
       mocks.readCheckpoint
         .mockImplementationOnce(async (_tx: unknown, _id: string, _hash: string | null, nowMs: number) => (order.push(`checkpoint@${nowMs === DB_PRE ? 'db' : 'instance'}`), { totpVerifiedAt: 1 }))
         .mockImplementationOnce(async (_tx: unknown, _id: string, _hash: string | null, nowMs: number) => (order.push(`checkpoint@${nowMs === DB_NOW ? 'db' : 'instance'}`), null));

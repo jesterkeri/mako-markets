@@ -1,8 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { recoveryCodes, users } from '@/db/schema';
-import { totpStepGuard } from '@/lib/totp-step-guard';
+import { lockUserRow } from '@/lib/account-locks';
+import { lockoutClearable, totpStepGuard } from '@/lib/totp-step-guard';
 import { checkSameOrigin } from '@/lib/csrf';
 import {
   generateRecoveryCodes,
@@ -53,6 +54,14 @@ class FactorFailure extends Error {
   constructor() {
     super('factor_failure');
     this.name = 'FactorFailure';
+  }
+}
+
+/// A lockout is active on the users row the transaction locked: refused with no strike and no write (r26).
+class LockedOut extends Error {
+  constructor(public readonly until: Date) {
+    super('totp_locked');
+    this.name = 'LockedOut';
   }
 }
 
@@ -137,10 +146,11 @@ export async function POST(req: Request) {
     code: totpCode,
   });
   if (!verifyResult.ok) {
+    // The writer's own after-state, judged on its own live time (r27), never this instance's clock.
     const post = await bumpTotpFailedAttempts({ userId: user.id });
-    if (isLockoutActive(post.lockedUntil)) {
+    if (post.active && post.lockedUntil) {
       return Response.json(
-        { error: 'totp_locked', retryAt: post.lockedUntil!.toISOString() },
+        { error: 'totp_locked', retryAt: post.lockedUntil.toISOString() },
         { status: 429 },
       );
     }
@@ -155,10 +165,17 @@ export async function POST(req: Request) {
 
   try {
     await db.transaction(async (tx) => {
+      // Lock and check first (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.3, r26): the users row, then the lockout on
+      // clock_timestamp(). A lockout committed while this request waited (another route's fifth wrong code) refuses
+      // here with no strike, even for a correct code; with the row held none can start, so a zero below is a replay.
+      const locked = await lockUserRow(tx, user.id);
+      if (!locked) throw new FactorFailure();
+      if (locked.lockedNow && locked.totpLockedUntil) throw new LockedOut(locked.totpLockedUntil);
+
       // Replay-guard: consume the TOTP step. A concurrent
       // regenerate / disable using the SAME step would race here;
       // 0 rows back means we lost the race and should treat it as
-      // factor failure.
+      // factor failure. It clears only an expired lockout (r22).
       const replayCheck = await tx
         .update(users)
         .set({
@@ -166,7 +183,7 @@ export async function POST(req: Request) {
           totpFailedAttempts: 0,
           totpLockedUntil: null,
         })
-        .where(totpStepGuard(user.id, verifyResult.step))
+        .where(and(totpStepGuard(user.id, verifyResult.step), lockoutClearable()))
         .returning({ id: users.id });
       if (replayCheck.length === 0) {
         throw new FactorFailure();
@@ -183,11 +200,14 @@ export async function POST(req: Request) {
       );
     });
   } catch (err) {
+    if (err instanceof LockedOut) {
+      return Response.json({ error: 'totp_locked', retryAt: err.until.toISOString() }, { status: 429 });
+    }
     if (err instanceof FactorFailure) {
       const post = await bumpTotpFailedAttempts({ userId: user.id });
-      if (isLockoutActive(post.lockedUntil)) {
+      if (post.active && post.lockedUntil) {
         return Response.json(
-          { error: 'totp_locked', retryAt: post.lockedUntil!.toISOString() },
+          { error: 'totp_locked', retryAt: post.lockedUntil.toISOString() },
           { status: 429 },
         );
       }

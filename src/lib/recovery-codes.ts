@@ -120,6 +120,15 @@ export async function verifyAndConsumeRecoveryCode(args: {
   userId: string;
   code: string;
 }): Promise<VerifyAndConsumeResult> {
+  const matchedId = await findRecoveryCodeMatch(args);
+  if (!matchedId) return { ok: false };
+  return consumeRecoveryCodeMatch(args.tx, matchedId);
+}
+
+/// The first half of verifyAndConsumeRecoveryCode: locks the account's unused codes (lock level (2a),
+/// SIGNIN_REMEMBERED_BROWSER_PLAN r29 [r28]) and returns the id of the one this code matches, or null. Consumes nothing,
+/// so /api/user/auth/totp can take every lock and judge its challenge on `t` before acting on the result.
+export async function findRecoveryCodeMatch(args: { tx: DbOrTx; userId: string; code: string }): Promise<string | null> {
   const { tx, userId, code } = args;
   const normalized = normalizeCode(code);
 
@@ -132,17 +141,16 @@ export async function verifyAndConsumeRecoveryCode(args: {
     .where(and(eq(recoveryCodes.userId, userId), isNull(recoveryCodes.usedAt)))
     .for('update');
 
-  let matchedId: string | null = null;
   for (const candidate of candidates) {
     // Sequential bcrypt-compare so each step runs in constant time relative
     // to the matched row. First match wins.
-    if (await bcrypt.compare(normalized, candidate.codeHash)) {
-      matchedId = candidate.id;
-      break;
-    }
+    if (await bcrypt.compare(normalized, candidate.codeHash)) return candidate.id;
   }
-  if (!matchedId) return { ok: false };
+  return null;
+}
 
+/// The second half: marks the matched (already locked) code used.
+export async function consumeRecoveryCodeMatch(tx: DbOrTx, matchedId: string): Promise<VerifyAndConsumeResult> {
   const consumed = await tx
     .update(recoveryCodes)
     .set({ usedAt: sql`now()` })
