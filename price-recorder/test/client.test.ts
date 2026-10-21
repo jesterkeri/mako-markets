@@ -86,6 +86,8 @@ describe('classify (plan 4.1)', () => {
       `{"reports":[{"feedID":"${F}","feed\\u0049D":"${F}","fullReport":"0x"}]}`,
       `{"reports":[{"feedID":"${F}","fullReport":"0x","note":"a\\nb"}]}`,
     ]) expect(parsePage(body), body).toBeNull();
+    // Two reports arrays where only the second carries read fields: the field counts agree, the reports count does not.
+    expect(parsePage(`{"reports":[1],"reports":[{"feedID":"${F}","fullReport":"0x"}]}`)).toBeNull();
     // A read key inside a field nobody reads would also miscount, so it refuses too (fails closed).
     expect(parsePage(`{"reports":[{"feedID":"${F}","fullReport":"0x","other":{"fullReport":"0x"}}]}`)).toBeNull();
     // The captured form passes; an absent feed id or second is allowed.
