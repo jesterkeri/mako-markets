@@ -111,14 +111,16 @@ function hasOddField(e: unknown): boolean {
 }
 
 
-/// Pure: a 200 body is a page iff it is a JSON object holding a `reports` array.
-export function parsePage(text: string): PageEntry[] | null {
+/// Pure: a 200 body is a page iff it is a JSON object holding a `reports` array of at most `limit` entries (the limit
+/// the request asked for).
+export function parsePage(text: string, limit = PAGE_LIMIT): PageEntry[] | null {
   try {
     const v: unknown = JSON.parse(text);
     if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
     const reports = (v as { reports?: unknown }).reports;
-    // More entries than asked for is not a page: the per-tick work bound assumes at most PAGE_LIMIT (Codex unit C R1, C2).
-    if (!Array.isArray(reports) || reports.length > PAGE_LIMIT) return null;
+    // More entries than asked for is not a page: the per-tick work bound assumes at most PAGE_LIMIT (Codex unit C R1, C2),
+    // and the restoration probe asks for 1 (adversary on unit d).
+    if (!Array.isArray(reports) || reports.length > limit) return null;
     // A read field in any other form than the captured ones is not a page either: such a value may have no exact identity
     // for raw_fp once parsed (an object too deep to print, a number JSON.parse rounds), so the page fails closed, a gap
     // (Codex B/C R2, F1, and the adversary pass after it).
@@ -140,7 +142,7 @@ export function parsePage(text: string): PageEntry[] | null {
   }
 }
 
-export async function classify(res: Response): Promise<PageResult> {
+export async function classify(res: Response, limit = PAGE_LIMIT): Promise<PageResult> {
   const header = res.headers.get('x-request-id');
   const requestId = header !== null && REQUEST_ID.test(header) ? header : null;
   const status = res.status;
@@ -157,7 +159,7 @@ export async function classify(res: Response): Promise<PageResult> {
     return { kind: 'failed', status, reason: status >= 500 && status <= 599 ? 'server_error' : 'bad_status', requestId };
   }
   const { text, truncated } = await readCapped(res, MAX_PAGE_BYTES);
-  const reports = truncated ? null : parsePage(text);
+  const reports = truncated ? null : parsePage(text, limit);
   if (!reports) return { kind: 'failed', status, reason: 'bad_body', requestId };
   return { kind: 'ok', status: 200, reports, requestId };
 }
@@ -188,7 +190,7 @@ export function pageClient(d: ClientDeps): PageClient {
       if (d.mayStart && !d.mayStart()) return { kind: 'unsent', status: 0, requestId: null };
       const res = await d.fetchImpl(`${base}${path}`, { headers, signal: AbortSignal.timeout(d.timeoutMs ?? REPORT_TIMEOUT_MS) });
       d.onStatus?.(res.status);
-      return await classify(res);
+      return await classify(res, limit);
     } catch {
       return { kind: 'failed', status: 0, reason: 'network', requestId: null };
     }
