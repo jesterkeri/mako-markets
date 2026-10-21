@@ -30,7 +30,11 @@ export function PoolMobileCard({ row: r, labels }: { row: PoolRow; labels: SideL
           </span>
           {catTitle(r.cat)}
         </span>
-        <span style={{ marginLeft: 'auto', height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: r.closingSoon ? 'var(--mako-red)' : 'inherit' }}>
+        <span
+          title={r.state === 'open' ? `Betting closes in ${r.closes}` : undefined}
+          aria-label={r.state === 'open' ? `Betting closes in ${r.closes}` : undefined}
+          style={{ marginLeft: 'auto', height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', borderRadius: 9999, background: 'var(--m3-inv-2)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: r.closingSoon ? 'var(--mako-red)' : 'inherit' }}
+        >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true">
             <circle cx="12" cy="13" r="8" />
             <path d="M12 9v4l2 2M9 2h6" />

@@ -194,7 +194,7 @@ function PoolsDesktop({ list, counts, openGroups, state, filter, setFilter, sort
             <span>YES · NO SPLIT</span>
             <span>BET · PAYS PER 1 USDC</span>
             <span style={{ textAlign: 'right' }}>POOL · USDC</span>
-            <span style={{ textAlign: 'right' }}>CLOSES</span>
+            <span style={{ textAlign: 'right' }}>BETS CLOSE</span>
             <span />
           </div>
           {openGroups.length === 0 && (

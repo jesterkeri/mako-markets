@@ -145,7 +145,7 @@ describe('the card', () => {
     const card = poolInviteCard(m, NOW, LABELS);
     expect(card.open).toBe(true);
     expect(card.pill).toEqual({ label: 'OPEN', colour: 'var(--mako-signal)', fg: '#000' });
-    expect(card.clock).toEqual({ label: 'Closes in', value: '6H 11M' });
+    expect(card.clock).toEqual({ label: 'Betting closes in', value: '6H 11M' });
     expect(card.scanTitle).toBe('Scan to join');
     expect(card.minLine).toBe('Min 0.10 USDC · gas-free with email');
     expect(card.cat).toBe('CRYPTO');
