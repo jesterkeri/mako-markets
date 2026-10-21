@@ -32,7 +32,7 @@
 
 import type { HmacHex, ReportCredentials } from '../../cf-worker/src/datastreams';
 import { buildMinute, type MinuteRow } from './candle';
-import { BACKFILL_PAGE_CAP, gapScan, PROBE_LOOKBACK_S, readTickState, todoWrites, unitBudget, unitOutcomes, type Unit } from './backfill';
+import { BACKFILL_PAGE_CAP, gapScan, PAGES_PER_UNIT, PROBE_LOOKBACK_S, readTickState, todoWrites, unitBudget, unitOutcomes, type Unit } from './backfill';
 import { checkShard, parseOpenCycle, resultWrites, startCycle, stuckWrite, STUCK_TICKS } from './checker';
 import { pageClient, type PageClient, type PageResult } from './client';
 import { readConfig } from './config';
@@ -253,8 +253,8 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     };
     const mayStart = () => limiter.halted === null;
     const raw = pageClient({ fetchImpl: deps.fetchImpl, base: deps.base, creds: deps.creds, now: () => clock.now(), hmac: deps.hmac, timeoutMs: deps.timeoutMs, onStatus, mayStart });
-    const client: PageClient = async (feedId, start) => {
-      const r = await raw(feedId, start);
+    const client: PageClient = async (feedId, start, limit) => {
+      const r = await raw(feedId, start, limit);
       if (r.kind === 'key_failure' || r.kind === 'rate_limited') limiter.halt(r.kind);
       return r;
     };
@@ -281,21 +281,30 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     // Plan 4.1: on the hourly tick, one restoration probe per feed in config.feeds_refused. A 200 with a valid entry
     // is logged `feed_restored`; the operator then lifts the listing.
     const restored: string[] = [];
+    const probeAnswers: PageResult[] = []; // counted in runs.n_429 and key_failure like every other answer
     if (hourly) {
       const probeFrom = Math.floor(clock.now() / 1000) - PROBE_LOOKBACK_S;
       await Promise.all(
         FEEDS.filter((f) => refusedByConfig.has(f.symbol)).map(async (f) => {
           if (limiter.halted !== null) return;
-          const res = await limiter.run(() => client(f.feedId, probeFrom));
+          const res = await limiter.run(() => client(f.feedId, probeFrom, 1));
           if (!res.ran) return;
-          if (res.value.kind === 'unsent') limiter.notSent();
-          else if (res.value.kind === 'ok' && res.value.reports.some((e) => e !== null && typeof e === 'object' && !Array.isArray(e) && validOnce(e as Record<string, unknown>, f) !== null)) restored.push(f.symbol);
+          if (res.value.kind === 'unsent') {
+            limiter.notSent();
+            return;
+          }
+          probeAnswers.push(res.value);
+          if (res.value.kind === 'ok' && res.value.reports.some((e) => e !== null && typeof e === 'object' && !Array.isArray(e) && validOnce(e as Record<string, unknown>, f) !== null)) restored.push(f.symbol);
         }),
       );
       for (const symbol of restored) log({ event: 'feed_restored', symbol });
     }
 
-    // Section 6: the backfill units, after live and catch-up. A unit of a feed refused this tick is skipped.
+    // Section 6: the backfill units, after live and catch-up. Catch-up pages come out of the backfill pages (4.1), so
+    // the units that still fit are run; the rest wait, untouched. A unit of a feed refused this tick is skipped.
+    const catchupPages = catchup.reduce((n, r) => n + (r?.pages ?? 0), 0);
+    const pBf = st.recent429 ? Math.floor(cfg.config.p_bf / 2) : cfg.config.p_bf;
+    units.splice(Math.floor(Math.max(0, pBf - catchupPages) / PAGES_PER_UNIT));
     const feedIndex = new Map(feeds.map((f, i) => [f.symbol, i]));
     const backfill: (FeedFetch | null)[] = await Promise.all(
       units.map((u) => {
@@ -306,7 +315,7 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
       }),
     );
 
-    const allAnswers = [...live, ...catchup, ...backfill].flatMap((r) => r?.answers ?? []);
+    const allAnswers = [...[...live, ...catchup, ...backfill].flatMap((r) => r?.answers ?? []), ...probeAnswers];
     const keyFailure = allLiveRefused || allAnswers.some((r) => r.kind === 'key_failure');
     const refused = new Set<string>();
     feeds.forEach((f, i) => {

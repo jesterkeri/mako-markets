@@ -147,19 +147,34 @@ describe('a backfill unit in the tick (plan 6)', () => {
 
   it('a unit the tick never started (a 429 on the live page halts every call) keeps its tries; the next tick runs half the units', async () => {
     await recordOnly(['BTC', 'EURUSD']);
-    await seedTodo([{ feed: 'BTC', hour: H }, { feed: 'EURUSD', hour: H }]);
+    await setPBf(148);
+    await seedTodo([{ feed: 'BTC', hour: H }, { feed: 'EURUSD', hour: H }, { feed: 'BTC', hour: H - HOUR }, { feed: 'EURUSD', hour: H - HOUR }]);
     const clock = virtualClock(msForLive(M));
     const fake = new FakeStreams(clock, [], (c) => (c.start >= M ? { status: 429, body: '' } : null));
     await tick(fake, clock);
-    expect((await todo()).filter((u) => u.hour === H).map((u) => u.tries)).toEqual([0, 0]);
+    expect((await todo()).filter((u) => u.hour >= H - HOUR && u.hour <= H).map((u) => u.tries)).toEqual([0, 0, 0, 0]);
     expect(fake.calls.every((c) => c.start >= M)).toBe(true);
-    // Next tick: P_bf 74 halved to 37, one unit.
+    // Next tick: P_bf 148 halved to 74, less this tick's catch-up pages (one per feed), fits one unit of 37 (unhalved:
+    // three).
     await db().prepare('UPDATE lease SET until = 0').run();
     clock.advance(60_000);
     const fake2 = new FakeStreams(clock, []);
     await tick(fake2, clock);
-    const unitStarts = new Set(fake2.calls.filter((c) => c.start < M - 600).map((c) => c.feedId));
-    expect(unitStarts.size).toBe(1);
+    const catchupPages = fake2.calls.filter((c) => c.start >= M + 60 - 600 && c.start < M + 60).length;
+    expect(catchupPages).toBe(2);
+    const units = new Set(fake2.calls.filter((c) => c.start < M - 600).map((c) => `${c.feedId}:${c.start - (c.start % HOUR)}`));
+    expect(units.size).toBe(1);
+  });
+
+  it('catch-up pages come out of the backfill pages (plan 4.1): P_bf 74 less 2 catch-up pages fits one unit, not two', async () => {
+    await recordOnly(['BTC', 'EURUSD']);
+    await seedTodo([{ feed: 'BTC', hour: H }, { feed: 'EURUSD', hour: H }]);
+    const clock = virtualClock(msForLive(M));
+    const fake = new FakeStreams(clock, []);
+    await tick(fake, clock);
+    expect(fake.calls.filter((c) => c.start >= M - 600 && c.start < M).length).toBe(2); // catch-up, one page per feed
+    const units = new Set(fake.calls.filter((c) => c.start < M - 600).map((c) => `${c.feedId}:${c.start - (c.start % HOUR)}`));
+    expect(units.size).toBe(1);
   });
 
   it('a unit of a feed refused this tick is skipped with its tries unchanged', async () => {

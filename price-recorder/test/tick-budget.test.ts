@@ -102,6 +102,7 @@ describe('statements per tick (plan 4.2)', () => {
     const M = 1792076400; // 15:00 UTC: an hourly tick
     await recordOnly(['AAPL', 'BTC', 'EURUSD', 'XAUUSD']);
     await env.DB.batch(startCycle(env.DB, M + 60)); // an open cycle: this tick checks shard 0
+    await env.DB.prepare('UPDATE config SET p_bf = 148 WHERE id = 1').run(); // room for both units after catch-up pages
     const { last: H } = repairWindow(M + 60);
     await env.DB.prepare('INSERT INTO todo (feed, hour) VALUES (?1, ?2), (?3, ?2)').bind('BTC', H, 'XAUUSD').run();
     const btc = capture('open-minute-BTC');

@@ -41,7 +41,8 @@ export type PageResult =
   /// Not sent: the tick was halted while the request was being signed (mayStart).
   | { kind: 'unsent'; status: 0; requestId: null };
 
-export type PageClient = (feedId: string, start: number) => Promise<PageResult>;
+/// `limit` defaults to PAGE_LIMIT; the hourly restoration probe asks for 1 (plan 4.1).
+export type PageClient = (feedId: string, start: number, limit?: number) => Promise<PageResult>;
 
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -180,8 +181,8 @@ export type ClientDeps = {
 /// One page request, never throwing.
 export function pageClient(d: ClientDeps): PageClient {
   const base = d.base.replace(/\/$/, '');
-  return async (feedId, start) => {
-    const path = pagePath(feedId, start);
+  return async (feedId, start, limit = PAGE_LIMIT) => {
+    const path = pagePath(feedId, start, limit);
     try {
       const headers = await reportHeaders(path, d.creds.apiKey, d.creds.secret, String(d.now()), d.hmac ?? hmacSha256Hex);
       if (d.mayStart && !d.mayStart()) return { kind: 'unsent', status: 0, requestId: null };

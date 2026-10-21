@@ -93,6 +93,7 @@ describe('per-feed refusal (plan 4.1)', () => {
     const listed = FEEDS.filter((f) => f.symbol !== 'BTC' && f.symbol !== 'EURUSD').map((f) => f.feedId);
     const probes = fake.calls.filter((c) => listed.includes(c.feedId as Feed['feedId']));
     expect(probes.map((c) => c.feedId).sort()).toEqual([...listed].sort()); // exactly one call each
+    expect(probes.every((c) => c.limit === 1)).toBe(true);
     expect(probes.every((c) => c.start >= M + 90 - 120 && c.start <= M + 90 + 45 - 120)).toBe(true); // from now - 120, within the call window
     expect(new Set(fake.calls.filter((c) => !listed.includes(c.feedId as Feed['feedId'])).map((c) => c.feedId.slice(0, 10)))).toEqual(new Set(['0x00037da0', '0x0008a5f1']));
     expect((await rows('SELECT DISTINCT feed FROM candles_1m ORDER BY feed')).map((x) => x.feed)).toEqual(['BTC', 'EURUSD']);
