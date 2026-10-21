@@ -112,15 +112,22 @@ export const TODO_DONE_SQL = `DELETE FROM todo WHERE (feed, hour) IN (${PAIRS})`
 export const TODO_TRIED_SQL = `UPDATE todo SET tries = tries + 1 WHERE (feed, hour) IN (${PAIRS})`;
 
 /// What became of each unit this tick: finished (its merged hour has nothing left to retry), tried (it made at least
-/// one call and did not finish), or untouched.
-export function unitOutcomes(units: readonly Unit[], pages: readonly number[], hours: readonly { feed: string; t: number; n_min_retry: number }[]): { done: Unit[]; tried: Unit[] } {
+/// one call and did not finish), or untouched. `halted`: the tick stopped every call (a 429 or a whole-key failure,
+/// plan 4.1), a service-wide interruption, so no unfinished unit is charged a try; a unit that finished before the
+/// halt still leaves `todo` (Codex RECORDER_D R1 F1).
+export function unitOutcomes(
+  units: readonly Unit[],
+  pages: readonly number[],
+  hours: readonly { feed: string; t: number; n_min_retry: number }[],
+  halted: boolean,
+): { done: Unit[]; tried: Unit[] } {
   const retry = new Map(hours.map((h) => [`${h.feed}:${h.t}`, h.n_min_retry]));
   const done: Unit[] = [];
   const tried: Unit[] = [];
   units.forEach((u, i) => {
     if (pages[i] === 0) return;
     if (retry.get(`${u.feed}:${u.hour}`) === 0) done.push(u);
-    else tried.push(u);
+    else if (!halted) tried.push(u);
   });
   return { done, tried };
 }

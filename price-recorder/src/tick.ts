@@ -377,7 +377,7 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     if (hourly) writes.push(pruneStatement(db, M).stmt);
     // A unit of a refused feed counts as not run (plan 4.1: its tries unchanged).
     const pages = units.map((u, k) => (refused.has(u.feed) ? 0 : (backfill[k]?.pages ?? 0)));
-    const { done, tried } = unitOutcomes(units, pages, plan.hours);
+    const { done, tried } = unitOutcomes(units, pages, plan.hours, limiter.halted !== null);
     writes.push(...todoWrites(db, [...done, ...st.stale], tried));
     if (hourly || st.needFill) writes.push(gapScan(db, feeds.map((f) => f.symbol), horizon));
     writes.push(...checkerWrites);

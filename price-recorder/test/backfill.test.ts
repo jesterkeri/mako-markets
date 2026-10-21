@@ -6,7 +6,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
-import { gapScan, MAX_TRIES, PAGES_PER_UNIT, readTickState, repairWindow, unitBudget, UNIT_PRIORITY } from '../src/backfill';
+import { gapScan, MAX_TRIES, PAGES_PER_UNIT, readTickState, repairWindow, unitBudget, unitOutcomes, UNIT_PRIORITY } from '../src/backfill';
 import type { PageEntry } from '../src/entry';
 import { FEEDS } from '../src/feeds';
 import { DAY, HOUR } from '../src/rollup';
@@ -185,6 +185,43 @@ describe('a backfill unit in the tick (plan 6)', () => {
     await tick(fake, clock);
     expect(fake.calls.every((c) => c.start >= M - 600)).toBe(true); // live (and nothing else) asked
     expect((await todo()).find((u) => u.feed === 'BTC' && u.hour === H)?.tries).toBe(0);
+  });
+});
+
+describe('a service-wide halt during a backfill unit (Codex RECORDER_D R1 F1)', () => {
+  const H = LAST;
+  // The unit's first page answers (100 real-shaped reports from H); its second page answers `answer`.
+  async function haltOnSecondPage(answer: { status: number; body: string }) {
+    await recordOnly(['BTC']);
+    await seedTodo([{ feed: 'BTC', hour: H }]);
+    const clock = virtualClock(msForLive(M));
+    let unitPages = 0;
+    const fake = new FakeStreams(clock, [btcSeconds(H, H + HOUR + 100)], (c) => (c.start >= H && c.start < H + HOUR && ++unitPages === 2 ? answer : null));
+    const r = await tick(fake, clock);
+    expect(unitPages).toBeGreaterThanOrEqual(2); // the unit started, then was halted
+    return r;
+  }
+
+  it('a 429 on the second page: n_429 recorded, the partial hour stays retryable, tries unchanged', async () => {
+    const r = await haltOnSecondPage({ status: 429, body: '' });
+    expect(r.run?.n_429).toBe(1);
+    expect((await todo()).find((u) => u.feed === 'BTC' && u.hour === H)?.tries).toBe(0);
+    const h = (await rows('SELECT n_min_open, n_min_retry FROM candles_1h WHERE feed = ?1 AND t = ?2', 'BTC', H))[0];
+    expect(Number(h.n_min_open)).toBeGreaterThan(0); // the first page's minutes are kept
+    expect(Number(h.n_min_retry)).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('a whole-key failure (401 with another body) on the second page: key_failure recorded, tries unchanged', async () => {
+    const r = await haltOnSecondPage({ status: 401, body: JSON.stringify({ error: 'invalid signature' }) });
+    expect(r.run?.key_failure).toBe(1);
+    expect((await todo()).find((u) => u.feed === 'BTC' && u.hour === H)?.tries).toBe(0);
+  }, 60_000);
+
+  it('a unit that finished before the halt still leaves todo; an unfinished one is not charged', () => {
+    const units = [{ feed: 'BTC', hour: H, tries: 0 }, { feed: 'ETH', hour: H, tries: 0 }];
+    const hours = [{ feed: 'BTC', t: H, n_min_retry: 0 }, { feed: 'ETH', t: H, n_min_retry: 12 }];
+    expect(unitOutcomes(units, [37, 3], hours, true)).toEqual({ done: [units[0]], tried: [] });
+    expect(unitOutcomes(units, [37, 3], hours, false)).toEqual({ done: [units[0]], tried: [units[1]] });
   });
 });
 
