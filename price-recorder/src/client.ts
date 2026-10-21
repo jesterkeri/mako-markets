@@ -130,6 +130,9 @@ export function parsePage(text: string): PageEntry[] | null {
     if (count('reports') !== 1) return null;
     for (const k of READ_FIELDS)
       if (count(k) !== reports.filter((e) => e !== null && typeof e === 'object' && !Array.isArray(e) && Object.prototype.hasOwnProperty.call(e, k)).length) return null;
+    // A second must be written as plain digits too: JSON.parse reads 1792070940.0, 1792070940e0 or a long fraction as
+    // the same integer, another spelling of one value (adversary on 73b08c7).
+    if ((text.match(/"observationsTimestamp"\s*:\s*(0|[1-9][0-9]*)\s*[,}]/g) ?? []).length !== count('observationsTimestamp')) return null;
     return reports.map(keepRead) as PageEntry[];
   } catch {
     return null;
