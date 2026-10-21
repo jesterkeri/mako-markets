@@ -387,6 +387,15 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     </button>
   );
 
+  // Every layout names where the candles come from, with the newest candle's own time (not the fetch time: the route
+  // serves cached candles).
+  const newest = data.candles[data.candles.length - 1];
+  const sourceLine = data.source === 'coinbase' && (
+    <div className="mako-mono" style={{ fontSize: 11, color: 'var(--dim)' }}>
+      Chart: Coinbase, latest candle {dayTime(Math.floor(newest.timestamp / 1000))}. Settlement uses Chainlink.
+    </div>
+  );
+
   const header = (
     <div className={`flex items-center justify-between flex-wrap gap-3 px-5 py-3 relative ${styles.header}`} style={{ boxShadow: 'inset 0 -1px 0 var(--line)' }}>
       <span className={`mako-mono text-xs tracking-widest ${styles.pair}`} style={{ fontWeight: 700 }}>
@@ -571,6 +580,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     return (
       <div className={`flex flex-col ${styles.theme}`} style={{ ...CARD_STYLE, height: '100%' }}>
         {header}
+        {sourceLine && <div className="px-5 pt-2">{sourceLine}</div>}
         <div className="flex-1 relative" style={{ minHeight: 0 }}>
           <CandlestickChart
             ref={chartRef}
@@ -601,12 +611,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '12px 14px 0' }}>
           <div style={{ minWidth: 0 }}>
             <div className="mako-mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--dim)' }}>{pair ?? oracleSymbol}</div>
-            {/* The newest candle's own time, not when the browser fetched: the route serves cached candles. */}
-            {data?.source === 'coinbase' && (
-              <div className="mako-mono" style={{ fontSize: 11, color: 'var(--dim)', marginTop: 2 }}>
-                Chart: Coinbase, latest candle {dayTime(Math.floor(last.timestamp / 1000))}. Settlement uses Chainlink.
-              </div>
-            )}
+            {sourceLine && <div style={{ marginTop: 2 }}>{sourceLine}</div>}
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 4 }}>
               <span style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{fmtLast(last.close)}</span>
               {chg !== null && (
@@ -661,6 +666,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   return (
     <div className={styles.theme} style={CARD_STYLE}>
       {header}
+      {sourceLine && <div className="px-5 pt-2">{sourceLine}</div>}
       <div className="relative" style={{ height: CHART_HEIGHT }}>
         <CandlestickChart
           ref={chartRef}

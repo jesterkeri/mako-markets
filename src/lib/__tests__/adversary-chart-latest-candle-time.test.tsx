@@ -74,3 +74,24 @@ describe('chart source line on the 1d timeframe', () => {
     }
   });
 });
+
+// Codex QUICK_WINS R1 F1: the line was only in the compact (phone) layout. Every layout must carry it.
+describe('chart source line in every layout', () => {
+  it.each([
+    ['compact', { compact: true }],
+    ['desktop', {}],
+    ['full page', { page: true }],
+  ] as const)('%s names Coinbase, Chainlink and the newest candle with its date', async (_name, mode) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ candles: CANDLES, source: 'coinbase' }), { status: 200 }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MarketChart oracleSymbol="BTC" assetClass="CRYPTO" pair="BTC/USD" initialTimeframe="1d" {...mode} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(container.textContent).toContain('Chart: Coinbase'));
+    const line = (container.textContent ?? '').match(/Chart: Coinbase,[^.]*\. Settlement uses Chainlink\./)?.[0];
+    expect(line, container.textContent ?? '').toBeDefined();
+    expect(line).toMatch(/Tue 20 Oct, 20:00/); // the newest candle, 2026-10-21 00:00 UTC, in New York
+  });
+});
