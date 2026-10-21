@@ -27,6 +27,7 @@ import { DrawingToolbar } from '@/components/chart/DrawingToolbar';
 import { DrawingEditor } from '@/components/chart/DrawingEditor';
 import { CHART_COLOR_KEYS, type ChartColors } from '@/lib/chart-colors';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
+import { dayTime } from '@/lib/pool-rules';
 import { useChartColors } from '@/lib/use-chart-colors';
 import type { Candle, Timeframe } from '@/types/chart';
 import type { ChartInnerHandle } from '@/components/chart/ChartInner';
@@ -603,7 +604,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             {/* The newest candle's own time, not when the browser fetched: the route serves cached candles. */}
             {data?.source === 'coinbase' && (
               <div className="mako-mono" style={{ fontSize: 11, color: 'var(--dim)', marginTop: 2 }}>
-                Chart: Coinbase, latest candle {new Date(last.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Settlement uses Chainlink.
+                Chart: Coinbase, latest candle {dayTime(Math.floor(last.timestamp / 1000))}. Settlement uses Chainlink.
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 4 }}>
