@@ -3,10 +3,11 @@
 //
 // The recorder Worker (CHARTS_DS_PLAN section 2). The cron runs one tick a minute (tick.ts, plan 4.2); migration 0001
 // seeds `record = 0`, so a fresh deploy calls nothing until the operator turns recording on (section 11, 16 step 4).
-// The HTTP surface answers 503 until the read API (unit e) exists, which is also what a request without a token will
-// get later (plan section 11).
+// The HTTP surface is the read API (read.ts, unit e): candles, latest, availability and health, behind the config
+// check and the read token (plan 7.2, 11).
 // ----------------------------------------------------------------------------
 
+import { handleRead } from './read';
 import { runTick, DEFAULT_DATASTREAMS_URL } from './tick';
 
 export interface Env {
@@ -14,11 +15,12 @@ export interface Env {
   DATASTREAMS_URL?: string;
   DATASTREAMS_API_KEY?: string;
   DATASTREAMS_API_SECRET?: string;
+  RECORDER_READ_TOKEN?: string;
 }
 
 export default {
-  async fetch(): Promise<Response> {
-    return Response.json({ error: 'not_serving' }, { status: 503 });
+  async fetch(req: Request, env: Env): Promise<Response> {
+    return handleRead(req, env);
   },
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
