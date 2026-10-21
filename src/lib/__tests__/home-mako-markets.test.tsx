@@ -129,7 +129,7 @@ describe('Home: the Mako markets column', () => {
   it('shows players and pot on each row, and the open count in the heading', () => {
     const { panel } = renderHome(MARKETS);
     const [busy, rich] = poolLinks(panel());
-    expect(busy.textContent).toContain('#2 · 9 PLAYERS · CLOSES 1D 5H');
+    expect(busy.textContent).toContain('#2 · 9 PLAYERS · BETS CLOSE 1D 5H');
     expect(busy.textContent).toContain('4.00 USDC');
     expect(rich.textContent).toContain('51.00 USDC');
     const one = poolLinks(renderHome([pool(1n, { yesBettorCount: 1, noBettorCount: 0, totalNo: 0n })]).panel())[0];

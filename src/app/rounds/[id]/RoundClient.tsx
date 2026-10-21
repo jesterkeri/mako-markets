@@ -16,6 +16,7 @@ import {
   commentary,
   entryCloseOf,
   estimateEntry,
+  otherSideEmpty,
   feesOf,
   MIN_ENTRY,
   mmss,
@@ -211,9 +212,18 @@ function enterSpec(r: Round, side: RoundSide, amount: bigint, estimate: bigint |
       { label: 'Round', value: `#${r.id.toString()} · ${V1_ASSET.pair} · ${clock(r.startTime)} to ${clock(closeTimeOf(r))}` },
       { label: 'Side', value: sideName(side), tone: side === 'up' ? 'up' : 'no' },
       { label: 'Stake', value: `${amt} USDC` },
-      { label: `Est. payout if ${sideName(side)} wins`, value: estimate === null ? 'Unknown' : `${usdcFloor2(estimate)} USDC` },
+      {
+        label: `Est. payout if ${sideName(side)} wins`,
+        value: otherSideEmpty(side, r.upPool, r.downPool)
+          ? `Full refund while no one is on ${sideName(side === 'up' ? 'down' : 'up')}`
+          : estimate === null
+            ? 'Unknown'
+            : `${usdcFloor2(estimate)} USDC`,
+      },
     ],
-    note: `The payout is an estimate until predictions close at ${clock(entryCloseOf(r))}. One wallet can only be on one side of a round.`,
+    note: otherSideEmpty(side, r.upPool, r.downPool)
+      ? `No one is on ${sideName(side === 'up' ? 'down' : 'up')} yet. If that is still true when predictions close at ${clock(entryCloseOf(r))}, the round refunds every stake in full. One wallet can only be on one side of a round.`
+      : `The payout is an estimate until predictions close at ${clock(entryCloseOf(r))}. One wallet can only be on one side of a round.`,
     doneTitle: 'You are in',
     doneBody: `${amt} USDC on ${sideName(side)}. The result comes at ${clock(closeTimeOf(r))}.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
@@ -582,7 +592,11 @@ function EnterForm(v: View) {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
           <span style={{ color: 'var(--dim)' }}>EST. PAYOUT IF {sideName(side)} WINS</span>
-          <span style={{ fontWeight: 700 }}>{estimate === null ? '0.00' : usdcFloor2(estimate)} USDC</span>
+          <span style={{ fontWeight: 700 }}>
+            {otherSideEmpty(side, v.round.upPool, v.round.downPool)
+              ? `Full refund while no one is on ${sideName(side === 'up' ? 'down' : 'up')}`
+              : `${estimate === null ? '0.00' : usdcFloor2(estimate)} USDC`}
+          </span>
         </div>
       </div>
       {!signedIn ? (

@@ -66,7 +66,7 @@ describe('resultSteps', () => {
   });
 
   it('betting close is the pool’s own time', () => {
-    expect(steps(pool())[0].body).toMatch(/^At the time set when the pool was created: \w{3} \d{2}:\d{2}\.$/);
+    expect(steps(pool())[0].body).toMatch(/^At the time set when the pool was created: \w{3} \d{1,2} \w{3}, \d{2}:\d{2} \S+\.$/);
   });
 
   it('no em-dashes, and no we/our/us/team', () => {

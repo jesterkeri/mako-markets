@@ -108,6 +108,10 @@ export function estimateEntry(side: RoundSide, amount: bigint, existing: bigint,
   return payoutIfWins(side, existing + amount, u, d);
 }
 
+/// Nobody on the other side yet: if it stays that way when predictions close, the round refunds every stake in full
+/// (`pendingRefund`), so a fee-taken estimate would wrongly show less than the stake (external review 2026-10).
+export const otherSideEmpty = (side: RoundSide, up: bigint, down: bigint): boolean => (side === 'up' ? down : up) === 0n;
+
 /// What one USDC on each side would return if it wins now, for the odds line; null when that side is empty.
 export function perOneUsdc(up: bigint, down: bigint): { up: number | null; down: number | null } {
   const { distributable } = feesOf(up, down);

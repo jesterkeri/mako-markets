@@ -34,6 +34,9 @@ export function CreatorEarningsSection({ user, account, variant }: { user: Authe
   const [spec, setSpec] = useState<ConfirmSpec | null>(null);
   /// After a claim lands, the refetch flips the pool's creatorFeeClaimed on chain and its row moves to Claimed.
   const tx = usePoolTx(() => marketsQ.refetch());
+  // Claimed and forfeited earnings are history: hidden until asked for, so a long-time creator's Me does not scroll on
+  // and on (owner, 2026-10-21).
+  const [showSettled, setShowSettled] = useState(false);
   const openClaim = (e: CreatorEarning) => {
     if (e.state !== 'claimable' || tx.tx) return;
     setSpec(creatorFeeConfirmSpec(e));
@@ -89,7 +92,8 @@ export function CreatorEarningsSection({ user, account, variant }: { user: Authe
 
   const { rows, claimableTotal, claimable } = creatorEarningsFor(marketsQ.markets, account, (id) => holds.has(id.toString()));
   if (rows.length === 0) return sheet;
-  const listed = rows.filter((e) => e.state === 'claimable' || e.state === 'confirming' || e.state === 'claimed' || e.state === 'forfeited');
+  const settled = rows.filter((e) => e.state === 'claimed' || e.state === 'forfeited');
+  const listed = [...rows.filter((e) => e.state === 'claimable' || e.state === 'confirming'), ...(showSettled ? settled : [])];
   const refunded = rows.filter((e) => e.state === 'refunded').length;
   const unresolved = rows.filter((e) => e.state === 'unresolved').length;
   const rest = [unresolved > 0 && `${unresolved} not resolved yet`, refunded > 0 && `${refunded} refunded, no fee`].filter(Boolean).join(' · ');
@@ -128,6 +132,17 @@ export function CreatorEarningsSection({ user, account, variant }: { user: Authe
               )}
             </div>
           ))}
+          {settled.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSettled((v) => !v)}
+              aria-expanded={showSettled}
+              className={mobile ? 'm3-press' : 'mk-press97'}
+              style={{ display: 'block', marginTop: 10, padding: 0, background: 'none', color: 'inherit', textDecoration: 'underline', ...(mobile ? { fontSize: 13, fontWeight: 700 } : { ...mono, fontSize: 12, fontWeight: 700 }) }}
+            >
+              {showSettled ? 'Hide claimed' : `See all claimed (${settled.length})`}
+            </button>
+          )}
           {rest && <div style={{ ...dim, ...(mobile ? {} : mono), fontSize: mobile ? 13 : 11, marginTop: 10 }}>Also: {rest}.</div>}
         </>,
       )}

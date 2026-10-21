@@ -6,6 +6,7 @@ import {
   estimateEntry,
   feesOf,
   movePct,
+  otherSideEmpty,
   payoutIfWins,
   pendingRefund,
   perOneUsdc,
@@ -166,5 +167,20 @@ describe('amounts owed are never shown rounded up', () => {
     expect(usdcFloor2(49_100_000n)).toBe('49.10');
     expect(usdcFloor2(9_999n)).toBe('0.00');
     expect(usdcFloor2(1_234_567_890_000n)).toBe('1,234,567.89');
+  });
+});
+
+describe('otherSideEmpty (external review 2026-10: no fee-taken estimate below the stake when nobody is on the other side)', () => {
+  it('is true only while the side opposite the one chosen has nothing in it', () => {
+    expect(otherSideEmpty('up', 5n, 0n)).toBe(true);
+    expect(otherSideEmpty('down', 0n, 5n)).toBe(true);
+    expect(otherSideEmpty('up', 0n, 5n)).toBe(false);
+    expect(otherSideEmpty('down', 5n, 1n)).toBe(false);
+  });
+
+  it('marks exactly the case where the estimate would fall below the stake although the round would refund in full', () => {
+    // 0.15 on DOWN, nothing on UP: the fee-taken estimate is under the stake, and the round refunds instead.
+    expect(estimateEntry('down', 150_000n, 0n, 0n, 0n)).toBeLessThan(150_000n);
+    expect(otherSideEmpty('down', 0n, 150_000n)).toBe(true);
   });
 });

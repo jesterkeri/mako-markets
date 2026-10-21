@@ -122,6 +122,8 @@ describe('Me creator earnings after an email account claim lands (spec 3, spec 5
     render(<CreatorEarningsSection user={user} account={SAFE} variant="desktop" />);
     await claimOnceAndClose();
     expect(within(region()).queryByRole('button', { name: 'Claim 0.80 USDC' })).toBeNull();
+    // Claimed rows sit behind See all claimed since 2026-10-21; the row is there once it is opened.
+    fireEvent.click(within(region()).getByRole('button', { name: /^See all claimed/ }));
     expect(within(region()).getByText('Claimed')).toBeTruthy();
   });
 
