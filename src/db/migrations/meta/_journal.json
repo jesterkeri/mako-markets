@@ -134,6 +134,13 @@
       "when": 1792195300000,
       "tag": "0018_chart_colors",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792540800000,
+      "tag": "0019_remembered_browsers",
+      "breakpoints": true
     }
   ]
 }

@@ -28,6 +28,7 @@ import {
   date,
   primaryKey,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 import type { StoredSplitFormUserOp } from '@/lib/user-op-types';
 
@@ -170,6 +171,10 @@ export const users = pgTable('users', {
   /// The email Privy showed at that detection, normalized and length-bounded. Attacker-chosen input: support only,
   /// never in a route response or a raw log ([J3]).
   privyEmailObserved: text('privy_email_observed'),
+  /// Remembered browsers (migration 0019, SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.1): the largest `latest_verified_at`
+  /// (Privy's email verification time, Unix seconds) Mako has recorded for this account. Raised only, never lowered:
+  /// GREATEST at every session mint, and the conditional bind update (NULL or below the value it records).
+  privyEmailVerifiedSeen: bigint('privy_email_verified_seen', { mode: 'number' }),
   /// Wallet-side identity. NULL for Magic rows. Stored canonical
   /// lowercase (DB CHECK + helper assertion both enforce). Partial
   /// unique index `users_wallet_address_uniq` lives in raw migration
@@ -701,6 +706,61 @@ export const privyStartOverFences = pgTable('privy_start_over_fences', {
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
 
+/// Email sign-in ceremonies (migration 0019, SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.1). Issued by
+/// /api/user/auth/email-start before the code is sent, naming no account; the browser holds the secret in the httpOnly
+/// `mako_ec` cookie and the row keeps only its SHA-256. Step A (/api/user/auth/email-verified) records the verification
+/// it saw right after loginWithCode; a bind spends it (used_at) and the "voids ceremonies" triggers void it (voided_at).
+export const emailCeremonies = pgTable(
+  'email_ceremonies',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    secretHash: text('secret_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    verifiedSidHash: text('verified_sid_hash'),
+    verifiedPrivyUserId: text('verified_privy_user_id'),
+    /// The email account's `latest_verified_at` (Unix seconds, Privy's clock) step A saw.
+    verifiedValue: bigint('verified_value', { mode: 'number' }),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    /// Step-A calls on this ceremony; at most 10 (CHECK).
+    attempts: integer('attempts').notNull().default(0),
+  },
+  (t) => ({
+    secretHashUniq: uniqueIndex('email_ceremonies_secret_hash_uniq').on(t.secretHash),
+    // The partial pending index lives in the migration.
+  }),
+);
+
+/// Remembered browsers (migration 0019): one Privy session (by the hash of its `sid`) bound to one browser (by the hash
+/// of its `mako_rb` cookie secret), 30 days from the bind. Unique per (user, sid): a revoked or expired row keeps that
+/// sid needing the email for good.
+export const rememberedBrowsers = pgTable(
+  'remembered_browsers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    privySidHash: text('privy_sid_hash').notNull(),
+    deviceSecretHash: text('device_secret_hash').notNull(),
+    ceremonyId: uuid('ceremony_id')
+      .notNull()
+      .references(() => emailCeremonies.id),
+    /// The Privy authenticator's verified_at (seconds) at the bind.
+    factorFingerprint: bigint('factor_fingerprint', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    /// NULL until the first shortcut: "never used" means exactly that (the lost-reply re-issue relies on it).
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokeReason: text('revoke_reason'),
+  },
+  (t) => ({
+    userSidUniq: uniqueIndex('remembered_browsers_user_sid_uniq').on(t.userId, t.privySidHash),
+  }),
+);
+
 export const authChallenges = pgTable(
   'auth_challenges',
   {
@@ -717,9 +777,17 @@ export const authChallenges = pgTable(
       .defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    /// Remembered browsers (migration 0019): the legacy two-request path carries what its bind or shortcut needs from
+    /// /api/user/auth to /api/user/auth/totp: the ceremony to spend OR the remembered row to use (never both), the
+    /// Privy session id's hash and the authenticator fingerprint seen at /api/user/auth.
+    rbCeremonyId: uuid('rb_ceremony_id'),
+    rbRowId: uuid('rb_row_id'),
+    rbSidHash: text('rb_sid_hash'),
+    rbFactorFingerprint: bigint('rb_factor_fingerprint', { mode: 'number' }),
   },
   (t) => ({
     expiresIdx: index('auth_challenges_expires_idx').on(t.expiresAt),
+    userIdx: index('auth_challenges_user_idx').on(t.userId),
     // The unconsumed partial index lives in the migration.
   }),
 );

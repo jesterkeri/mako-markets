@@ -51,6 +51,7 @@ const USERS_STUB_SQL = `
     "key_exported_at"       timestamptz,
     "privy_email_mismatch_at" timestamptz,
     "privy_email_observed"  text,
+    "privy_email_verified_seen" bigint,
     "wallet_address"        text,
     "auth_type"             text NOT NULL DEFAULT 'magic',
     "kyc_status"            text NOT NULL DEFAULT 'none',
