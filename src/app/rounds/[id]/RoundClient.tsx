@@ -507,7 +507,9 @@ function PositionCard(v: View) {
       {p.kind === 'in' && (
         <div style={{ display: 'flex', justifyContent: 'space-between', ...mono, fontSize: 12, marginTop: 10 }}>
           <span style={{ color: 'var(--dim)' }}>Est. payout if {sideName(p.side)} wins</span>
-          <span style={{ fontWeight: 700 }}>{usdcFloor2(p.ifWins)} USDC</span>
+          <span style={{ fontWeight: 700 }}>
+            {otherSideEmpty(p.side, v.round.upPool, v.round.downPool) ? `Full refund while no one is on ${sideName(p.side === 'up' ? 'down' : 'up')}` : `${usdcFloor2(p.ifWins)} USDC`}
+          </span>
         </div>
       )}
       {p.kind === 'won' && <div style={{ ...mono, fontSize: 12, marginTop: 10 }}>You won {usdcExact(p.payout)} USDC{p.claimed ? ', claimed.' : '.'}</div>}

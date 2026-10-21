@@ -63,6 +63,7 @@ describe('money, as SPEC §7 computes it', () => {
   it('per-1-USDC odds, null for an empty side', () => {
     expect(perOneUsdc(60n * U, 40n * U)).toEqual({ up: 1.6366, down: 2.455 });
     expect(perOneUsdc(0n, 40n * U).up).toBeNull();
+    expect(perOneUsdc(0n, 40n * U).down).toBe(1); // nobody on UP: DOWN refunds in full
   });
   it('a settled payout uses the recorded distributable', () => {
     const r = round({ status: RoundStatus.Settled, outcome: RoundOutcome.Down, distributable: 98_200_000n });

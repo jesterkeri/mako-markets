@@ -307,7 +307,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     return () => window.removeEventListener('mousedown', onClick);
   }, [toolsOpen]);
 
-  const { data, isLoading, error, refetch, isFetching, dataUpdatedAt } = useQuery<ChartsResponse>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<ChartsResponse>({
     queryKey: ['charts', oracleSymbol, tf],
     queryFn: async () => {
       const url = `/api/charts?s=${encodeURIComponent(oracleSymbol)}&tf=${tf}`;
@@ -600,9 +600,10 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '12px 14px 0' }}>
           <div style={{ minWidth: 0 }}>
             <div className="mako-mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--dim)' }}>{pair ?? oracleSymbol}</div>
-            {data?.source === 'coinbase' && dataUpdatedAt > 0 && (
+            {/* The newest candle's own time, not when the browser fetched: the route serves cached candles. */}
+            {data?.source === 'coinbase' && (
               <div className="mako-mono" style={{ fontSize: 11, color: 'var(--dim)', marginTop: 2 }}>
-                Chart: Coinbase, updated {new Date(dataUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Settlement uses Chainlink.
+                Chart: Coinbase, latest candle {new Date(last.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Settlement uses Chainlink.
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 4 }}>

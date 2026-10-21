@@ -112,11 +112,12 @@ export function estimateEntry(side: RoundSide, amount: bigint, existing: bigint,
 /// (`pendingRefund`), so a fee-taken estimate would wrongly show less than the stake (external review 2026-10).
 export const otherSideEmpty = (side: RoundSide, up: bigint, down: bigint): boolean => (side === 'up' ? down : up) === 0n;
 
-/// What one USDC on each side would return if it wins now, for the odds line; null when that side is empty.
+/// What one USDC on each side would return if it wins now, for the odds line; null when that side is empty, and 1
+/// when the other side is, since that round refunds in full (pools print 1.00x the same way, `pool-list.ts`).
 export function perOneUsdc(up: bigint, down: bigint): { up: number | null; down: number | null } {
   const { distributable } = feesOf(up, down);
-  const each = (w: bigint) => (w === 0n ? null : Number((distributable * 10_000n) / w) / 10_000);
-  return { up: each(up), down: each(down) };
+  const each = (w: bigint, other: bigint) => (w === 0n ? null : other === 0n ? 1 : Number((distributable * 10_000n) / w) / 10_000);
+  return { up: each(up, down), down: each(down, up) };
 }
 
 /// A settled round's payout for a stake on the winning side, from the contract's recorded distributable.
