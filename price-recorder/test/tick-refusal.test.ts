@@ -8,6 +8,7 @@ import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
 import { freshDb } from './apply-migrations';
+import { FEEDS, type Feed } from '../src/feeds';
 import { capture } from './helpers';
 import { FakeStreams, msForLive, OTHER_ERROR_BODY, recordOnly, REFUSAL_BODY, rows, snapshot, tick, virtualClock, type Call } from './tick-helpers';
 
@@ -86,11 +87,16 @@ describe('per-feed refusal (plan 4.1)', () => {
     expect(await rows('SELECT * FROM candles_1m')).toEqual([]);
   });
 
-  it('a feed in config.feeds_refused is never requested and gets no row', async () => {
+  it('a feed in config.feeds_refused gets only its one hourly restoration probe, no row and no todo unit', async () => {
     await recordOnly(['BTC', 'EURUSD']);
-    const { fake } = await runAt(M, null);
-    expect(new Set(fake.calls.map((c) => c.feedId.slice(0, 10)))).toEqual(new Set(['0x00037da0', '0x0008a5f1']));
+    const { fake } = await runAt(M, null); // M is 15:00 UTC: the hourly gap-scan tick
+    const listed = FEEDS.filter((f) => f.symbol !== 'BTC' && f.symbol !== 'EURUSD').map((f) => f.feedId);
+    const probes = fake.calls.filter((c) => listed.includes(c.feedId as Feed['feedId']));
+    expect(probes.map((c) => c.feedId).sort()).toEqual([...listed].sort()); // exactly one call each
+    expect(probes.every((c) => c.start >= M + 90 - 120 && c.start <= M + 90 + 45 - 120)).toBe(true); // from now - 120, within the call window
+    expect(new Set(fake.calls.filter((c) => !listed.includes(c.feedId as Feed['feedId'])).map((c) => c.feedId.slice(0, 10)))).toEqual(new Set(['0x00037da0', '0x0008a5f1']));
     expect((await rows('SELECT DISTINCT feed FROM candles_1m ORDER BY feed')).map((x) => x.feed)).toEqual(['BTC', 'EURUSD']);
+    expect((await rows('SELECT DISTINCT feed FROM todo ORDER BY feed')).map((x) => x.feed)).toEqual(['BTC', 'EURUSD']);
   });
 });
 

@@ -168,6 +168,7 @@ describe('a recording tick on real captured pages', () => {
 
   it('catch-up retries only missing and incomplete minutes; a proven minute is not fetched again', async () => {
     await recordOnly(['BTC']);
+    await env.DB.prepare('UPDATE config SET p_bf = 0 WHERE id = 1').run(); // backfill off: only live and catch-up call
     const clock = virtualClock(msForLive(M + 60));
     const fake = new FakeStreams(clock, [BTC_LIVE]);
     await tick(fake, clock); // live M + 60 (short page: incomplete); catch-up proves M - 540 .. M

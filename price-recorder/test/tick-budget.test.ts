@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
 
 import type { PageEntry } from '../src/entry';
+import { repairWindow } from '../src/backfill';
+import { startCycle } from '../src/checker';
 import { FEEDS, type Feed } from '../src/feeds';
 import { MAX_PAGES_PER_TICK } from '../src/limiter';
 import { capture, withWord } from './helpers';
@@ -88,12 +90,43 @@ describe('statements per tick (plan 4.2)', () => {
     expect(await rows("SELECT state FROM candles_1m WHERE feed = 'BTC' AND t = ?1", M)).toEqual([{ state: 'conflict' }]);
     expect((await rows('SELECT COUNT(*) AS n FROM conflicts'))[0].n).toBeGreaterThan(0);
     expect(await rows('SELECT symbol FROM feed_holds')).toEqual([{ symbol: 'AAPL' }]);
-    // config 1 + lease 2 (read, acquire) + 1m read 1 + 1h read 1 + batch 13 (fence, 1m, 15m, 1h, 1d, conflicts,
-    // latest drop, latest upsert, runs, hold, prune, guard delete, release).
-    expect(r.batchStatements).toBe(13);
-    expect(counted.count()).toBe(18);
+    // config 1 + lease 2 (read, acquire) + state 1 + 1m read 1 + 1h read 1 + batch 16 (fence, 1m, 15m, 1h, 1d,
+    // conflicts, latest drop, latest upsert, runs, hold, prune, gap scan, checker cycle + shards, guard delete,
+    // release). The first tick starts the checker cycle, so it reads no shard.
+    expect(r.batchStatements).toBe(16);
+    expect(counted.count()).toBe(22);
     expect(counted.count()).toBeLessThanOrEqual(27);
   });
+
+  it('the largest unit-d tick (hourly, a refusal, a conflict, a finished and a tried unit, a shard check) sends 26, under 27', async () => {
+    const M = 1792076400; // 15:00 UTC: an hourly tick
+    await recordOnly(['AAPL', 'BTC', 'EURUSD', 'XAUUSD']);
+    await env.DB.batch(startCycle(env.DB, M + 60)); // an open cycle: this tick checks shard 0
+    const { last: H } = repairWindow(M + 60);
+    await env.DB.prepare('INSERT INTO todo (feed, hour) VALUES (?1, ?2), (?3, ?2)').bind('BTC', H, 'XAUUSD').run();
+    const btc = capture('open-minute-BTC');
+    const twin = withWord(btc[10], 6, 1n);
+    const hourOfBtc = Array.from({ length: 3700 }, (_, i) => {
+      const s = H + i;
+      return { ...withWord(withWord(withWord(V3, 0, BigInt(FEEDS.find((f) => f.symbol === 'BTC')!.feedId)), 1, BigInt(s)), 2, BigInt(s)), feedID: FEEDS.find((f) => f.symbol === 'BTC')!.feedId, validFromTimestamp: s, observationsTimestamp: s };
+    });
+    const sources = [[...btc, twin, ...hourOfBtc], ...['open-minute-EURUSD', 'open-minute-XAUUSD', 'open-minute-AAPL'].map(capture)];
+    const clock = virtualClock(msForLive(M));
+    const xau = FEEDS.find((f) => f.symbol === 'XAUUSD')!.feedId;
+    const fake = new FakeStreams(clock, sources, (c) =>
+      c.feedId.startsWith('0x0008b8ad') ? { status: 401, body: REFUSAL_BODY } : c.feedId === xau && c.start < M - 600 ? { status: 500, body: '' } : null,
+    );
+    const counted = countingDb(env.DB);
+    const r = await tick(fake, clock, { db: counted.db });
+    expect(r.outcome).toBe('recorded');
+    expect(await rows("SELECT feed, tries FROM todo WHERE hour = ?1 AND feed IN ('BTC', 'XAUUSD') ORDER BY feed", H)).toEqual([{ feed: 'XAUUSD', tries: 1 }]); // BTC done (and not re-queued by the gap scan in the same batch), XAUUSD tried
+    expect(await rows('SELECT next_index FROM checker_cycle')).toEqual([{ next_index: 1 }]);
+    // Reads 8: config, lease 2, state, 1m, 1h, shard 2. Batch 18: fence, 1m, 15m, 1h, 1d, conflicts, latest drop,
+    // latest upsert, runs, hold, prune, todo done, todo tried, gap scan, checker result, cursor, guard delete, release.
+    expect(r.batchStatements).toBe(18);
+    expect(counted.count()).toBe(26);
+    expect(counted.count()).toBeLessThanOrEqual(27);
+  }, 60_000);
 
   it('a record = 0 tick sends 7 statements: config, lease 2, and a batch of fence, runs, guard delete, release', async () => {
     const counted = countingDb(env.DB);

@@ -6,17 +6,23 @@
 //      nothing and calls nothing. Then take the lease (4.4); not acquired: `lease_busy`, exit.
 //      `record = 0` (the kill switch): no Data Streams call; the batch writes only the `runs` row (calls = 0), so
 //      /v1/availability turns every symbol `unknown` within 3 minutes (8.6, section 11).
-//   2. (todo units: unit d, backfill)
-//   3. fetch the live minute of every feed not in `config.feeds_refused`, then the live catch-up (3.4); build the
-//      1m rows and the `latest` candidates in memory. The live minute M is the newest minute that ended >= 30 s ago;
-//      catch-up takes every minute of the 10 before it that has no row or an `incomplete` row, oldest first.
+//   2. one state read (backfill.ts): the backfill units (section 6), whether a 429 was seen in the last 10 minutes,
+//      whether the gap scan must fill `todo` now (first start), and the checker's open cycle and shard (3.6).
+//   3. fetch the live minute of every feed not in `config.feeds_refused`, then the live catch-up (3.4), then on the
+//      hourly tick one restoration probe per listed feed (4.1), then the backfill units; build the 1m rows and the
+//      `latest` candidates in memory (backfill never writes `latest`). The live minute M is the newest minute that
+//      ended >= 30 s ago; catch-up takes every minute of the 10 before it that has no row or an `incomplete` row,
+//      oldest first.
 //   4. two reads: the stored 1m rows of the hours the tick can touch (read before fetching, because catch-up needs
-//      them, and complete for every hour live and catch-up touch), and the stored 1h rows of the touched days.
+//      them, and complete for every hour live, catch-up and backfill touch), and the stored 1h rows of the touched
+//      days; and, before fetching, the checker's two shard reads (checker.ts).
 //   5. merge and recompute (plan.ts), with the horizon = the end of the live minute (the newest minute built), never
 //      the wall clock.
 //   6. one batch: fence, 1m, 15m, 1h, 1d, conflict evidence (only when there is some), the `latest` drop for minutes
 //      that became `conflict` and the `latest` upsert, the `runs` row, the `feed_holds` insert (only in a tick that saw
-//      a per-feed refusal), the hourly pruning statement, the guard delete, the release. Sent only if the worker's
+//      a per-feed refusal), the hourly pruning statement, the finished and tried `todo` units, the gap scan (hourly,
+//      or on a first-start tick), the checker's result and cursor (or a new cycle, or its stuck count), the guard
+//      delete, the release. Sent only if the worker's
 //      clock shows at most 58 s since just before the lease was taken (`deadline` otherwise, nothing written).
 // Refusals (4.1): a per-feed refusal leaves that feed's minutes of the tick `incomplete` (its pages are discarded),
 // makes no further request for it, lists it in `runs.unauthorized` and holds it (add-only). Any other 401/403 body is a
@@ -26,6 +32,8 @@
 
 import type { HmacHex, ReportCredentials } from '../../cf-worker/src/datastreams';
 import { buildMinute, type MinuteRow } from './candle';
+import { BACKFILL_PAGE_CAP, gapScan, PROBE_LOOKBACK_S, readTickState, todoWrites, unitBudget, unitOutcomes, type Unit } from './backfill';
+import { checkShard, parseOpenCycle, resultWrites, startCycle, stuckWrite, STUCK_TICKS } from './checker';
 import { pageClient, type PageClient, type PageResult } from './client';
 import { readConfig } from './config';
 import { candleWrites, pruneStatement, readHoursOfDays, readMinutesOfHours } from './db';
@@ -199,10 +207,42 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     const refusedByConfig = new Set(cfg.config.feeds_refused);
     const feeds = FEEDS.filter((f) => !refusedByConfig.has(f.symbol));
     const window = [...catchupWindow(M), M];
+    const horizon = M + MINUTE_S;
 
-    // Step 4, first read: every stored 1m row of the hours live and catch-up can touch.
-    const windowHours: Span[] = feeds.flatMap((f) => [...new Set(window.map((t) => align(t, HOUR)))].map((start) => ({ feed: f.symbol, start })));
+    // Step 2: the state read; backfill units beyond this tick's budget wait.
+    const st = await readTickState(db, cfg.config.feeds_refused, horizon, cfg.config.p_bf);
+    const units: Unit[] = st.units.slice(0, unitBudget(cfg.config.p_bf, st.recent429));
+    const hourly = M % HOUR === 0;
+
+    // Step 4, first read: every stored 1m row of the hours live, catch-up and backfill can touch.
+    const windowHours: Span[] = [
+      ...feeds.flatMap((f) => [...new Set(window.map((t) => align(t, HOUR)))].map((start) => ({ feed: f.symbol, start }))),
+      ...units.map((u) => ({ feed: u.feed, start: u.hour })),
+    ];
     const stored = await readMinutesOfHours(db, windowHours);
+
+    // The checker's shard (3.6), read now so its reads never meet the batch deadline. A read or parse failure is not a
+    // result: the shard stays where it is and is retried next tick.
+    const cycle = parseOpenCycle(st.checker);
+    const checkerWrites: D1PreparedStatement[] = [];
+    if (cycle === null) checkerWrites.push(...startCycle(db, horizon));
+    else {
+      let ok = false;
+      if (cycle.feed !== null && cycle.day !== null) {
+        try {
+          const r = await checkShard(db, cycle.feed, cycle.day, horizon);
+          checkerWrites.push(...resultWrites(db, cycle, r));
+          ok = true;
+          if (r.status === 'diff') log({ event: 'checker_diff', cycle: cycle.id, ordinal: cycle.next, feed: cycle.feed, day: cycle.day, first: r.first_diff });
+        } catch (e) {
+          log({ event: 'checker_read_failed', cycle: cycle.id, ordinal: cycle.next, error: e instanceof Error ? e.name : 'error' });
+        }
+      }
+      if (!ok) {
+        checkerWrites.push(stuckWrite(db, cycle));
+        if (cycle.stuck + 1 >= STUCK_TICKS) log({ event: 'checker_stuck', cycle: cycle.id, ordinal: cycle.next, ticks: cycle.stuck + 1 });
+      }
+    }
     const storedBy = new Map<string, StoredMinute>(stored.map((m) => [`${m.feed}:${m.t}`, m]));
 
     // Step 3: fetch. A 429 or a whole-key failure halts the limiter, so every chain still waiting stops. A 429 halts on
@@ -236,11 +276,44 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
       }),
     );
 
-    const allAnswers = [...live, ...catchup].flatMap((r) => r?.answers ?? []);
+    const refusedNow = (i: number) => [live[i], catchup[i]].some((r) => r?.answers.some((a) => a.kind === 'feed_refused'));
+
+    // Plan 4.1: on the hourly tick, one restoration probe per feed in config.feeds_refused. A 200 with a valid entry
+    // is logged `feed_restored`; the operator then lifts the listing.
+    const restored: string[] = [];
+    if (hourly) {
+      const probeFrom = Math.floor(clock.now() / 1000) - PROBE_LOOKBACK_S;
+      await Promise.all(
+        FEEDS.filter((f) => refusedByConfig.has(f.symbol)).map(async (f) => {
+          if (limiter.halted !== null) return;
+          const res = await limiter.run(() => client(f.feedId, probeFrom));
+          if (!res.ran) return;
+          if (res.value.kind === 'unsent') limiter.notSent();
+          else if (res.value.kind === 'ok' && res.value.reports.some((e) => e !== null && typeof e === 'object' && !Array.isArray(e) && validOnce(e as Record<string, unknown>, f) !== null)) restored.push(f.symbol);
+        }),
+      );
+      for (const symbol of restored) log({ event: 'feed_restored', symbol });
+    }
+
+    // Section 6: the backfill units, after live and catch-up. A unit of a feed refused this tick is skipped.
+    const feedIndex = new Map(feeds.map((f, i) => [f.symbol, i]));
+    const backfill: (FeedFetch | null)[] = await Promise.all(
+      units.map((u) => {
+        const i = feedIndex.get(u.feed);
+        if (i === undefined || limiter.halted !== null || refusedNow(i)) return null;
+        const minutes = Array.from({ length: HOUR / MINUTE_S }, (_, k) => u.hour + k * MINUTE_S);
+        return fetchMinutes(ctx, feeds[i], minutes, BACKFILL_PAGE_CAP);
+      }),
+    );
+
+    const allAnswers = [...live, ...catchup, ...backfill].flatMap((r) => r?.answers ?? []);
     const keyFailure = allLiveRefused || allAnswers.some((r) => r.kind === 'key_failure');
     const refused = new Set<string>();
     feeds.forEach((f, i) => {
-      if ([live[i], catchup[i]].some((r) => r?.answers.some((a) => a.kind === 'feed_refused'))) refused.add(f.symbol);
+      if (refusedNow(i)) refused.add(f.symbol);
+    });
+    units.forEach((u, k) => {
+      if (backfill[k]?.answers.some((a) => a.kind === 'feed_refused')) refused.add(u.feed);
     });
 
     // Build the 1m rows and the latest candidates.
@@ -253,6 +326,10 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
       }
       const chains = [...live[i].chains, ...(catchup[i]?.chains ?? [])];
       for (const c of chains) for (const t of c.minutes) built.push(buildMinute(f, t, minuteInputs(f, t, c.entries), c.ok));
+      for (let k = 0; k < units.length; k++) {
+        if (units[k].feed !== f.symbol) continue;
+        for (const c of backfill[k]?.chains ?? []) for (const t of c.minutes) built.push(buildMinute(f, t, minuteInputs(f, t, c.entries), c.ok));
+      }
       if (!live[i].chains.some((c) => c.minutes.includes(M))) built.push(buildMinute(f, M, [], true));
       const liveOk = live[i].chains.filter((c) => c.ok);
       if (liveOk.length === live[i].chains.length) {
@@ -265,7 +342,7 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     const TH = new Set(touchedHours(built).map((s) => `${s.feed}:${s.start}`));
     const storedTH = stored.filter((m) => TH.has(`${m.feed}:${align(m.t, HOUR)}`));
     const stored1h = await readHoursOfDays(db, touchedDays(built));
-    const plan = planTick(built, storedTH, stored1h, M + MINUTE_S);
+    const plan = planTick(built, storedTH, stored1h, horizon);
 
     const conflicted = plan.merges.filter((m) => m.becameConflict).map((m) => ({ feed: m.feed, t: m.t }));
     const inConflict = (c: LatestRow) => conflicted.some((m) => m.feed === c.feed && c.obs >= m.t && c.obs < m.t + MINUTE_S);
@@ -288,7 +365,14 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     if (latest.length > 0) writes.push(db.prepare(LATEST_UPSERT_SQL).bind(JSON.stringify(latest)));
     writes.push(runsInsert(db, report.run));
     if (unauthorized.length > 0) writes.push(db.prepare(HOLD_INSERT_SQL).bind(JSON.stringify(unauthorized)));
-    if (M % HOUR === 0) writes.push(pruneStatement(db, M).stmt);
+    if (hourly) writes.push(pruneStatement(db, M).stmt);
+    // A unit of a refused feed counts as not run (plan 4.1: its tries unchanged).
+    const pages = units.map((u, k) => (refused.has(u.feed) ? 0 : (backfill[k]?.pages ?? 0)));
+    const { done, tried } = unitOutcomes(units, pages, plan.hours);
+    writes.push(...todoWrites(db, [...done, ...st.stale], tried));
+    if (hourly || st.needFill) writes.push(gapScan(db, feeds.map((f) => f.symbol), horizon));
+    writes.push(...checkerWrites);
+    if (units.length > 0 || done.length > 0) log({ event: 'backfill', units: units.length, done: done.length, tried: tried.length });
     return await commit(writes, 'recorded');
   } catch (e) {
     // A failed read or a bug: nothing was written, and the lease expires by itself (plan 4.4).

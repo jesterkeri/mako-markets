@@ -192,6 +192,8 @@ CREATE TABLE checker_cycle (
   next_index INTEGER NOT NULL DEFAULT 0,
   n_ok INTEGER NOT NULL DEFAULT 0,
   n_diff INTEGER NOT NULL DEFAULT 0,
+  -- Ticks running whose shard could not be read or parsed (3.6 checker_stuck); reset when the cursor advances.
+  stuck INTEGER NOT NULL DEFAULT 0,
   completed_at INTEGER
 );
 

@@ -152,11 +152,12 @@ describe('deadlines (plan 4.1, 4.4)', () => {
 describe('one write transaction (plan 4.2 step 6)', () => {
   it('a statement failing late in the batch rolls back every earlier write: candles, latest, conflicts, runs; the lease is not released', async () => {
     await recordOnly(['BTC', 'EURUSD']);
-    await env.DB.prepare('DROP TABLE runs').run();
+    // The runs insert sits late in the batch; a trigger makes it fail (the table itself is read before the batch).
+    await env.DB.prepare("CREATE TRIGGER fail_runs BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT, 'test'); END").run();
     const clock = virtualClock(msForLive(M));
     const r = await tick(new FakeStreams(clock, [BTC_LIVE, EUR_LIVE]), clock, { holder: () => 'mine' });
     expect(r.outcome).toBe('batch_failed');
-    for (const t of ['candles_1m', 'candles_15m', 'candles_1h', 'candles_1d', 'latest', 'conflicts', 'feed_holds', 'lease_guard']) expect(await rows(`SELECT * FROM ${t}`), t).toEqual([]);
+    for (const t of ['candles_1m', 'candles_15m', 'candles_1h', 'candles_1d', 'latest', 'conflicts', 'feed_holds', 'lease_guard', 'runs', 'todo', 'checker_cycle', 'checker_shard']) expect(await rows(`SELECT * FROM ${t}`), t).toEqual([]);
     const l = (await rows('SELECT holder, until FROM lease'))[0];
     expect(l.holder).toBe('mine');
     expect(Number(l.until)).toBeGreaterThan(await d1Now());
