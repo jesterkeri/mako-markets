@@ -16,8 +16,11 @@
 // never builds the same minute twice.
 // ----------------------------------------------------------------------------
 
+import type { PageResult } from './client';
+import { isInt } from './db';
+import { validOnce, type FetchContext } from './fetcher';
 import { D1_NOW } from './lease';
-import { FEEDS } from './feeds';
+import { FEEDS, type Feed } from './feeds';
 import { align, DAY, HOUR } from './rollup';
 import { REPAIR_HORIZON_S } from './retention';
 
@@ -54,15 +57,19 @@ export const STALE_BATCH = 100;
 /// 429 was seen in the last 10 minutes, whether no 1h row ended by the window yet (first start: fill now rather than at
 /// the next hour), the open checker cycle and its current shard (checker.ts), the units, and up to STALE_BATCH queued
 /// hours older than the window.
+/// The open checker cycle and its current shard as one JSON object, or NULL (checker.ts parseOpenCycle).
+export const OPEN_CYCLE_SQL =
+  `(SELECT json_object('id', c.id, 'total', c.shards_total, 'next', c.next_index, 'stuck', c.stuck, 'feed', s.feed, 'day', s.day) ` +
+  `FROM checker_cycle c LEFT JOIN checker_shard s ON s.cycle_id = c.id AND s.ordinal = c.next_index ` +
+  `WHERE c.completed_at IS NULL ORDER BY c.id DESC LIMIT 1)`;
+
 /// ?1 feeds_refused JSON, ?2 first hour, ?3 last hour, ?4 limit, ?5 priority JSON.
 export const STATE_SQL =
   `WITH st AS (SELECT ` +
   `EXISTS (SELECT 1 FROM runs WHERE n_429 > 0 AND t >= ${D1_NOW} - ${RATE_LIMIT_COOLDOWN_S}) AS recent429, ` +
   `NOT EXISTS (SELECT 1 FROM candles_1h WHERE t <= ?3) AS need_fill, ` +
   `COALESCE((SELECT unauthorized FROM runs ORDER BY t DESC LIMIT 1), '[]') AS unauth, ` +
-  `(SELECT json_object('id', c.id, 'total', c.shards_total, 'next', c.next_index, 'stuck', c.stuck, 'feed', s.feed, 'day', s.day) ` +
-  `FROM checker_cycle c LEFT JOIN checker_shard s ON s.cycle_id = c.id AND s.ordinal = c.next_index ` +
-  `WHERE c.completed_at IS NULL ORDER BY c.id DESC LIMIT 1) AS checker), ` +
+  `${OPEN_CYCLE_SQL} AS checker), ` +
   `u AS (SELECT todo.feed, todo.hour, todo.tries FROM todo, st WHERE todo.tries < ${MAX_TRIES} AND todo.hour >= ?2 AND todo.hour <= ?3 ` +
   `AND todo.feed NOT IN (SELECT value FROM json_each(?1)) AND todo.feed NOT IN (SELECT value FROM json_each(st.unauth)) ` +
   `ORDER BY todo.hour DESC, COALESCE((SELECT key FROM json_each(?5) WHERE value = todo.feed), 999) LIMIT ?4), ` +
@@ -70,7 +77,6 @@ export const STATE_SQL =
   `x AS (SELECT 'unit' AS kind, feed, hour, tries FROM u UNION ALL SELECT 'stale', feed, hour, tries FROM s) ` +
   `SELECT st.recent429, st.need_fill, st.checker, x.kind, x.feed, x.hour, x.tries FROM st LEFT JOIN x ON 1`;
 
-const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
 
 export async function readTickState(db: D1Database, feedsRefused: readonly string[], horizon: number, pBf: number): Promise<TickState> {
   const { first, last } = repairWindow(horizon);
@@ -89,8 +95,10 @@ export async function readTickState(db: D1Database, feedsRefused: readonly strin
   return { recent429: head.recent429 === 1, needFill: head.need_fill === 1, checker: typeof head.checker === 'string' ? head.checker : null, units, stale };
 }
 
-/// Units this tick may run: floor(P_bf / 37), halved P_bf after a recent 429 (plan 4.1).
-export const unitBudget = (pBf: number, recent429: boolean): number => Math.floor((recent429 ? Math.floor(pBf / 2) : pBf) / PAGES_PER_UNIT);
+/// Units this tick may run (plan 4.1): P_bf, halved after a recent 429, less the pages already spent on catch-up, in
+/// units of 37.
+export const unitBudget = (pBf: number, recent429: boolean, spentPages = 0): number =>
+  Math.floor(Math.max(0, (recent429 ? Math.floor(pBf / 2) : pBf) - spentPages) / PAGES_PER_UNIT);
 
 /// The gap scan (plan 6). ?1 the feeds to queue (JSON), ?2 first hour, ?3 last hour, ?4 1 to reset tries (00:00 UTC).
 /// A (feed, hour) is queued when its 1h row is missing or still has minutes to retry (missing or incomplete); proven
@@ -140,5 +148,26 @@ export function todoWrites(db: D1Database, done: readonly Unit[], tried: readonl
   return out;
 }
 
-/// Plan 4.1: one restoration probe per feed in config.feeds_refused, on the hourly gap-scan tick, from now - 120.
+/// Plan 4.1: one restoration probe per feed in config.feeds_refused, on the hourly gap-scan tick, from now - 120, with
+/// limit=1. Returns every answer (they count toward the tick's n_429 and key_failure like any other) and the feeds that
+/// answered a valid entry (logged `feed_restored`; the operator then lifts the listing).
 export const PROBE_LOOKBACK_S = 120;
+
+export async function probeRefused(ctx: FetchContext, listed: readonly Feed[], nowS: number): Promise<{ answers: PageResult[]; restored: string[] }> {
+  const answers: PageResult[] = [];
+  const restored: string[] = [];
+  await Promise.all(
+    listed.map(async (f) => {
+      if (ctx.limiter.halted !== null) return;
+      const res = await ctx.limiter.run(() => ctx.client(f.feedId, nowS - PROBE_LOOKBACK_S, 1));
+      if (!res.ran) return;
+      if (res.value.kind === 'unsent') {
+        ctx.limiter.notSent();
+        return;
+      }
+      answers.push(res.value);
+      if (res.value.kind === 'ok' && res.value.reports.some((e) => e !== null && typeof e === 'object' && !Array.isArray(e) && validOnce(e as Record<string, unknown>, f) !== null)) restored.push(f.symbol);
+    }),
+  );
+  return { answers, restored };
+}

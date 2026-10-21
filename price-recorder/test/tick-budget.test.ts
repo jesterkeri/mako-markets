@@ -14,25 +14,10 @@ import { repairWindow } from '../src/backfill';
 import { startCycle } from '../src/checker';
 import { FEEDS, type Feed } from '../src/feeds';
 import { MAX_PAGES_PER_TICK } from '../src/limiter';
-import { capture, withWord } from './helpers';
+import { capture, derivedSeconds, deriveReport, withWord } from './helpers';
 import { countingDb, FakeStreams, msForLive, recordOnly, REFUSAL_BODY, rows, tick, virtualClock } from './tick-helpers';
 
-const V3 = capture('live-page-BTC')[0];
-// A v8 report from the day before, so its lastUpdate is older than every derived second (plan 3.1's v8 rule).
-const V8 = capture('open-minute-EURUSD')[0];
-
-const derived = new Map<string, PageEntry>();
-function derive(f: Feed, obs: number): PageEntry {
-  const k = `${f.symbol}:${obs}`;
-  let e = derived.get(k);
-  if (!e) {
-    const base = f.schema === 3 ? V3 : V8;
-    const blob = withWord(withWord(withWord(base, 0, BigInt(f.feedId)), 1, BigInt(obs)), 2, BigInt(obs));
-    e = { ...blob, feedID: f.feedId, validFromTimestamp: obs, observationsTimestamp: obs };
-    derived.set(k, e);
-  }
-  return e;
-}
+const derive = deriveReport;
 
 describe('the call budget of the worst live tick (plan 4.1)', () => {
   it('34 feeds wanting 10 pages each: exactly 330 calls, at most 8 per second, none after 45 s, all signed', async () => {
@@ -107,10 +92,7 @@ describe('statements per tick (plan 4.2)', () => {
     await env.DB.prepare('INSERT INTO todo (feed, hour) VALUES (?1, ?2), (?3, ?2)').bind('BTC', H, 'XAUUSD').run();
     const btc = capture('open-minute-BTC');
     const twin = withWord(btc[10], 6, 1n);
-    const hourOfBtc = Array.from({ length: 3700 }, (_, i) => {
-      const s = H + i;
-      return { ...withWord(withWord(withWord(V3, 0, BigInt(FEEDS.find((f) => f.symbol === 'BTC')!.feedId)), 1, BigInt(s)), 2, BigInt(s)), feedID: FEEDS.find((f) => f.symbol === 'BTC')!.feedId, validFromTimestamp: s, observationsTimestamp: s };
-    });
+    const hourOfBtc = derivedSeconds(FEEDS.find((f) => f.symbol === 'BTC')!, H, H + 3700);
     const sources = [[...btc, twin, ...hourOfBtc], ...['open-minute-EURUSD', 'open-minute-XAUUSD', 'open-minute-AAPL'].map(capture)];
     const clock = virtualClock(msForLive(M));
     const xau = FEEDS.find((f) => f.symbol === 'XAUUSD')!.feedId;

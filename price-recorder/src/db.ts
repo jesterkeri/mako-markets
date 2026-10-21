@@ -31,7 +31,7 @@ const D1_NOW = "CAST(strftime('%s', 'now') AS INTEGER)";
 const fail = (what: string, row: unknown): never => {
   throw new Error(`malformed ${what} row: ${JSON.stringify(row)}`);
 };
-const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
+export const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
 const isText = (v: unknown): v is string => typeof v === 'string';
 const isPrice = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]*)$/.test(v);
 const intOrNull = (v: unknown): v is number | null => v === null || isInt(v);

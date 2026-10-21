@@ -11,7 +11,7 @@ import type { PageEntry } from '../src/entry';
 import { FEEDS } from '../src/feeds';
 import { DAY, HOUR } from '../src/rollup';
 import { REPAIR_HORIZON_S } from '../src/retention';
-import { capture, feed, withWord } from './helpers';
+import { capture, derivedSeconds, feed } from './helpers';
 import { FakeStreams, msForLive, recordOnly, rows, tick, virtualClock } from './tick-helpers';
 
 const db = () => env.DB;
@@ -19,17 +19,7 @@ const M = 1792177740; // 2026-10-16 19:09:00 UTC, not an hourly tick
 const HORIZON = M + 60;
 const { first: FIRST, last: LAST } = repairWindow(HORIZON);
 
-const V3 = capture('live-page-BTC')[0];
-/// BTC reports one a second over [from, to).
-function btcSeconds(from: number, to: number): PageEntry[] {
-  const id = BigInt(feed('BTC').feedId);
-  const out: PageEntry[] = [];
-  for (let s = from; s < to; s++) {
-    const blob = withWord(withWord(withWord(V3, 0, id), 1, BigInt(s)), 2, BigInt(s));
-    out.push({ ...blob, feedID: feed('BTC').feedId, validFromTimestamp: s, observationsTimestamp: s });
-  }
-  return out;
-}
+const btcSeconds = (from: number, to: number): PageEntry[] => derivedSeconds(feed('BTC'), from, to);
 
 const seedTodo = (units: { feed: string; hour: number; tries?: number }[]) =>
   db().batch(units.map((u) => db().prepare('INSERT INTO todo (feed, hour, tries) VALUES (?1, ?2, ?3)').bind(u.feed, u.hour, u.tries ?? 0)));

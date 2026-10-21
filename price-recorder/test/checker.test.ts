@@ -4,6 +4,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
+import { OPEN_CYCLE_SQL } from '../src/backfill';
 import { buildMinute } from '../src/candle';
 import {
   CHECKER_DAYS,
@@ -29,9 +30,7 @@ const M = 1792177740; // 2026-10-16 19:09:00 UTC
 const HORIZON = M + 60;
 const TODAY = M - (M % DAY);
 
-const OPEN_STATE_SQL =
-  `SELECT json_object('id', c.id, 'total', c.shards_total, 'next', c.next_index, 'stuck', c.stuck, 'feed', s.feed, 'day', s.day) AS j ` +
-  `FROM checker_cycle c LEFT JOIN checker_shard s ON s.cycle_id = c.id AND s.ordinal = c.next_index WHERE c.completed_at IS NULL ORDER BY c.id DESC LIMIT 1`;
+const OPEN_STATE_SQL = `SELECT ${OPEN_CYCLE_SQL} AS j`;
 /// db() with `prepare` routed through `hook`; every other member bound to the real database.
 const via = (hook: (t: D1Database, sql: string) => D1PreparedStatement): D1Database =>
   new Proxy(db(), {

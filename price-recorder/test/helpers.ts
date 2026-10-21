@@ -52,3 +52,20 @@ export const word = (e: PageEntry, i: number): bigint => {
   const blob = decodeAbiParameters(ENVELOPE, e.fullReport as Hex)[1] as Hex;
   return BigInt(`0x${blob.slice(2 + 64 * i, 2 + 64 * (i + 1))}`);
 };
+
+/// DERIVED reports of one feed, one a second over [from, to): a real captured report (BTC v3, or EURUSD v8 from the day
+/// before so its lastUpdate is older than every derived second, plan 3.1) with its feed id and two timestamps rewritten
+/// (withWord). The recorder never checks signatures (plan 3.1), so they decode as that feed's. Memoised per (feed, second).
+const derivedCache = new Map<string, PageEntry>();
+export function deriveReport(f: Feed, obs: number): PageEntry {
+  const k = `${f.symbol}:${obs}`;
+  let e = derivedCache.get(k);
+  if (!e) {
+    const base = f.schema === 3 ? capture('live-page-BTC')[0] : capture('open-minute-EURUSD')[0];
+    const blob = withWord(withWord(withWord(base, 0, BigInt(f.feedId)), 1, BigInt(obs)), 2, BigInt(obs));
+    e = { ...blob, feedID: f.feedId, validFromTimestamp: obs, observationsTimestamp: obs };
+    derivedCache.set(k, e);
+  }
+  return e;
+}
+export const derivedSeconds = (f: Feed, from: number, to: number): PageEntry[] => Array.from({ length: to - from }, (_, i) => deriveReport(f, from + i));

@@ -9,6 +9,7 @@
 // code path writes serve or record (a test greps for it); only the operator does.
 // ----------------------------------------------------------------------------
 
+import { isInt } from './db';
 import { FEED_BY_SYMBOL } from './feeds';
 
 export type Config = {
@@ -24,7 +25,6 @@ export type ConfigRead = { valid: true; config: Config } | { valid: false; reaso
 
 export const READ_CONFIG_SQL = 'SELECT id, serve, record, p_bf, updated_at, feeds_refused, live_unsupported FROM config';
 
-const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
 const flag = (v: unknown): v is 0 | 1 => v === 0 || v === 1;
 
 function symbols(v: unknown): string[] | null {

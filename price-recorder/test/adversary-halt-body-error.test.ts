@@ -8,21 +8,12 @@ import { describe, expect, it } from 'vitest';
 import { repairWindow } from '../src/backfill';
 import type { PageEntry } from '../src/entry';
 import { HOUR } from '../src/rollup';
-import { capture, feed, withWord } from './helpers';
+import { derivedSeconds, feed } from './helpers';
 import { FakeStreams, msForLive, recordOnly, rows, tick, virtualClock } from './tick-helpers';
 
 const M = 1792177740; // 2026-10-16 19:09:00 UTC, not an hourly tick (as in backfill.test.ts)
 const { last: LAST } = repairWindow(M + 60);
-const V3 = capture('live-page-BTC')[0];
-function btcSeconds(from: number, to: number): PageEntry[] {
-  const id = BigInt(feed('BTC').feedId);
-  const out: PageEntry[] = [];
-  for (let s = from; s < to; s++) {
-    const blob = withWord(withWord(withWord(V3, 0, id), 1, BigInt(s)), 2, BigInt(s));
-    out.push({ ...blob, feedID: feed('BTC').feedId, validFromTimestamp: s, observationsTimestamp: s });
-  }
-  return out;
-}
+const btcSeconds = (from: number, to: number): PageEntry[] => derivedSeconds(feed('BTC'), from, to);
 
 describe('adversary: a 401 whose body cannot be read during a backfill unit', () => {
   it('is a whole-key failure: key_failure recorded, no further call, tries unchanged', async () => {

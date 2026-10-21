@@ -18,7 +18,7 @@
 // ----------------------------------------------------------------------------
 
 import { keccak256, stringToHex } from 'viem';
-import { parseBucket, parseStoredMinute } from './db';
+import { isInt, parseBucket, parseStoredMinute } from './db';
 import { FEEDS } from './feeds';
 import { D1_NOW } from './lease';
 import { align, bucketFromMinutes, DAY, HOUR, QUARTER, rollupDay, type Bucket, type MinuteCell } from './rollup';
@@ -29,7 +29,6 @@ export const STUCK_TICKS = 10;
 
 export type OpenCycle = { id: number; total: number; next: number; stuck: number; feed: string | null; day: number | null };
 
-const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
 
 /// The `checker` column of the state read (backfill.ts STATE_SQL): the open cycle and its current shard, or null.
 export function parseOpenCycle(json: string | null): OpenCycle | null {
@@ -156,3 +155,23 @@ export function resultWrites(db: D1Database, c: OpenCycle, r: ShardResult): D1Pr
 }
 
 export const stuckWrite = (db: D1Database, c: OpenCycle): D1PreparedStatement => db.prepare(STUCK_UPDATE_SQL).bind(c.id);
+
+/// The tick's checker step (3.6): start a cycle when none is open, else check the current shard. Read in the tick's
+/// read phase, so its reads never meet the batch deadline; returns the statements for the tick's one batch. A read or
+/// parse failure of the shard is not a result: the shard stays where it is, its stuck count goes up, and it is retried
+/// next tick. A malformed open-cycle row (`parseOpenCycle`) throws to the caller, failing the whole tick.
+export async function checkerStep(db: D1Database, openCycle: string | null, horizon: number, log: (e: Record<string, unknown>) => void): Promise<D1PreparedStatement[]> {
+  const cycle = parseOpenCycle(openCycle);
+  if (cycle === null) return startCycle(db, horizon);
+  if (cycle.feed !== null && cycle.day !== null) {
+    try {
+      const r = await checkShard(db, cycle.feed, cycle.day, horizon);
+      if (r.status === 'diff') log({ event: 'checker_diff', cycle: cycle.id, ordinal: cycle.next, feed: cycle.feed, day: cycle.day, first: r.first_diff });
+      return resultWrites(db, cycle, r);
+    } catch (e) {
+      log({ event: 'checker_read_failed', cycle: cycle.id, ordinal: cycle.next, error: e instanceof Error ? e.name : 'error' });
+    }
+  }
+  if (cycle.stuck + 1 >= STUCK_TICKS) log({ event: 'checker_stuck', cycle: cycle.id, ordinal: cycle.next, ticks: cycle.stuck + 1 });
+  return [stuckWrite(db, cycle)];
+}
