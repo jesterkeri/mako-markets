@@ -60,29 +60,31 @@ describe('classify (plan 4.1)', () => {
     for (const body of ['', 'null', '[]', '{}', '{"reports":{}}', '{"reports":"x"}', '[{"reports":[]}]', 'not json'])
       expect(await classify(res(200, body)), body).toMatchObject({ kind: 'failed', reason: 'bad_body' });
     expect(parsePage('{"reports":[1,null,"x",[[[]]]]}')).toEqual([null, null, null, null]); // never read, kept as null
-    // A string that is not printable ASCII becomes a fixed tag; different strings stay different.
-    const [a, b] = parsePage('{"reports":[{"fullReport":"0x","feedID":"\\u00e9"},{"fullReport":"0x","feedID":"\\u00e8"}]}') as Record<string, string>[];
-    expect(a.feedID).toMatch(/^\u0000text:0x[0-9a-f]{64}$/);
-    expect(b.feedID).not.toBe(a.feedID);
-    // A read field holding an object or an array refuses the whole page (Codex B/C R2, F1): no real report has one, and
-    // such a value has no bounded exact identity. Data: the scenario of the review, two values nested 5,000 deep.
+    const F = '0x' + 'ab'.repeat(32); // a feed id in the captured form
+    // A read field holding an object or an array refuses the whole page (Codex B/C R2, F1). Data: the review's
+    // scenario, two values nested 5,000 deep.
     const deep = (x: number) => '['.repeat(5000) + x + ']'.repeat(5000);
-    expect(parsePage(`{"reports":[{"feedID":"f","observationsTimestamp":1,"fullReport":${deep(0)}},{"feedID":"f","observationsTimestamp":1,"fullReport":${deep(1)}}]}`)).toBeNull();
+    expect(parsePage(`{"reports":[{"feedID":"${F}","observationsTimestamp":1,"fullReport":${deep(0)}},{"feedID":"${F}","observationsTimestamp":1,"fullReport":${deep(1)}}]}`)).toBeNull();
     for (const field of ['feedID', 'observationsTimestamp', 'fullReport'])
       for (const v of ['[]', '{}', '[[1]]', '{"a":{}}', 'null', 'true', '1.5', '1e400', '9007199254740993'])
-        expect(parsePage(`{"reports":[{"${field}":${v}}]}`), `${field}=${v}`).toBeNull();
-    for (const field of ['feedID', 'fullReport']) expect(parsePage(`{"reports":[{"${field}":1}]}`), `${field}=1`).toBeNull();
-    // fullReport must be present and 0x hex (adversary on d0bb0e4): another kind could share raw_fp's key with a hex value.
-    for (const e of ['{"feedID":"0xab"}', '{"fullReport":"zz"}', '{"fullReport":"0x0"}', '{"fullReport":""}']) expect(parsePage(`{"reports":[${e}]}`), e).toBeNull();
-    // The captured forms pass: strings, and a safe-integer second.
-    expect(parsePage('{"reports":[{"feedID":"0xab","observationsTimestamp":1792070940,"fullReport":"0x00"},{"observationsTimestamp":"1792070941","fullReport":"0x01"}]}')).toHaveLength(2);
-    expect(parsePage('{"reports":[{"feedID":"f","fullReport":"0x","other":{"deep":[[]]}}]}')).toEqual([{ feedID: 'f', fullReport: '0x' }]); // fields never read may be anything
+        expect(parsePage(`{"reports":[{"${field}":${v},"fullReport":"0x"}]}`.replace(`"fullReport":${v},"fullReport":"0x"`, `"fullReport":${v}`)), `${field}=${v}`).toBeNull();
+    // Only the one captured form passes (Codex B/C R3 F1): any other spelling of the same value would alias in raw_fp.
+    for (const e of [
+      `{"feedID":"${F.toUpperCase().replace('0X', '0x')}","fullReport":"0x"}`, // upper-case feed id
+      `{"feedID":"0xab","fullReport":"0x"}`, // too short
+      `{"feedID":"${F}","fullReport":"0xAB"}`, // upper-case report
+      `{"feedID":"${F}","fullReport":"zz"}`, `{"feedID":"${F}","fullReport":"0x0"}`, `{"feedID":"${F}"}`, // not hex, odd, absent
+      `{"feedID":"${F}","observationsTimestamp":"1792070940","fullReport":"0x"}`, // second as a string
+    ]) expect(parsePage(`{"reports":[${e}]}`), e).toBeNull();
+    // The captured form passes; an absent feed id or second is allowed.
+    expect(parsePage(`{"reports":[{"feedID":"${F}","observationsTimestamp":1792070940,"fullReport":"0x00"},{"fullReport":"0x01"}]}`)).toHaveLength(2);
+    expect(parsePage(`{"reports":[{"feedID":"${F}","fullReport":"0x","other":{"deep":[[]]}}]}`)).toEqual([{ feedID: F, fullReport: '0x' }]); // fields never read may be anything
     // At most PAGE_LIMIT entries: 100 is a page, 101 is not (Codex unit C R1, C2).
     expect(parsePage(JSON.stringify({ reports: Array(100).fill({ fullReport: '0x' }) }))).toHaveLength(100);
     expect(parsePage(JSON.stringify({ reports: Array(101).fill({ fullReport: '0x' }) }))).toBeNull();
     // Only the fields entry.ts reads are kept; an absent feedID or second stays absent.
-    expect(parsePage('{"reports":[{"feedID":"f","observationsTimestamp":1,"fullReport":"0x","pad":"xxxx"},{"fullReport":"0x"}]}')).toEqual([
-      { feedID: 'f', observationsTimestamp: 1, fullReport: '0x' },
+    expect(parsePage(`{"reports":[{"feedID":"${F}","observationsTimestamp":1,"fullReport":"0x","pad":"xxxx"},{"fullReport":"0x"}]}`)).toEqual([
+      { feedID: F, observationsTimestamp: 1, fullReport: '0x' },
       { fullReport: '0x' },
     ]);
   });

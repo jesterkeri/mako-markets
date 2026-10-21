@@ -9,7 +9,7 @@
 // An answer is classified, never thrown, and never carries the body, the request or a header out of this file
 // (plan 4.1: errors carry status, reason and request id only):
 //   ok            200 with a JSON object holding a `reports` array of at most 100 entries, in a body of at most 200,000
-//                 bytes; each entry keeps only the fields read, as flat values (keepRead)
+//                 bytes; each entry keeps only the fields read, in the one captured form (hasOddField, keepRead)
 //   feed_refused  401 or 403 whose body, read up to 200 bytes and parsed as JSON, has `error` exactly
 //                 "feeds not authorized": a refusal of the feed requested (plan 4.1, the 2026-10-16 captures)
 //   key_failure   any other 401 or 403 (another error text, no body, a body that is not JSON, an HMAC error)
@@ -18,8 +18,6 @@
 // ----------------------------------------------------------------------------
 
 import { hmacSha256Hex, REPORT_TIMEOUT_MS, reportHeaders, type HmacHex, type ReportCredentials } from '../../cf-worker/src/datastreams';
-import { keccak256, stringToBytes } from 'viem';
-
 import type { PageEntry } from './entry';
 
 /// The measured maximum `limit` of /reports/page (plan 1, captures of 2026-10-16).
@@ -28,7 +26,7 @@ export const PAGE_LIMIT = 100;
 export const REFUSAL_BODY_BYTES = 200;
 /// A page of 100 reports is about 170 KB (plan 1); anything far larger is not a page and is not read further.
 /// A real page of 100 reports is about 164 KB (2026-10-16 capture: every entry 1,636 bytes); 200,000 bytes leaves about
-/// 20%. With keepRead's flat values, what a tick holds of its pages stays about 330 x 200 KB = 66 MB at most, under the
+/// 20%. With keepRead keeping only the three fields read, what a tick holds of its pages stays about 330 x 200 KB = 66 MB at most, under the
 /// Worker's 128 MB (plan 3.4, 4.3; adversary on r22).
 export const MAX_PAGE_BYTES = 200_000;
 export const FEEDS_NOT_AUTHORIZED = 'feeds not authorized';
@@ -94,32 +92,23 @@ const READ_FIELDS = ['feedID', 'observationsTimestamp', 'fullReport'] as const;
 function keepRead(e: unknown): unknown {
   if (e === null || typeof e !== 'object' || Array.isArray(e)) return null;
   const out: Record<string, unknown> = {};
-  for (const k of READ_FIELDS) if (Object.prototype.hasOwnProperty.call(e, k)) out[k] = flat((e as Record<string, unknown>)[k]);
+  for (const k of READ_FIELDS) if (Object.prototype.hasOwnProperty.call(e, k)) out[k] = (e as Record<string, unknown>)[k];
   return out;
 }
 
-/// The captured forms (every entry of the 2026-10-16 captures): feedID a string, fullReport present and 0x hex (so
-/// raw_fp's key is always the plain keccak of its bytes and two kinds of value can never share one), observationsTimestamp
-/// a string or a safe integer. An absent feedID or second stays allowed (such an entry is never this feed's).
+/// The one form every entry of the 2026-10-16 captures has (1,500 of 1,500): feedID lower-case 0x and 64 hex digits,
+/// fullReport present and lower-case 0x hex, observationsTimestamp a safe integer. Any other spelling of the same value
+/// (an upper-case id or report, a second written as a string) would reach raw_fp as the same identity, so the page is
+/// refused instead (Codex B/C R3 F1). An absent feedID or second is allowed: such an entry is never this feed's.
 function hasOddField(e: unknown): boolean {
   if (e === null || typeof e !== 'object' || Array.isArray(e)) return false;
   const o = e as Record<string, unknown>;
   const has = (k: string) => Object.prototype.hasOwnProperty.call(o, k);
-  if (has('feedID') && typeof o.feedID !== 'string') return true;
-  if (typeof o.fullReport !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(o.fullReport)) return true;
-  const t = o.observationsTimestamp;
-  return has('observationsTimestamp') && typeof t !== 'string' && !(typeof t === 'number' && Number.isSafeInteger(t));
+  if (has('feedID') && !(typeof o.feedID === 'string' && /^0x[0-9a-f]{64}$/.test(o.feedID))) return true;
+  if (!(typeof o.fullReport === 'string' && /^0x([0-9a-f]{2})*$/.test(o.fullReport))) return true;
+  return has('observationsTimestamp') && !(typeof o.observationsTimestamp === 'number' && Number.isSafeInteger(o.observationsTimestamp));
 }
 
-/// A kept value is a number, a boolean, null, or a printable ASCII string, so what a tick holds stays about the body's
-/// size (V8 stores such a string one byte a character). A string with another character becomes a fixed tag holding
-/// the keccak of its JSON text, so two different strings stay different for raw_fp (entry.ts) and junk costs no more
-/// than the tag; JSON.stringify escapes a lone surrogate, which a UTF-8 encoding would turn into U+FFFD. The tag starts
-/// with U+0000, which no kept string can contain. Only strings and safe integers get here (hasOddField refuses the rest).
-function flat(v: unknown): unknown {
-  if (typeof v !== 'string' || /^[\x20-\x7e]*$/.test(v)) return v;
-  return `\u0000text:${keccak256(stringToBytes(JSON.stringify(v)))}`;
-}
 
 /// Pure: a 200 body is a page iff it is a JSON object holding a `reports` array.
 export function parsePage(text: string): PageEntry[] | null {
