@@ -1,4 +1,6 @@
 import { decodeEventLog, getAddress, type TransactionReceipt } from 'viem';
+import { MONAD_TESTNET_ID } from './chain';
+import { MAKO_RELEASES, type MakoRelease } from './mako-release-record';
 import { ROUNDS_RELEASE_RECORD, type RoundsRelease } from './rounds-release-record';
 import { makoAbi } from './MakoMarkets.abi';
 import { USDC_ADDRESS, usdcContract } from './usdc';
@@ -31,14 +33,38 @@ function normalizeAddress(raw: string, label: string): `0x${string}` {
  * Set `NEXT_PUBLIC_MAKO_ADDRESS` in `.env.local` after running
  * `forge script script/DeployV4.s.sol:DeployV4` in `../mako-contracts/`.
  *
- * Defaults to the live v4 deploy so the app still compiles and renders
- * if the env var is unset.
+ * Defaults to the address of the V4 record in `mako-release-record.ts`, so
+ * the app still compiles and renders if the env var is unset. Any other
+ * address must have its own reviewed record there, or the app does not load
+ * (MAKO_RELEASE below).
  */
 export const MAKO_ADDRESS = normalizeAddress(
   process.env.NEXT_PUBLIC_MAKO_ADDRESS
     || '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195',
   'NEXT_PUBLIC_MAKO_ADDRESS',
 );
+
+/// The reviewed deployment for this chain and address (naming plan r8 §7.10, owner decision 2026-10-22: one root
+/// guard), or a throw. `address` is already EIP-55 normalised, and every record's address is its own EIP-55 form, so
+/// equality is the exact match after trimming and checksum casing. The deploy block must equal the record's when set.
+export function resolveMakoRelease(
+  chainId: number,
+  address: `0x${string}`,
+  deployBlockRaw: string | undefined,
+  releases: readonly MakoRelease[] = MAKO_RELEASES,
+): MakoRelease {
+  const r = releases.find((x) => x.chainId === chainId && x.address === address);
+  if (!r) throw new Error(`NEXT_PUBLIC_MAKO_ADDRESS ${address} on chain ${chainId} is not a reviewed Mako Market deployment (src/lib/mako-release-record.ts). Mako Market will not load.`);
+  const b = deployBlockRaw?.trim();
+  if (b && b !== String(r.deployBlock)) throw new Error(`NEXT_PUBLIC_MAKO_DEPLOY_BLOCK ${JSON.stringify(deployBlockRaw)} is not ${r.deployBlock}, the reviewed deploy block of ${address}. Mako Market will not load.`);
+  return r;
+}
+
+/// The reviewed record of the contract this app reads. Throws when this module loads for an unreviewed contract, and
+/// every page (root layout -> AppShell -> SignInDialog), rules card, title, bet, create, share and send path loads this
+/// module first, as does instrumentation.ts register(): nothing runs for a contract without a record.
+export type { MakoRelease };
+export const MAKO_RELEASE = resolveMakoRelease(MONAD_TESTNET_ID, MAKO_ADDRESS, process.env.NEXT_PUBLIC_MAKO_DEPLOY_BLOCK);
 
 /**
  * Deployed address of MakoPrivateMarketsV1 on Monad testnet.
@@ -211,6 +237,11 @@ export type Market = {
   creatorFeeClaimed: boolean;
   protocolFeeBpsSnapshot: number;  // uint16 — frozen at createMarket
   creatorFeeBpsSnapshot: number;   // uint16 — frozen at createMarket
+  /// decodeMarket only: the stored question when the title above is built from the pool's settlement data and the
+  /// stored text is one of the reviewed record's vetted wordings (pool-display.ts poolTitle).
+  originalWording?: string;
+  /// decodeMarket only: the question exactly as stored on chain (`question` may be a built title). Admin resolve shows it.
+  chainQuestion?: string;
 };
 
 /** Market + its on-chain id, convenient for list rendering. */
