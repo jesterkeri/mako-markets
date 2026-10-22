@@ -114,6 +114,8 @@ export type TickReport = {
   run: RunRow | null;
   /// Statements of the write batch (0 when nothing was sent).
   batchStatements: number;
+  /// Plan 12, unit f: on the hourly tick, one valid live report per feed, for the monitor's on-chain sample.
+  samples: { symbol: string; fullReport: string }[];
 };
 
 /// Plan 3.4: the live minute M at worker time `nowS`, the newest minute that ended at least 30 s ago.
@@ -155,7 +157,7 @@ const answered = (r: PageResult) => r.status !== 0;
 export async function runTick(deps: TickDeps): Promise<TickReport> {
   const clock = deps.clock ?? realClock;
   const log = deps.log ?? ((e) => console.log(JSON.stringify(e)));
-  const report: TickReport = { outcome: 'config_invalid', recovered: false, minute: null, run: null, batchStatements: 0 };
+  const report: TickReport = { outcome: 'config_invalid', recovered: false, minute: null, run: null, batchStatements: 0, samples: [] };
   const done = (outcome: TickOutcome, extra: Record<string, unknown> = {}): TickReport => {
     report.outcome = outcome;
     log({ event: outcome, minute: report.minute, recovered: report.recovered, ...(report.run ?? {}), batchStatements: report.batchStatements, ...extra });
@@ -306,6 +308,10 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
         const cand = latestCandidate(f, liveOk.flatMap((c) => c.entries));
         if (cand) candidates.push(cand);
       }
+      if (hourly) {
+        const sample = liveOk.flatMap((c) => c.entries).find((e) => validOnce(e, f) !== null && typeof e.fullReport === 'string');
+        if (sample) report.samples.push({ symbol: f.symbol, fullReport: sample.fullReport as string });
+      }
     });
 
     // Steps 4 (second read) and 5.
@@ -313,6 +319,9 @@ export async function runTick(deps: TickDeps): Promise<TickReport> {
     const storedTH = stored.filter((m) => TH.has(`${m.feed}:${align(m.t, HOUR)}`));
     const stored1h = await readHoursOfDays(db, touchedDays(built));
     const plan = planTick(built, storedTH, stored1h, horizon);
+    // Plan 3.5: identical raw evidence that interprets differently under the same rules is a determinism bug; it keeps the
+    // stored row and alerts at once (unit f).
+    for (const m of plan.merges) if (m.event === 'internal_mismatch') log({ event: 'internal_mismatch', feed: m.feed, t: m.t });
 
     const conflicted = plan.merges.filter((m) => m.becameConflict).map((m) => ({ feed: m.feed, t: m.t }));
     const inConflict = (c: LatestRow) => conflicted.some((m) => m.feed === c.feed && c.obs >= m.t && c.obs < m.t + MINUTE_S);

@@ -4,12 +4,14 @@ compatibility_date = "2026-09-01"
 
 # Mako Market price recorder (mako-design/CHARTS_DS_PLAN.md). Records one-minute candles from Chainlink Data Streams
 # for the charts. Units (a) to (c): decoding, the candle builder, the D1 schema, rollups and retention, and the minute
-# tick (fetcher, limiter, lease); unit (d) backfill, gap repair and the checker; unit (e) the read API. Nothing here settles a pool, and it has no binding
+# tick (fetcher, limiter, lease); unit (d) backfill, gap repair and the checker; unit (e) the read API; unit (f) monitoring. Nothing here settles a pool, and it has no binding
 # to, or shared storage with, mako-auto-resolver.
 # One tick a minute (plan 4.2). Migration 0001 seeds record = 0, so a deployed Worker calls nothing until the operator
 # turns recording on (plan 11, 16 step 4). Secrets, set by the owner with `wrangler secret put` (plan 16 step 4):
 # DATASTREAMS_API_KEY and DATASTREAMS_API_SECRET; DATASTREAMS_URL is optional (the resolver's testnet host by default);
-# RECORDER_READ_TOKEN, the bearer token the app sends to the read API (unit e; without it every read answers 503).
+# RECORDER_READ_TOKEN, the bearer token the app sends to the read API (unit e; without it every read answers 503);
+# HEALTHCHECKS_PING_URL, the recorder's Healthchecks check (unit f; period 1 min, grace 5 min; without it the monitor
+# only logs). PUBLIC_RPC_URL is optional (the public Monad RPC by default, for the hourly on-chain sample).
 [triggers]
 crons = ["* * * * *"]
 
