@@ -1,12 +1,10 @@
 // How the redesign names and lists Pools (the V4 markets).
 
-import { hexToString } from 'viem';
-
 import { MarketType, type MarketWithId } from './contract';
 import type { MakoRelease } from './mako-release-record';
 import { noMultiplier, yesMultiplier } from './mocks';
 import { priceTitle } from './pool-create';
-import { parseOracleRef } from './pool-rules';
+import { parseOracleRef, rawOracleRef } from './pool-rules';
 
 const CATEGORY: Record<MarketType, string> = {
   [MarketType.FOOTBALL]: 'Football',
@@ -48,12 +46,8 @@ const OLD_WORDING = /^Will ([A-Z0-9]{1,10}) (close|trade|settle) (above|below) \
 export function oldWording(m: Pick<MarketWithId, 'question' | 'oracleRef'>): string | null {
   const x = OLD_WORDING.exec(m.question);
   if (!x) return null;
-  let raw: string;
-  try {
-    raw = hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '');
-  } catch {
-    return null;
-  }
+  const raw = rawOracleRef(m);
+  if (raw === null) return null;
   const parts = raw.split(':');
   if (parts.length !== 3) return null;
   const [symbol, op, strike] = parts;

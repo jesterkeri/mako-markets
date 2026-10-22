@@ -109,7 +109,7 @@ const holdExpired = (nowSec: number) => Math.floor(Date.now() / 1000) - nowSec >
 const TIMES_MOVED_ON: ConfirmPhase = {
   step: 'failed',
   title: 'Times moved on',
-  body: "A new pool's times are set when this sheet opens and hold for 30 seconds. Close this and press Create pool again for new times.",
+  body: `A new pool's times are set when this sheet opens and hold for ${SHEET_HOLD_SEC} seconds. Close this and press Create pool again for new times.`,
   nothingMoved: true,
   primary: { label: 'Close' },
   secondary: { label: 'Close' },

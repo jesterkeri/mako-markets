@@ -33,18 +33,24 @@ const FEED_CLASS: Partial<Record<number, 'forex' | 'commodities' | 'stocks'>> = 
   [MarketType.STOCKS]: 'stocks',
 };
 
+/// The settlement reference's text as stored (trailing NULs dropped, nothing trimmed), or null when it does not decode.
+/// parseOracleRef and pool-display.ts oldWording both read this, so they always see the same text.
+export function rawOracleRef(m: Pick<MarketWithId, 'oracleRef'>): string | null {
+  try {
+    return hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '');
+  } catch {
+    return null;
+  }
+}
+
 /// The pool's settlement reference, decoded and validated exactly as the resolver does (cf-worker/src/index.ts:
 /// parseCryptoOracleRef with its CRYPTO_SYMBOLS, parsePriceFeedOracleRef with PRICE_FEED_BY_SYMBOL and the class
 /// check, parseFootballOracleRef, parseBasketballOracleRef), or null when the resolver would not read it. The
 /// contract stores any reference a direct `createMarket` call passes, so a null here is a pool the resolver will
 /// never settle by price or result (Codex S3 r1).
 export function parseOracleRef(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): OracleRef | null {
-  let raw: string;
-  try {
-    raw = hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '');
-  } catch {
-    return null;
-  }
+  const raw = rawOracleRef(m);
+  if (raw === null) return null;
   if (m.mType === MarketType.CRYPTO) {
     // The live crypto resolver reads the untrimmed text strictly: a space, '+', '.5' or '1e3' never settles.
     const cm = CRYPTO_REF.exec(raw);

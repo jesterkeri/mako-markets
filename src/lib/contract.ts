@@ -40,7 +40,7 @@ function normalizeAddress(raw: string, label: string): `0x${string}` {
  */
 export const MAKO_ADDRESS = normalizeAddress(
   process.env.NEXT_PUBLIC_MAKO_ADDRESS
-    || '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195',
+    || MAKO_RELEASES[0].address,
   'NEXT_PUBLIC_MAKO_ADDRESS',
 );
 
@@ -63,7 +63,6 @@ export function resolveMakoRelease(
 /// The reviewed record of the contract this app reads. Throws when this module loads for an unreviewed contract, and
 /// every page (root layout -> AppShell -> SignInDialog), rules card, title, bet, create, share and send path loads this
 /// module first, as does instrumentation.ts register(): nothing runs for a contract without a record.
-export type { MakoRelease };
 export const MAKO_RELEASE = resolveMakoRelease(MONAD_TESTNET_ID, MAKO_ADDRESS, process.env.NEXT_PUBLIC_MAKO_DEPLOY_BLOCK);
 
 /**
