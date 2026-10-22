@@ -178,6 +178,35 @@ describe('candles (7.2, 10)', () => {
     expect(await body(await get('/v1/candles?s=EURUSD&tf=1h'))).toMatchObject({ candles: [], gaps: [] });
   });
 
+  it('closed time takes none of the 300 slots: a feed closed for 400 minutes still answers its last 300 open minutes', async () => {
+    await serve(1);
+    // BTC stands in for a market feed here: the read path classifies by stored state, not by asset class.
+    const opens = Array.from({ length: 320 }, (_, i) => H + i * 60);
+    for (let i = 0; i < opens.length; i += 60) await store(opens.slice(i, i + 60).map(openMinute), H + 320 * 60);
+    const closedRows = Array.from({ length: 400 }, (_, i) => ({ ...toStored(openMinute(H + (320 + i) * 60), 0), state: 'closed' as const, o: null, h: null, l: null, c: null }));
+    for (let i = 0; i < closedRows.length; i += 100) await db().batch([upsertMinutes(db(), closedRows.slice(i, i + 100))!]);
+    const r = await body(await get('/v1/candles?s=BTC&tf=1m'));
+    const ts = (r.candles as { t: number }[]).map((c) => c.t);
+    expect(ts).toHaveLength(MAX_CANDLES);
+    expect(ts.at(-1)).toBe(opens[319]);
+    expect(r.gaps).toEqual([]);
+    expect(r.asOf).toBe(H + 720 * 60);
+  }, 60_000);
+
+  it("today's 1d candle is not drawn over an hour that ended with minutes never stored", async () => {
+    await serve(1);
+    const day = H - (H % 86400);
+    // Hour `day`: minutes :00 to :30 stored while the hour was forming, never touched again.
+    await store(Array.from({ length: 31 }, (_, i) => openMinute(day + i * 60)), day + 31 * 60);
+    // The next hour is complete, written after; the newest minute opens the third hour. Every hour of the day so far
+    // has a row, so only the stale first hour can make the day a gap.
+    await store(Array.from({ length: 60 }, (_, i) => openMinute(day + HOUR + i * 60)), day + 2 * HOUR + 60);
+    await store([openMinute(day + 2 * HOUR)], day + 2 * HOUR + 60);
+    const d = await body(await get('/v1/candles?s=BTC&tf=1d'));
+    expect(d.candles).toEqual([]);
+    expect(d.gaps).toEqual([day]);
+  }, 60_000);
+
   it('marketOpen for a forex feed follows the newest minute: closed -> false', async () => {
     await serve(1);
     const eur = feed('EURUSD');

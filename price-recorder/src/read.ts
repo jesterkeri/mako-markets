@@ -18,7 +18,7 @@ import { readConfig, type ConfigRead } from './config';
 import { isInt, parseBucket, parseStoredMinute } from './db';
 import { FEED_BY_SYMBOL, FEEDS } from './feeds';
 import { D1_NOW } from './lease';
-import { align, DAY, drawableAt, rollupWide, WIDTH, type Bucket, type Timeframe } from './rollup';
+import { align, DAY, drawableAt, HOUR, rollupDay, rollupWide, WIDTH, type Bucket, type Timeframe } from './rollup';
 import { MINUTE_S } from './rules';
 
 export type ReadEnv = { DB?: D1Database; RECORDER_READ_TOKEN?: string };
@@ -69,9 +69,44 @@ function bucketSlot(b: Bucket, width: number, horizon: number): Slot {
   return { kind: 'gap' };
 }
 
-/// 7.2 and section 10: the newest MAX_CANDLES slots ending at the bucket holding the newest recorded minute. Closed
-/// time produces no slot; missing or unusable data a gap. No gaps are sent before the feed's first stored row (a
-/// recorder that started recently is not a hole in the data).
+/// A 1h row as a sub-bucket of a wider one (2h, 4h, today's 1d), at the read horizon. A stored row was computed at the
+/// horizon of the tick that last wrote it; an hour written while forming and never touched again keeps n_min_gap = 0
+/// for minutes that have since elapsed without a row (the case `drawableAt` handles for the row itself). Once the hour
+/// has ended, its missing or incomplete minutes (n_min_retry) count as gaps, so a wider bucket holding it is not drawn
+/// (adversary on unit e). Only the gap decision uses the sum, never as a count.
+const subHourAt = (b: Bucket, horizon: number): Bucket => (b.t + HOUR <= horizon && b.n_min_retry > 0 ? { ...b, n_min_gap: b.n_min_gap + b.n_min_retry } : b);
+
+/// The slots of [start, end] for one timeframe, keyed by bucket start.
+async function slotsIn(db: D1Database, symbol: string, tf: Timeframe | '1m', start: number, end: number, asOf: number): Promise<Map<number, Slot>> {
+  const width = tf === '1m' ? MINUTE_S : WIDTH[tf];
+  const slots = new Map<number, Slot>();
+  if (tf === '1m') {
+    const res = await db.prepare('SELECT * FROM candles_1m WHERE feed = ?1 AND t >= ?2 AND t <= ?3').bind(symbol, start, end).all<Record<string, unknown>>();
+    for (const m of res.results.map(parseStoredMinute)) {
+      slots.set(m.t, m.state === 'open' ? { kind: 'candle', candle: { t: m.t, o: m.o!, h: m.h!, l: m.l!, c: m.c! } } : m.state === 'closed' ? { kind: 'closed' } : { kind: 'gap' });
+    }
+    return slots;
+  }
+  const wide = tf === '2h' || tf === '4h';
+  const table = wide ? 'candles_1h' : BUCKET_TABLE[tf];
+  const res = await db.prepare(`SELECT * FROM ${table} WHERE feed = ?1 AND t >= ?2 AND t < ?3`).bind(symbol, start, end + width).all<Record<string, unknown>>();
+  const rows = res.results.map(parseBucket);
+  const buckets = wide ? rollupWide(symbol, tf === '2h' ? 2 : 4, rows.map((b) => subHourAt(b, asOf)), asOf) : rows;
+  for (const b of buckets) slots.set(b.t, bucketSlot(b, width, asOf));
+  if (tf === '1d' && end + DAY > asOf) {
+    // Today's stored 1d row has the same blind spot as a wide bucket: rebuild it from today's 1h rows at the read horizon.
+    const hours = await db.prepare('SELECT * FROM candles_1h WHERE feed = ?1 AND t >= ?2 AND t < ?2 + 86400').bind(symbol, end).all<Record<string, unknown>>();
+    const today = hours.results.map(parseBucket);
+    if (today.length > 0) slots.set(end, bucketSlot(rollupDay(symbol, end, today.map((b) => subHourAt(b, asOf)), asOf), DAY, asOf));
+  }
+  return slots;
+}
+
+/// 7.2 and section 10: the newest MAX_CANDLES slots (candles and gaps) up to the bucket holding the newest recorded
+/// minute. Closed time produces no slot and so takes none of the 300 (a stock's 1m chart overnight, a forex chart at the
+/// weekend still shows the last session): the window doubles backwards until it holds 300 slots or reaches the feed's
+/// first stored row (adversary on unit e). Missing or unusable data is a gap; no gaps before the first stored row.
+export const MAX_WINDOW_DOUBLINGS = 8;
 export async function candles(db: D1Database, symbol: string, tf: Timeframe | '1m'): Promise<{ candles: Candle[]; gaps: number[]; asOf: number | null; marketOpen: boolean | null }> {
   const newest = await db.prepare('SELECT t, state FROM candles_1m WHERE feed = ?1 ORDER BY t DESC LIMIT 1').bind(symbol).first<{ t: number; state: string }>();
   if (!newest) return { candles: [], gaps: [], asOf: null, marketOpen: null };
@@ -80,36 +115,30 @@ export async function candles(db: D1Database, symbol: string, tf: Timeframe | '1
   const marketOpen = isCrypto ? null : newest.state === 'open' ? true : newest.state === 'closed' ? false : null;
   const width = tf === '1m' ? MINUTE_S : WIDTH[tf];
   const end = align(newest.t, width);
-  const start = end - (MAX_CANDLES - 1) * width;
+  const sourceTable = tf === '1m' ? 'candles_1m' : tf === '2h' || tf === '4h' ? 'candles_1h' : BUCKET_TABLE[tf];
+  const firstRow = await db.prepare(`SELECT MIN(t) AS t FROM ${sourceTable} WHERE feed = ?1`).bind(symbol).first<{ t: number | null }>();
+  if (!firstRow || firstRow.t === null) return { candles: [], gaps: [], asOf, marketOpen };
+  const floor = align(firstRow.t, width);
 
-  const slots = new Map<number, Slot>();
-  let first: number | null = null;
-  if (tf === '1m') {
-    const res = await db.prepare('SELECT * FROM candles_1m WHERE feed = ?1 AND t >= ?2 AND t <= ?3').bind(symbol, start, end).all<Record<string, unknown>>();
-    for (const m of res.results.map(parseStoredMinute)) {
-      slots.set(m.t, m.state === 'open' ? { kind: 'candle', candle: { t: m.t, o: m.o!, h: m.h!, l: m.l!, c: m.c! } } : m.state === 'closed' ? { kind: 'closed' } : { kind: 'gap' });
-      if (first === null || m.t < first) first = m.t;
+  let span = MAX_CANDLES;
+  let picked: { t: number; slot: Slot }[] = [];
+  for (let i = 0; ; i++) {
+    const start = Math.max(end - (span - 1) * width, floor);
+    const slots = await slotsIn(db, symbol, tf, start, end, asOf);
+    picked = [];
+    for (let t = end; t >= start && picked.length < MAX_CANDLES; t -= width) {
+      const s = slots.get(t) ?? { kind: 'gap' };
+      if (s.kind !== 'closed') picked.push({ t, slot: s });
     }
-  } else {
-    const wide = tf === '2h' || tf === '4h';
-    const table = wide ? 'candles_1h' : BUCKET_TABLE[tf];
-    const res = await db.prepare(`SELECT * FROM ${table} WHERE feed = ?1 AND t >= ?2 AND t < ?3`).bind(symbol, start, end + width).all<Record<string, unknown>>();
-    const rows = res.results.map(parseBucket);
-    const buckets = wide ? rollupWide(symbol, tf === '2h' ? 2 : 4, rows, asOf) : rows;
-    for (const b of buckets) {
-      slots.set(b.t, bucketSlot(b, width, asOf));
-      if (first === null || b.t < first) first = b.t;
-    }
+    if (picked.length >= MAX_CANDLES || start <= floor || i >= MAX_WINDOW_DOUBLINGS) break;
+    span *= 2;
   }
-
+  picked.reverse();
   const out: Candle[] = [];
   const gaps: number[] = [];
-  if (first !== null) {
-    for (let t = Math.max(start, align(first, width)); t <= end; t += width) {
-      const s = slots.get(t) ?? { kind: 'gap' };
-      if (s.kind === 'candle') out.push(s.candle);
-      else if (s.kind === 'gap') gaps.push(t);
-    }
+  for (const { t, slot } of picked) {
+    if (slot.kind === 'candle') out.push(slot.candle);
+    else gaps.push(t);
   }
   return { candles: out, gaps, asOf, marketOpen };
 }
