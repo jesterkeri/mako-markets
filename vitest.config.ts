@@ -37,6 +37,8 @@ export default defineConfig({
       'src/lib/leaderboard/__tests__/**/*.test.ts',
       'src/lib/comments/__tests__/**/*.test.ts',
       'src/lib/comments/__tests__/**/*.test.tsx',
+      'src/lib/notifications/__tests__/**/*.test.ts',
+      'src/lib/notifications/__pg_tests__/**/*.test.ts',
       'src/app/api/comments/**/*.test.ts',
       'src/app/api/pm/**/*.test.ts',
     ],

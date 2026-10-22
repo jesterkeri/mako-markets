@@ -1,18 +1,21 @@
-import { createPublicClient, http } from 'viem';
-
 import { db } from '@/db/client';
 import { monadTestnet, MONAD_TESTNET_ID } from '@/lib/chain';
 import { checkCronAuth, cronDiagnostics } from '@/lib/cron-auth';
 import {
+  createScanClient,
   runLeaderboardIndexerOnce,
   LEADERBOARD_CRON_TIME_BUDGET_MS,
+  ROUTE_HARD_STOP_MS,
 } from '@/lib/leaderboard/indexer';
 
 // ----------------------------------------------------------------------------
-// GET /api/cron/leaderboard (every 5 minutes, fired by mako-auto-resolver
-// CF Worker — see cf-worker/src/index.ts, minute % 5 gate)
+// GET /api/cron/leaderboard (every 30 minutes, fired by mako-auto-resolver
+// CF Worker — see cf-worker/src/index.ts, minute % 30 gate)
 //
 // Runs runLeaderboardIndexerOnce against the LEADERBOARD_CONTRACTS list.
+// #214: that V4 scan now also announces pool results (notifications), so
+// this route loses nothing between the main deploy and the Worker change
+// that moves the scan into /api/cron/notify; a manual call is harmless.
 // Per-contract mutex serialises overlapping ticks; busy contracts return
 // in the result as mutex:'busy' (NOT a 5xx — busy is healthy).
 //
@@ -59,18 +62,17 @@ export async function GET(req: Request) {
 
   const rpcUrl =
     process.env.MONAD_RPC_URL || monadTestnet.rpcUrls.default.http[0];
-  const publicClient = createPublicClient({
-    chain: monadTestnet,
-    transport: http(rpcUrl),
-  });
-
   const startedAt = Date.now();
+  // #214: the gated scan client (viem retries off, 5 s timeout); no RPC request starts after 48 s.
+  const publicClient = createScanClient(rpcUrl, startedAt + ROUTE_HARD_STOP_MS);
+
   try {
     const result = await runLeaderboardIndexerOnce({
       db,
       publicClient,
       chainId: MONAD_TESTNET_ID,
       timeBudgetMs: LEADERBOARD_CRON_TIME_BUDGET_MS,
+      hardStopAt: startedAt + ROUTE_HARD_STOP_MS,
     });
 
     return Response.json({

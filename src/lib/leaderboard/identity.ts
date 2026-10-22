@@ -155,6 +155,41 @@ export async function registeredAddresses(db: DbOrTx, addresses: readonly string
   return new Set([...wallets, ...safes].flatMap((r) => (r.addr ? [r.addr.toLowerCase()] : [])));
 }
 
+/// #214 Every Mako account address (lowercase): each Safe on `chainId` and each wallet sign-in. The same two branches
+/// as resolveStoredIdentities, without its address filter. Server-only: the notify roster rule reads it to ask the
+/// contract for positions (NOTIFICATIONS_PLAN r8 §3.2 "Recipient history"); it is never logged or returned.
+export async function accountAddresses(db: DbOrTx, chainId: number): Promise<string[]> {
+  const [safes, wallets] = await Promise.all([
+    db.select({ addr: sql<string>`lower(${userSafes.safeAddress})` }).from(userSafes).where(eq(userSafes.chainId, chainId)),
+    db.select({ addr: sql<string>`lower(${users.walletAddress})` }).from(users).where(isNotNull(users.walletAddress)),
+  ]);
+  return [...new Set([...safes, ...wallets].map((r) => r.addr))];
+}
+
+/// #214 The account(s) behind each address (lowercase keys): the Safe branch on `chainId` and the wallet branch,
+/// lower() on both sides as in resolveStoredIdentities. An address with no account is absent.
+export async function accountUserIds(db: DbOrTx, addresses: readonly string[], chainId: number): Promise<Map<string, string[]>> {
+  const lowered = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  const out = new Map<string, string[]>();
+  if (lowered.length === 0) return out;
+  const [safes, wallets] = await Promise.all([
+    db
+      .select({ addr: sql<string>`lower(${userSafes.safeAddress})`, userId: userSafes.userId })
+      .from(userSafes)
+      .where(and(eq(userSafes.chainId, chainId), inArray(sql`lower(${userSafes.safeAddress})`, lowered))),
+    db
+      .select({ addr: sql<string>`lower(${users.walletAddress})`, userId: users.id })
+      .from(users)
+      .where(and(isNotNull(users.walletAddress), inArray(sql`lower(${users.walletAddress})`, lowered))),
+  ]);
+  for (const r of [...safes, ...wallets]) {
+    const ids = out.get(r.addr) ?? [];
+    if (!ids.includes(r.userId)) ids.push(r.userId);
+    out.set(r.addr, ids);
+  }
+  return out;
+}
+
 /// True when `a` outranks `b` under the documented precedence.
 function beats(a: CandidateRow, b: CandidateRow): boolean {
   const aNamed = a.displayName !== null && a.displayName !== '';

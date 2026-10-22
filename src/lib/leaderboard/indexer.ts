@@ -22,20 +22,42 @@
 //      scripts/seed-leaderboard.mts). For the same reason, RAISING
 //      CONFIRMATIONS later does not retroactively re-validate
 //      already-indexed blocks — that too is a re-sync, not an env bump.
+//      #214: the re-sync must NOT truncate notify_cursor (migration 0020):
+//      that row is what keeps a re-seed from announcing old results again.
 //   2. Adaptive halve-on-error chunking. Monad's PUBLIC RPC caps
 //      eth_getLogs at a 100-block range (-32614 — documented in
 //      admin/analytics/route.ts); private RPCs allow 1k+. Rather than
 //      fail the tick on a mis-sized chunk, fetchLogsAdaptive halves the
 //      span (floor CHUNK_FLOOR) and retries. The PM scanner lacks this.
+//      #214: rate limits, timeouts, 5xx answers and lost connections are
+//      retried on the SAME span (1 s, then 2 s) and never halved.
 //   3. Multi-contract: one cursor row per (chain_id, contract_address),
 //      scanned sequentially. No contract-mismatch guard needed — the PM
 //      table keys by chain only; this one keys by (chain, contract).
 //
+// #214 Notifications S1 (NOTIFICATIONS_PLAN r8 §3.2 "Scanning"): scanContract
+// serves this V4 scan and the Rounds scan (notifications/rounds-scan.ts).
+//   - Batches of 20 chunks are fetched in parallel through the RPC gate
+//     (rpc-gate.ts); batches run one after another. A batch with no logs
+//     writes nothing; a batch with logs commits ONE transaction (its rows,
+//     its notifications, the notify_cursor statements, the cursor advance).
+//   - Cursor rule "empty or committed": the cursor moves only to safeEnd, the
+//     end of the unbroken run of batches that were each empty or committed. A
+//     batch that fetched logs but whose re-read, position read or transaction
+//     failed ends the scan and is fetched again next tick. No block is skipped.
+//   - Floor: before the lock the scan reads F (notify_cursor.notified_through,
+//     else NOTIFY_FROM_BLOCK − 1). It starts at max(floor, min(cursor, F) + 1),
+//     so blocks an old build scanned without notifying are fetched again
+//     (ledger rows land as no-ops). The release and the 60 s write move
+//     notified_through with the cursor in one ownership-gated statement.
+//   - Every V4 scan notifies: the notify route, /api/cron/leaderboard and the
+//     seed script. No caller can move notified_through past a resolution in
+//     silence.
+//
 // Cold start: the live v4 deploy block is ~weeks behind head on a
 // sub-second chain — millions of blocks. No serverless tick can finish
 // that, so the one-time scripts/seed-leaderboard.mts (local Node, no
-// function timeout) backfills BEFORE the cron is deployed. Steady state
-// after the seed is a few hundred blocks per 5-minute tick.
+// function timeout) backfills BEFORE the cron is deployed.
 //
 // Lock discipline: LEADERBOARD_STALE_LOCK_MS must exceed the cron
 // route's maxDuration, or the next cron fire reclaims a live lock during
@@ -55,6 +77,15 @@ import {
 } from '@/db/schema';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import {
+  announceBatch,
+  marketConfirms,
+  notifyFromBlockEnv,
+  poolItem,
+  readMarketsAtFinalized,
+  readNotifyFloor,
+  type AccountSource,
+} from '@/lib/notifications/produce';
+import {
   normalizeHex,
   normalizeAddressLower,
   bigintToNumber,
@@ -64,6 +95,9 @@ import {
   LEADERBOARD_CONTRACTS,
   type LeaderboardContract,
 } from './contracts';
+import { classifyRpcError, withRpcRetry } from './rpc-gate';
+
+export { createScanClient, createRpcGate, GateClosed, classifyRpcError, withRpcRetry } from './rpc-gate';
 
 // ---- Constants -------------------------------------------------------------
 
@@ -83,14 +117,23 @@ export const LEADERBOARD_STALE_LOCK_MS = 5 * 60 * 1000;
 /// 60s is within every Vercel tier's allowance.
 export const LEADERBOARD_CRON_MAX_DURATION_S = 60;
 
-/// Soft time budget for the cron path: stop starting new chunks this
+/// Soft time budget for the cron path: stop starting new batches this
 /// many ms after entry so the tick releases its lock cleanly instead of
 /// being killed at maxDuration and holding the lock until stale
-/// recovery. Progress is kept — each chunk commits its own cursor
-/// advance. The seed script omits the budget entirely (local Node has
+/// recovery. The seed script omits the budget entirely (local Node has
 /// no function timeout).
 export const LEADERBOARD_CRON_TIME_BUDGET_MS =
   (LEADERBOARD_CRON_MAX_DURATION_S - 10) * 1000;
+
+/// #214: no RPC request starts after this many ms from a route's start (the gate's refuseAfter, plan §3.9).
+export const ROUTE_HARD_STOP_MS = 48_000;
+
+/// #214: chunks per batch. 20 × 100 blocks = 2,000 blocks on the public RPC.
+export const BATCH_CHUNKS = 20;
+
+/// #214: a scan with no deadline (the seed) writes its cursor at least this often, so a crash loses at most a minute
+/// of empty batches.
+export const CURSOR_WRITE_INTERVAL_MS = 60_000;
 
 /// getLogs span floor for the adaptive halving. At 50 blocks even the
 /// public RPC's 100-block cap has headroom; below this we rethrow.
@@ -112,6 +155,8 @@ function defaultChunkSize(): number {
   return n;
 }
 
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 // ---- Event ABI -------------------------------------------------------------
 
 /// The three per-user events the ledger ingests. NOTE: BetPlaced also
@@ -127,17 +172,20 @@ const EVENT_CLAIMED = parseAbiItem(
 const EVENT_CREATOR_FEE_PAID = parseAbiItem(
   'event CreatorFeePaid(uint256 indexed id, address indexed creator, uint256 amount)',
 );
+/// #214: the terminal event pool notifications come from. OR-ed into the same getLogs, so no extra calls.
+const EVENT_MARKET_RESOLVED = parseAbiItem('event MarketResolved(uint256 indexed id, uint8 outcome)');
 
-const LEDGER_EVENTS = [
+const V4_EVENTS = [
   EVENT_BET_PLACED,
   EVENT_CLAIMED,
   EVENT_CREATOR_FEE_PAID,
+  EVENT_MARKET_RESOLVED,
 ] as const;
 
 // ---- Args / results --------------------------------------------------------
 
 export interface RunLeaderboardIndexerArgs {
-  /// Top-level Drizzle handle; per-chunk transactions open on this.
+  /// Top-level Drizzle handle; per-batch transactions open on this.
   db: DbOrTx;
   publicClient: PublicClient;
   /// Defaults to LEADERBOARD_CONTRACTS. Injectable for tests.
@@ -146,11 +194,19 @@ export interface RunLeaderboardIndexerArgs {
   chunkSize?: number;
   confirmations?: number;
   staleLockMs?: number;
-  /// Stop starting new chunks once this many ms have elapsed. Omit for
+  /// Stop starting new batches once this many ms have elapsed. Omit for
   /// no budget (seed script). The cron route passes
-  /// LEADERBOARD_CRON_TIME_BUDGET_MS.
+  /// LEADERBOARD_CRON_TIME_BUDGET_MS; the notify route 16 s.
   timeBudgetMs?: number;
-  /// Called after each committed chunk — the seed script's multi-hour
+  /// #214: NOTIFY_FROM_BLOCK; defaults to the env var. null = unset.
+  notifyFromBlock?: number | null;
+  /// #214: no roster attempt starts at or after this absolute ms time (the route's hard stop).
+  hardStopAt?: number;
+  /// #214 test seams: the retry wait and the account-address reads.
+  sleep?: (ms: number) => Promise<void>;
+  accounts?: AccountSource;
+  now?: () => number;
+  /// Called after each cursor write — the seed script's multi-hour
   /// backfill needs visible progress. No-op when omitted (cron path).
   onChunk?: (info: {
     contractAddress: `0x${string}`;
@@ -162,15 +218,16 @@ export interface RunLeaderboardIndexerArgs {
 
 export interface LeaderboardContractScanResult {
   contractAddress: `0x${string}`;
-  /// 'error' = this contract's scan threw mid-run; committed chunks
-  /// persist (per-chunk atomicity), the lock was released, and the
-  /// REMAINING contracts still ran (review MINOR-5 — one contract's
-  /// RPC blip must not starve the rest of the list).
-  mutex: 'acquired' | 'stale-recovered' | 'busy' | 'error';
-  /// First block this run scanned (null when busy or already at head).
+  /// 'error' = this contract's scan failed mid-run; committed batches
+  /// persist, the lock was released, and the REMAINING contracts still
+  /// ran (review MINOR-5). #214 'no-floor' = a scan that needs a floor
+  /// (Rounds) found none: it took no lock and scanned nothing.
+  mutex: 'acquired' | 'stale-recovered' | 'busy' | 'error' | 'no-floor';
+  /// First block this run scanned (null when busy).
   fromBlock: number | null;
-  /// Last block the cursor advanced to (null when busy; unchanged
-  /// cursor when already at head).
+  /// Without a floor: the cursor after this run. With one (#214):
+  /// min(last_scanned_block, notified_through), so no scan reports
+  /// up to date while a block above its floor is unannounced.
   scannedTo: number | null;
   /// head − confirmations at run entry; the scan target.
   scanTarget: number | null;
@@ -178,14 +235,20 @@ export interface LeaderboardContractScanResult {
   /// RETURNING — a re-scan of already-ingested ranges reports 0, not
   /// the decoded count; review NIT-6).
   eventsInserted: number;
-  /// True when the cursor reached scanTarget this run.
+  /// True when scannedTo reached scanTarget this run.
   upToDate: boolean;
   /// True when the time budget expired before reaching scanTarget.
   budgetExhausted: boolean;
+  /// #214: notify_cursor.notified_through after the run; null when no row exists.
+  notifiedThrough: number | null;
+  /// #214: no NOTIFY_FROM_BLOCK and no notify_cursor row: nothing is announced.
+  noFloor: boolean;
+  /// #214: terminal events whose roster came from the contract this run.
+  rosterFromChain: number;
   /// Non-empty when the success-path lock release failed (lock then
   /// self-heals via stale recovery). Mirrors the PM pattern.
   releaseWarning?: string;
-  /// Present iff mutex === 'error'.
+  /// Present iff mutex === 'error'. 'roster_changed' when every roster attempt saw the account registry change.
   error?: string;
 }
 
@@ -226,6 +289,11 @@ function coerceDate(value: unknown): Date {
   }
   throw new Error(`coerceDate: unexpected timestamp shape: ${typeof value}`);
 }
+
+const rowsOf = <T>(res: unknown): T[] => {
+  const raw = (res as { rows?: unknown[] }).rows ?? (res as unknown[]);
+  return (Array.isArray(raw) ? raw : []) as T[];
+};
 
 async function acquireContractMutex(
   db: DbOrTx,
@@ -272,10 +340,7 @@ async function acquireContractMutex(
     FROM upserted u
     LEFT JOIN prior p ON true;
   `);
-  const raw =
-    (result as unknown as { rows?: unknown[] }).rows ??
-    (result as unknown as unknown[]);
-  const rows = raw as Record<string, unknown>[];
+  const rows = rowsOf<Record<string, unknown>>(result);
   if (rows.length === 0) return null; // busy
   const r = rows[0];
   return {
@@ -307,22 +372,24 @@ async function releaseContractMutex(
 }
 
 async function advanceCursorOrThrow(
-  chunkTx: DbOrTx,
+  batchTx: DbOrTx,
   chainId: number,
   contractAddressLower: string,
   acquiredLockedAt: Date,
-  endOfChunk: number,
+  endOfBatch: number,
   scanTarget: number,
 ): Promise<void> {
-  // Ownership-gated advance inside the chunk transaction: if the lock
+  // Ownership-gated advance inside the batch transaction: if the lock
   // was stale-recovered out from under us this matches 0 rows and the
-  // whole chunk (event inserts + advance) rolls back together.
-  // last_scan_target rides in the same UPDATE so the read API can
-  // derive `syncing` (scanned < target) without an RPC (MAJOR-1).
-  const advanced = await chunkTx
+  // whole batch (rows + advance) rolls back together. last_scan_target
+  // rides in the same UPDATE so the read API can derive `syncing`
+  // (scanned < target) without an RPC (MAJOR-1). #214: GREATEST, because
+  // a scan may now start below the cursor (it re-fetches what an old
+  // build scanned without notifying).
+  const advanced = await batchTx
     .update(makoLeaderboardIndexerState)
     .set({
-      lastScannedBlock: endOfChunk,
+      lastScannedBlock: sql`GREATEST(${makoLeaderboardIndexerState.lastScannedBlock}, ${endOfBatch})`,
       lastScanTarget: scanTarget,
       updatedAt: new Date(),
     })
@@ -339,60 +406,262 @@ async function advanceCursorOrThrow(
   }
 }
 
-// ---- Log fetch + decode ----------------------------------------------------
-
-type LedgerLog = Awaited<
-  ReturnType<typeof fetchLedgerLogs>
->[number];
-
-async function fetchLedgerLogs(
-  publicClient: PublicClient,
-  address: `0x${string}`,
-  fromBlock: number,
-  toBlock: number,
-) {
-  // `events` (plural) filters topic0 to exactly our three signatures
-  // AND decodes args — address-scoped per plan NIT-4 (other deployments
-  // share these common event signatures; topic-only would ingest
-  // foreign rows).
-  return publicClient.getLogs({
-    address,
-    events: LEDGER_EVENTS,
-    fromBlock: numberToBigInt(fromBlock),
-    toBlock: numberToBigInt(toBlock),
-  });
+/// #214 The cursor write of a release (locked_at cleared) or of the 60 s write (lock kept): the scan cursor to
+/// GREATEST(cursor, safeEnd) and, for a scan with a floor, notified_through to GREATEST(F, safeEnd), in ONE statement
+/// gated on the lock token. Returns the notify_cursor value written (null without a floor). A lost lock writes
+/// neither and throws.
+async function writeCursorPair(
+  db: DbOrTx,
+  p: { chainId: number; contract: string; token: Date; safeEnd: number; target: number; floor: number | null; release: boolean },
+): Promise<number | null> {
+  const lockClear = p.release ? sql`, locked_at = NULL` : sql``;
+  const update = sql`
+    UPDATE mako_leaderboard_indexer_state
+       SET last_scanned_block = GREATEST(last_scanned_block, ${p.safeEnd}),
+           last_scan_target   = ${p.target}${lockClear},
+           updated_at         = now()
+     WHERE chain_id = ${p.chainId} AND contract_address = ${p.contract}
+       AND locked_at = ${p.token.toISOString()}::timestamptz
+    RETURNING 1 AS ok`;
+  if (p.floor === null) {
+    if (rowsOf(await db.execute(update)).length === 0) throw new LeaderboardStaleLockLostError(p.contract);
+    return null;
+  }
+  const rows = rowsOf<{ nt: number | string }>(
+    await db.execute(sql`
+      WITH s AS (${update})
+      INSERT INTO notify_cursor (chain_id, contract_address, notified_through)
+      SELECT ${p.chainId}, ${p.contract}, GREATEST(${p.floor}::bigint, ${p.safeEnd}::bigint) FROM s
+      ON CONFLICT (chain_id, contract_address)
+      DO UPDATE SET notified_through = GREATEST(notify_cursor.notified_through, EXCLUDED.notified_through)
+      RETURNING notified_through AS nt`),
+  );
+  if (rows.length === 0) throw new LeaderboardStaleLockLostError(p.contract);
+  return Number(rows[0].nt);
 }
 
-/// getLogs with adaptive halving: on any RPC failure, split the span and
-/// retry the halves sequentially, flooring at CHUNK_FLOOR. Handles both
-/// the public RPC's 100-block range cap and response-size caps without
-/// failing the tick. Non-size errors (RPC down) burn a few extra calls
-/// before the floor rethrows — acceptable.
-async function fetchLogsAdaptive(
-  publicClient: PublicClient,
-  address: `0x${string}`,
+// ---- Generic scan (#214) ---------------------------------------------------
+
+/// The log fields the scanner itself reads; each contract's writer narrows further.
+export interface ScanLog {
+  blockNumber: bigint | null;
+  logIndex: number | null;
+  blockHash: `0x${string}` | null;
+  transactionHash: `0x${string}` | null;
+  eventName: string;
+}
+
+export interface BatchContext<L extends ScanLog> {
+  db: DbOrTx;
+  publicClient: PublicClient;
+  chainId: number;
+  contractLower: `0x${string}`;
+  /// The batch's logs, in block then log order.
+  logs: L[];
+  batchEnd: number;
+  /// null: no floor, announce nothing. Else seed = NOTIFY_FROM_BLOCK − 1 (null when the env var is unset).
+  notify: { seed: number | null } | null;
+  /// The ownership-gated cursor advance to batchEnd; call it inside the batch transaction.
+  advanceCursor(tx: DbOrTx): Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  hardStopAt?: number;
+  accounts?: AccountSource;
+  now?: () => number;
+}
+
+export interface BatchWriteResult {
+  eventsInserted: number;
+  rosterFromChain: number;
+  /// notify_cursor after the batch, when the batch announced; else null.
+  notifiedThrough: number | null;
+}
+
+export interface ScanContractArgs<L extends ScanLog> {
+  db: DbOrTx;
+  publicClient: PublicClient;
+  chainId: number;
+  contractLower: `0x${string}`;
+  /// The scan's lowest block for a notify floor F (null = none). V4: its deploy block. Rounds: F + 1 − 60,000, or
+  /// null without F, which means "report noFloor, take no lock, scan nothing".
+  floorFor(F: number | null): number | null;
+  notifyFromBlock: number | null;
+  fetchLogs(fromBlock: number, toBlock: number): Promise<L[]>;
+  writeBatch(ctx: BatchContext<L>): Promise<BatchWriteResult>;
+  chunkSize: number;
+  confirmations: number;
+  staleLockMs: number;
+  /// Absolute ms time after which no batch starts (Infinity for none).
+  deadline: number;
+  hardStopAt?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  accounts?: AccountSource;
+  onChunk?: RunLeaderboardIndexerArgs['onChunk'];
+}
+
+/// getLogs with retries and adaptive halving: a rate limit, timeout, 5xx or lost connection is retried on the SAME
+/// span (withRpcRetry) and never halved; GateClosed fails at once; anything else (the range cap) splits the span and
+/// retries the halves sequentially, flooring at CHUNK_FLOOR.
+async function fetchLogsAdaptive<L>(
+  fetch: (from: number, to: number) => Promise<L[]>,
   fromBlock: number,
   toBlock: number,
-): Promise<LedgerLog[]> {
+  sleep: (ms: number) => Promise<void>,
+): Promise<L[]> {
   try {
-    return await fetchLedgerLogs(publicClient, address, fromBlock, toBlock);
+    return await withRpcRetry(() => fetch(fromBlock, toBlock), sleep);
   } catch (err) {
+    if (classifyRpcError(err) !== 'other') throw err;
     const span = toBlock - fromBlock + 1;
     if (span <= CHUNK_FLOOR) throw err;
     const mid = fromBlock + Math.floor(span / 2) - 1;
-    const left = await fetchLogsAdaptive(publicClient, address, fromBlock, mid);
-    const right = await fetchLogsAdaptive(
-      publicClient,
-      address,
-      mid + 1,
-      toBlock,
-    );
+    const left = await fetchLogsAdaptive(fetch, fromBlock, mid, sleep);
+    const right = await fetchLogsAdaptive(fetch, mid + 1, toBlock, sleep);
     return [...left, ...right];
   }
 }
 
+export async function scanContract<L extends ScanLog>(a: ScanContractArgs<L>): Promise<LeaderboardContractScanResult> {
+  const now = a.now ?? Date.now;
+  const sleep = a.sleep ?? realSleep;
+  const c = a.contractLower;
+  const { floor: F, fromRow } = await readNotifyFloor(a.db, a.chainId, c, a.notifyFromBlock);
+  const scanFloor = a.floorFor(F);
+  if (scanFloor === null) {
+    return {
+      contractAddress: c, mutex: 'no-floor', fromBlock: null, scannedTo: null, scanTarget: null, eventsInserted: 0,
+      upToDate: false, budgetExhausted: false, notifiedThrough: null, noFloor: true, rosterFromChain: 0,
+    };
+  }
+  const notify = F === null ? null : { seed: a.notifyFromBlock === null ? null : a.notifyFromBlock - 1 };
+
+  let token: Date | null = null;
+  let last = 0;
+  let mutexOutcome: 'acquired' | 'stale-recovered' = 'acquired';
+  let fromBlock: number | null = null;
+  let scanTarget: number | null = null;
+  let safeEnd: number | null = null;
+  let notifiedThrough: number | null = fromRow ? F : null;
+  let eventsInserted = 0;
+  let rosterFromChain = 0;
+  let budgetExhausted = false;
+  let error: string | undefined;
+  let releaseWarning: string | undefined;
+  const noteNt = (v: number | null) => {
+    if (v !== null) notifiedThrough = Math.max(notifiedThrough ?? v, v);
+  };
+
+  try {
+    const acquired = await acquireContractMutex(a.db, a.chainId, c, a.staleLockMs);
+    if (acquired === null) {
+      return {
+        contractAddress: c, mutex: 'busy', fromBlock: null, scannedTo: null, scanTarget: null, eventsInserted: 0,
+        upToDate: false, budgetExhausted: false, notifiedThrough, noFloor: F === null, rosterFromChain: 0,
+      };
+    }
+    token = acquired.acquiredLockedAt;
+    last = acquired.lastScannedBlock;
+    mutexOutcome = acquired.mutexOutcome;
+
+    const head = bigintToNumber(await withRpcRetry(() => a.publicClient.getBlockNumber(), sleep));
+    const target = head - a.confirmations;
+    scanTarget = target;
+    // Resume at cursor + 1 — no overlap re-scan; see divergence (1). #214: never above notified_through + 1.
+    fromBlock = F !== null ? Math.max(scanFloor, Math.min(last, F) + 1) : Math.max(scanFloor, last + 1);
+
+    const lockToken = token;
+    let cursor = fromBlock;
+    let lastWriteAt = now();
+    let lastWritten = -Infinity;
+    while (cursor <= target) {
+      if (now() > a.deadline) {
+        budgetExhausted = true;
+        break;
+      }
+      const batchEnd = Math.min(cursor + BATCH_CHUNKS * a.chunkSize - 1, target);
+      const spans: [number, number][] = [];
+      for (let s = cursor; s <= batchEnd; s += a.chunkSize) spans.push([s, Math.min(s + a.chunkSize - 1, batchEnd)]);
+      const logs = (await Promise.all(spans.map(([f, t]) => fetchLogsAdaptive((x, y) => a.fetchLogs(x, y), f, t, sleep)))).flat();
+      if (logs.length > 0) {
+        const r = await a.writeBatch({
+          db: a.db,
+          publicClient: a.publicClient,
+          chainId: a.chainId,
+          contractLower: c,
+          logs,
+          batchEnd,
+          notify,
+          advanceCursor: (tx) => advanceCursorOrThrow(tx, a.chainId, c, lockToken, batchEnd, target),
+          sleep,
+          hardStopAt: a.hardStopAt,
+          accounts: a.accounts,
+          now: a.now,
+        });
+        eventsInserted += r.eventsInserted;
+        rosterFromChain += r.rosterFromChain;
+        noteNt(r.notifiedThrough);
+        lastWriteAt = now();
+        lastWritten = batchEnd;
+        a.onChunk?.({ contractAddress: c, chunkEnd: batchEnd, scanTarget: target, rowsInChunk: r.eventsInserted });
+      }
+      safeEnd = batchEnd;
+      cursor = batchEnd + 1;
+      if (now() - lastWriteAt >= CURSOR_WRITE_INTERVAL_MS && safeEnd > lastWritten) {
+        noteNt(await writeCursorPair(a.db, { chainId: a.chainId, contract: c, token: lockToken, safeEnd, target, floor: F, release: false }));
+        lastWriteAt = now();
+        lastWritten = safeEnd;
+        a.onChunk?.({ contractAddress: c, chunkEnd: safeEnd, scanTarget: target, rowsInChunk: 0 });
+      }
+    }
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+    console.warn(`[leaderboard-indexer] ${c} scan failed: ${error}; continuing with remaining contracts`);
+  } finally {
+    if (token !== null) {
+      try {
+        // "If no batch of this run was empty or committed, clear locked_at only."
+        if (safeEnd !== null && scanTarget !== null) {
+          noteNt(await writeCursorPair(a.db, { chainId: a.chainId, contract: c, token, safeEnd, target: scanTarget, floor: F, release: true }));
+        } else {
+          await releaseContractMutex(a.db, a.chainId, c, token);
+        }
+      } catch (err) {
+        releaseWarning = `lock release failed for ${c}: ${
+          err instanceof Error ? err.message : String(err)
+        } (self-heals via stale recovery after ${a.staleLockMs}ms)`;
+        console.warn(`[leaderboard-indexer] ${releaseWarning}`);
+      }
+    }
+  }
+
+  const cursorAfter = safeEnd !== null ? Math.max(last, safeEnd) : last;
+  const effectiveNt = notifiedThrough ?? F;
+  const scannedTo = effectiveNt !== null ? Math.min(cursorAfter, effectiveNt) : cursorAfter;
+  return {
+    contractAddress: c,
+    mutex: error !== undefined ? 'error' : mutexOutcome,
+    fromBlock,
+    scannedTo,
+    scanTarget,
+    eventsInserted, // committed batches persisted even after a failure
+    upToDate: error === undefined && scanTarget !== null && scannedTo >= scanTarget,
+    budgetExhausted,
+    notifiedThrough,
+    noFloor: F === null,
+    rosterFromChain,
+    ...(releaseWarning ? { releaseWarning } : {}),
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
+// ---- V4 log decode ---------------------------------------------------------
+
+interface V4Log extends ScanLog {
+  args: Record<string, unknown>;
+}
+
 function decodeToRows(
-  logs: LedgerLog[],
+  logs: V4Log[],
   chainId: number,
   contractAddressLower: `0x${string}`,
   version: string,
@@ -422,57 +691,59 @@ function decodeToRows(
       txHash: normalizeHex(log.transactionHash, 32),
       logIndex: log.logIndex,
     };
+    const args = log.args as { id: bigint; user?: `0x${string}`; creator?: `0x${string}`; isYes?: boolean; amount: bigint };
     switch (log.eventName) {
       case 'BetPlaced':
         rows.push({
           ...base,
-          marketId: log.args.id!.toString(),
+          marketId: args.id.toString(),
           kind: 'bet',
-          actor: normalizeAddressLower(log.args.user!),
-          isYes: log.args.isYes!,
-          amount: log.args.amount!.toString(),
+          actor: normalizeAddressLower(args.user!),
+          isYes: args.isYes!,
+          amount: args.amount.toString(),
         });
         break;
       case 'Claimed':
         rows.push({
           ...base,
-          marketId: log.args.id!.toString(),
+          marketId: args.id.toString(),
           kind: 'claim',
-          actor: normalizeAddressLower(log.args.user!),
+          actor: normalizeAddressLower(args.user!),
           isYes: null,
-          amount: log.args.amount!.toString(),
+          amount: args.amount.toString(),
         });
         break;
       case 'CreatorFeePaid':
         rows.push({
           ...base,
-          marketId: log.args.id!.toString(),
+          marketId: args.id.toString(),
           kind: 'creator_fee',
-          actor: normalizeAddressLower(log.args.creator!),
+          actor: normalizeAddressLower(args.creator!),
           isYes: null,
-          amount: log.args.amount!.toString(),
+          amount: args.amount.toString(),
         });
         break;
       default: {
-        // events-filtered getLogs should never return anything else.
-        const name: string = (log as { eventName: string }).eventName;
-        throw new Error(`leaderboard indexer: unexpected event ${name}`);
+        // events-filtered getLogs should never return anything else
+        // (MarketResolved is split off before this is called).
+        throw new Error(`leaderboard indexer: unexpected event ${log.eventName}`);
       }
     }
   }
   return rows;
 }
 
-/// Concurrency cap for getBlock prefetches. Steady-state chunks carry
+/// Concurrency cap for getBlock prefetches. Steady-state batches carry
 /// a handful of event blocks; the SEED path (LEADERBOARD_LOG_CHUNK
 /// 1000+, no time budget) can carry hundreds — unbounded Promise.all
 /// there hammers the RPC exactly on the long-pole path (review
 /// MINOR-4; mirrors the PM indexer's prefetchBatchSize discipline).
 const TIMESTAMP_PREFETCH_BATCH = 15;
 
-async function prefetchBlockTimestamps(
+export async function prefetchBlockTimestamps(
   publicClient: PublicClient,
-  logs: LedgerLog[],
+  logs: readonly ScanLog[],
+  sleep: (ms: number) => Promise<void> = realSleep,
 ): Promise<Map<string, Date>> {
   const hashes = [...new Set(logs.map((l) => l.blockHash as string))];
   const out = new Map<string, Date>();
@@ -480,14 +751,101 @@ async function prefetchBlockTimestamps(
     const batch = hashes.slice(i, i + TIMESTAMP_PREFETCH_BATCH);
     await Promise.all(
       batch.map(async (hash) => {
-        const block = await publicClient.getBlock({
-          blockHash: hash as `0x${string}`,
-        });
+        const block = await withRpcRetry(() => publicClient.getBlock({ blockHash: hash as `0x${string}` }), sleep);
         out.set(hash, new Date(Number(block.timestamp) * 1000));
       }),
     );
   }
   return out;
+}
+
+type Tx = DbOrTx & { transaction: <T>(fn: (tx: DbOrTx) => Promise<T>) => Promise<T> };
+
+/// The V4 batch writer: ledger rows always; pool notifications for each MarketResolved above notified_through, after
+/// a 'finalized' re-read confirms it (resolved, same outcome) — else the batch fails and is fetched again next tick.
+function v4BatchWriter(contract: LeaderboardContract) {
+  return async (ctx: BatchContext<V4Log>): Promise<BatchWriteResult> => {
+    const { db, chainId, contractLower } = ctx;
+    const timestamps = await prefetchBlockTimestamps(ctx.publicClient, ctx.logs, ctx.sleep);
+    const rows = decodeToRows(
+      ctx.logs.filter((l) => l.eventName !== 'MarketResolved'),
+      chainId,
+      contractLower,
+      contract.version,
+      timestamps,
+    );
+    // onConflictDoNothing makes seed/cron overlap and crash-replay idempotent against the (tx_hash, log_index) PK;
+    // RETURNING gives the count of rows that actually landed (NIT-6 — re-scans report 0, not the decoded count).
+    const writeRows = async (tx: DbOrTx) =>
+      rows.length === 0
+        ? 0
+        : (
+            await tx
+              .insert(makoMarketEvents)
+              .values(rows)
+              .onConflictDoNothing({ target: [makoMarketEvents.txHash, makoMarketEvents.logIndex] })
+              .returning({ txHash: makoMarketEvents.txHash })
+          ).length;
+
+    let candidates: V4Log[] = [];
+    if (ctx.notify !== null) {
+      const nt0 = (await readNotifyFloor(db, chainId, contractLower, null)).floor ?? ctx.notify.seed;
+      if (nt0 !== null) {
+        candidates = ctx.logs.filter((l) => l.eventName === 'MarketResolved' && bigintToNumber(l.blockNumber!) > nt0);
+      }
+    }
+    if (candidates.length === 0) {
+      let inserted = 0;
+      await (db as Tx).transaction(async (tx) => {
+        inserted = await writeRows(tx);
+        await ctx.advanceCursor(tx);
+      });
+      return { eventsInserted: inserted, rosterFromChain: 0, notifiedThrough: null };
+    }
+
+    const ids = [...new Set(candidates.map((l) => l.args.id as bigint))];
+    const markets = await readMarketsAtFinalized(ctx.publicClient, contractLower, ids, ctx.sleep);
+    const byId = new Map(ids.map((id, i) => [id, markets[i]]));
+    const items = candidates.map((l) => {
+      const id = l.args.id as bigint;
+      const outcome = Number(l.args.outcome);
+      const market = byId.get(id)!;
+      if (!marketConfirms(market, outcome)) {
+        throw new Error(`pool ${id.toString()}: the finalized re-read does not confirm MarketResolved(${outcome})`);
+      }
+      return poolItem(
+        db,
+        ctx.publicClient,
+        {
+          contractLower,
+          chainId,
+          id,
+          outcome,
+          blockNumber: bigintToNumber(l.blockNumber!),
+          eventAt: timestamps.get(l.blockHash as string)!,
+          market,
+          batchBets: rows
+            .filter((r) => r.kind === 'bet' && r.marketId === id.toString())
+            .map((r) => ({ actor: r.actor, isYes: r.isYes === true })),
+        },
+        ctx.sleep,
+      );
+    });
+    const r = await announceBatch({
+      db,
+      chainId,
+      contractLower,
+      batchEnd: ctx.batchEnd,
+      seedNotifiedThrough: ctx.notify!.seed,
+      items,
+      writeRows,
+      advanceCursor: ctx.advanceCursor,
+      accounts: ctx.accounts,
+      hardStopAt: ctx.hardStopAt,
+      now: ctx.now,
+    });
+    return { eventsInserted: r.inserted, rosterFromChain: r.rosterFromChain, notifiedThrough: r.notifiedThrough };
+  };
 }
 
 // ---- Orchestrator ----------------------------------------------------------
@@ -500,6 +858,7 @@ export async function runLeaderboardIndexerOnce(
   const chunkSize = args.chunkSize ?? defaultChunkSize();
   const confirmations = args.confirmations ?? LEADERBOARD_CONFIRMATIONS;
   const staleLockMs = args.staleLockMs ?? LEADERBOARD_STALE_LOCK_MS;
+  const notifyFromBlock = args.notifyFromBlock === undefined ? notifyFromBlockEnv() : args.notifyFromBlock;
   const { db, publicClient, timeBudgetMs } = args;
 
   for (const [name, val] of [
@@ -514,166 +873,55 @@ export async function runLeaderboardIndexerOnce(
     }
   }
 
+  const now = args.now ?? Date.now;
   const deadline =
-    timeBudgetMs === undefined ? Infinity : Date.now() + timeBudgetMs;
+    timeBudgetMs === undefined ? Infinity : now() + timeBudgetMs;
 
   const results: LeaderboardContractScanResult[] = [];
-
+  // Per-contract isolation: a failure for one contract records an 'error'
+  // result and the loop moves on (MINOR-5).
   for (const contract of contracts) {
-    const contractAddressLower = normalizeAddressLower(contract.address);
-
-    // Everything per-contract lives inside try/catch/finally: a throw
-    // for THIS contract records an 'error' result and the loop moves
-    // on — one contract's RPC blip must not starve the rest (MINOR-5).
-    let acquiredLockedAt: Date | null = null;
-    let lastScannedBlock = 0;
-    let mutexOutcome: 'acquired' | 'stale-recovered' = 'acquired';
-    let eventsInserted = 0;
-    let budgetExhausted = false;
-    let scannedTo: number | null = null;
-    let fromBlock: number | null = null;
-    let scanTarget: number | null = null;
-
+    const contractLower = normalizeAddressLower(contract.address);
     try {
-      const acquired = await acquireContractMutex(
-        db,
-        chainId,
-        contractAddressLower,
-        staleLockMs,
-      );
-      if (acquired === null) {
-        results.push({
-          contractAddress: contractAddressLower,
-          mutex: 'busy',
-          fromBlock: null,
-          scannedTo: null,
-          scanTarget: null,
-          eventsInserted: 0,
-          upToDate: false,
-          budgetExhausted: false,
-        });
-        continue;
-      }
-      acquiredLockedAt = acquired.acquiredLockedAt;
-      lastScannedBlock = acquired.lastScannedBlock;
-      mutexOutcome = acquired.mutexOutcome;
-
-      const head = bigintToNumber(await publicClient.getBlockNumber());
-      scanTarget = head - confirmations;
-      // Resume at cursor + 1 — no overlap re-scan; see divergence (1).
-      fromBlock = Math.max(contract.deployBlock, lastScannedBlock + 1);
-
-      let cursor = fromBlock;
-      while (cursor <= scanTarget) {
-        if (Date.now() > deadline) {
-          budgetExhausted = true;
-          break;
-        }
-        const chunkEnd = Math.min(cursor + chunkSize - 1, scanTarget);
-
-        const logs = await fetchLogsAdaptive(
+      results.push(
+        await scanContract<V4Log>({
+          db,
           publicClient,
-          contractAddressLower,
-          cursor,
-          chunkEnd,
-        );
-        const timestamps = await prefetchBlockTimestamps(publicClient, logs);
-        const rows = decodeToRows(
-          logs,
           chainId,
-          contractAddressLower,
-          contract.version,
-          timestamps,
-        );
-
-        // Per-chunk transaction: inserts + cursor/target advance are
-        // atomic. onConflictDoNothing makes seed/cron overlap and
-        // crash-replay idempotent against the (tx_hash, log_index) PK;
-        // RETURNING gives the count of rows that actually landed
-        // (NIT-6 — re-scans report 0, not the decoded count).
-        const lockToken = acquiredLockedAt;
-        const target = scanTarget;
-        let insertedInChunk = 0;
-        await (db as DbOrTx & {
-          transaction: <T>(fn: (tx: DbOrTx) => Promise<T>) => Promise<T>;
-        }).transaction(async (chunkTx) => {
-          if (rows.length > 0) {
-            const landed = await chunkTx
-              .insert(makoMarketEvents)
-              .values(rows)
-              .onConflictDoNothing({
-                target: [makoMarketEvents.txHash, makoMarketEvents.logIndex],
-              })
-              .returning({ txHash: makoMarketEvents.txHash });
-            insertedInChunk = landed.length;
-          }
-          await advanceCursorOrThrow(
-            chunkTx,
-            chainId,
-            contractAddressLower,
-            lockToken,
-            chunkEnd,
-            target,
-          );
-        });
-
-        eventsInserted += insertedInChunk;
-        scannedTo = chunkEnd;
-        cursor = chunkEnd + 1;
-        args.onChunk?.({
-          contractAddress: contractAddressLower,
-          chunkEnd,
-          scanTarget,
-          rowsInChunk: insertedInChunk,
-        });
-      }
-
-      results.push({
-        contractAddress: contractAddressLower,
-        mutex: mutexOutcome,
-        fromBlock,
-        scannedTo: scannedTo ?? lastScannedBlock,
-        scanTarget,
-        eventsInserted,
-        upToDate: (scannedTo ?? lastScannedBlock) >= scanTarget,
-        budgetExhausted,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      results.push({
-        contractAddress: contractAddressLower,
-        mutex: 'error',
-        fromBlock,
-        scannedTo,
-        scanTarget,
-        eventsInserted, // committed chunks persisted before the throw
-        upToDate: false,
-        budgetExhausted: false,
-        error: message,
-      });
-      console.warn(
-        `[leaderboard-indexer] ${contractAddressLower} scan failed: ${message}; continuing with remaining contracts`,
+          contractLower,
+          floorFor: () => contract.deployBlock,
+          notifyFromBlock,
+          // `events` (plural) filters topic0 to exactly our signatures AND
+          // decodes args — address-scoped per plan NIT-4 (other deployments
+          // share these common event signatures).
+          fetchLogs: async (from, to) =>
+            (await publicClient.getLogs({
+              address: contractLower,
+              events: V4_EVENTS,
+              fromBlock: numberToBigInt(from),
+              toBlock: numberToBigInt(to),
+            })) as unknown as V4Log[],
+          writeBatch: v4BatchWriter(contract),
+          chunkSize,
+          confirmations,
+          staleLockMs,
+          deadline,
+          hardStopAt: args.hardStopAt,
+          sleep: args.sleep,
+          now: args.now,
+          accounts: args.accounts,
+          onChunk: args.onChunk,
+        }),
       );
-    } finally {
-      if (acquiredLockedAt !== null) {
-        try {
-          await releaseContractMutex(
-            db,
-            chainId,
-            contractAddressLower,
-            acquiredLockedAt,
-          );
-        } catch (err) {
-          const releaseWarning = `lock release failed for ${contractAddressLower}: ${
-            err instanceof Error ? err.message : String(err)
-          } (self-heals via stale recovery after ${staleLockMs}ms)`;
-          const last = results[results.length - 1];
-          if (last && last.contractAddress === contractAddressLower) {
-            last.releaseWarning = releaseWarning;
-          }
-          console.warn(`[leaderboard-indexer] ${releaseWarning}`);
-        }
-      }
+    } catch (err) {
+      // The floor read itself failed (before any lock): record it and move on.
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[leaderboard-indexer] ${contractLower} scan failed: ${message}; continuing with remaining contracts`);
+      results.push({
+        contractAddress: contractLower, mutex: 'error', fromBlock: null, scannedTo: null, scanTarget: null,
+        eventsInserted: 0, upToDate: false, budgetExhausted: false, notifiedThrough: null, noFloor: notifyFromBlock === null,
+        rosterFromChain: 0, error: message,
+      });
     }
   }
 
