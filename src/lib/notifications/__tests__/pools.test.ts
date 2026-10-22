@@ -375,6 +375,35 @@ describe('history guard and scanning', () => {
   });
 });
 
+describe('concurrency and lock loss', () => {
+  it('two runs at once give one row each: the second reports busy', async () => {
+    const db = await fresh();
+    const alice = await walletAccount(db, ALICE);
+    const chain = mockChain({ head: HEAD, logs: [betLog(4, ALICE, true, F + 2), resolvedLog(4, 3, F + 10)], markets: new Map([['4', market({ outcome: 3, noBettorCount: 0 })]]) });
+    const [r1, r2] = await Promise.all([run(chain), run(chain)]);
+    expect([r1.mutex, r2.mutex].sort()).toEqual(['acquired', 'busy']);
+    expect(await notificationsOf(db, alice)).toHaveLength(1);
+  });
+
+  it('a lock lost mid-batch rolls the batch back: no ledger row, no notification, cursors unchanged', async () => {
+    const db = await fresh();
+    await walletAccount(db, ALICE);
+    const chain = mockChain({ head: HEAD, logs: [betLog(4, ALICE, true, F + 2), resolvedLog(4, 3, F + 10)], markets: new Map([['4', market({ outcome: 3, noBettorCount: 0 })]]) });
+    const getBlock = chain.client.getBlock.bind(chain.client);
+    (chain.client as unknown as { getBlock: typeof getBlock }).getBlock = (async (a: Parameters<typeof getBlock>[0]) => {
+      // Another worker stale-recovers the lock while this batch is being prepared.
+      await db.client.query(`UPDATE mako_leaderboard_indexer_state SET locked_at = date_trunc('milliseconds', now()) + interval '1 second'`);
+      return getBlock(a);
+    }) as typeof getBlock;
+    const r = await run(chain);
+    expect(r.mutex).toBe('error');
+    expect(await notificationsOf(db)).toHaveLength(0);
+    expect((await db.client.query(`SELECT count(*)::int AS c FROM mako_market_events`)).rows[0]).toEqual({ c: 0 });
+    expect(await cursorOf(db, V4.address)).toBe(F - 1);
+    expect(await notifiedThrough(db, V4.address)).toBeNull();
+  });
+});
+
 describe('handoff (Invariant H, Codex R1 F1)', () => {
   async function oldStyleAdvance(db: NotifyDb, chain: MockChain, to: number) {
     // What the deployed 8f94ef9 indexer writes for blocks F..to: ledger rows and the cursor, no notification and no
