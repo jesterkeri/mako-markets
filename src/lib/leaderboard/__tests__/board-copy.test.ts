@@ -40,7 +40,7 @@ describe('leaderboard copy', () => {
   });
 
   it('drops every line from the design that the code cannot back', () => {
-    expect(ALL_TEXT).not.toMatch(/every minute/i); // indexed every 30 minutes
+    expect(ALL_TEXT).not.toMatch(/every minute/i); // indexed every 15 minutes (#214)
     expect(ALL_TEXT).not.toMatch(/settled bets/i); // stakes count when placed, not at settlement
     expect(ALL_TEXT).not.toMatch(/count as zero/i); // an unclaimed refund is a loss until claimed
     expect(ALL_TEXT).not.toMatch(/count the same/i); // rounds are not in the ledger
@@ -68,11 +68,12 @@ describe('leaderboard copy', () => {
     expect(SORTS.map((s) => s.key)).toEqual(['profit', 'volume']);
   });
 
-  it('says 30 minutes because the cf-worker pings the leaderboard indexer on minute % 30', () => {
+  it('says 15 minutes because the cf-worker pings /api/cron/notify, which runs the leaderboard indexer, on minute % 15', () => {
     const worker = readFileSync(resolve('cf-worker/src/index.ts'), 'utf-8');
-    const gate = worker.match(/if \(minute % (\d+) === 0\) \{[^}]*\/api\/cron\/leaderboard/);
-    expect(gate?.[1]).toBe('30');
-    expect(BOARD_COPY.cadence).toBe('Updates about every 30 minutes.');
+    const gate = worker.match(/if \(minute % (\d+) === 0\) \{[^}]*\/api\/cron\/notify/);
+    expect(gate?.[1]).toBe('15');
+    expect(worker).not.toMatch(/pingVercelCron\(env, '\/api\/cron\/leaderboard'\)/);
+    expect(BOARD_COPY.cadence).toBe('Updates about every 15 minutes.');
   });
 
   it('empty and error states say the right thing for the situation', () => {

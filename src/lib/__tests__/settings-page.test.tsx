@@ -96,10 +96,15 @@ describe('Settings', () => {
     expect(screen.queryAllByText('Covered by Mako Market')).toHaveLength(0);
   });
 
-  it('notifications are not working switches, Replay tour starts How to play, and sign out opens the confirm', () => {
+  it('only shipped notification kinds are working switches, Replay tour starts How to play, and sign out opens the confirm', () => {
     mocks.user = emailUser();
     render(<SettingsClient />);
-    for (const s of screen.getAllByRole('switch')) expect(s.getAttribute('aria-disabled')).toBe('true');
+    // #214 S1 ships Money to claim, Results and Replies; the other kinds stay coming soon, never a working switch.
+    const switches = screen.getAllByRole('switch');
+    const comingSoon = switches.filter((s) => /coming soon/.test(s.getAttribute('aria-label') ?? ''));
+    expect(comingSoon.length).toBeGreaterThan(0);
+    for (const s of comingSoon) expect(s.getAttribute('aria-disabled')).toBe('true');
+    for (const name of ['Money to claim', 'Results', 'Replies']) expect(screen.getAllByRole('switch', { name }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Replay tour' })[0].getAttribute('href')).toBe('/?tour=1');
     fireEvent.click(screen.getAllByRole('button', { name: 'Sign out' })[0]);
     // The dialog itself is the shell's (SignOutHost), opened for this account.

@@ -9,8 +9,9 @@ import {
 } from '@/lib/leaderboard/indexer';
 
 // ----------------------------------------------------------------------------
-// GET /api/cron/leaderboard (every 30 minutes, fired by mako-auto-resolver
-// CF Worker — see cf-worker/src/index.ts, minute % 30 gate)
+// GET /api/cron/leaderboard (fired every 30 minutes by the deployed
+// mako-auto-resolver CF Worker until its #214 redeploy, which pings
+// /api/cron/notify at minute % 15 instead; see cf-worker/src/index.ts)
 //
 // Runs runLeaderboardIndexerOnce against the LEADERBOARD_CONTRACTS list.
 // #214: that V4 scan now also announces pool results (notifications), so
