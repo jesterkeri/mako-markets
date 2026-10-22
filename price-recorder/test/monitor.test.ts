@@ -115,7 +115,7 @@ describe('conditions from D1', () => {
         )
         .bind(feed, t, state, state === 'open' ? '1' : null);
     const rows = [];
-    for (let i = 0; i < 6; i++) rows.push(ins('BTC', M - 3600 + i * 60, 'incomplete'));
+    for (let i = 0; i < 6; i++) rows.push(ins('BTC', M - 4200 + i * 60, 'incomplete')); // the window's first minutes
     for (let i = 0; i < 9; i++) rows.push(ins('ETH', M - 600 + i * 60, 'incomplete')); // inside catch-up: not counted
     for (let i = 0; i < 6; i++) rows.push(ins('EURUSD', M - 3000 + i * 120, 'open'), ins('EURUSD', M - 3000 + i * 120 + 60, 'empty'));
     await db().batch(rows);

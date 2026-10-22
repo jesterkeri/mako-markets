@@ -16,7 +16,8 @@
 // From D1, every tick (one statement):
 //   rate_limited: the newest 3 runs rows all saw a 429;  checker_stalled: no cycle completed in 26 h, once the
 //   recorder has run for 26 h (the first cycle takes about 17.6 h)
-// From D1, on the hourly tick, over the hour's minutes that are past the 10-minute catch-up window (one statement):
+// From D1, on the hourly tick, over the 60 minutes that end where the 10-minute catch-up window starts, so consecutive
+// hourly ticks cover every minute exactly once (one statement):
 //   incomplete:SYM (> 5);  empty:SYM (crypto: any; others: > 5 that follow an open minute);  stale:SYM (> 15);
 //   rejects:SYM (> 5 % of the minute reports rejected)
 // On the hourly tick, after the tick: one live report per feed verified through VerifierProxy.verify by eth_call on
@@ -66,7 +67,7 @@ export const MONITOR_STATE_SQL =
   `SELECT ${D1_NOW} AS now, (SELECT COUNT(*) FROM (SELECT n_429 FROM runs ORDER BY t DESC LIMIT ${RATE_LIMITED_RUNS}) WHERE n_429 > 0) AS r429, ` +
   `(SELECT MIN(t) FROM runs) AS first_run, (SELECT MAX(completed_at) FROM checker_cycle) AS last_cycle`;
 
-/// ?1 the hour's first minute, ?2 the first minute still inside the catch-up window. Empty minutes count for an RWA
+/// ?1 the window's first minute, ?2 the first minute still inside the catch-up window. Empty minutes count for an RWA
 /// feed only after an open minute (a feed going from open straight to empty, not a market closing).
 export const HOURLY_SQL =
   `SELECT feed, SUM(state = 'incomplete') AS incomplete, SUM(state = 'empty') AS empty, ` +
@@ -107,7 +108,9 @@ export async function dbReasons(db: D1Database, minute: number | null): Promise<
   if (s.r429 === RATE_LIMITED_RUNS) reasons.push('rate_limited');
   if (s.first_run !== null && s.first_run <= s.now - STALLED_S && (s.last_cycle === null || s.last_cycle < s.now - STALLED_S)) reasons.push('checker_stalled');
   if (minute !== null && minute % HOUR === 0) {
-    const res = await db.prepare(HOURLY_SQL).bind(minute - HOUR, minute - CATCHUP_S).all<HourRow>();
+    // [M - 1 h - 10 min, M - 10 min): the window slides with the catch-up holdback (adversary on unit f: a fixed
+    // [M - 1 h, M - 10 min) never read the 10 minutes before each hour).
+    const res = await db.prepare(HOURLY_SQL).bind(minute - HOUR - CATCHUP_S, minute - CATCHUP_S).all<HourRow>();
     reasons.push(...hourReasons(res.results));
   }
   return reasons;
