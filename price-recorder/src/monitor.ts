@@ -26,18 +26,17 @@
 // ----------------------------------------------------------------------------
 
 import { decodeFunctionResult, encodeFunctionData, type Hex } from 'viem';
-import { VERIFIER_PROXY } from '../../cf-worker/src/datastreams';
+import { VERIFIER_PROXY, VERIFY_TIMEOUT_MS } from '../../cf-worker/src/datastreams';
 import { reportBlob } from './envelope';
 import { FEED_BY_SYMBOL } from './feeds';
 import { D1_NOW } from './lease';
-import { HOUR } from './rollup';
+import { HOUR, MINUTE } from './rollup';
 import type { TickReport } from './tick';
 
 export const DEFAULT_PUBLIC_RPC_URL = 'https://testnet-rpc.monad.xyz';
 export const STALLED_S = 26 * HOUR;
 export const CATCHUP_S = 600;
 export const VERIFY_CONCURRENCY = 4;
-export const VERIFY_TIMEOUT_MS = 8_000;
 export const PING_TIMEOUT_MS = 10_000;
 
 const FAILED_OUTCOMES = new Set(['tick_failed', 'batch_failed', 'lease_lost', 'deadline', 'config_invalid', 'no_credentials']);
@@ -61,9 +60,11 @@ export function tickReasons(report: TickReport, events: readonly Record<string, 
   return { ping: true, reasons };
 }
 
-export const STATE_SQL =
-  `SELECT ${D1_NOW} AS now, (SELECT COUNT(*) FROM (SELECT n_429 FROM runs ORDER BY t DESC LIMIT 3) WHERE n_429 > 0) AS r429, ` +
-  `(SELECT COUNT(*) FROM runs) AS nruns, (SELECT MIN(t) FROM runs) AS first_run, (SELECT MAX(completed_at) FROM checker_cycle) AS last_cycle`;
+/// Plan 12: a 429 in each of this many newest runs alerts.
+export const RATE_LIMITED_RUNS = 3;
+export const MONITOR_STATE_SQL =
+  `SELECT ${D1_NOW} AS now, (SELECT COUNT(*) FROM (SELECT n_429 FROM runs ORDER BY t DESC LIMIT ${RATE_LIMITED_RUNS}) WHERE n_429 > 0) AS r429, ` +
+  `(SELECT MIN(t) FROM runs) AS first_run, (SELECT MAX(completed_at) FROM checker_cycle) AS last_cycle`;
 
 /// ?1 the hour's first minute, ?2 the first minute still inside the catch-up window. Empty minutes count for an RWA
 /// feed only after an open minute (a feed going from open straight to empty, not a market closing).
@@ -72,9 +73,16 @@ export const HOURLY_SQL =
   `SUM(state = 'empty' AND prev = 'open') AS empty_after_open, SUM(state = 'stale') AS stale, ` +
   `SUM(n_rejected) AS rejected, SUM(n_reports) AS reports FROM (` +
   `SELECT feed, t, state, n_rejected, n_reports, LAG(state) OVER (PARTITION BY feed ORDER BY t) AS prev FROM candles_1m ` +
-  `WHERE t >= ?1 - 60 AND t < ?2) WHERE t >= ?1 GROUP BY feed`;
+  `WHERE t >= ?1 - ${MINUTE} AND t < ?2) WHERE t >= ?1 GROUP BY feed`;
 
 export type HourRow = { feed: string; incomplete: number; empty: number; empty_after_open: number; stale: number; rejected: number; reports: number };
+
+/// Plan 12's per-feed thresholds over one hour: alert when a count is above these.
+export const MAX_INCOMPLETE = 5;
+export const MAX_EMPTY_AFTER_OPEN = 5;
+export const MAX_STALE = 15;
+export const MAX_REJECTED_PERCENT = 5;
+export const MAX_PING_BODY = 1000;
 
 /// Plan 12's per-feed thresholds over one hour (pure).
 export function hourReasons(rows: readonly HourRow[]): string[] {
@@ -84,19 +92,19 @@ export function hourReasons(rows: readonly HourRow[]): string[] {
   };
   const crypto = (r: HourRow) => FEED_BY_SYMBOL.get(r.feed)?.class === 'crypto';
   return [
-    ...by('incomplete', (r) => r.incomplete > 5),
-    ...by('empty', (r) => (crypto(r) ? r.empty > 0 : r.empty_after_open > 5)),
-    ...by('stale', (r) => r.stale > 15),
-    ...by('rejects', (r) => r.reports > 0 && r.rejected * 100 > r.reports * 5),
+    ...by('incomplete', (r) => r.incomplete > MAX_INCOMPLETE),
+    ...by('empty', (r) => (crypto(r) ? r.empty > 0 : r.empty_after_open > MAX_EMPTY_AFTER_OPEN)),
+    ...by('stale', (r) => r.stale > MAX_STALE),
+    ...by('rejects', (r) => r.reports > 0 && r.rejected * 100 > r.reports * MAX_REJECTED_PERCENT),
   ];
 }
 
 /// The D1 conditions: every tick the 429 run and the stalled checker; on the hourly tick the per-feed thresholds.
 export async function dbReasons(db: D1Database, minute: number | null): Promise<string[]> {
-  const s = await db.prepare(STATE_SQL).first<{ now: number; r429: number; nruns: number; first_run: number | null; last_cycle: number | null }>();
+  const s = await db.prepare(MONITOR_STATE_SQL).first<{ now: number; r429: number; first_run: number | null; last_cycle: number | null }>();
   if (!s) throw new Error('monitor state read returned no row');
   const reasons: string[] = [];
-  if (s.nruns >= 3 && s.r429 === 3) reasons.push('rate_limited');
+  if (s.r429 === RATE_LIMITED_RUNS) reasons.push('rate_limited');
   if (s.first_run !== null && s.first_run <= s.now - STALLED_S && (s.last_cycle === null || s.last_cycle < s.now - STALLED_S)) reasons.push('checker_stalled');
   if (minute !== null && minute % HOUR === 0) {
     const res = await db.prepare(HOURLY_SQL).bind(minute - HOUR, minute - CATCHUP_S).all<HourRow>();
@@ -130,7 +138,13 @@ export async function verifySample(fetchImpl: typeof fetch, rpcUrl: string, s: {
       const msg = typeof body.error?.message === 'string' ? body.error.message : '';
       return { symbol: s.symbol, result: body.error?.code === 3 || /revert/i.test(msg) ? 'drift' : 'unavailable' };
     }
-    const verified = decodeFunctionResult({ abi: verifyAbi, functionName: 'verify', data: body.result as Hex }).toLowerCase();
+    // An answer that is not ABI bytes is a wrong answer, not an unreachable RPC (the resolver's verify_failed).
+    let verified: string;
+    try {
+      verified = decodeFunctionResult({ abi: verifyAbi, functionName: 'verify', data: body.result as Hex }).toLowerCase();
+    } catch {
+      return { symbol: s.symbol, result: 'drift' };
+    }
     return { symbol: s.symbol, result: verified === blob ? 'match' : 'drift' };
   } catch {
     return { symbol: s.symbol, result: 'unavailable' };
@@ -150,7 +164,7 @@ export async function ping(fetchImpl: typeof fetch, url: string, reasons: readon
   const base = url.trim().replace(/\/$/, '');
   const body = reasons.length > 0 ? `${reasons.join(' ')} | ${status}` : status;
   try {
-    await fetchImpl(reasons.length > 0 ? `${base}/fail` : base, { method: 'POST', body: body.slice(0, 1000), signal: AbortSignal.timeout(PING_TIMEOUT_MS) });
+    await fetchImpl(reasons.length > 0 ? `${base}/fail` : base, { method: 'POST', body: body.slice(0, MAX_PING_BODY), signal: AbortSignal.timeout(PING_TIMEOUT_MS) });
   } catch {
     /* reported by absence */
   }

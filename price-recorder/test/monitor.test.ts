@@ -10,7 +10,7 @@ import { scheduledRun } from '../src/index';
 import { dbReasons, hourReasons, monitorRun, ping, tickReasons, verifySample, type HourRow } from '../src/monitor';
 import type { TickReport } from '../src/tick';
 import { capture } from './helpers';
-import { BASE, CREDS, d1Now } from './tick-helpers';
+import { BASE, CREDS, d1Now, FakeStreams, msForLive, recordOnly, tick, virtualClock } from './tick-helpers';
 
 const db = () => env.DB;
 const HC = 'https://hc-ping.test/uuid-not-a-credential';
@@ -139,6 +139,7 @@ describe('the hourly on-chain sample', () => {
     expect((await verifySample(recorder(() => new Response('', { status: 502 })).f, RPC, sample)).result).toBe('unavailable');
     expect((await verifySample(recorder(() => Promise.reject(new Error('down'))).f, RPC, sample)).result).toBe('unavailable');
     expect((await verifySample(recorder(() => ok(blob)).f, RPC, { symbol: 'BTC', fullReport: '0xzz' })).result).toBe('drift');
+    expect((await verifySample(recorder(() => Response.json({ result: '0x1234' })).f, RPC, sample)).result).toBe('drift'); // an answer that is not ABI bytes
   });
 
   it('drift alerts by symbol; an unreachable RPC is counted in the body, not alerted', async () => {
@@ -199,7 +200,6 @@ describe('a whole scheduled run on local D1', () => {
 
 describe('the tick hands the monitor its samples', () => {
   it('on the hourly tick one valid live report per feed; on any other tick none', async () => {
-    const { FakeStreams, msForLive, recordOnly, tick, virtualClock } = await import('./tick-helpers');
     const M = 1792076400; // 15:00 UTC, an hourly tick with a real BTC page (capture open-minute-BTC)
     await recordOnly(['BTC']);
     const clock = virtualClock(msForLive(M));
