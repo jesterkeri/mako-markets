@@ -18,9 +18,11 @@ import { useTheme, type ThemePreference } from '@/lib/use-theme';
 import { accountAddress, useUser, type AuthedUser } from '@/lib/use-user';
 import { SPONSOR_CAP_PER_USER_PER_DAY } from '@/lib/aa-constants';
 
-// Settings (21a). Account, security, appearance, network and sign out. What the product does not do yet
-// (notifications) is shown as coming soon, never as a working switch. Security follows the
-// design corrections list: two-factor authentication and key export for email accounts.
+import { NOTIFICATION_ROWS, PrefSwitch, useNotificationPrefs } from './notification-prefs';
+
+// Settings (21a). Account, security, notifications, appearance, network and sign out. Notification kinds whose slice
+// has not shipped yet are shown as coming soon, never as a working switch (#214 S1 ships claim, result and reply).
+// Security follows the design corrections list: two-factor authentication and key export for email accounts.
 
 const SECTIONS = [
   { id: 'account', label: 'Account' },
@@ -29,14 +31,6 @@ const SECTIONS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'network', label: 'Network' },
 ] as const;
-
-const NOTIFICATION_KINDS: [string, string][] = [
-  ['Round starting', 'A round you follow opens for entries'],
-  ['Entries closing', 'Before entries close on your rounds'],
-  ['You won', 'A round or pool you are in settles in your favour'],
-  ['Pool results', 'A pool you bet on is settled or refunded'],
-  ['Replies', 'Someone replies to your comment'],
-];
 
 const THEMES: { key: ThemePreference; label: string }[] = [
   { key: 'light', label: 'Light' },
@@ -64,6 +58,7 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
   const email = user.authType === 'magic';
   const account = accountAddress(user);
   const name = user.displayName?.trim() || null;
+  const notif = useNotificationPrefs(account);
 
   const runExport = async () => {
     setExportError('');
@@ -183,17 +178,25 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
           { k: 'Security', v: <span style={note}>Your wallet keeps your key and approves every transaction.</span> },
           { k: 'Last sign-in', v: <span style={note}>{user.lastSignInAt ? `Before this one: ${when(user.lastSignInAt)}` : 'This is your first sign-in.'}</span> },
         ],
-    notifications: NOTIFICATION_KINDS.map(([k, d]) => ({
-      k,
-      v: (
-        <>
-          <span style={note}>{d}</span>
-          <span role="switch" aria-checked="false" aria-disabled="true" aria-label={`${k}, coming soon`} style={{ marginLeft: 'auto', width: 38, height: 22, borderRadius: 9999, background: BAR, opacity: 0.55, position: 'relative', flex: 'none' }}>
-            <span style={{ position: 'absolute', top: 3, left: 3, width: 16, height: 16, borderRadius: '50%', background: 'var(--dim)' }} />
-          </span>
-        </>
-      ),
-    })),
+    notifications: [
+      ...NOTIFICATION_ROWS.map((r) => ({
+        k: r.label,
+        v: r.live ? (
+          <>
+            <span style={note}>{r.note}</span>
+            <PrefSwitch label={r.label} on={notif.prefs ? notif.prefs.kinds[r.kind] : null} disabled={notif.saving !== null} onToggle={() => void notif.toggle(r.kind)} />
+          </>
+        ) : (
+          <>
+            <span style={note}>{r.note} · coming soon</span>
+            <span role="switch" aria-checked="false" aria-disabled="true" aria-label={`${r.label}, coming soon`} style={{ marginLeft: 'auto', width: 38, height: 22, borderRadius: 9999, background: BAR, opacity: 0.55, position: 'relative', flex: 'none' }}>
+              <span style={{ position: 'absolute', top: 3, left: 3, width: 16, height: 16, borderRadius: '50%', background: 'var(--dim)' }} />
+            </span>
+          </>
+        ),
+      })),
+      ...(notif.error ? [{ k: 'Notice', v: <span role="alert" style={{ ...note, color: 'var(--mako-red)' }}>{notif.error}</span> }] : []),
+    ],
     appearance: [
       {
         k: 'Theme',
@@ -262,7 +265,6 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
               <section key={s.id} id={s.id} aria-labelledby={`${s.id}-h`} style={{ marginTop: 34, scrollMarginTop: 20 }}>
                 <h2 id={`${s.id}-h`} style={{ margin: '0 0 6px', ...display, fontSize: 22, letterSpacing: '-0.02em' }}>
                   {s.label}
-                  {s.id === 'notifications' && <span style={{ ...mono, fontSize: 11, fontWeight: 700, color: 'var(--dim)', marginLeft: 10 }}>COMING SOON</span>}
                 </h2>
                 {rows[s.id].map((r) => (
                   <div key={r.k} style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: 16, alignItems: 'center', padding: '13px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
@@ -294,7 +296,6 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
             <section key={s.id} aria-labelledby={`${s.id}-mh`} style={{ marginTop: 22 }}>
               <h2 id={`${s.id}-mh`} style={{ margin: '0 0 8px 4px', fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>
                 {s.label}
-                {s.id === 'notifications' && ' · coming soon'}
               </h2>
               <div style={{ borderRadius: 24, background: 'var(--raise)', padding: '2px 14px' }}>
                 {rows[s.id].map((r, i) => (

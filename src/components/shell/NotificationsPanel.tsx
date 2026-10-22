@@ -1,8 +1,13 @@
 'use client';
 
-/// The notifications dropdown (22a frame). Notifications are not built yet (founder's decision, 2026-09-30:
-/// show "coming soon" rather than hide or fake them), so the panel says so; it never shows an unread count.
-export function NotificationsPanel() {
+import Link from 'next/link';
+
+import { NotificationList } from '@/components/notifications/NotificationList';
+
+/// The notifications dropdown (22a frame, #214 S1). The newest 10, marked read as they are shown; "See all" opens
+/// /notifications. Results, refunds, creator earnings and replies arrive here; reminders and price alerts come in
+/// later slices.
+export function NotificationsPanel({ onClose }: { onClose?: () => void }) {
   return (
     <div
       role="dialog"
@@ -23,11 +28,12 @@ export function NotificationsPanel() {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
         <span style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 18 }}>Notifications</span>
-        <span style={{ fontFamily: 'var(--mako-font-mono)', fontSize: 11, color: 'var(--dim)' }}>COMING SOON</span>
+        <Link href="/notifications" onClick={onClose} style={{ marginLeft: 'auto', fontFamily: 'var(--mako-font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--mako-canvas-fg)' }}>
+          SEE ALL
+        </Link>
       </div>
-      <div style={{ padding: '18px 16px 20px', fontSize: 14, lineHeight: 1.5, color: 'var(--dim)' }}>
-        Round results, refunds and replies to your comments will show up here once notifications launch. Until
-        then, results and claims are on Me.
+      <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+        <NotificationList limit={10} paged={false} onNavigate={onClose} />
       </div>
     </div>
   );

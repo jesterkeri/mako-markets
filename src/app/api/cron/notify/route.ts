@@ -41,7 +41,11 @@ const PRUNE_LIMIT = 1_000;
 type ScanReport = Omit<LeaderboardContractScanResult, 'contractAddress'>;
 
 /// The scan result without the contract address, which the tick script does not need.
-const report = ({ contractAddress: _c, ...rest }: LeaderboardContractScanResult): ScanReport => rest;
+const report = (r: LeaderboardContractScanResult): ScanReport => {
+  const rest: Partial<LeaderboardContractScanResult> = { ...r };
+  delete rest.contractAddress;
+  return rest as ScanReport;
+};
 
 const rowCount = (res: unknown): number => {
   const r = res as { count?: number; affectedRows?: number; rows?: unknown[] };

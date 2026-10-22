@@ -315,7 +315,7 @@ describe('history guard and scanning', () => {
   });
 
   it('a -32011 answer twice, then success, retries the same span without halving', async () => {
-    const db = await fresh();
+    await fresh();
     const chain = mockChain({ head: HEAD, logs: [] });
     let failures = 2;
     const inner = chain.client.getLogs.bind(chain.client);
