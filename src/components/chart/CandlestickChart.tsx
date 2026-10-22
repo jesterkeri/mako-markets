@@ -16,6 +16,8 @@ import { forwardRef, lazy, Suspense } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
 import type { Candle, Timeframe } from '@/types/chart';
+import type { ChartColors } from '@/lib/chart-colors';
+
 import type { ChartInnerHandle } from './ChartInner';
 
 const ChartInner = lazy(() => import('./ChartInner'));
@@ -33,6 +35,8 @@ interface Props {
   /// pinch and horizontal drag still move the chart (adversary on cb71ae1). The chart page leaves it off.
   scrollWithPage?: boolean;
   onChartReady?: (chart: IChartApi | null, series: ISeriesApi<'Candlestick'> | null) => void;
+  /** Candle colours (TradingView's set); TradingView's green and red when absent. */
+  candleColors?: ChartColors;
 }
 
 export const CandlestickChart = forwardRef<ChartInnerHandle, Props>(

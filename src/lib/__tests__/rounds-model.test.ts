@@ -6,6 +6,7 @@ import {
   estimateEntry,
   feesOf,
   movePct,
+  otherSideEmpty,
   payoutIfWins,
   pendingRefund,
   perOneUsdc,
@@ -62,6 +63,7 @@ describe('money, as SPEC §7 computes it', () => {
   it('per-1-USDC odds, null for an empty side', () => {
     expect(perOneUsdc(60n * U, 40n * U)).toEqual({ up: 1.6366, down: 2.455 });
     expect(perOneUsdc(0n, 40n * U).up).toBeNull();
+    expect(perOneUsdc(0n, 40n * U).down).toBe(1); // nobody on UP: DOWN refunds in full
   });
   it('a settled payout uses the recorded distributable', () => {
     const r = round({ status: RoundStatus.Settled, outcome: RoundOutcome.Down, distributable: 98_200_000n });
@@ -166,5 +168,20 @@ describe('amounts owed are never shown rounded up', () => {
     expect(usdcFloor2(49_100_000n)).toBe('49.10');
     expect(usdcFloor2(9_999n)).toBe('0.00');
     expect(usdcFloor2(1_234_567_890_000n)).toBe('1,234,567.89');
+  });
+});
+
+describe('otherSideEmpty (external review 2026-10: no fee-taken estimate below the stake when nobody is on the other side)', () => {
+  it('is true only while the side opposite the one chosen has nothing in it', () => {
+    expect(otherSideEmpty('up', 5n, 0n)).toBe(true);
+    expect(otherSideEmpty('down', 0n, 5n)).toBe(true);
+    expect(otherSideEmpty('up', 0n, 5n)).toBe(false);
+    expect(otherSideEmpty('down', 5n, 1n)).toBe(false);
+  });
+
+  it('marks exactly the case where the estimate would fall below the stake although the round would refund in full', () => {
+    // 0.15 on DOWN, nothing on UP: the fee-taken estimate is under the stake, and the round refunds instead.
+    expect(estimateEntry('down', 150_000n, 0n, 0n, 0n)).toBeLessThan(150_000n);
+    expect(otherSideEmpty('down', 0n, 150_000n)).toBe(true);
   });
 });

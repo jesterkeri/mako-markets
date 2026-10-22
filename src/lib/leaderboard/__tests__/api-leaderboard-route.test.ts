@@ -11,6 +11,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
 import { makoMarketEvents, makoLeaderboardIndexerState } from '@/db/schema';
+import { publicAvatarPath } from '@/lib/public-avatar';
 import { createTestDb, type TestDb } from './test-db';
 
 // ---- Mocks (hoisted) ---------------------------------------------------------
@@ -254,7 +255,7 @@ describe('GET /api/leaderboard', () => {
 
       const body = await (await GET(request('?window=all'))).json();
       expect(body.rows.map((r: { actor: string; avatarUrl: string | null }) => [r.actor, r.avatarUrl])).toEqual([
-        [SAFE_LOWER, owned],
+        [SAFE_LOWER, publicAvatarPath(SAFE_LOWER, owned)], // its /api/avatar path, never the stored URL
         [ANON, null], // a legacy pasted URL is never served
       ]);
     } finally {

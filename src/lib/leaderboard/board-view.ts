@@ -29,6 +29,9 @@ export interface BoardWireRow {
   /// The player's profile photo (only one this app uploaded for them), or null for the letter avatar. Optional on the
   /// wire so a response from before the field existed still reads.
   avatarUrl?: string | null;
+  /// A Mako Market account, so it has a profile page. Optional on the wire: a response from before the field existed
+  /// reads as false (no link).
+  registered?: boolean;
 }
 
 export interface BoardWireViewer extends BoardWireRow {
@@ -156,6 +159,9 @@ export function playerNames(rows: readonly BoardWireRow[], viewer?: BoardWireRow
   return names;
 }
 
+/// A player's public profile page (13a).
+export const profileHref = (actor: string): string => `/u/${actor.toLowerCase()}`;
+
 /// The letter in a player's avatar: their name's first letter, or the first hex digit of their address.
 export function initialOf(displayName: string | null, actor: string): string {
   const name = displayName?.trim();
@@ -194,6 +200,8 @@ export interface PlayerView {
   colour: string;
   /// The profile photo shown in the avatar circle, or null for the letter.
   avatarUrl: string | null;
+  /// Has a profile page (a Mako Market account); a bettor who never signed in is not a link.
+  registered: boolean;
   profit: { text: string; tone: Tone };
   volume: string;
   bets: number;
@@ -271,6 +279,7 @@ function toPlayer(row: BoardWireRow, rank: number, sort: BoardSort, names: Map<s
     initial: initialOf(row.displayName, row.actor),
     colour: avatarColour(row.actor),
     avatarUrl: row.avatarUrl ?? null,
+    registered: row.registered === true,
     profit,
     volume,
     bets: row.bets,

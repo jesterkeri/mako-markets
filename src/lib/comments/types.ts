@@ -36,7 +36,7 @@ export type CommentScope = 'main' | 'pm';
 export type CommentPosition = 'yes' | 'no' | 'both' | null;
 
 /// One comment as serialized to the client. Explicit allowlist — NO email,
-/// magic_eoa, or user_id in the scalar fields. `avatarSeed` is sha256(user_id):
+/// magic_eoa, or user_id in the scalar fields (the on-chain address is public, see authorAddress). `avatarSeed` is sha256(user_id):
 /// stable + non-reversible, drives the glyph fallback. `avatarUrl` is the
 /// author's uploaded profile photo when they have one (a single-origin Vercel
 /// Blob URL, else null); the UI renders it via <AvatarCircle>, falling back to
@@ -53,6 +53,9 @@ export interface CommentWire {
   authorLabel: string;
   avatarSeed: string;
   avatarUrl: string | null;
+  /// The author's public on-chain address (lowercase), so the name links to their profile (13a). Joshua 2026-10-17:
+  /// already public through the leaderboard and name lookups. null on a deleted row or when it cannot be derived.
+  authorAddress: string | null;
   isOwn: boolean;
   position: CommentPosition;
   body: string;

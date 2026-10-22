@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 import { explorerUrl } from '@/lib/chain';
@@ -129,7 +129,27 @@ export const tileTitle: React.CSSProperties = { fontFamily: 'var(--mako-font-dis
 export const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, fontWeight: 600, opacity: 0.8, marginTop: 6, overflowWrap: 'anywhere' };
 const chip: React.CSSProperties = { alignSelf: 'flex-start', height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', borderRadius: 9999, background: 'color-mix(in srgb, currentColor 14%, transparent)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'inherit', textDecoration: 'none' };
 
-function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, variant, confirmRef }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null> }) {
+/// One step's content (review, pending, done, ...). Keyed on the step by the caller, so a new step mounts fresh and
+/// plays its entrance (mk-stepin, mako-shell.css) instead of swapping in place. The column matches the dialog's own
+/// (flex column, 16px gap), so the layout is the same as when these children sat in the dialog directly.
+function StepBody({ entering, children }: { entering: boolean; children: React.ReactNode }) {
+  return (
+    <div data-step-body="" className={entering ? 'mk-stepin' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {children}
+    </div>
+  );
+}
+
+/// A check that replaces a spinner (or lands with the done tile) scales in from 0.8 (mk-checkin, mako-shell.css).
+function CheckIn({ size }: { size: number }) {
+  return (
+    <span className="mk-checkin" style={{ display: 'inline-flex' }}>
+      <Svg d={CHECK_ICON} size={size} />
+    </span>
+  );
+}
+
+function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, variant, confirmRef, stepEntering }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null>; stepEntering: boolean }) {
   const rows: ConfirmRow[] = [...spec.rows];
   const feeText = wallet.kind === 'mako' ? 'Free · gas covered' : 'Paid in MON by your wallet';
   const titleSize = variant === 'desktop' ? 32 : 30;
@@ -148,163 +168,165 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
         )}
       </div>
 
-      {phase.step === 'review' && (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ flex: 'none', width: 56, height: 56, borderRadius: 9999, background: spec.glyphColor, color: spec.glyphFg ?? '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {/* mk-onsig turns a signal glyph yellow on the dark yellow sheet (where signal fills turn black); a side fill keeps its own text colour. */}
-              <span className={spec.glyphFg ? undefined : 'mk-onsig'} style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 22 }}>{spec.glyph}</span>
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <div className="wl-eyebrow" style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>Confirm to continue</div>
-              <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: titleSize, lineHeight: 1.05, letterSpacing: '-0.02em' }}>{spec.title}</div>
-            </div>
-          </div>
-          <div className="wl-tbl" style={{ borderRadius: 20, background: 'var(--raise)', padding: '4px 16px' }}>
-            {[...rows.map((r) => ({ ...r, fee: false })), { label: 'Network fee', value: feeText, fee: true, tone: undefined }].map((r) => (
-              <div key={r.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
-                <span className="wl-k" style={{ fontSize: 14, fontWeight: 600, color: 'var(--dim)' }}>{r.label}</span>
-                <span
-                  className="wl-v"
-                  style={{
-                    fontSize: 15,
-                    fontWeight: 700,
-                    textAlign: 'right',
-                    // A full address (the send sheet) wraps instead of pushing the sheet wider than a phone.
-                    minWidth: 0,
-                    overflowWrap: 'anywhere',
-                    fontVariantNumeric: 'tabular-nums',
-                    color: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv-fg)' : r.tone === 'up' ? 'var(--yes-text)' : r.tone === 'no' ? 'var(--no-text)' : 'var(--mako-canvas-fg)',
-                    background: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv)' : 'transparent',
-                    padding: r.fee && wallet.kind === 'mako' ? '5px 12px' : 0,
-                    borderRadius: 9999,
-                  }}
-                >
-                  {r.value}
-                </span>
+      <StepBody key={phase.step} entering={stepEntering}>
+        {phase.step === 'review' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ flex: 'none', width: 56, height: 56, borderRadius: 9999, background: spec.glyphColor, color: spec.glyphFg ?? '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {/* mk-onsig turns a signal glyph yellow on the dark yellow sheet (where signal fills turn black); a side fill keeps its own text colour. */}
+                <span className={spec.glyphFg ? undefined : 'mk-onsig'} style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 22 }}>{spec.glyph}</span>
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div className="wl-eyebrow" style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>Confirm to continue</div>
+                <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: titleSize, lineHeight: 1.05, letterSpacing: '-0.02em' }}>{spec.title}</div>
               </div>
-            ))}
-          </div>
-          <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)' }}>{spec.note}</div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={onCancel} className="m3-press" style={{ ...sheetButton(false), flex: 'none', width: 112 }}>
-              Cancel
-            </button>
-            <button ref={confirmRef} onClick={onConfirm} className="m3-press mk-onsig" style={sheetButton(true)}>
-              {spec.confirmLabel}
-            </button>
-          </div>
-        </>
-      )}
-
-      {phase.step === 'pending' && (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ flex: 'none', width: 56, height: 56, borderRadius: 9999, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Spinner size={28} />
-            </span>
-            <div>
-              <div className="wl-eyebrow" style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>Don’t close this</div>
-              <div role="status" style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: titleSize, lineHeight: 1.05, letterSpacing: '-0.02em' }}>{spec.pendingTitle}</div>
             </div>
-          </div>
-          <div className="wl-tbl" style={{ borderRadius: 20, background: 'var(--raise)', padding: '6px 16px' }}>
-            {(
-              [
-                ['Signed', phase.stage === 'signing' ? 'now' : 'done', ''],
-                ['Sent to Monad', phase.stage === 'signing' ? 'wait' : phase.stage === 'sending' ? 'now' : 'done', phase.txHash ? formatAddress(phase.txHash) : ''],
-                ['Confirmed', phase.stage === 'confirming' ? 'now' : 'wait', ''],
-              ] as const
-            ).map(([label, state, meta]) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
-                <span style={{ flex: 'none', width: 26, height: 26, borderRadius: 9999, background: state === 'done' ? 'var(--mako-teal)' : 'var(--raise2)', color: state === 'done' ? '#000' : 'var(--mako-canvas-fg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {state === 'done' && <Svg d={CHECK_ICON} size={14} />}
-                  {state === 'now' && <Spinner size={16} />}
-                </span>
-                <span style={{ fontSize: 15, fontWeight: 700, color: state === 'wait' ? 'var(--dim)' : 'var(--mako-canvas-fg)' }}>{label}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--dim)', fontVariantNumeric: 'tabular-nums' }}>{meta}</span>
+            <div className="wl-tbl" style={{ borderRadius: 20, background: 'var(--raise)', padding: '4px 16px' }}>
+              {[...rows.map((r) => ({ ...r, fee: false })), { label: 'Network fee', value: feeText, fee: true, tone: undefined }].map((r) => (
+                <div key={r.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
+                  <span className="wl-k" style={{ fontSize: 14, fontWeight: 600, color: 'var(--dim)' }}>{r.label}</span>
+                  <span
+                    className="wl-v"
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 700,
+                      textAlign: 'right',
+                      // A full address (the send sheet) wraps instead of pushing the sheet wider than a phone.
+                      minWidth: 0,
+                      overflowWrap: 'anywhere',
+                      fontVariantNumeric: 'tabular-nums',
+                      color: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv-fg)' : r.tone === 'up' ? 'var(--yes-text)' : r.tone === 'no' ? 'var(--no-text)' : 'var(--mako-canvas-fg)',
+                      background: r.fee && wallet.kind === 'mako' ? 'var(--m3-inv)' : 'transparent',
+                      padding: r.fee && wallet.kind === 'mako' ? '5px 12px' : 0,
+                      borderRadius: 9999,
+                    }}
+                  >
+                    {r.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)' }}>{spec.note}</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={onCancel} className="m3-press" style={{ ...sheetButton(false), flex: 'none', width: 112 }}>
+                Cancel
+              </button>
+              <button ref={confirmRef} onClick={onConfirm} className="m3-press mk-onsig" style={sheetButton(true)}>
+                {spec.confirmLabel}
+              </button>
+            </div>
+          </>
+        )}
+
+        {phase.step === 'pending' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ flex: 'none', width: 56, height: 56, borderRadius: 9999, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Spinner size={28} />
+              </span>
+              <div>
+                <div className="wl-eyebrow" style={{ fontSize: 14, fontWeight: 700, color: 'var(--dim)' }}>Don’t close this</div>
+                <div role="status" style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: titleSize, lineHeight: 1.05, letterSpacing: '-0.02em' }}>{spec.pendingTitle}</div>
               </div>
-            ))}
-          </div>
-          <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)' }}>Usually a few seconds on Monad.</div>
-        </>
-      )}
-
-      {phase.step === 'done' && (
-        <>
-          <div className="wl-tile" style={{ borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--m3-inv-fg)', color: 'var(--m3-inv)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Svg d={CHECK_ICON} size={26} />
-            </span>
-            <div role="status">
-              <div style={tileTitle}>{spec.doneTitle}</div>
-              <div style={tileBody}>{spec.doneBody}</div>
             </div>
-            {phase.txHash && (
-              <a href={explorerUrl('tx', phase.txHash)} target="_blank" rel="noopener noreferrer" style={chip}>
-                Transaction · {formatAddress(phase.txHash)} ↗
-              </a>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            {spec.doneSecondary && <ActionButton action={spec.doneSecondary} primary={false} onRetry={onRetry} onClose={onClose} />}
-            <button ref={confirmRef} onClick={onClose} className="m3-press mk-onsig" style={sheetButton(true)}>
-              Done
-            </button>
-          </div>
-        </>
-      )}
-
-      {phase.step === 'cancelled' && (
-        <>
-          <div className="wl-tile" style={{ borderRadius: 28, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--mako-canvas-fg)', color: 'var(--mako-canvas)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Svg d={CLOSE_ICON} size={24} />
-            </span>
-            <div role="status">
-              <div style={tileTitle}>You cancelled</div>
-              <div style={tileBody}>Nothing was sent. Your balance hasn’t changed.</div>
+            <div className="wl-tbl" style={{ borderRadius: 20, background: 'var(--raise)', padding: '6px 16px' }}>
+              {(
+                [
+                  ['Signed', phase.stage === 'signing' ? 'now' : 'done', ''],
+                  ['Sent to Monad', phase.stage === 'signing' ? 'wait' : phase.stage === 'sending' ? 'now' : 'done', phase.txHash ? formatAddress(phase.txHash) : ''],
+                  ['Confirmed', phase.stage === 'confirming' ? 'now' : 'wait', ''],
+                ] as const
+              ).map(([label, state, meta]) => (
+                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
+                  <span style={{ flex: 'none', width: 26, height: 26, borderRadius: 9999, background: state === 'done' ? 'var(--mako-teal)' : 'var(--raise2)', color: state === 'done' ? '#000' : 'var(--mako-canvas-fg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {state === 'done' && <CheckIn size={14} />}
+                    {state === 'now' && <Spinner size={16} />}
+                  </span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: state === 'wait' ? 'var(--dim)' : 'var(--mako-canvas-fg)' }}>{label}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--dim)', fontVariantNumeric: 'tabular-nums' }}>{meta}</span>
+                </div>
+              ))}
             </div>
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={onClose} className="m3-press" style={sheetButton(false)}>
-              Close
-            </button>
-            <button ref={confirmRef} onClick={onRetry} className="m3-press mk-onsig" style={sheetButton(true)}>
-              Try again
-            </button>
-          </div>
-        </>
-      )}
+            <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--dim)' }}>Usually a few seconds on Monad.</div>
+          </>
+        )}
 
-      {phase.step === 'failed' && (
-        <>
-          <div role="alert" className="wl-tile" style={{ borderRadius: 28, background: 'var(--mako-red)', color: '#000', boxShadow: 'inset 0 0 0 2px #000', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <span style={{ width: 52, height: 52, borderRadius: 9999, background: '#000', color: 'var(--mako-red)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Svg d={WARN_ICON} size={24} />
-            </span>
-            <div>
-              <div style={tileTitle}>{phase.title}</div>
-              <div style={tileBody}>{phase.body}</div>
-            </div>
-            {phase.nothingMoved && (
-              <div style={chip}>
-                <Svg d={CHECK_ICON} size={14} />
-                No USDC left your wallet
+        {phase.step === 'done' && (
+          <>
+            <div className="wl-tile" style={{ borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--m3-inv-fg)', color: 'var(--m3-inv)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CheckIn size={26} />
+              </span>
+              <div role="status">
+                <div style={tileTitle}>{spec.doneTitle}</div>
+                <div style={tileBody}>{spec.doneBody}</div>
               </div>
-            )}
-            {phase.txHash && (
-              <a href={explorerUrl('tx', phase.txHash)} target="_blank" rel="noopener noreferrer" style={chip}>
-                Transaction · {formatAddress(phase.txHash)} ↗
-              </a>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <ActionButton action={phase.secondary} primary={false} onRetry={onRetry} onClose={onClose} />
-            <ActionButton action={phase.primary} primary onRetry={onRetry} onClose={onClose} />
-          </div>
-        </>
-      )}
+              {phase.txHash && (
+                <a href={explorerUrl('tx', phase.txHash)} target="_blank" rel="noopener noreferrer" style={chip}>
+                  Transaction · {formatAddress(phase.txHash)} ↗
+                </a>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {spec.doneSecondary && <ActionButton action={spec.doneSecondary} primary={false} onRetry={onRetry} onClose={onClose} />}
+              <button ref={confirmRef} onClick={onClose} className="m3-press mk-onsig" style={sheetButton(true)}>
+                Done
+              </button>
+            </div>
+          </>
+        )}
+
+        {phase.step === 'cancelled' && (
+          <>
+            <div className="wl-tile" style={{ borderRadius: 28, background: 'var(--raise2)', color: 'var(--mako-canvas-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--mako-canvas-fg)', color: 'var(--mako-canvas)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Svg d={CLOSE_ICON} size={24} />
+              </span>
+              <div role="status">
+                <div style={tileTitle}>You cancelled</div>
+                <div style={tileBody}>Nothing was sent. Your balance hasn’t changed.</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={onClose} className="m3-press" style={sheetButton(false)}>
+                Close
+              </button>
+              <button ref={confirmRef} onClick={onRetry} className="m3-press mk-onsig" style={sheetButton(true)}>
+                Try again
+              </button>
+            </div>
+          </>
+        )}
+
+        {phase.step === 'failed' && (
+          <>
+            <div role="alert" className="wl-tile" style={{ borderRadius: 28, background: 'var(--mako-red)', color: '#000', boxShadow: 'inset 0 0 0 2px #000', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <span style={{ width: 52, height: 52, borderRadius: 9999, background: '#000', color: 'var(--mako-red)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Svg d={WARN_ICON} size={24} />
+              </span>
+              <div>
+                <div style={tileTitle}>{phase.title}</div>
+                <div style={tileBody}>{phase.body}</div>
+              </div>
+              {phase.nothingMoved && (
+                <div style={chip}>
+                  <Svg d={CHECK_ICON} size={14} />
+                  No USDC left your wallet
+                </div>
+              )}
+              {phase.txHash && (
+                <a href={explorerUrl('tx', phase.txHash)} target="_blank" rel="noopener noreferrer" style={chip}>
+                  Transaction · {formatAddress(phase.txHash)} ↗
+                </a>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <ActionButton action={phase.secondary} primary={false} onRetry={onRetry} onClose={onClose} />
+              <ActionButton action={phase.primary} primary onRetry={onRetry} onClose={onClose} />
+            </div>
+          </>
+        )}
+      </StepBody>
     </>
   );
 }
@@ -315,6 +337,15 @@ export function ConfirmSheet(props: Props) {
   const mobileConfirm = useRef<HTMLButtonElement>(null);
   const pending = props.phase.step === 'pending';
   const { onClose } = props;
+  // A step entrance plays only when the step changes while the sheet is open: the first step arrives with the sheet's
+  // own entrance (mk-pop / mk-sheet), so it does not get a second one. The previous step is tracked in state and
+  // compared during render (React's "storing information from previous renders" pattern).
+  const [seenStep, setSeenStep] = useState(props.phase.step);
+  const [stepEntering, setStepEntering] = useState(false);
+  if (seenStep !== props.phase.step) {
+    setSeenStep(props.phase.step);
+    setStepEntering(true);
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -331,7 +362,7 @@ export function ConfirmSheet(props: Props) {
 
   return (
     <SheetFrame label="Confirm in wallet" onScrim={pending ? undefined : onClose} initialFocus={{ desktop: desktopConfirm, mobile: mobileConfirm }}>
-      {(variant) => <Body {...props} variant={variant} confirmRef={variant === 'desktop' ? desktopConfirm : mobileConfirm} />}
+      {(variant) => <Body {...props} variant={variant} confirmRef={variant === 'desktop' ? desktopConfirm : mobileConfirm} stepEntering={stepEntering} />}
     </SheetFrame>
   );
 }

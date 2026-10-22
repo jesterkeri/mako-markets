@@ -5,7 +5,7 @@ import { useState } from 'react';
 
 import { USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 
-import { AVATAR_CLEAR_ERROR, avatarFileError, avatarUploadError, NETWORK_ERROR, nameSaveError, validateDisplayName } from './profile-rules';
+import { avatarClearError, avatarFileError, avatarUploadError, NETWORK_ERROR, nameSaveError, validateDisplayName } from './profile-rules';
 
 type UserCache = AuthedUser | { authed: false } | undefined;
 
@@ -40,7 +40,8 @@ export function useProfileEdit() {
         body: JSON.stringify({ displayName: value.trim() }),
       });
       if (!res.ok) {
-        setNameError(nameSaveError(res.status));
+        const code = ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
+        setNameError(nameSaveError(res.status, code));
         return false;
       }
       const body = (await res.json()) as Partial<AuthedUser>;
@@ -68,6 +69,9 @@ export function useProfileEdit() {
       const res = await fetch('/api/user/avatar/upload', { method: 'POST', credentials: 'same-origin', body: fd });
       if (!res.ok) {
         setPhotoError(avatarUploadError(res.status));
+        // A server error can leave the outcome unknown (a database write whose answer was lost): refetch so the page shows
+        // the photo the account really has.
+        if (res.status >= 500) void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
         return;
       }
       const body = (await res.json()) as Partial<AuthedUser>;
@@ -90,7 +94,7 @@ export function useProfileEdit() {
         body: JSON.stringify({ avatarUrl: null }),
       });
       if (!res.ok) {
-        setPhotoError(AVATAR_CLEAR_ERROR);
+        setPhotoError(avatarClearError(res.status));
         return;
       }
       await merge({ avatarUrl: null });

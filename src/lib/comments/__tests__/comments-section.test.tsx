@@ -46,6 +46,7 @@ const comment = (over: Partial<CommentWire> = {}): CommentWire => ({
   authorLabel: 'Ann',
   avatarSeed: 'abc12345',
   avatarUrl: null,
+  authorAddress: null,
   isOwn: false,
   position: null,
   body: 'hello world',

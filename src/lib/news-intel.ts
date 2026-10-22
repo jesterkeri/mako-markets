@@ -43,12 +43,6 @@ export function parseNews(body: unknown): IntelItem[] | null {
   return out;
 }
 
-/// The first `n` items. The route already orders the feed newest first (capping any one source at two in a row,
-/// so crypto's frequent posts cannot fill the panel), so its first items are the newest it has.
-export function latestIntel(items: readonly IntelItem[], n: number): IntelItem[] {
-  return items.slice(0, Math.max(0, Math.floor(n)));
-}
-
 /// The categories the feed has (Market intel's pills, after ALL), in the design's order.
 export const INTEL_TAGS: readonly IntelTag[] = ['CRYPTO', 'FOOTBALL', 'NBA'];
 

@@ -9,7 +9,13 @@
 // Values are the MakoMarketsV4 `mType` enum (src/lib/contract.ts MarketType).
 export const PAUSED_CREATE_MTYPES: ReadonlySet<number> = new Set<number>();
 
+/// Symbols the resolver still pins a feed for (cf-worker/src/rwa-feeds.json) but Chainlink Data Streams refuses for this
+/// account: every call answers 401 {"error":"feeds not authorized"} (BAC and MA, first seen 2026-10-16 in
+/// mako-design/bench/recorder-capture/2026-10-16T19-11-36-228Z and its follow-up; both verified 2026-09-18). The
+/// resolver keeps them, so a pool already open settles if access comes back, and otherwise waits for the 24 h refund.
+export const UNAUTHORIZED_FEED_SYMBOLS: ReadonlySet<string> = new Set(['BAC', 'MA']);
+
 /// Price-feed symbols (FOREX / COMMODITIES / STOCKS) without a usable Chainlink Data Streams feed: shown as not
-/// available on the Create pool page and refused by the sponsor. Must match the resolver's absence from
-/// cf-worker/src/rwa-feeds.json (tests check both sides).
-export const PAUSED_PRICE_FEED_SYMBOLS: ReadonlySet<string> = new Set(['EURGBP', 'EURJPY', 'GBPJPY', 'AMD', 'DIS', 'KO', 'PEP', 'BA', 'GS']);
+/// available on the Create pool page and refused by the sponsor. These are the resolver's absences from
+/// cf-worker/src/rwa-feeds.json plus the feeds it pins that Chainlink refuses (tests check both sides).
+export const PAUSED_PRICE_FEED_SYMBOLS: ReadonlySet<string> = new Set(['EURGBP', 'EURJPY', 'GBPJPY', 'AMD', 'DIS', 'KO', 'PEP', 'BA', 'GS', ...UNAUTHORIZED_FEED_SYMBOLS]);

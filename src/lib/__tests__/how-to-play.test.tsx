@@ -148,12 +148,11 @@ describe('moving through the tour', () => {
 describe('the copy is true today', () => {
   const all = TOUR_STEPS.flatMap((s) => [s.title, s.body, s.bodyMobile, ...(s.facts ?? []).flat()]);
 
-  it('rounds are not live, so their step and Home say coming soon', () => {
+  it('rounds are live (since 2026-10-12), so no step calls them coming soon', () => {
     const rounds = TOUR_STEPS[1];
-    expect(rounds.body).toMatch(/^Coming soon: rounds are not live yet\./);
-    expect(rounds.bodyMobile).toMatch(/^Coming soon/);
-    expect(rounds.facts).toContainEqual(['STATUS', 'COMING SOON']);
-    expect(TOUR_STEPS[0].body).toMatch(/rounds coming soon/);
+    expect(rounds.facts).toContainEqual(['STATUS', 'LIVE']);
+    for (const s of TOUR_STEPS.slice(0, 2)) for (const t of [s.body, s.bodyMobile]) expect(t).not.toMatch(/coming soon|not live/i);
+    expect(TOUR_STEPS[0].body).toMatch(/15-minute BTC rounds/);
   });
 
   it('pools: one-sided pools refund; no promise of a refund for every unsettled pool', () => {
@@ -188,8 +187,9 @@ describe('the copy is true today', () => {
   });
 });
 
-// Reduced motion is fade only (DESIGN_RULES; Codex S7 r1): a pointer target below the fold is scrolled to at once,
-// and the card and its arrow do not slide. Without the preference both keep their motion.
+// Reduced motion is fade only (DESIGN_RULES; Codex S7 r1): a pointer target below the fold is scrolled to at once.
+// The card and its arrow never slide between anchors, with or without the preference (motion pass 5, Joshua
+// 2026-10-16: each step's card pops in at its own place instead; motion-tour-card.test.tsx).
 describe('reduced motion', () => {
   function media({ desktop, reduced }: { desktop: boolean; reduced: boolean }) {
     vi.spyOn(window, 'matchMedia').mockImplementation(
@@ -230,7 +230,7 @@ describe('reduced motion', () => {
       expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ behavior: reduced ? 'instant' : 'smooth' }));
     });
 
-    it(`${reduced ? 'with' : 'without'} it, the desktop tab card and its arrow ${reduced ? 'do not slide' : 'slide'}`, () => {
+    it(`${reduced ? 'with' : 'without'} it, the desktop tab card and its arrow do not slide`, () => {
       media({ desktop: true, reduced });
       layout();
       page(
@@ -245,10 +245,10 @@ describe('reduced motion', () => {
         </div>,
       );
       const card = screen.getAllByRole('dialog', { name: 'How to play' })[0];
-      expect(slidingIn(card)).toHaveLength(reduced ? 0 : 2);
+      expect(slidingIn(card)).toHaveLength(0);
     });
 
-    it(`${reduced ? 'with' : 'without'} it, the mobile card's arrow ${reduced ? 'does not slide' : 'slides'}`, () => {
+    it(`${reduced ? 'with' : 'without'} it, the mobile card's arrow does not slide`, () => {
       media({ desktop: false, reduced });
       layout();
       page(
@@ -263,7 +263,7 @@ describe('reduced motion', () => {
         </div>,
       );
       const card = screen.getAllByRole('dialog', { name: 'How to play' })[0];
-      expect(slidingIn(card)).toHaveLength(reduced ? 0 : 1);
+      expect(slidingIn(card)).toHaveLength(0);
     });
   }
 });

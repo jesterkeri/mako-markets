@@ -60,7 +60,7 @@ describe('parseOracleRef mirrors the resolver', () => {
 describe('poolRules', () => {
   it('states the price rule with the strict comparison the resolver uses', () => {
     const m = pool({});
-    expect(rule(m, 'YES')).toBe('BTC is above $80000 at Fri 11:00, the close.');
+    expect(rule(m, 'YES')).toBe('BTC is above $80000 at Fri 15 Jan, 11:00 UTC, the close.');
     expect(rule(m, 'NO')).toBe('BTC is at $80000 or below at the close.');
     expect(rule(m, 'SOURCE')).toBe('The Chainlink Data Streams price for the close second, verified on chain.');
     expect(rule(pool({ oracleRef: ref('BTC:lt:80000') }), 'NO')).toBe('BTC is at $80000 or above at the close.');
@@ -68,7 +68,7 @@ describe('poolRules', () => {
 
   it('writes forex strikes without a dollar sign and names Chainlink Data Streams, with the closed-market rule', () => {
     const m = pool({ mType: MarketType.FOREX, oracleRef: ref('EURUSD:gt:1.095') });
-    expect(rule(m, 'YES')).toBe('EURUSD is above 1.095 at Fri 11:00, the close.');
+    expect(rule(m, 'YES')).toBe('EURUSD is above 1.095 at Fri 15 Jan, 11:00 UTC, the close.');
     expect(rule(m, 'SOURCE')).toBe('The Chainlink Data Streams price for the close second, verified on chain. If the market is closed then, its last traded price.');
   });
 
@@ -87,7 +87,7 @@ describe('poolRules', () => {
   it('states the 24H refund from the close time, and no YES/NO rule for an unreadable reference', () => {
     const m = pool({ oracleRef: ref('garbage') });
     expect(rule(m, 'YES')).toBeUndefined();
-    expect(rule(m, 'REFUND')).toBe("If it isn't settled within 24H of Fri 11:00, anyone can mark it refunded. Refunds carry no fee: everyone claims their stake back.");
+    expect(rule(m, 'REFUND')).toBe("If it isn't settled within 24H of Fri 15 Jan, 11:00 UTC, anyone can mark it refunded. Refunds carry no fee: everyone claims their stake back.");
   });
 
   it('says a house pool is settled by hand', () => {
@@ -98,7 +98,7 @@ describe('poolRules', () => {
 describe('poolClock and poolSteps', () => {
   it('counts down to betting close, then to the close time, then flags an overdue result', () => {
     const m = pool({});
-    expect(poolClock(m, 'open', NOW, 'UTC')).toMatchObject({ label: 'Closes in', value: '2H 0M' });
+    expect(poolClock(m, 'open', NOW, 'UTC')).toMatchObject({ label: 'Betting closes in', value: '2H 0M' });
     expect(poolClock(m, 'betting_closed', NOW + 2 * HOUR, 'UTC')).toMatchObject({ label: 'Result after', value: '1H 0M' });
     expect(poolClock(m, 'resolving', NOW + 3 * HOUR, 'UTC').value).toBe('Settling');
     expect(poolClock(m, 'resolving', NOW + 3 * HOUR + RESOLUTION_GRACE_SEC, 'UTC').value).toBe('Overdue');

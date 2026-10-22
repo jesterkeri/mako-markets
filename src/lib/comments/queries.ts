@@ -174,13 +174,18 @@ function toWire(
   return {
     id: row.id,
     parentId: row.parentId ?? null,
-    authorLabel: author?.authorLabel ?? 'anon',
-    avatarSeed: author?.avatarSeed ?? '',
+    // A deleted comment hides its author entirely on the wire, not only on the page (adversary r4 on 77028ce): no name,
+    // no badge, no photo, no address, no seed. The page already draws a blank disc and no name there.
+    authorLabel: deleted ? '' : author?.authorLabel ?? 'anon',
+    // Hidden on a deleted row like the rest of the author's identity: the seed is a hash of the public address, so
+    // anyone could match it against the addresses on the leaderboard (adversary r3 on 06166a8).
+    avatarSeed: deleted ? '' : author?.avatarSeed ?? '',
     // Real photo when the author uploaded one (else null → glyph fallback).
     // Not shown for a deleted row (author identity is hidden there).
     avatarUrl: deleted ? null : author?.avatarUrl ?? null,
+    authorAddress: deleted ? null : addr,
     isOwn: viewerUserId !== null && viewerUserId === row.userId,
-    position: addr ? badges.get(addr) ?? null : null,
+    position: !deleted && addr ? badges.get(addr) ?? null : null,
     body: deleted ? '' : row.body,
     deleted,
     createdAt: row.createdAt.toISOString(),

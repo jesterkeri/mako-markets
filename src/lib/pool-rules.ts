@@ -77,9 +77,19 @@ export function parseOracleRef(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): Or
   return null;
 }
 
-/// "Sat 16:30" in the viewer's time zone.
+/// "Sat 25 Oct, 16:30 GMT+1" in the viewer's time zone: the date and the zone are shown because a weekday and a time
+/// alone are ambiguous for pools that run past a week or are read from another time zone (external review 2026-10).
 export function dayTime(sec: number, timeZone?: string): string {
-  return new Intl.DateTimeFormat('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone }).format(new Date(sec * 1000));
+  return new Intl.DateTimeFormat('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+    timeZone,
+  }).format(new Date(sec * 1000));
 }
 
 export type RuleLine = { k: 'YES' | 'NO' | 'CLOSES' | 'REFUND' | 'SOURCE' | 'WARNING'; v: string };
@@ -171,7 +181,7 @@ export function poolClock(m: MarketWithId, state: PoolState, nowSec: number, tim
   const manual = unsettleable(m);
   switch (state) {
     case 'open':
-      return { label: 'Closes in', value: formatCountdown(Number(m.bettingCloseTime) - nowSec), sub: `Betting stops ${bettingClose}.` };
+      return { label: 'Betting closes in', value: formatCountdown(Number(m.bettingCloseTime) - nowSec), sub: `Betting stops ${bettingClose}.` };
     case 'betting_closed':
       return manual
         ? { label: 'Refundable in', value: formatCountdown(Number(m.closeTime) + RESOLUTION_GRACE_SEC - nowSec), sub: `Betting closed ${bettingClose}. Not settled automatically: from 24H after ${close}, anyone can mark it refunded.` }

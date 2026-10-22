@@ -1,0 +1,27 @@
+{
+  "name": "mako-beta-sweep",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker that fires beta's avatar sweep every 15 minutes through Vercel deployment protection. Holds a bypass token and beta's cron secret, nothing else.",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail --format pretty",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "bundle": "wrangler deploy --dry-run --outdir dist"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260919.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.135.0"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}

@@ -16,6 +16,7 @@ import {
   commentary,
   entryCloseOf,
   estimateEntry,
+  otherSideEmpty,
   feesOf,
   MIN_ENTRY,
   mmss,
@@ -211,9 +212,18 @@ function enterSpec(r: Round, side: RoundSide, amount: bigint, estimate: bigint |
       { label: 'Round', value: `#${r.id.toString()} · ${V1_ASSET.pair} · ${clock(r.startTime)} to ${clock(closeTimeOf(r))}` },
       { label: 'Side', value: sideName(side), tone: side === 'up' ? 'up' : 'no' },
       { label: 'Stake', value: `${amt} USDC` },
-      { label: `Est. payout if ${sideName(side)} wins`, value: estimate === null ? 'Unknown' : `${usdcFloor2(estimate)} USDC` },
+      {
+        label: `Est. payout if ${sideName(side)} wins`,
+        value: otherSideEmpty(side, r.upPool, r.downPool)
+          ? `Full refund while no one is on ${sideName(side === 'up' ? 'down' : 'up')}`
+          : estimate === null
+            ? 'Unknown'
+            : `${usdcFloor2(estimate)} USDC`,
+      },
     ],
-    note: `The payout is an estimate until predictions close at ${clock(entryCloseOf(r))}. One wallet can only be on one side of a round.`,
+    note: otherSideEmpty(side, r.upPool, r.downPool)
+      ? `No one is on ${sideName(side === 'up' ? 'down' : 'up')} yet. If that is still true when predictions close at ${clock(entryCloseOf(r))}, the round refunds every stake in full. One wallet can only be on one side of a round.`
+      : `The payout is an estimate until predictions close at ${clock(entryCloseOf(r))}. One wallet can only be on one side of a round.`,
     doneTitle: 'You are in',
     doneBody: `${amt} USDC on ${sideName(side)}. The result comes at ${clock(closeTimeOf(r))}.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
@@ -280,6 +290,13 @@ function countdown(r: Round, phase: RoundPhase, now: number): { label: string; v
 export function RoundView(v: View & { narrow: boolean }) {
   const { round: r, phase, now, narrow } = v;
   const cd = countdown(r, phase, now);
+  // The result plays its reveal (mk-resultin) only when it arrives while this page is open: a round already settled
+  // when the page first renders shows its result still. Whether a pending phase was ever seen is kept in state and
+  // updated during render (React's "storing information from previous renders" pattern).
+  const resultShown = phase === 'settled' || phase === 'refunded';
+  const [sawPending, setSawPending] = useState(!resultShown);
+  if (!resultShown && !sawPending) setSawPending(true);
+  const reveal = sawPending && phase === 'settled';
   const actions = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {v.position.kind !== 'none' && <PositionCard {...v} />}
@@ -329,7 +346,13 @@ export function RoundView(v: View & { narrow: boolean }) {
         </div>
         <div style={{ flex: 'none', textAlign: narrow ? 'left' : 'right' }}>
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--dim)' }}>{cd.label}</div>
-          <div style={{ ...display, fontSize: narrow ? 56 : 84, lineHeight: 1, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', marginTop: 4 }}>{cd.value}</div>
+          <div
+            data-round-result={phase === 'settled' ? cd.value : undefined}
+            className={reveal ? 'mk-resultin' : undefined}
+            style={{ ...display, fontSize: narrow ? 56 : 84, lineHeight: 1, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', marginTop: 4, transformOrigin: narrow ? 'left center' : 'right center' }}
+          >
+            {cd.value}
+          </div>
           <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 6, maxWidth: 360 }}>{cd.sub}</div>
         </div>
       </div>
@@ -484,7 +507,9 @@ function PositionCard(v: View) {
       {p.kind === 'in' && (
         <div style={{ display: 'flex', justifyContent: 'space-between', ...mono, fontSize: 12, marginTop: 10 }}>
           <span style={{ color: 'var(--dim)' }}>Est. payout if {sideName(p.side)} wins</span>
-          <span style={{ fontWeight: 700 }}>{usdcFloor2(p.ifWins)} USDC</span>
+          <span style={{ fontWeight: 700 }}>
+            {otherSideEmpty(p.side, v.round.upPool, v.round.downPool) ? `Full refund while no one is on ${sideName(p.side === 'up' ? 'down' : 'up')}` : `${usdcFloor2(p.ifWins)} USDC`}
+          </span>
         </div>
       )}
       {p.kind === 'won' && <div style={{ ...mono, fontSize: 12, marginTop: 10 }}>You won {usdcExact(p.payout)} USDC{p.claimed ? ', claimed.' : '.'}</div>}
@@ -569,7 +594,11 @@ function EnterForm(v: View) {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
           <span style={{ color: 'var(--dim)' }}>EST. PAYOUT IF {sideName(side)} WINS</span>
-          <span style={{ fontWeight: 700 }}>{estimate === null ? '0.00' : usdcFloor2(estimate)} USDC</span>
+          <span style={{ fontWeight: 700 }}>
+            {otherSideEmpty(side, v.round.upPool, v.round.downPool)
+              ? `Full refund while no one is on ${sideName(side === 'up' ? 'down' : 'up')}`
+              : `${estimate === null ? '0.00' : usdcFloor2(estimate)} USDC`}
+          </span>
         </div>
       </div>
       {!signedIn ? (

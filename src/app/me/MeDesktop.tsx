@@ -7,6 +7,7 @@ import { ListStateDesktop } from '@/components/ListState';
 import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, positionMeta, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { usdc2 } from '@/lib/pool-list';
+import { FlashValue } from '@/lib/use-flash';
 import { tourHref } from '@/lib/tour';
 import { formatAddress } from '@/lib/user-display';
 
@@ -35,7 +36,8 @@ import {
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
 import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from './use-creator-totals';
-import { validateDisplayName } from './profile-rules';
+import { NAME_RESERVED, NAME_TAKEN, validateDisplayName } from './profile-rules';
+import { useNameCheck } from './use-name-check';
 
 // Me on desktop (11a), in the terminal look: identity and test USDC, the four totals, profit and badges, then the
 // positions beside Ready to claim.
@@ -83,9 +85,12 @@ function Identity(v: MeView) {
   const { user, account, name, label, initial, emailAccount, editing, draft, edit } = v;
   const invalid = editing ? validateDisplayName(draft) : null;
   const unchanged = draft.trim() === (name ?? '');
-  const canSave = !invalid && !unchanged && !edit.nameBusy;
-  const hint = invalid ?? (edit.nameError || 'Looks good. This is how you show up in comments and the leaderboard.');
-  const hintIsError = invalid !== null || edit.nameError !== '';
+  const check = useNameCheck(draft, name, editing, account);
+  const canSave = !invalid && !unchanged && !edit.nameBusy && check !== 'taken' && check !== 'reserved';
+  const hint =
+    invalid ??
+    (check === 'taken' ? NAME_TAKEN : check === 'reserved' ? NAME_RESERVED : edit.nameError || (check === 'checking' ? 'Checking the name...' : 'Looks good. This is how you show up in comments and the leaderboard.'));
+  const hintIsError = invalid !== null || check === 'taken' || check === 'reserved' || edit.nameError !== '';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 22, padding: '22px 4px 24px' }}>
       <button
@@ -232,11 +237,16 @@ function PhotoPanel(v: MeView) {
   );
 }
 
-function Amount({ value, colour, suffix = ' USDC' }: { value: Loadable<bigint>; colour?: string; suffix?: string }) {
+/// A total on the page canvas: when a re-read changes it, it flashes up (YES text) or down (NO text) (motion pass 7).
+export function Amount({ value, colour, suffix = ' USDC' }: { value: Loadable<bigint>; colour?: string; suffix?: string }) {
   const big: React.CSSProperties = { ...display, fontSize: 30, letterSpacing: '-0.02em', marginTop: 4, fontVariantNumeric: 'tabular-nums' };
   if (value.status === 'loading') return <div aria-label="Loading" style={{ width: 150, height: 30, borderRadius: 8, marginTop: 6, background: BAR }} />;
   if (value.status === 'error') return <div style={{ ...big, fontSize: 22, marginTop: 8, color: 'var(--dim)' }}>Unavailable</div>;
-  return <div style={{ ...big, color: colour ?? 'var(--mako-canvas-fg)' }}>{`${usdc2(value.value)}${suffix}`}</div>;
+  return (
+    <div style={{ ...big, color: colour ?? 'var(--mako-canvas-fg)' }}>
+      <FlashValue value={value.value} text={`${usdc2(value.value)}${suffix}`} kind="direction" />
+    </div>
+  );
 }
 
 function Totals(v: MeView) {
@@ -412,16 +422,20 @@ function PositionRow({ p, v }: { p: MePosition; v: MeView }) {
         <div style={{ ...mono, fontSize: 11, color: 'var(--dim)', marginTop: 4 }}>Pool · {v.now === null ? '' : positionMeta(p, v.now)}</div>
       </div>
       <span style={{ ...pillStyle, background: side.bg, color: side.fg, fontSize: 11, fontWeight: 800 }}>{side.text}</span>
-      <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>{usdc2(p.stake)}</span>
+      <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>
+        <FlashValue value={p.stake} text={usdc2(p.stake)} kind="direction" />
+      </span>
       {p.settlement ? (
         <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700, color: resultColour(p) }}>{resultLabel(p.settlement, p.stake)}</span>
       ) : pays.length === 1 ? (
-        <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>{usdc2(pays[0].payout)} USDC</span>
+        <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>
+          <FlashValue value={pays[0].payout} text={usdc2(pays[0].payout)} kind="direction" /> USDC
+        </span>
       ) : (
         <span style={{ textAlign: 'right', ...mono, fontSize: 12, fontWeight: 700, display: 'flex', flexDirection: 'column', gap: 2 }}>
           {pays.map((e) => (
             <span key={e.side} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {e.side === 'yes' ? labels.yes : labels.no} {usdc2(e.payout)}
+              {e.side === 'yes' ? labels.yes : labels.no} <FlashValue value={e.payout} text={usdc2(e.payout)} kind="direction" />
             </span>
           ))}
         </span>

@@ -360,8 +360,12 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
           res.status === 400 ? 'Image rejected. Try a different file.'
             : res.status === 401 ? 'Sign-in expired. Please refresh.'
             : res.status === 502 ? 'Upload service unavailable. Retry shortly.'
+            : res.status === 503 ? "Couldn't change your photo. Try again."
             : 'Upload failed. Please retry.',
         );
+        // A server error can leave the outcome unknown (a database write whose answer was lost): refetch so the page shows
+        // the photo the account really has.
+        if (res.status >= 500) void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
         setAvatarPhase('idle');
         return;
       }
@@ -406,7 +410,8 @@ function MagicEditableIdentity({ user }: { user: MagicAuthedUser }) {
       });
       if (!mountedRef.current) return;
       if (!res.ok) {
-        setAvatarError('Clear failed. Please retry.');
+        // 503: the removal could not be recorded for deletion, so nothing changed (Codex PUBLIC_PROFILE R4 F1).
+        setAvatarError(res.status === 503 ? "Couldn't remove your photo. Try again." : 'Clear failed. Please retry.');
         setAvatarPhase('idle');
         return;
       }

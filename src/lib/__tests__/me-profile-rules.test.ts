@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { avatarFileError, avatarUploadError, nameSaveError, validateDisplayName } from '@/app/me/profile-rules';
+import { avatarClearError, avatarFileError, avatarUploadError, nameSaveError, validateDisplayName } from '@/app/me/profile-rules';
 
 describe('validateDisplayName', () => {
   it('accepts what the update route accepts: 1 to 32 of letters, digits, space, dot, underscore, dash (trimmed)', () => {
@@ -38,5 +38,12 @@ describe('photo checks', () => {
     expect(avatarUploadError(401)).toBe('Sign-in expired. Please refresh.');
     expect(avatarUploadError(502)).toBe('Upload service unavailable. Retry shortly.');
     expect(avatarUploadError(500)).toBe('Upload failed. Please retry.');
+    // The old photo could not be deleted from storage, so nothing changed (Codex PUBLIC_PROFILE R2 M1).
+    expect(avatarUploadError(503)).toBe("Couldn't change your photo. Try again.");
+  });
+
+  it('words a refused removal by status', () => {
+    expect(avatarClearError(503)).toBe("Couldn't remove your photo. Try again.");
+    expect(avatarClearError(500)).toBe('Clear failed. Please retry.');
   });
 });

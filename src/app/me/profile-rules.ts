@@ -14,10 +14,15 @@ export function validateDisplayName(value: string): string | null {
   return null;
 }
 
-/// The message for a display-name update the server refused.
-export function nameSaveError(status: number): string {
+/// The message for a display-name update the server refused (`code` is the response's `error`).
+export function nameSaveError(status: number, code?: string): string {
+  if (status === 409 || code === 'name_taken') return NAME_TAKEN;
+  if (code === 'name_reserved') return NAME_RESERVED;
   return status === 400 ? 'Display name was rejected. Try a shorter / simpler value.' : 'Update failed. Please retry.';
 }
+
+export const NAME_TAKEN = 'That name is taken. Pick another.';
+export const NAME_RESERVED = 'That name is reserved. Pick another.';
 
 const AVATAR_MAX_BYTES = 4 * 1024 * 1024;
 const AVATAR_MIME_ALLOW = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -35,8 +40,17 @@ export function avatarUploadError(status: number): string {
   if (status === 400) return 'Image rejected. Try a different file.';
   if (status === 401) return 'Sign-in expired. Please refresh.';
   if (status === 502) return 'Upload service unavailable. Retry shortly.';
+  // The new photo could not be recorded for cleanup, so nothing changed (Codex PUBLIC_PROFILE R4 F1).
+  if (status === 503) return PHOTO_NOT_REPLACED;
   return 'Upload failed. Please retry.';
 }
 
+/// The message for a photo removal the server refused.
+export function avatarClearError(status: number): string {
+  // The removal could not be recorded for deletion, so the photo was kept (Codex PUBLIC_PROFILE R4 F1).
+  return status === 503 ? PHOTO_NOT_REMOVED : 'Clear failed. Please retry.';
+}
+
+export const PHOTO_NOT_REPLACED = "Couldn't change your photo. Try again.";
+export const PHOTO_NOT_REMOVED = "Couldn't remove your photo. Try again.";
 export const NETWORK_ERROR = 'Network error. Please retry.';
-export const AVATAR_CLEAR_ERROR = 'Clear failed. Please retry.';

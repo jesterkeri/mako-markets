@@ -174,8 +174,11 @@ html {
   animation: ticker-crawl 50s linear infinite;
   will-change: transform;
 }
-.ticker-crawl:hover {
-  animation-play-state: paused;
+/* Pause on a real hover only: on a touch screen a tap would leave it paused until the next tap elsewhere. */
+@media (hover: hover) and (pointer: fine) {
+  .ticker-crawl:hover {
+    animation-play-state: paused;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .ticker-crawl { animation: none; }

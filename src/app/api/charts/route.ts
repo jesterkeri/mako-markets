@@ -59,7 +59,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const candles = await fetcher();
-    return Response.json({ candles }, { headers: { 'cache-control': `public, max-age=${TTL[tf]}` } });
+    // `source` names where these candles come from, so the chart can say so (external review 2026-10).
+    return Response.json({ candles, source: 'coinbase' }, { headers: { 'cache-control': `public, max-age=${TTL[tf]}` } });
   } catch (err) {
     if (err instanceof CoinbaseApiError) {
       if (err.status === 429) {

@@ -49,7 +49,7 @@ describe('GET /api/charts', () => {
     vi.mocked(fetchCoinbaseCandles).mockResolvedValue(SAMPLE);
     const res = await GET(mkReq('s=btc'));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ candles: SAMPLE });
+    expect(await res.json()).toEqual({ candles: SAMPLE, source: 'coinbase' });
     expect(fetchCoinbaseCandles).toHaveBeenCalledWith({ product: 'BTC-USD', timeframe: '1h' });
     expect(res.headers.get('cache-control')).toBe('public, max-age=300');
   });

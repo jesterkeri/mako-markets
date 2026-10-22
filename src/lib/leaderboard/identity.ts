@@ -29,15 +29,18 @@
 // ----------------------------------------------------------------------------
 
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { getAddress, isAddress } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
 import { users, userSafes } from '@/db/schema';
 import { isAppOwnedAvatarUrl } from '@/lib/avatar-url';
+import { publicAvatarPath } from '@/lib/public-avatar';
 
 export interface ResolvedIdentity {
   /// The display name, or null when only a profile photo is set.
   displayName: string | null;
-  /// The profile photo this app uploaded for the user (strictly checked), or null.
+  /// The profile photo this app uploaded for the user (strictly checked), or null: from resolveLabels its public
+  /// /api/avatar path, from resolveStoredIdentities the stored Blob URL.
   avatarUrl: string | null;
   /// Which join branch won — exposed for tests/debugging only.
   branch: 'safe' | 'wallet';
@@ -57,6 +60,18 @@ interface CandidateRow {
 /// neither a display name nor an app-owned photo are absent; callers fall
 /// back to the truncated address and the letter avatar.
 export async function resolveLabels(
+  db: DbOrTx,
+  addresses: readonly string[],
+  chainId: number,
+): Promise<Map<string, ResolvedIdentity>> {
+  const stored = await resolveStoredIdentities(db, addresses, chainId);
+  // The public never gets the stored photo URL (it carries the internal account id): only its /api/avatar path.
+  for (const [addr, id] of stored) if (id.avatarUrl) stored.set(addr, { ...id, avatarUrl: publicAvatarPath(addr, id.avatarUrl) });
+  return stored;
+}
+
+/// As resolveLabels, but with the STORED photo URL. Server-only: for /api/avatar, which streams it; never serialise it.
+export async function resolveStoredIdentities(
   db: DbOrTx,
   addresses: readonly string[],
   chainId: number,
@@ -121,6 +136,23 @@ export async function resolveLabels(
     }
   }
   return out;
+}
+
+/// The addresses (lowercase) that belong to a Mako Market account: a wallet sign-in, or an email account's Safe on
+/// `chainId`. Only these have a public profile (Joshua 2026-10-17); a bettor who never signed in has none. Compares the
+/// raw columns so both lookups use their indexes (Codex PUBLIC_PROFILE R1 M1): wallet_address is lowercase by CHECK,
+/// and both Safe writers store deriveSafeAddress's checksummed form (the lowercase form is matched too, for safety).
+export async function registeredAddresses(db: DbOrTx, addresses: readonly string[], chainId: number): Promise<Set<string>> {
+  const lowered = [...new Set(addresses.map((a) => a.toLowerCase()))].filter((a) => isAddress(a, { strict: false }));
+  if (lowered.length === 0) return new Set();
+  const [wallets, safes] = await Promise.all([
+    db.select({ addr: users.walletAddress }).from(users).where(inArray(users.walletAddress, lowered)),
+    db
+      .select({ addr: userSafes.safeAddress })
+      .from(userSafes)
+      .where(and(eq(userSafes.chainId, chainId), inArray(userSafes.safeAddress, [...lowered, ...lowered.map((a) => getAddress(a))]))),
+  ]);
+  return new Set([...wallets, ...safes].flatMap((r) => (r.addr ? [r.addr.toLowerCase()] : [])));
 }
 
 /// True when `a` outranks `b` under the documented precedence.

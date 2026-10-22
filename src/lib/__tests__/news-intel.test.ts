@@ -1,9 +1,9 @@
-// Market intel on Home (2a): the body is parsed defensively, the newest four show in the route's order, and each
-// item's age is worked out in the browser from publishedAt, so it does not go stale with the route's 15-minute cache.
+// Market intel on Home (2a): the body is parsed defensively, items keep the route's order, and each item's age is
+// worked out in the browser from publishedAt, so it does not go stale with the route's 15-minute cache.
 
 import { describe, expect, it } from 'vitest';
 
-import { latestIntel, newsAge, parseNews, type IntelItem } from '../news-intel';
+import { newsAge, parseNews } from '../news-intel';
 
 const NOW = Date.parse('2026-10-01T12:00:00Z');
 const ago = (sec: number) => new Date(NOW - sec * 1000).toISOString();
@@ -52,16 +52,6 @@ describe('parseNews', () => {
     expect(parseNews({ items: 'nope' })).toBeNull();
     expect(parseNews({ error: 'boom' })).toBeNull();
     expect(parseNews({ items: [] })).toEqual([]);
-  });
-});
-
-describe('latestIntel', () => {
-  const item = (title: string): IntelItem => ({ tag: 'CRYPTO', title, time: '' });
-  it('takes the first n in the route order (newest first)', () => {
-    const all = ['a', 'b', 'c', 'd', 'e', 'f'].map(item);
-    expect(latestIntel(all, 4).map((i) => i.title)).toEqual(['a', 'b', 'c', 'd']);
-    expect(latestIntel(all.slice(0, 2), 4)).toHaveLength(2);
-    expect(latestIntel(all, 0)).toEqual([]);
   });
 });
 

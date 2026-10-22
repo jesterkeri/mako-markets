@@ -25,7 +25,10 @@ import { TimeframeSelector } from '@/components/chart/TimeframeSelector';
 import { DrawingCanvas } from '@/components/chart/DrawingCanvas';
 import { DrawingToolbar } from '@/components/chart/DrawingToolbar';
 import { DrawingEditor } from '@/components/chart/DrawingEditor';
+import { CHART_COLOR_KEYS, type ChartColors } from '@/lib/chart-colors';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
+import { dayTime } from '@/lib/pool-rules';
+import { useChartColors } from '@/lib/use-chart-colors';
 import type { Candle, Timeframe } from '@/types/chart';
 import type { ChartInnerHandle } from '@/components/chart/ChartInner';
 import type { Drawing, DrawingTool } from '@/types/drawing';
@@ -116,6 +119,8 @@ const CHART_HEIGHT = 350;
 
 interface ChartsResponse {
   candles: Candle[];
+  /// Where the candles come from; absent from an older response.
+  source?: 'coinbase';
 }
 
 let drawingIdCounter = 0;
@@ -133,6 +138,35 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   const [showEMA50, setShowEMA50] = useState(false);
   const chartRef = useRef<ChartInnerHandle>(null);
   const toolsRef = useRef<HTMLDivElement>(null);
+  // Candle colours (TradingView's set, saved to the account). A change shows at once and is saved 500 ms after the
+  // last one, so dragging a colour picker does not send a request per step.
+  const candle = useChartColors();
+  // The draft holds only the colours changed, over the saved set, so it can never put defaults over saved choices. It
+  // belongs to the account it was made on and is dropped if another account signs in before it is saved.
+  const [draft, setDraft] = useState<{ account: string | null; patch: Partial<ChartColors> } | null>(null);
+  const candleDraft = draft && draft.account === candle.account ? draft.patch : null;
+  const candleColors = candleDraft ? { ...candle.colors, ...candleDraft } : candle.colors;
+  const { save: saveCandleColors } = candle;
+  // The change still waiting for its save, so it is saved, not lost, if the chart closes inside the 500 ms.
+  const pendingCandle = useRef<Partial<ChartColors> | null>(null);
+  useEffect(() => {
+    pendingCandle.current = candleDraft;
+    if (!candleDraft) return;
+    // Only the colours changed are sent (the server merges them); handed to the save, which puts the result in the
+    // cache at once, and cleared, so it is saved exactly once.
+    const t = setTimeout(() => {
+      pendingCandle.current = null;
+      saveCandleColors(candleDraft);
+      setDraft(null);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [candleDraft, saveCandleColors]);
+  useEffect(
+    () => () => {
+      if (pendingCandle.current) saveCandleColors(pendingCandle.current);
+    },
+    [saveCandleColors],
+  );
 
   // Drawing tools state (krait port)
   const [drawingsOpen, setDrawingsOpen] = useState(false);
@@ -353,6 +387,15 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     </button>
   );
 
+  // Every layout names where the candles come from, with the newest candle's own time (not the fetch time: the route
+  // serves cached candles).
+  const newest = data.candles[data.candles.length - 1];
+  const sourceLine = data.source === 'coinbase' && (
+    <div className="mako-mono" style={{ fontSize: 11, color: 'var(--dim)' }}>
+      Chart: Coinbase, latest candle {dayTime(Math.floor(newest.timestamp / 1000))}. Settlement uses Chainlink.
+    </div>
+  );
+
   const header = (
     <div className={`flex items-center justify-between flex-wrap gap-3 px-5 py-3 relative ${styles.header}`} style={{ boxShadow: 'inset 0 -1px 0 var(--line)' }}>
       <span className={`mako-mono text-xs tracking-widest ${styles.pair}`} style={{ fontWeight: 700 }}>
@@ -423,7 +466,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             </svg>
           </button>
           {toolsOpen && (
-            <div role="menu" aria-label="Indicators" className={`absolute right-0 top-full mt-2 z-30 w-44 bg-paper border-2 border-ink rounded-xl shadow-brutal-sm overflow-hidden ${styles.menu}`}>
+            <div role="menu" aria-label="Indicators" className={`absolute right-0 top-full mt-2 z-30 w-56 bg-paper border-2 border-ink rounded-xl shadow-brutal-sm overflow-hidden ${styles.menu}`}>
               <div className="mako-label text-[9px] text-muted px-4 py-2 border-b-2 border-ink bg-surface-elevated">
                 INDICATORS
               </div>
@@ -431,6 +474,43 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
                 toggleRow('VOLUME', showVolume, () => setShowVolume((v) => !v))}
               {toggleRow('MA (20)', showMA20, () => setShowMA20((v) => !v))}
               {toggleRow('EMA (50)', showEMA50, () => setShowEMA50((v) => !v))}
+              <div className="mako-label text-[9px] text-muted px-4 py-2 border-y-2 border-ink bg-surface-elevated">CANDLE COLOURS</div>
+              <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-3 gap-y-2 px-4 py-3 mako-label text-[10px]">
+                <span />
+                <span>UP</span>
+                <span>DOWN</span>
+                {(['Body', 'Border', 'Wick'] as const).map((part) => (
+                  <ColorPair
+                    key={part}
+                    part={part}
+                    colors={candleColors}
+                    disabled={!candle.canSave}
+                    onChange={(key, value) =>
+                      candle.canSave &&
+                      setDraft((d) => ({ account: candle.account, patch: { ...(d?.account === candle.account ? d.patch : null), [key]: value } }))
+                    }
+                  />
+                ))}
+              </div>
+              <div className="flex items-center justify-between gap-2 px-4 pb-3 mako-label text-[10px]">
+                {candle.canSave ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft(null);
+                      saveCandleColors(null);
+                    }}
+                    className="underline"
+                  >
+                    Reset to TradingView
+                  </button>
+                ) : (
+                  <span className="text-muted normal-case">
+                    {candle.loadFailed ? 'Your colours did not load.' : candle.signedIn || candle.loading ? 'Loading your colours.' : 'Sign in to change and keep your colours.'}
+                  </span>
+                )}
+                {candle.saveFailed && <span role="alert" className="text-mako-red normal-case">Not saved</span>}
+              </div>
             </div>
           )}
         </div>
@@ -500,6 +580,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     return (
       <div className={`flex flex-col ${styles.theme}`} style={{ ...CARD_STYLE, height: '100%' }}>
         {header}
+        {sourceLine && <div className="px-5 pt-2">{sourceLine}</div>}
         <div className="flex-1 relative" style={{ minHeight: 0 }}>
           <CandlestickChart
             ref={chartRef}
@@ -511,6 +592,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             showVolume={showVolume}
             showMA20={showMA20}
             showEMA50={showEMA50}
+            candleColors={candleColors}
             scrollWithPage={!page}
             onChartReady={handleChartReady}
           />
@@ -529,6 +611,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '12px 14px 0' }}>
           <div style={{ minWidth: 0 }}>
             <div className="mako-mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--dim)' }}>{pair ?? oracleSymbol}</div>
+            {sourceLine && <div style={{ marginTop: 2 }}>{sourceLine}</div>}
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 4 }}>
               <span style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{fmtLast(last.close)}</span>
               {chg !== null && (
@@ -571,6 +654,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
             showVolume={false}
             showMA20={false}
             showEMA50={false}
+            candleColors={candleColors}
             scrollWithPage={!page}
             onChartReady={handleChartReady}
           />
@@ -582,6 +666,7 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
   return (
     <div className={styles.theme} style={CARD_STYLE}>
       {header}
+      {sourceLine && <div className="px-5 pt-2">{sourceLine}</div>}
       <div className="relative" style={{ height: CHART_HEIGHT }}>
         <CandlestickChart
           ref={chartRef}
@@ -593,11 +678,33 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
           showVolume={showVolume}
           showMA20={showMA20}
           showEMA50={showEMA50}
+          candleColors={candleColors}
           scrollWithPage={!page}
             onChartReady={handleChartReady}
         />
         {drawingLayer}
       </div>
     </div>
+  );
+}
+
+/// One row of the candle-colour grid: the up and down colour of one part (body, border or wick).
+function ColorPair({ part, colors, disabled, onChange }: { part: 'Body' | 'Border' | 'Wick'; colors: ChartColors; disabled: boolean; onChange: (key: (typeof CHART_COLOR_KEYS)[number], value: string) => void }) {
+  const keys = [`up${part}`, `down${part}`] as const;
+  return (
+    <>
+      <span>{part.toUpperCase()}</span>
+      {keys.map((k) => (
+        <input
+          key={k}
+          type="color"
+          value={colors[k]}
+          disabled={disabled}
+          aria-label={`${k.startsWith('up') ? 'Rising' : 'Falling'} candle ${part.toLowerCase()} colour`}
+          onChange={(e) => onChange(k, e.target.value.toLowerCase())}
+          className="w-8 h-6 p-0 border-2 border-ink rounded cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      ))}
+    </>
   );
 }

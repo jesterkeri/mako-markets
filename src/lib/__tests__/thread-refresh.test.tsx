@@ -20,6 +20,7 @@ const reply = (id: string): CommentWire => ({
   authorLabel: id,
   avatarSeed: id,
   avatarUrl: null,
+  authorAddress: null,
   isOwn: false,
   position: null as unknown as CommentWire['position'],
   body: `body ${id}`,

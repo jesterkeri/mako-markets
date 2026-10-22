@@ -4,12 +4,12 @@ import { BOARD_COPY } from '@/lib/leaderboard/board-copy';
 import { PERIODS, SCOPES, SORTS, type PlayerView } from '@/lib/leaderboard/board-view';
 
 import { AvatarFill } from './AvatarFill';
+import { PlayerLink } from './PlayerLink';
 import { BoardStateDesktop, DESK_COLS } from './BoardState';
 import { TONE_FG, type BoardProps } from './props';
 
 // Leaderboard desktop (12a, terminal look): title, scope / period / sort pills, a podium for the top three, the
-// signed-in player's pinned row, then everyone from #4 as hairline rows. Players are plain text: there are no
-// profile pages yet (13a), so nothing here is a link and rows have no hover or arrow.
+// signed-in player's pinned row, then everyone from #4 as hairline rows. Each player opens their profile (13a).
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
@@ -45,7 +45,7 @@ const PODIUM_HEIGHT = [200, 240, 180];
 function PodiumCard({ p, place, metric }: { p: PlayerView; place: number; metric: string }) {
   const first = place === 1;
   return (
-    <div style={{ textAlign: 'left', borderRadius: 14, background: 'var(--raise)', color: 'var(--mako-canvas-fg)', boxShadow: first ? 'inset 0 0 0 2px var(--mako-signal)' : 'inset 0 0 0 1px var(--line)', padding: 18, height: PODIUM_HEIGHT[place], display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+    <PlayerLink p={p} style={{ textAlign: 'left', borderRadius: 14, background: 'var(--raise)', color: 'var(--mako-canvas-fg)', boxShadow: first ? 'inset 0 0 0 2px var(--mako-signal)' : 'inset 0 0 0 1px var(--line)', padding: 18, height: PODIUM_HEIGHT[place], display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
         <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 52, height: 52, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 22 }}>
           <AvatarFill initial={p.initial} avatarUrl={p.avatarUrl} />
@@ -59,13 +59,13 @@ function PodiumCard({ p, place, metric }: { p: PlayerView; place: number; metric
         <div style={{ ...mono, fontSize: 11, opacity: 0.7 }}>{metric}</div>
         <div style={{ ...display, fontSize: 36, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>{p.value}</div>
       </div>
-    </div>
+    </PlayerLink>
   );
 }
 
 function Row({ p }: { p: PlayerView }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: DESK_COLS, gap: 18, alignItems: 'center', padding: '13px 20px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
+    <PlayerLink p={p} style={{ display: 'grid', gridTemplateColumns: DESK_COLS, gap: 18, alignItems: 'center', padding: '13px 20px', boxShadow: 'inset 0 1px 0 var(--line)' }}>
       <span style={{ ...mono, fontSize: 15, fontWeight: 700, color: 'var(--dim)' }}>#{p.rank}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 34, height: 34, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 14 }}>
@@ -80,7 +80,7 @@ function Row({ p }: { p: PlayerView }) {
       <span style={{ textAlign: 'right', ...mono, fontSize: 14 }}>{p.bets}</span>
       <span style={{ textAlign: 'right', ...mono, fontSize: 14 }}>{p.volume}</span>
       <span />
-    </div>
+    </PlayerLink>
   );
 }
 
@@ -118,7 +118,7 @@ export function BoardDesktop({ view, state, scope, setScope, period, setPeriod, 
           </div>
 
           {me && (
-            <div style={{ margin: '22px 4px 0', display: 'grid', gridTemplateColumns: DESK_COLS, gap: 18, alignItems: 'center', padding: '14px 16px', borderRadius: 14, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>
+            <PlayerLink p={me.player} style={{ margin: '22px 4px 0', display: 'grid', gridTemplateColumns: DESK_COLS, gap: 18, alignItems: 'center', padding: '14px 16px', borderRadius: 14, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>
               <span style={{ ...display, fontSize: 22 }}>#{me.player.rank}</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                 <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 34, height: 34, borderRadius: 9999, background: '#000', color: 'var(--mako-signal)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display }}>
@@ -132,7 +132,7 @@ export function BoardDesktop({ view, state, scope, setScope, period, setPeriod, 
               <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>{me.player.bets}</span>
               <span style={{ textAlign: 'right', ...mono, fontSize: 14, fontWeight: 700 }}>{me.player.volume}</span>
               <span />
-            </div>
+            </PlayerLink>
           )}
 
           {view.restDesktop.length > 0 && (

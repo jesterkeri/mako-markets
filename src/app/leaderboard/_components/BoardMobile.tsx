@@ -4,12 +4,13 @@ import { BOARD_COPY } from '@/lib/leaderboard/board-copy';
 import { betsText, NEXT_SORT, PERIODS, SCOPES, SORTS } from '@/lib/leaderboard/board-view';
 
 import { AvatarFill } from './AvatarFill';
+import { PlayerLink } from './PlayerLink';
 import { BoardStateMobile } from './BoardState';
 import type { BoardProps } from './props';
 
 // Leaderboard mobile (12a, Material 3 Expressive): scope and period chips, the top five as bars, the signed-in
 // player's inverse card with the gap to the next player, then everyone from #6. Every number shown is the one the
-// board is sorted by. Players are plain text: there are no profile pages yet (13a), so nothing is tappable.
+// board is sorted by. Each player opens their profile (13a).
 
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const ellipsis: React.CSSProperties = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
@@ -67,18 +68,18 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
           <div style={{ height: 18 }} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, alignItems: 'end', height: 250, padding: '0 16px' }}>
             {view.bars.map(({ player: p, heightPx, bg }) => (
-              <div key={p.actor} style={{ height: heightPx, borderRadius: 9999, background: bg, color: '#000', boxShadow: 'var(--edge)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0 14px' }}>
+              <PlayerLink key={p.actor} p={p} aria-label={p.name} style={{ height: heightPx, borderRadius: 9999, background: bg, color: '#000', boxShadow: 'var(--edge)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 0 14px' }}>
                 <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', width: 48, height: 48, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: `0 0 0 3px ${bg}`, display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 18 }}>
                   <AvatarFill initial={p.initial} avatarUrl={p.avatarUrl} />
                 </span>
                 <span style={{ marginTop: 'auto', ...display, fontSize: 22 }}>{p.rank}</span>
-              </div>
+              </PlayerLink>
             ))}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, padding: '10px 16px 0', textAlign: 'center' }}>
             {view.bars.map(({ player: p }) => (
               <div key={p.actor} style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, ...ellipsis }}>{p.name}</div>
+                <PlayerLink p={p} style={{ display: 'block', fontSize: 12, fontWeight: 700, ...ellipsis }}>{p.name}</PlayerLink>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--dim)', fontVariantNumeric: 'tabular-nums' }}>{p.short}</div>
               </div>
             ))}
@@ -86,7 +87,7 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
 
           {me && (
             <div style={{ padding: '16px 12px 0' }}>
-              <div style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '16px 18px' }}>
+              <PlayerLink p={me.player} style={{ display: 'block', borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '16px 18px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 48, height: 48, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 20 }}>
                     <AvatarFill initial={me.player.initial} avatarUrl={me.player.avatarUrl} />
@@ -112,7 +113,7 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
                     {me.next}
                   </div>
                 )}
-              </div>
+              </PlayerLink>
             </div>
           )}
 
@@ -129,7 +130,7 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 12px' }}>
               {view.restMobile.map((p) => (
-                <div key={p.actor} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', borderRadius: 24, background: 'var(--raise)', padding: '10px 16px 10px 12px' }}>
+                <PlayerLink key={p.actor} p={p} style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', borderRadius: 24, background: 'var(--raise)', padding: '10px 16px 10px 12px' }}>
                   <span style={{ flex: 'none', width: 28, textAlign: 'center', ...display, fontSize: 16, color: 'var(--dim)' }}>{p.rank}</span>
                   <span aria-hidden="true" style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 44, height: 44, borderRadius: 9999, background: p.colour, color: '#000', boxShadow: 'var(--edge)', display: 'flex', alignItems: 'center', justifyContent: 'center', ...display, fontSize: 17 }}>
                     <AvatarFill initial={p.initial} avatarUrl={p.avatarUrl} />
@@ -139,7 +140,7 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
                     <span style={{ display: 'block', fontSize: 13, color: 'var(--dim)', fontVariantNumeric: 'tabular-nums' }}>{betsText(p.bets)}</span>
                   </span>
                   <span style={{ flex: 'none', fontSize: 15, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{p.value}</span>
-                </div>
+                </PlayerLink>
               ))}
             </div>
           )}

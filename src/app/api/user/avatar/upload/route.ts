@@ -1,10 +1,13 @@
+import { randomUUID } from 'node:crypto';
+
 import { type Address } from 'viem';
 import { eq } from 'drizzle-orm';
-import { put, del } from '@vercel/blob';
+import { put } from '@vercel/blob';
 import sharp from 'sharp';
 
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
+import { avatarPathname, deleteSettled, markForSweep, unmarkSettled } from '@/lib/avatar-sweep';
 import { isOwnedAvatarBlobUrl } from '@/lib/avatar-url';
 import { checkSameOrigin } from '@/lib/csrf';
 import { readLastSignIn } from '@/lib/last-sign-in';
@@ -26,14 +29,19 @@ import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
 //   3. Decode with sharp.metadata() — magic-byte sniff. Reject if format
 //      mismatches the declared content type (anti–MIME-spoof).
 //   4. Resize cover 256×256, output webp, strip EXIF (sharp default).
-//   5. put() to Vercel Blob at avatars/<userId>/<unique>.webp, public.
-//   6. If prior avatar_url is a Vercel Blob URL UNDER THIS USER'S
-//      avatars/<userId>/ prefix, del() the old blob. The path-prefix
-//      check is load-bearing — without it a caller could paste another
-//      user's blob URL via /api/user/profile/update and then trigger an
-//      upload to delete it. Failures are logged but don't fail the
-//      request; orphans are cleaned by a later cron (out of scope).
-//   7. Update users.avatar_url to the new URL.
+//   5. Replace the photo so a failure anywhere leaves at most files no account points at, which the avatar sweep
+//      deletes within about 20 minutes, and the account always points at a stored photo (Joshua 2026-10-19, owner
+//      decision Q-D, Codex PUBLIC_PROFILE R4 F1; src/lib/avatar-sweep.ts):
+//      a. choose the new pathname, avatars/<userId>/<uuid>.webp, and record it in the sweep set BEFORE put(). If the
+//         set cannot be written, nothing has happened: 503 sweep_unavailable.
+//      b. put() it under exactly that name (addRandomSuffix false). Failure: 502 storage_unavailable, the account
+//         unchanged (a file stored despite a lost answer is in the set).
+//      c. one transaction, the row locked: read the current photo; if it is this user's own upload (the path-prefix
+//         check is load-bearing, so a pasted foreign URL can never get another user's file deleted) record it in the
+//         set too (failure: rolled back, 503); point the row at the new photo; commit.
+//      d. take the new file off the set, record the replaced file again and e. del() it, then take it off the set
+//         (each best effort). 200 once (c) committed.
+//      The row only ever moves to a photo already stored, so the active photo is never broken.
 //
 // Vercel route body limit is 4.5 MB. We cap at 4 MB to leave headroom
 // for multipart envelope overhead.
@@ -47,6 +55,18 @@ const SHARP_FORMAT_BY_MIME: Record<string, string> = {
   'image/jpeg': 'jpeg',
   'image/webp': 'webp',
 };
+
+// The whole request is cut off well inside the sweep's 5-minute grace, so a new file is never swept before its row
+// write could still commit.
+export const maxDuration = 60;
+
+/// Thrown inside the transaction when the replaced photo cannot be recorded for the sweep, so the transaction rolls back.
+class SweepUnavailable extends Error {}
+
+type UpdatedRow = Pick<
+  typeof users.$inferSelect,
+  'email' | 'magicEoa' | 'displayName' | 'avatarUrl' | 'totpSecret' | 'totpEnabledAt' | 'lastEmailChangedAt'
+>;
 
 export async function POST(req: Request) {
   const origin = checkSameOrigin(req);
@@ -96,54 +116,73 @@ export async function POST(req: Request) {
     return Response.json({ error: 'bad_image' }, { status: 400 });
   }
 
-  const path = `avatars/${session.userId}/${Date.now()}.webp`;
-  let uploadUrl: string;
+  // a. The new file is in the sweep set before it exists, so no failure from here on can leave it untracked.
+  const pathname = `avatars/${session.userId}/${randomUUID()}.webp`;
+  let newScore: number;
   try {
-    const blob = await put(path, resized, {
-      access: 'public',
-      contentType: 'image/webp',
-      addRandomSuffix: true,
-    });
-    uploadUrl = blob.url;
+    newScore = await markForSweep(pathname);
+  } catch (e) {
+    console.warn('[avatar-upload] sweep set unavailable, nothing changed', e instanceof Error ? e.name : 'error');
+    return Response.json({ error: 'sweep_unavailable' }, { status: 503 });
+  }
+
+  // b. Stored under exactly the recorded name.
+  let newUrl: string;
+  try {
+    const blob = await put(pathname, resized, { access: 'public', contentType: 'image/webp', addRandomSuffix: false });
+    if (avatarPathname(blob.url) !== pathname) throw new Error('stored under an unexpected pathname');
+    newUrl = blob.url;
   } catch (e) {
     console.error('[avatar-upload] blob put failed', e);
     return Response.json({ error: 'storage_unavailable' }, { status: 502 });
   }
 
-  // Read prior URL so we can clean up the old blob after the DB row is
-  // updated. Done before the UPDATE so we capture the value being
-  // replaced even if the UPDATE returns the new value in `returning()`.
-  const priorRow = await db
-    .select({ avatarUrl: users.avatarUrl })
-    .from(users)
-    .where(eq(users.id, session.userId))
-    .limit(1);
-  const priorAvatarUrl = priorRow[0]?.avatarUrl ?? null;
-
-  const updated = await db
-    .update(users)
-    .set({ avatarUrl: uploadUrl })
-    .where(eq(users.id, session.userId))
-    .returning({
-      email: users.email,
-      magicEoa: users.magicEoa,
-      displayName: users.displayName,
-      avatarUrl: users.avatarUrl,
-      totpSecret: users.totpSecret,
-      totpEnabledAt: users.totpEnabledAt,
-      lastEmailChangedAt: users.lastEmailChangedAt,
+  // c. The row is locked from the read of the current photo to the commit, so two requests from one account each
+  // replace exactly the photo the other left (Codex PUBLIC_PROFILE R3 M1). A database failure here propagates: the new
+  // file is in the set (swept unless the row turns out to point at it) and so is the replaced one.
+  let result: { row: UpdatedRow; replaced: { url: string; pathname: string; score: number } | null } | undefined;
+  try {
+    result = await db.transaction(async (tx) => {
+      const [current] = await tx.select({ url: users.avatarUrl }).from(users).where(eq(users.id, session.userId)).for('update');
+      if (!current) return undefined;
+      const oldPath = current.url && isOwnedAvatarBlobUrl(current.url, session.userId) ? avatarPathname(current.url) : null;
+      let oldScore = 0;
+      if (oldPath) {
+        try {
+          oldScore = await markForSweep(oldPath);
+        } catch {
+          throw new SweepUnavailable();
+        }
+      }
+      const [updated] = await tx
+        .update(users)
+        .set({ avatarUrl: newUrl })
+        .where(eq(users.id, session.userId))
+        .returning({
+          email: users.email,
+          magicEoa: users.magicEoa,
+          displayName: users.displayName,
+          avatarUrl: users.avatarUrl,
+          totpSecret: users.totpSecret,
+          totpEnabledAt: users.totpEnabledAt,
+          lastEmailChangedAt: users.lastEmailChangedAt,
+        });
+      return { row: updated, replaced: current.url && oldPath ? { url: current.url, pathname: oldPath, score: oldScore } : null };
     });
+  } catch (e) {
+    if (e instanceof SweepUnavailable) return Response.json({ error: 'sweep_unavailable' }, { status: 503 });
+    throw e;
+  }
 
-  if (updated.length === 0) {
+  if (result === undefined) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const row = updated[0];
+  const { row, replaced: old } = result;
 
-  if (priorAvatarUrl && isOwnedAvatarBlobUrl(priorAvatarUrl, session.userId)) {
-    void del(priorAvatarUrl).catch((e) => {
-      console.warn('[avatar-upload] prior blob delete failed', e);
-    });
-  }
+  // d, e. Committed: the row points at the new file, so it leaves the set; the old file goes now if storage allows,
+  // else at the next sweep (Codex PUBLIC_PROFILE R5 F1: settled files never wait in the set).
+  await unmarkSettled(pathname, newScore);
+  if (old) await deleteSettled(old, 'avatar-upload');
 
   const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);
 

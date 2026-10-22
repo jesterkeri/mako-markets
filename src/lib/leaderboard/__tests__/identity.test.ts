@@ -18,7 +18,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resolveLabels } from '@/lib/leaderboard/identity';
+import { resolveLabels, resolveStoredIdentities } from '@/lib/leaderboard/identity';
+import { publicAvatarPath } from '@/lib/public-avatar';
 import { createTestDb, type TestDb } from './test-db';
 
 const CHAIN = 10143;
@@ -233,7 +234,9 @@ describe('resolveLabels: profile photos are served only when this app uploaded t
     const id = await insertMagicUser(t, { displayName: 'kemi', safeAddress: SAFE_CHECKSUMMED });
     const url = `https://${HOST}/avatars/${id}/1790000000000.webp`;
     await setAvatar(t, id, url);
-    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)).toEqual({ displayName: 'kemi', avatarUrl: url, branch: 'safe' });
+    // The public gets the /api/avatar path, never the stored URL (it carries the internal id); the route reads the stored one.
+    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)).toEqual({ displayName: 'kemi', avatarUrl: publicAvatarPath(SAFE_LOWER, url), branch: 'safe' });
+    expect((await resolveStoredIdentities(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)?.avatarUrl).toBe(url);
   });
 
   it('a user with a photo but no display name is still returned (name null), so the board can show the photo', async () => {
@@ -241,7 +244,7 @@ describe('resolveLabels: profile photos are served only when this app uploaded t
     const id = await insertMagicUser(t, { displayName: null, safeAddress: SAFE_CHECKSUMMED });
     const url = `https://${HOST}/avatars/${id}/1.webp`;
     await setAvatar(t, id, url);
-    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)).toEqual({ displayName: null, avatarUrl: url, branch: 'safe' });
+    expect((await resolveLabels(t.db as never, [SAFE_LOWER], CHAIN)).get(SAFE_LOWER)).toEqual({ displayName: null, avatarUrl: publicAvatarPath(SAFE_LOWER, url), branch: 'safe' });
   });
 
   it.each([

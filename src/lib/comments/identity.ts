@@ -10,7 +10,7 @@ import 'server-only';
 //   - authorLabel = display_name (trimmed) ?? formatAddress(on-chain address).
 //     When a display_name exists the raw address is NOT shown; when it doesn't,
 //     the truncated address IS the label (intended fallback, plan §2).
-//   - avatarSeed  = sha256(user_id) — stable, NON-REVERSIBLE, drives a glyph
+//   - avatarSeed  = sha256(public address) ('' without one; '' on a deleted row) — drives a glyph
 //     avatar. Never the raw address (a named author would leak it otherwise).
 //   - addressLower = the author's on-chain address, lowercased, for the
 //     position-badge join (Magic → deriveSafeAddress(magic_eoa); wallet →
@@ -28,6 +28,7 @@ import type { Address } from 'viem';
 import type { DbOrTx } from '@/db/client';
 import { users } from '@/db/schema';
 import { isAppOwnedAvatarUrl } from '@/lib/avatar-url';
+import { publicAvatarPath } from '@/lib/public-avatar';
 import { deriveSafeAddress } from '@/lib/safe';
 import { formatAddress } from '@/lib/user-display';
 
@@ -90,12 +91,15 @@ export async function resolveCommentAuthors(
     // /avatars/<id>/ prefix; otherwise null → glyph. Fails closed when the app
     // host can't be resolved. Keeps the public comments JSON from beaconing
     // third-party hosts.
+    // The public gets the photo's /api/avatar path, never the stored URL, whose path carries the internal account id
+    // (Joshua 2026-10-17, Codex PUBLIC_PROFILE R1 M2); without an address there is no public path, so the glyph shows.
     const avatarUrl =
-      r.avatarUrl && isAppOwnedAvatarUrl(r.avatarUrl, r.id) ? r.avatarUrl : null;
+      r.avatarUrl && addressLower && isAppOwnedAvatarUrl(r.avatarUrl, r.id) ? publicAvatarPath(addressLower, r.avatarUrl) : null;
 
     out.set(r.id, {
       authorLabel,
-      avatarSeed: seedFor(r.id),
+      // Seeded from the public address, never the internal id; no address, no seed (the glyph takes a default colour).
+      avatarSeed: addressLower ? seedFor(addressLower) : '',
       avatarUrl,
       addressLower,
     });
