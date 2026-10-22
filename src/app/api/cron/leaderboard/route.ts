@@ -85,9 +85,10 @@ export async function GET(req: Request) {
       diagnostics,
     });
   } catch (err) {
+    // The error's name only: messages can carry the RPC URL and request bodies (plan §4).
     console.error(
       '[cron/leaderboard] tick failed:',
-      err instanceof Error ? err.message : String(err),
+      err instanceof Error && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : 'unknown',
     );
     return Response.json(
       { error: 'leaderboard-cron-failed' },

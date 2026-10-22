@@ -84,6 +84,8 @@ import {
   poolItem,
   readMarketsAtFinalized,
   readNotifyFloor,
+  RosterAttemptsExhausted,
+  RosterHardStop,
   type AccountSource,
 } from '@/lib/notifications/produce';
 import {
@@ -269,6 +271,21 @@ export class LeaderboardStaleLockLostError extends Error {
     this.name = 'LeaderboardStaleLockLostError';
   }
 }
+
+/// #214: what a failed scan reports and logs. A fixed code, never the error's message: viem's messages carry the RPC
+/// URL (an API key may sit in its path) and the request body (the roster rule's multicall holds every Mako account
+/// address), and plan §4 keeps both out of responses and logs.
+export function scanErrorCode(err: unknown): string {
+  if (err instanceof RosterAttemptsExhausted) return 'roster_changed';
+  if (err instanceof RosterHardStop) return 'hard_stop';
+  if (err instanceof LeaderboardStaleLockLostError) return 'lock_lost';
+  const cls = classifyRpcError(err);
+  if (cls === 'gate') return 'gate_closed';
+  if (cls === 'retry') return 'rpc_unavailable';
+  const name = err instanceof Error && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : 'unknown';
+  return `scan_failed:${name}`;
+}
+
 
 // ---- Mutex -----------------------------------------------------------------
 
@@ -615,7 +632,7 @@ export async function scanContract<L extends ScanLog>(a: ScanContractArgs<L>): P
       }
     }
   } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
+    error = scanErrorCode(err);
     console.warn(`[leaderboard-indexer] ${c} scan failed: ${error}; continuing with remaining contracts`);
   } finally {
     if (token !== null) {

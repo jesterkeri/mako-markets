@@ -85,8 +85,9 @@ export async function GET(req: Request) {
   const publicClient = createScanClient(rpcUrl, hardStopAt);
   const late = () => Date.now() >= hardStopAt;
   const fail = (step: string, err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[cron/notify] ${step} failed: ${message}`);
+    // The error's name only: messages can carry the RPC URL and request bodies (plan §4).
+    const name = err instanceof Error && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : 'unknown';
+    console.error(`[cron/notify] ${step} failed: ${name}`);
     return { error: 'step_failed' as const };
   };
 
