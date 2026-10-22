@@ -16,8 +16,9 @@
 // From D1, every tick (one statement):
 //   rate_limited: the newest 3 runs rows all saw a 429;  checker_stalled: no cycle completed in 26 h, once the
 //   recorder has run for 26 h (the first cycle takes about 17.6 h)
-// From D1, on the hourly tick, over the 60 minutes that end where the 10-minute catch-up window starts, so consecutive
-// hourly ticks cover every minute exactly once (one statement):
+// From D1, on each of the first 5 ticks of an hour (so one late cron firing or a held lease cannot skip the hour), over
+// that hour's 60 minutes that end where the 10-minute catch-up window starts, so the windows of consecutive hours cover
+// every minute; a minute checked by several ticks only re-asserts the same state (one statement):
 //   incomplete:SYM (> 5);  empty:SYM (crypto: any; others: > 5 that follow an open minute);  stale:SYM (> 15);
 //   rejects:SYM (> 5 % of the minute reports rejected)
 // On the hourly tick, after the tick: one live report per feed verified through VerifierProxy.verify by eth_call on
@@ -37,6 +38,8 @@ import type { TickReport } from './tick';
 export const DEFAULT_PUBLIC_RPC_URL = 'https://testnet-rpc.monad.xyz';
 export const STALLED_S = 26 * HOUR;
 export const CATCHUP_S = 600;
+/// The hourly thresholds are evaluated on every tick in the first HOURLY_TICKS_S of an hour (adversary r2 on unit f).
+export const HOURLY_TICKS_S = 300;
 export const VERIFY_CONCURRENCY = 4;
 export const PING_TIMEOUT_MS = 10_000;
 
@@ -107,10 +110,12 @@ export async function dbReasons(db: D1Database, minute: number | null): Promise<
   const reasons: string[] = [];
   if (s.r429 === RATE_LIMITED_RUNS) reasons.push('rate_limited');
   if (s.first_run !== null && s.first_run <= s.now - STALLED_S && (s.last_cycle === null || s.last_cycle < s.now - STALLED_S)) reasons.push('checker_stalled');
-  if (minute !== null && minute % HOUR === 0) {
-    // [M - 1 h - 10 min, M - 10 min): the window slides with the catch-up holdback (adversary on unit f: a fixed
-    // [M - 1 h, M - 10 min) never read the 10 minutes before each hour).
-    const res = await db.prepare(HOURLY_SQL).bind(minute - HOUR - CATCHUP_S, minute - CATCHUP_S).all<HourRow>();
+  const H = minute === null ? null : minute - (minute % HOUR);
+  if (minute !== null && H !== null && minute - H < HOURLY_TICKS_S) {
+    // [H - 1 h - 10 min, H - 10 min) for the hour H of this tick: the window ends where the catch-up holdback starts
+    // (adversary on unit f: a fixed [H - 1 h, H - 10 min) never read the 10 minutes before each hour), and is the same
+    // for every tick of the hour's first 5 minutes.
+    const res = await db.prepare(HOURLY_SQL).bind(H - HOUR - CATCHUP_S, H - CATCHUP_S).all<HourRow>();
     reasons.push(...hourReasons(res.results));
   }
   return reasons;

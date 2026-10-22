@@ -120,7 +120,8 @@ describe('conditions from D1', () => {
     for (let i = 0; i < 6; i++) rows.push(ins('EURUSD', M - 3000 + i * 120, 'open'), ins('EURUSD', M - 3000 + i * 120 + 60, 'empty'));
     await db().batch(rows);
     expect(await dbReasons(db(), M)).toEqual(['incomplete:BTC', 'empty:EURUSD']);
-    expect(await dbReasons(db(), M + 60)).toEqual([]); // not an hourly tick
+    expect(await dbReasons(db(), M + 240)).toEqual(['incomplete:BTC', 'empty:EURUSD']); // the hour's first 5 ticks read the same window
+    expect(await dbReasons(db(), M + 300)).toEqual([]); // later ticks do not
   });
 });
 
