@@ -266,8 +266,11 @@ export async function handleRead(req: Request, env: ReadEnv): Promise<Response> 
       return json(await availability(db, g.cfg.feeds_refused));
     }
     if (route === '/v1/health') return json(await health(db, g.cfg));
+    // Step (3): every input is validated before any answer, the refused-feed one included (Codex RECORDER_E R1).
     const s = url.searchParams.get('s') ?? '';
     if (!FEED_BY_SYMBOL.has(s)) return json({ error: 'bad_symbol' }, 400);
+    const tf = url.searchParams.get('tf') ?? '';
+    if (route === '/v1/candles' && !TIMEFRAMES.includes(tf)) return json({ error: 'bad_timeframe' }, 400);
     if (g.cfg.feeds_refused.includes(s)) {
       return route === '/v1/candles' ? json({ candles: [], gaps: [], unavailable: 'feed_refused' }) : json({ unavailable: 'feed_refused' });
     }
@@ -275,8 +278,6 @@ export async function handleRead(req: Request, env: ReadEnv): Promise<Response> 
       const l = await latest(db, s);
       return l ? json(l) : json({ error: 'no_latest' }, 404);
     }
-    const tf = url.searchParams.get('tf') ?? '';
-    if (!TIMEFRAMES.includes(tf)) return json({ error: 'bad_timeframe' }, 400);
     return json(await candles(db, s, tf as Timeframe | '1m'));
   } catch (e) {
     console.log(JSON.stringify({ event: 'read_failed', route, error: e instanceof Error ? e.name : 'error' }));

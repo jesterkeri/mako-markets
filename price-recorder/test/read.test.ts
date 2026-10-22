@@ -81,6 +81,10 @@ describe('order of checks (7.2, 11)', () => {
     expect((await get('/v1/candles?s=BTC&tf=1m', { method: 'POST' })).status).toBe(405);
     expect((await get('/v1/other')).status).toBe(404);
     expect((await get('/v1/candles?s=NOPE&tf=1m', { token: null })).status).toBe(401); // the token comes before inputs
+    // A refused feed's answer comes after input validation too (Codex RECORDER_E R1).
+    expect((await get('/v1/candles?s=BAC&tf=bad')).status).toBe(400);
+    expect((await get('/v1/candles?s=BAC')).status).toBe(400);
+    expect((await get('/v1/candles?s=BAC&tf=1h')).status).toBe(200);
   });
 
   it('no answer carries a CORS header; every answer is no-store JSON', async () => {
