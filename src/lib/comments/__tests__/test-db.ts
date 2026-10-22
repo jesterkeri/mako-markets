@@ -17,6 +17,9 @@
 //   - load the REAL 0006_private_markets.sql for `pm_markets` (full fidelity,
 //     and 0009 ALTERs comments_enabled onto it exactly as prod does).
 //   - load 0009_comments.sql verbatim.
+//   - #214: load 0020_notifications.sql, because a reply now upserts the parent
+//     author's notification in createComment's transaction (with a minimal
+//     user_safes stub, which 0020's triggers name).
 //
 // Each test gets a fresh instance; call close() from afterEach/afterAll.
 // ----------------------------------------------------------------------------
@@ -66,6 +69,13 @@ const USERS_STUB_SQL = `
     "totp_locked_until"     timestamptz,
     "totp_last_used_step"   bigint
   );
+  -- #214: 0020's account-address triggers name user_safes too.
+  CREATE TABLE IF NOT EXISTS "user_safes" (
+    "user_id"      uuid NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+    "chain_id"     integer NOT NULL,
+    "safe_address" text NOT NULL,
+    "deployed_at"  timestamptz
+  );
 `;
 
 const sqlCache = new Map<string, string>();
@@ -97,6 +107,7 @@ export async function createTestDb(): Promise<TestDb> {
   await execScript(client, loadSql('0006_private_markets.sql')); // pm_markets
   await execScript(client, loadSql('0008_leaderboard_events.sql')); // mako_market_events (badges)
   await execScript(client, loadSql('0009_comments.sql'));
+  await execScript(client, loadSql('0020_notifications.sql')); // #214: reply notifications
   const db = drizzle(client, { schema });
   return {
     client,

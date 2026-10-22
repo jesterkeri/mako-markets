@@ -11,6 +11,13 @@ import 'server-only';
 // and asserts the parent is a top-level comment on the SAME target that isn't
 // deleted (depth-1 rule + no cross-market replies).
 //
+// #214: in the same transaction a reply also upserts the parent author's
+// `reply` notification (NOTIFICATIONS_PLAN r8 §3.2(3)): one row per parent
+// comment, a count of unread replies, re-opened as a new item once read. No
+// self-reply, main markets only, the author's `reply` switch read through
+// prefOn (never a cast of a non-boolean), and no user text in the row, so the
+// upsert cannot make the comment fail.
+//
 // Delete is soft-only. Owner path scopes by user_id in the WHERE (a miss is 0
 // rows, never someone else's row — API1/BOLA). Admin path omits the user_id
 // scope. Both are no-ops on an already-deleted row (idempotent-ish → the route
@@ -22,6 +29,8 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { DbOrTx } from '@/db/client';
 import { marketComments } from '@/db/schema';
 import { sql } from 'drizzle-orm';
+import { replyKey } from '@/lib/notifications/keys';
+import { prefOn } from '@/lib/notifications/prefs';
 import type { CommentTarget } from './queries';
 
 export interface CreateCommentInput {
@@ -46,6 +55,7 @@ interface ParentLockRow {
   pmMarketDbId: string | null;
   parentId: string | null;
   deletedAt: Date | null;
+  userId: string;
 }
 
 function parentMatchesTarget(p: ParentLockRow, target: CommentTarget): boolean {
@@ -79,6 +89,7 @@ export async function createComment(
   input: CreateCommentInput,
 ): Promise<CreateResult> {
   return db.transaction(async (tx) => {
+    let parent: ParentLockRow | undefined;
     if (input.parentId) {
       const res = await tx.execute(sql`
         SELECT scope,
@@ -87,14 +98,15 @@ export async function createComment(
                market_id AS "marketId",
                pm_market_db_id AS "pmMarketDbId",
                parent_id AS "parentId",
-               deleted_at AS "deletedAt"
+               deleted_at AS "deletedAt",
+               user_id AS "userId"
           FROM market_comments
          WHERE id = ${input.parentId}
          FOR SHARE
       `);
       const rows =
         ((res as { rows?: unknown[] }).rows ?? (res as unknown[])) as ParentLockRow[];
-      const parent = Array.isArray(rows) ? rows[0] : undefined;
+      parent = Array.isArray(rows) ? rows[0] : undefined;
       if (!parent) return { ok: false, error: 'parent_not_found' } as const;
       if (!parentMatchesTarget(parent, input.target)) {
         return { ok: false, error: 'parent_mismatch' } as const;
@@ -111,8 +123,29 @@ export async function createComment(
       .insert(marketComments)
       .values(insertValues(input))
       .returning({ id: marketComments.id, createdAt: marketComments.createdAt });
+    if (parent && input.parentId && parent.userId !== input.userId && input.target.scope === 'main' && parent.marketId) {
+      await upsertReplyNotification(tx, parent.userId, input.parentId, parent.marketId);
+    }
     return { ok: true, id: inserted[0].id, createdAt: inserted[0].createdAt } as const;
   });
+}
+
+/// One row per parent comment for its author. An unread row counts one more reply; a row already read is re-opened
+/// as a new item (count 1, unread, fresh times, out of any pending email). poolId is the parent's market_id, which the
+/// validators constrain to a canonical uint256; no name and no body.
+async function upsertReplyNotification(tx: DbOrTx, parentUserId: string, parentId: string, marketId: string) {
+  await tx.execute(sql`
+    INSERT INTO notifications (user_id, kind, dedupe_key, data, event_at)
+    SELECT ${parentUserId}::uuid, 'reply', ${replyKey(parentId)}, jsonb_build_object('poolId', ${marketId}::text, 'count', 1), now()
+      FROM users u
+     WHERE u.id = ${parentUserId}::uuid AND ${prefOn('reply')}
+    ON CONFLICT (user_id, dedupe_key) DO UPDATE SET
+      data = jsonb_set(notifications.data, '{count}',
+        to_jsonb(CASE WHEN notifications.read_at IS NULL THEN (notifications.data->>'count')::int + 1 ELSE 1 END)),
+      event_at = now(),
+      created_at = now(),
+      email_id = CASE WHEN notifications.read_at IS NULL THEN notifications.email_id ELSE NULL END,
+      read_at = NULL`);
 }
 
 /** Owner soft-delete. Ownership is in the WHERE, so a miss is 0 rows (never
