@@ -20,6 +20,7 @@ import {
 import {
   decodeMarketCreatedId,
   MAKO_ADDRESS,
+  MAKO_RELEASE,
   makoContract,
   type MarketWithId,
   type Market,
@@ -37,6 +38,7 @@ import {
 } from './aa-client';
 import { useUser } from './use-user';
 import { SPONSOR_CAP_PER_USER_PER_DAY } from './aa-constants';
+import { poolTitle } from './pool-display';
 
 /**
  * Pre-write chain guard.
@@ -75,12 +77,18 @@ export function decodeMarket(raw: unknown, id: bigint): MarketWithId {
   // after the v3→v4 struct field-order change (bettingCloseTime inserted
   // between closeTime and totalYes; fee snapshots after creatorFeeClaimed).
   const m = raw as unknown as Market;
+  // Every UI title comes through here (or pool-share.ts readPoolForShare): price pools get a title built from the
+  // settlement data, under the reviewed record of the contract read (pool-display.ts poolTitle). The stored text stays
+  // in `chainQuestion` for admins.
+  const { title, originalWording } = poolTitle({ id, mType: m.mType as MarketType, oracleRef: m.oracleRef, question: m.question, closeTime: m.closeTime }, MAKO_RELEASE);
   return {
     id,
     creator: m.creator,
     mType: m.mType as MarketType,
     oracleRef: m.oracleRef,
-    question: m.question,
+    question: title,
+    ...(originalWording !== undefined ? { originalWording } : {}),
+    chainQuestion: m.question,
     createdAt: m.createdAt,
     closeTime: m.closeTime,
     bettingCloseTime: m.bettingCloseTime,

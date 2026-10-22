@@ -4,7 +4,8 @@
 
 import { createPublicClient, http } from 'viem';
 
-import { MAKO_ADDRESS, makoAbi, marketTypeLabel, type MarketWithId } from './contract';
+import { MAKO_ADDRESS, MAKO_RELEASE, makoAbi, marketTypeLabel, type MarketWithId } from './contract';
+import { poolTitle } from './pool-display';
 import { unsettleable } from './pool-rules';
 import { humanizeUntil } from './time';
 
@@ -27,7 +28,8 @@ export async function readPoolForShare(id: bigint): Promise<MarketWithId | null>
   try {
     const client = createPublicClient({ chain: monadTestnet, transport: http(RPC_URL) });
     const m = (await client.readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket', args: [id] })) as Omit<MarketWithId, 'id'>;
-    return m && m.question ? { ...m, id } : null;
+    // The page title and the preview image show the pool page's title, without the original-wording line.
+    return m && m.question ? { ...m, id, question: poolTitle({ ...m, id }, MAKO_RELEASE).title } : null;
   } catch {
     return null;
   }

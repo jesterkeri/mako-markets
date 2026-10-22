@@ -18,6 +18,7 @@ import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/crea
 import { addTouchSample, shouldCloseDrawer, type TouchSample } from '@/lib/drawer-swipe';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
+import { firstWorded } from '@/lib/pool-display';
 import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
@@ -392,6 +393,7 @@ function PoolDesktop(v: ViewProps) {
             </span>
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 52, lineHeight: 1.02, letterSpacing: '-0.035em', maxWidth: 720, textWrap: 'balance' }}>{m.question}</h1>
+          {m.originalWording && <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 8, maxWidth: 720 }}>{firstWorded(m.originalWording)}</div>}
           <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 10 }}>
             {catTitle(row.cat)} · betting closes {dayTime(Number(m.bettingCloseTime))}. Hosted by <Host m={m} by={by} style={{ color: 'var(--mako-canvas-fg)', fontWeight: 700 }} />
           </div>
@@ -867,6 +869,7 @@ function PoolMobile(v: ViewProps) {
             </span>
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 28, lineHeight: 1.08, letterSpacing: '-0.025em' }}>{m.question}</h1>
+          {m.originalWording && <div style={{ fontSize: 13, fontWeight: 600, opacity: 0.65, marginTop: 6 }}>{firstWorded(m.originalWording)}</div>}
           <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.65, marginTop: 8 }}>
             Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by <Host m={m} by={by} /> · <FlashValue value={row.bettors} text={String(row.bettors)} kind="neutral" /> {row.bettors === 1 ? 'bettor' : 'bettors'}
           </div>

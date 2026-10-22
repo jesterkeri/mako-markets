@@ -60,15 +60,15 @@ describe('parseOracleRef mirrors the resolver', () => {
 describe('poolRules', () => {
   it('states the price rule with the strict comparison the resolver uses', () => {
     const m = pool({});
-    expect(rule(m, 'YES')).toBe('BTC is above $80000 at Fri 15 Jan, 11:00 UTC, the close.');
-    expect(rule(m, 'NO')).toBe('BTC is at $80000 or below at the close.');
+    expect(rule(m, 'YES')).toBe('BTC is above $80,000 at Fri 15 Jan, 11:00 UTC, the close.');
+    expect(rule(m, 'NO')).toBe('BTC is at $80,000 or below at the close.');
     expect(rule(m, 'SOURCE')).toBe('The Chainlink Data Streams price for the close second, verified on chain.');
-    expect(rule(pool({ oracleRef: ref('BTC:lt:80000') }), 'NO')).toBe('BTC is at $80000 or above at the close.');
+    expect(rule(pool({ oracleRef: ref('BTC:lt:80000') }), 'NO')).toBe('BTC is at $80,000 or above at the close.');
   });
 
-  it('writes forex strikes without a dollar sign and names Chainlink Data Streams, with the closed-market rule', () => {
+  it('writes forex pairs and strikes without a dollar sign and names Chainlink Data Streams, with the closed-market rule', () => {
     const m = pool({ mType: MarketType.FOREX, oracleRef: ref('EURUSD:gt:1.095') });
-    expect(rule(m, 'YES')).toBe('EURUSD is above 1.095 at Fri 15 Jan, 11:00 UTC, the close.');
+    expect(rule(m, 'YES')).toBe('EUR/USD is above 1.095 at Fri 15 Jan, 11:00 UTC, the close.');
     expect(rule(m, 'SOURCE')).toBe('The Chainlink Data Streams price for the close second, verified on chain. If the market is closed then, its last traded price.');
   });
 

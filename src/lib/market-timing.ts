@@ -28,6 +28,17 @@ export const MIN_DURATION_SEC = 5 * 60;               // v4 contract MIN_DURATIO
 export const TX_LANDING_BUFFER_SEC = 60;
 
 /**
+ * How long a new price pool's confirm sheet holds its times (naming plan
+ * r8 §4, §7.7). The title states the close time and is stored on chain, so
+ * the times are fixed when the sheet opens: the close is pushed this much
+ * later before rounding to the minute, and a Confirm more than this many
+ * seconds after the sheet opened is refused ("Times moved on"). After a
+ * full hold every margin is still today's (sponsor 5-minute floor, contract
+ * MIN_DURATION, the betting-close tier).
+ */
+export const SHEET_HOLD_SEC = 30;
+
+/**
  * Narrow string literal for `sportsTimestamps` so this module never
  * imports `MarketType` from `contract.ts`. Call sites map their enum
  * value to the literal at the boundary (see /create page + seed scripts).

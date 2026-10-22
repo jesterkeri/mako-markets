@@ -11,6 +11,7 @@ import { CRYPTO_SYMBOLS } from './crypto-assets';
 import { PAUSED_PRICE_FEED_SYMBOLS } from './market-availability';
 import { PRICE_FEED_BY_SYMBOL } from './price-feed-assets';
 import { formatCountdown } from './countdown';
+import { priceSubject, priceTarget } from './pool-create';
 import type { PoolState } from './pool-list';
 
 /// The contract's RESOLUTION_GRACE: after the close time plus this, anyone may mark an unsettled pool refunded.
@@ -104,8 +105,6 @@ export function unsettleable(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): bool
 export const UNSETTLEABLE_LINE =
   "Mako Market's resolver can't read this pool's settlement reference, so it will not be settled by a price or a result. If nobody settles it within 24H of close, anyone can mark it refunded.";
 
-const unit = (m: MarketWithId) => (m.mType === MarketType.FOREX ? '' : '$');
-
 /// The "How this pool resolves" lines.
 export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
   const close = dayTime(Number(m.closeTime), timeZone);
@@ -118,12 +117,14 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
   } else if (!ref) {
     lines.push({ k: 'WARNING', v: UNSETTLEABLE_LINE });
   } else if (ref.kind === 'price') {
-    const s = `${unit(m)}${ref.strike}`;
+    // Named and grouped as the title names them: "EUR/USD is above 1.095", "BTC is above $80,000".
+    const a = priceSubject(m.mType, ref.symbol);
+    const s = priceTarget(m.mType, ref.strike) ?? ref.strike;
     lines.push(
       ref.op === 'gt'
-        ? { k: 'YES', v: `${ref.symbol} is above ${s} at ${close}, the close.` }
-        : { k: 'YES', v: `${ref.symbol} is below ${s} at ${close}, the close.` },
-      ref.op === 'gt' ? { k: 'NO', v: `${ref.symbol} is at ${s} or below at the close.` } : { k: 'NO', v: `${ref.symbol} is at ${s} or above at the close.` },
+        ? { k: 'YES', v: `${a} is above ${s} at ${close}, the close.` }
+        : { k: 'YES', v: `${a} is below ${s} at ${close}, the close.` },
+      ref.op === 'gt' ? { k: 'NO', v: `${a} is at ${s} or below at the close.` } : { k: 'NO', v: `${a} is at ${s} or above at the close.` },
     );
   } else {
     const what = ref.kind === 'football' ? 'goals' : 'points';
