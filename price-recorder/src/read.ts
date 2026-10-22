@@ -106,6 +106,8 @@ async function slotsIn(db: D1Database, symbol: string, tf: Timeframe | '1m', sta
 /// minute. Closed time produces no slot and so takes none of the 300 (a stock's 1m chart overnight, a forex chart at the
 /// weekend still shows the last session): the window doubles backwards until it holds 300 slots or reaches the feed's
 /// first stored row (adversary on unit e). Missing or unusable data is a gap; no gaps before the first stored row.
+/// Reads per request: the final window, once. Worst cases: 1m at most the 35 days of kept rows (50,400); 2h and 4h at
+/// most the feed's 1h history; a feed with open data in the last 300 slots reads about 300 rows (2h: 600, 4h: 1,200).
 export const MAX_WINDOW_DOUBLINGS = 8;
 export async function candles(db: D1Database, symbol: string, tf: Timeframe | '1m'): Promise<{ candles: Candle[]; gaps: number[]; asOf: number | null; marketOpen: boolean | null }> {
   const newest = await db.prepare('SELECT t, state FROM candles_1m WHERE feed = ?1 ORDER BY t DESC LIMIT 1').bind(symbol).first<{ t: number; state: string }>();
@@ -120,16 +122,18 @@ export async function candles(db: D1Database, symbol: string, tf: Timeframe | '1
   if (!firstRow || firstRow.t === null) return { candles: [], gaps: [], asOf, marketOpen };
   const floor = align(firstRow.t, width);
 
+  // Each widening reads only the part not read yet, so a request reads at most its final window once.
   let span = MAX_CANDLES;
-  let picked: { t: number; slot: Slot }[] = [];
+  let readFrom = end + width;
+  const picked: { t: number; slot: Slot }[] = [];
   for (let i = 0; ; i++) {
     const start = Math.max(end - (span - 1) * width, floor);
-    const slots = await slotsIn(db, symbol, tf, start, end, asOf);
-    picked = [];
-    for (let t = end; t >= start && picked.length < MAX_CANDLES; t -= width) {
+    const slots = await slotsIn(db, symbol, tf, start, readFrom - width, asOf);
+    for (let t = readFrom - width; t >= start && picked.length < MAX_CANDLES; t -= width) {
       const s = slots.get(t) ?? { kind: 'gap' };
       if (s.kind !== 'closed') picked.push({ t, slot: s });
     }
+    readFrom = start;
     if (picked.length >= MAX_CANDLES || start <= floor || i >= MAX_WINDOW_DOUBLINGS) break;
     span *= 2;
   }

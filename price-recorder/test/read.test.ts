@@ -193,6 +193,32 @@ describe('candles (7.2, 10)', () => {
     expect(r.asOf).toBe(H + 720 * 60);
   }, 60_000);
 
+  it('widening the window never reads the same range twice', async () => {
+    await serve(1);
+    const opens = Array.from({ length: 60 }, (_, i) => H + i * 60);
+    await store(opens.map(openMinute), H + 60 * 60);
+    const closedRows = Array.from({ length: 1000 }, (_, i) => ({ ...toStored(openMinute(H + (60 + i) * 60), 0), state: 'closed' as const, o: null, h: null, l: null, c: null }));
+    for (let i = 0; i < closedRows.length; i += 100) await db().batch([upsertMinutes(db(), closedRows.slice(i, i + 100))!]);
+    const ranges: [number, number][] = [];
+    const watching = new Proxy(db(), {
+      get: (t, k) => {
+        if (k === 'prepare')
+          return (sql: string) => {
+            const stmt = t.prepare(sql);
+            if (!sql.startsWith('SELECT * FROM candles_1m WHERE feed = ?1 AND t >= ?2 AND t <= ?3')) return stmt;
+            return new Proxy(stmt, { get: (st, kk) => (kk === 'bind' ? (...a: unknown[]) => (ranges.push([a[1] as number, a[2] as number]), st.bind(...a)) : (st as unknown as Record<PropertyKey, unknown>)[kk] instanceof Function ? ((st as unknown as Record<PropertyKey, (...x: unknown[]) => unknown>)[kk]).bind(st) : (st as unknown as Record<PropertyKey, unknown>)[kk]) });
+          };
+        const v = (t as unknown as Record<PropertyKey, unknown>)[k];
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    const r = await body(await get('/v1/candles?s=BTC&tf=1m', { database: watching }));
+    expect((r.candles as unknown[]).length).toBe(60); // only 60 open minutes exist; the window reached the first row
+    expect(ranges.length).toBeGreaterThan(1);
+    const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < sorted.length; i++) expect(sorted[i][0]).toBeGreaterThan(sorted[i - 1][1]);
+  }, 60_000);
+
   it("today's 1d candle is not drawn over an hour that ended with minutes never stored", async () => {
     await serve(1);
     const day = H - (H % 86400);
