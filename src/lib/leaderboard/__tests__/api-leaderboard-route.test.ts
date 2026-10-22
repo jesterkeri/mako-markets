@@ -77,21 +77,7 @@ afterEach(async () => {
 async function freshDb(): Promise<TestDb> {
   testDb = await createTestDb();
   currentDb = testDb.db;
-  // Minimal identity mirror (see identity.test.ts for rationale).
-  await testDb.client.exec(`
-    CREATE TABLE users (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      email text,
-      wallet_address text,
-      display_name text,
-      avatar_url text
-    );
-    CREATE TABLE user_safes (
-      user_id uuid NOT NULL,
-      chain_id integer NOT NULL,
-      safe_address text NOT NULL
-    );
-  `);
+  // The minimal identity mirror (users, user_safes) comes from the harness (#214: 0020's triggers name them).
   return testDb;
 }
 

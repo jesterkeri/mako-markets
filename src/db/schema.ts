@@ -1087,6 +1087,73 @@ export const feedbackRateLimits = pgTable(
 );
 
 // ----------------------------------------------------------------------------
+// #214 Notifications, S1 (migration 0020, NOTIFICATIONS_PLAN r8 §3.3). The CHECKs, partial indexes, the version row's
+// seed and its seven triggers live in the SQL. users.notification_prefs (jsonb, NULL = defaults) is deliberately NOT
+// declared on `users` above: it is read and written only through raw SQL in src/lib/notifications/prefs.ts (prefOn,
+// prefsSet), and declaring it would make every test stub of `users` that db.insert()s grow a column it never uses.
+// ----------------------------------------------------------------------------
+export type NotificationKind = 'claim' | 'result' | 'reply' | 'closing' | 'round_start' | 'price';
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<NotificationKind>().notNull(),
+    /// One row per user per thing (UNIQUE with user_id). Never user-written text.
+    dedupeKey: text('dedupe_key').notNull(),
+    /// Producer-computed values only (enums, decimal ids, counts): never a question, comment, name or address.
+    data: jsonb('data').$type<Record<string, unknown>>().notNull(),
+    eventAt: timestamp('event_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    /// The digest email holding this item (S2 adds the foreign key).
+    emailId: uuid('email_id'),
+  },
+  (t) => ({
+    userDedupe: uniqueIndex('notifications_user_dedupe').on(t.userId, t.dedupeKey),
+  }),
+);
+
+/// Per contract, the highest block whose terminal events have been turned into notifications. Only notifying scans
+/// write it; never truncated by the leaderboard re-sync runbook, never pruned.
+export const notifyCursor = pgTable(
+  'notify_cursor',
+  {
+    chainId: integer('chain_id').notNull(),
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    notifiedThrough: bigint('notified_through', { mode: 'number' }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.chainId, t.contractAddress] }),
+  }),
+);
+
+/// Rounds entrants the notify scan has seen (side 1 = up, 2 = down). Pruned after 9 days.
+export const makoRoundEntrants = pgTable(
+  'mako_round_entrants',
+  {
+    contractAddress: varchar('contract_address', { length: 42 }).notNull(),
+    roundId: text('round_id').notNull(),
+    account: varchar('account', { length: 42 }).notNull(),
+    side: integer('side').notNull(),
+    blockNumber: bigint('block_number', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.contractAddress, t.roundId, t.account] }),
+  }),
+);
+
+/// One row (id = true), raised by triggers on every write that adds, changes, moves or removes an account address.
+export const accountAddressVersion = pgTable('account_address_version', {
+  id: boolean('id').primaryKey().default(true),
+  version: bigint('version', { mode: 'number' }).notNull(),
+});
+
+// ----------------------------------------------------------------------------
 // Convenience type exports for application code. Drizzle derives insert/select
 // row types from the table declaration, which is what callers should import.
 // ----------------------------------------------------------------------------
@@ -1144,3 +1211,4 @@ export type CommentScope = MarketComment['scope'];
 export type CommentRateLimit = typeof commentRateLimits.$inferSelect;
 export type NewCommentRateLimit = typeof commentRateLimits.$inferInsert;
 export type FeedbackRateLimit = typeof feedbackRateLimits.$inferSelect;
+export type NotificationRow = typeof notifications.$inferSelect;
