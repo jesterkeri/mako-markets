@@ -119,7 +119,7 @@ describe('Leaderboard page', () => {
     await screen.findAllByText('kemi');
     expect(container.textContent).not.toMatch(/win rate/i);
     expect(screen.getByText(/claimed winnings and refunds minus stakes/)).toBeTruthy();
-    expect(screen.getByText('Updates about every 30 minutes.')).toBeTruthy();
+    expect(screen.getByText('Updates about every 15 minutes.')).toBeTruthy();
   });
 
   it('shows Rounds as coming soon and not pickable', async () => {
