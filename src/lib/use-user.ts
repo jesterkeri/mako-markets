@@ -71,6 +71,9 @@ export type MagicAuthedUser = {
   /// affordance and surface "Next change available [date]" copy.
   /// Server-side enforcement lives in /api/user/email/update.
   nextEmailChangeAvailableAt: string | null;
+  /// #214 The bell's badge: unread notifications, capped at 100; null when the count failed (no badge). Optional:
+  /// a user object set from another response (or an older build) has none, which also shows no badge.
+  unreadNotifications?: number | null;
 };
 
 /**
@@ -89,6 +92,8 @@ export type WalletAuthedUser = {
   /// across both shapes because wallet users see the same compromise-
   /// detection signal in /profile.
   lastSignInAt: string | null;
+  /// Same as the Magic shape's `unreadNotifications`.
+  unreadNotifications?: number | null;
 };
 
 /**

@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { readLastSignIn } from '@/lib/last-sign-in';
+import { unreadCount } from '@/lib/notifications/unread';
 import { deriveSafeAddress } from '@/lib/safe';
 import { getUserSession } from '@/lib/user-session';
 import { magicUserToWire, walletUserToWire } from '@/lib/users-wire';
@@ -40,6 +41,10 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // "last sign-in" signal. The PRIOR session's createdAt is what users
 // care about when scanning for compromise. First-ever sign-in returns
 // lastSignInAt: null (no prior session).
+//
+// #214 `unreadNotifications` is the bell's badge: unread notifications, capped
+// at 100, or null when the count fails (never fails this route). useUser
+// refetches /me on mount and focus, so the badge adds no request.
 // ----------------------------------------------------------------------------
 
 export async function GET() {
@@ -48,7 +53,10 @@ export async function GET() {
     return Response.json({ authed: false });
   }
 
-  const lastSignInAt = await readLastSignIn(session.userId, session.sessionId);
+  const [lastSignInAt, unreadNotifications] = await Promise.all([
+    readLastSignIn(session.userId, session.sessionId),
+    unreadCount(session.userId),
+  ]);
 
   if (session.authType === 'magic') {
     const safeAddress = deriveSafeAddress(session.magicEoa as Address);
@@ -95,6 +103,7 @@ export async function GET() {
       ...magicUserToWire(row, safeAddress),
       lastSignInAt,
       nextEmailChangeAvailableAt,
+      unreadNotifications,
     });
   }
 
@@ -117,5 +126,6 @@ export async function GET() {
     authed: true,
     ...walletUserToWire(userRow[0], session.walletAddress),
     lastSignInAt,
+    unreadNotifications,
   });
 }

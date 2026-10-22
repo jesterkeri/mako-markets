@@ -151,6 +151,7 @@ describe('GET /api/user/me — wire shape', () => {
       'safeAddress',
       'totpEnabled',
       'totpEnabledAt',
+      'unreadNotifications',
     ]);
     expect(body.authType).toBe('magic');
     expect(body).not.toHaveProperty('totpSecret');
@@ -253,6 +254,7 @@ describe('GET /api/user/me — wire shape', () => {
       'avatarUrl',
       'displayName',
       'lastSignInAt',
+      'unreadNotifications',
       'walletAddress',
     ]);
     expect(body.authType).toBe('wallet');
