@@ -206,6 +206,8 @@ export interface RunLeaderboardIndexerArgs {
   sleep?: (ms: number) => Promise<void>;
   accounts?: AccountSource;
   now?: () => number;
+  /// #214 test seam: runs inside an announcing batch's transaction after its version check, before COMMIT.
+  afterVersionCheck?: () => Promise<void>;
   /// Called after each cursor write — the seed script's multi-hour
   /// backfill needs visible progress. No-op when omitted (cron path).
   onChunk?: (info: {
@@ -467,6 +469,7 @@ export interface BatchContext<L extends ScanLog> {
   hardStopAt?: number;
   accounts?: AccountSource;
   now?: () => number;
+  afterVersionCheck?: () => Promise<void>;
 }
 
 export interface BatchWriteResult {
@@ -496,6 +499,7 @@ export interface ScanContractArgs<L extends ScanLog> {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   accounts?: AccountSource;
+  afterVersionCheck?: () => Promise<void>;
   onChunk?: RunLeaderboardIndexerArgs['onChunk'];
 }
 
@@ -596,6 +600,7 @@ export async function scanContract<L extends ScanLog>(a: ScanContractArgs<L>): P
           hardStopAt: a.hardStopAt,
           accounts: a.accounts,
           now: a.now,
+          afterVersionCheck: a.afterVersionCheck,
         });
         eventsInserted += r.eventsInserted;
         rosterFromChain += r.rosterFromChain;
@@ -843,6 +848,7 @@ function v4BatchWriter(contract: LeaderboardContract) {
       accounts: ctx.accounts,
       hardStopAt: ctx.hardStopAt,
       now: ctx.now,
+      afterVersionCheck: ctx.afterVersionCheck,
     });
     return { eventsInserted: r.inserted, rosterFromChain: r.rosterFromChain, notifiedThrough: r.notifiedThrough };
   };
@@ -910,6 +916,7 @@ export async function runLeaderboardIndexerOnce(
           sleep: args.sleep,
           now: args.now,
           accounts: args.accounts,
+          afterVersionCheck: args.afterVersionCheck,
           onChunk: args.onChunk,
         }),
       );

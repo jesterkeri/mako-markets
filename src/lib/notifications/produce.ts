@@ -171,6 +171,8 @@ export interface AnnounceArgs {
   /// No roster attempt starts at or after this time (ms).
   hardStopAt?: number;
   now?: () => number;
+  /// Test seam (the two-connection tests): runs inside the transaction after the version check passed, before COMMIT.
+  afterVersionCheck?: () => Promise<void>;
 }
 
 export interface AnnounceResult {
@@ -250,6 +252,7 @@ export async function announceBatch(args: AnnounceArgs): Promise<AnnounceResult>
         await args.advanceCursor(tx);
         // Step 5: the last statement. Waits for an in-flight address write, then sees its version.
         if ((await readVersion(tx, true)) !== v0) throw new RosterChanged('version moved');
+        await args.afterVersionCheck?.();
       });
     } catch (err) {
       if (err instanceof RosterChanged) continue;
