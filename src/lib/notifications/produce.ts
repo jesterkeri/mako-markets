@@ -28,6 +28,7 @@ import { sql } from 'drizzle-orm';
 import type { PublicClient } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
+import { rowsOf } from '@/db/rows';
 import { isCreatorFeeForfeited } from '@/lib/bet';
 import { accountAddresses, accountUserIds } from '@/lib/leaderboard/identity';
 import { withRpcRetry } from '@/lib/leaderboard/rpc-gate';
@@ -69,11 +70,6 @@ export interface AccountSource {
   userIds(db: DbOrTx, addresses: readonly string[], chainId: number): Promise<Map<string, string[]>>;
 }
 export const DEFAULT_ACCOUNTS: AccountSource = { addresses: accountAddresses, userIds: accountUserIds };
-
-const rowsOf = <T>(res: unknown): T[] => {
-  const raw = (res as { rows?: unknown[] }).rows ?? (res as unknown[]);
-  return (Array.isArray(raw) ? raw : []) as T[];
-};
 
 // ---- Floor ------------------------------------------------------------------
 

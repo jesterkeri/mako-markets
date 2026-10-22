@@ -18,6 +18,7 @@ import { sql } from 'drizzle-orm';
 import { getAbiItem, type PublicClient } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
+import { rowsOf } from '@/db/rows';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import {
   LEADERBOARD_CONFIRMATIONS,
@@ -72,11 +73,6 @@ interface RoundAtFinalized {
   upEntrants: number;
   downEntrants: number;
 }
-
-const rowsOf = <T>(res: unknown): T[] => {
-  const raw = (res as { rows?: unknown[] }).rows ?? (res as unknown[]);
-  return (Array.isArray(raw) ? raw : []) as T[];
-};
 
 interface EntrantRow {
   contractAddress: string;
@@ -139,20 +135,24 @@ function roundItem(
     buildRows(roster, usersOf) {
       const rows: NotificationInsert[] = [];
       const base = { eventAt: ev.eventAt, blockNumber: ev.blockNumber, kind: 'claim' as const, dedupeKey: roundResultKey(ev.contractLower, idStr) };
-      const seen = new Set<string>();
       const won = ev.settled ? SIDE_NAME[ev.outcome] : null;
+      // One row per account: an account whose addresses entered different sides is told it won if any of them won.
+      const sidesOf = new Map<string, Set<string>>();
       for (const [addr, sides] of roster) {
         for (const userId of usersOf(addr)) {
-          if (seen.has(userId)) continue;
-          seen.add(userId);
-          const side = [...sides][0];
-          if (!ev.settled) {
-            rows.push({ ...base, userId, data: { t: 'round', id: idStr, outcome: 'refund', why: 'refund', reason: REASON_NAME[ev.reason] ?? 'one_sided' } });
-          } else if (side === won) {
-            rows.push({ ...base, userId, data: { t: 'round', id: idStr, outcome: won, why: 'won' } });
-          } else {
-            rows.push({ ...base, userId, kind: 'result', data: { t: 'round', id: idStr, outcome: won, side } });
-          }
+          const all = sidesOf.get(userId) ?? new Set<string>();
+          for (const x of sides) all.add(x);
+          sidesOf.set(userId, all);
+        }
+      }
+      for (const [userId, sides] of sidesOf) {
+        const side = won !== null && sides.has(won) ? won : [...sides][0];
+        if (!ev.settled) {
+          rows.push({ ...base, userId, data: { t: 'round', id: idStr, outcome: 'refund', why: 'refund', reason: REASON_NAME[ev.reason] ?? 'one_sided' } });
+        } else if (side === won) {
+          rows.push({ ...base, userId, data: { t: 'round', id: idStr, outcome: won, why: 'won' } });
+        } else {
+          rows.push({ ...base, userId, kind: 'result', data: { t: 'round', id: idStr, outcome: won, side } });
         }
       }
       return rows;

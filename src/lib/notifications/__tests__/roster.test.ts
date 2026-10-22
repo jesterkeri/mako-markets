@@ -209,6 +209,20 @@ describe('rounds scan', () => {
     expect((await notificationsOf(t, carol)).map((n) => [n.kind, n.data])).toEqual([['result', { t: 'round', id: '9', outcome: 'up', side: 'down' }]]);
   });
 
+  it('one account with two addresses on opposite sides is told it won when either address won (refactor pass, 2026-10-22)', async () => {
+    t = await createNotifyDb();
+    const alice = await walletAccount(t, ALICE);
+    // Alice's account also owns a Safe (DAVE). The losing address enters first, so a first-address-only rule says "lost".
+    await t.client.query(`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES ($1, $2, $3)`, [alice, CHAIN, DAVE]);
+    const chain = mockChain({
+      head: HEAD,
+      logs: [enteredLog(9, ALICE, 2, F + 1), enteredLog(9, DAVE, 1, F + 2), settledLog(9, 1, F + 10)],
+      rounds: new Map([['9', round({})]]),
+    });
+    await runRounds(chain);
+    expect((await notificationsOf(t, alice)).map((n) => [n.kind, n.data])).toEqual([['claim', { t: 'round', id: '9', outcome: 'up', why: 'won' }]]);
+  });
+
   it('across batches: entrants from one run, the settlement in a later run', async () => {
     t = await createNotifyDb();
     const alice = await walletAccount(t, ALICE);

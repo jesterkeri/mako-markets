@@ -75,6 +75,7 @@ import {
   makoLeaderboardIndexerState,
   type NewMakoMarketEvent,
 } from '@/db/schema';
+import { rowsOf } from '@/db/rows';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import {
   announceBatch,
@@ -291,11 +292,6 @@ function coerceDate(value: unknown): Date {
   }
   throw new Error(`coerceDate: unexpected timestamp shape: ${typeof value}`);
 }
-
-const rowsOf = <T>(res: unknown): T[] => {
-  const raw = (res as { rows?: unknown[] }).rows ?? (res as unknown[]);
-  return (Array.isArray(raw) ? raw : []) as T[];
-};
 
 async function acquireContractMutex(
   db: DbOrTx,

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
+import { isUuid } from '@/lib/comments/validate';
 import { getUserSession } from '@/lib/user-session';
 
 // GET /api/notifications?cursor=<id>&limit=<1..30> -> { items: [{ id, kind, data, eventAt, read }], next }
@@ -11,7 +12,6 @@ import { getUserSession } from '@/lib/user-session';
 
 export const dynamic = 'force-dynamic';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 interface Row {
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
   const limit = rawLimit === null ? 20 : Number(rawLimit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 30) return Response.json({ error: 'bad_limit' }, { status: 400, headers: NO_STORE });
   const cursor = params.get('cursor');
-  if (cursor !== null && !UUID_RE.test(cursor)) return Response.json({ error: 'bad_cursor' }, { status: 400, headers: NO_STORE });
+  if (cursor !== null && !isUuid(cursor)) return Response.json({ error: 'bad_cursor' }, { status: 400, headers: NO_STORE });
 
   const after =
     cursor === null

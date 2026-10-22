@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { checkSameOrigin } from '@/lib/csrf';
+import { isUuid } from '@/lib/comments/validate';
 import { getUserSession } from '@/lib/user-session';
 
 // POST /api/notifications/read { ids: uuid[] } -> { updated }
@@ -9,7 +10,6 @@ import { getUserSession } from '@/lib/user-session';
 // "created up to" cut, so an item committed after the GET stays unread (and can still be emailed in S2). 1 to 30 ids,
 // each a uuid, else 400. Same-origin and session; scoped by user_id, so another account's id changes nothing.
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_READ_IDS = 30;
 
 export async function POST(req: Request) {
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     !Array.isArray(ids) ||
     ids.length < 1 ||
     ids.length > MAX_READ_IDS ||
-    !ids.every((id): id is string => typeof id === 'string' && UUID_RE.test(id))
+    !ids.every((id): id is string => typeof id === 'string' && isUuid(id))
   ) {
     return Response.json({ error: 'bad_body' }, { status: 400 });
   }
