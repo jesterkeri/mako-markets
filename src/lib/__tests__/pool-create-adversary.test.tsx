@@ -94,7 +94,7 @@ describe('rule 7: the live step names the pool this create made', () => {
 
     const { result } = renderHook(() => usePoolTx());
     act(() => {
-      result.current.open({ kind: 'create', draft: { kind: 'crypto', symbol: 'BTC', direction: 'above', strike: 100000, durationSec: 3600 }, seed: 1_000_000n, seedYes: true });
+      result.current.open({ kind: 'create', draft: { kind: 'crypto', symbol: 'BTC', direction: 'above', strike: 100000, durationSec: 3600 }, nowSec: Math.floor(Date.now() / 1000), seed: 1_000_000n, seedYes: true });
     });
     await act(async () => {
       await result.current.confirm();

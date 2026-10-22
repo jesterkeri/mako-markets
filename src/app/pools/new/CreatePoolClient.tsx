@@ -174,7 +174,7 @@ export function CreatePoolClient() {
   const bothSides = mine.length ? Math.round((mine.filter((m) => m.totalYes > 0n && m.totalNo > 0n).length * 100) / mine.length) : null;
 
   const openCreate = () => {
-    if (!pool || !draft || seed === null || seedProblem || tx.tx) return;
+    if (!pool || !draft || now === null || seed === null || seedProblem || tx.tx) return;
     const side = seedYes ? 'YES' : 'NO';
     setSheetSpec({
       glyph: '+',
@@ -192,7 +192,8 @@ export function CreatePoolClient() {
       doneBody: pool.question,
       doneSecondary: { label: 'View in Pools', href: '/pools' },
     });
-    tx.open({ kind: 'create', draft, seed, seedYes });
+    // The same `now` the sheet's pool was built from, so the chain gets exactly the title and times shown.
+    tx.open({ kind: 'create', draft, nowSec: now, seed, seedYes });
   };
 
   const v: ViewProps = {
