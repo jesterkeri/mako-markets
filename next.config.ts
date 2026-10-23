@@ -13,6 +13,8 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: PROJECT_ROOT,
   },
+  // Proxy gets the request URL as received, so it can refuse a share card URL with a bare `?` or any `%` (src/proxy.ts).
+  skipProxyUrlNormalize: true,
   // The design system site is a static page in public/designsystem/. Serve
   // it at /designsystem as well as /designsystem/index.html.
   async rewrites() {

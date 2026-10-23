@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GET } from '@/app/pools/[id]/pnl/[tx]/[log]/[state]/image.png/route';
 import * as page from '@/app/pools/[id]/pnl/[tx]/[log]/[state]/page';
-import { AVATAR_VISITOR_PER_MINUTE, CARD_LOADS_PER_SECOND } from '@/lib/avatar-budget';
+import { AVATAR_VISITOR_PER_MINUTE, CARD_LOAD_WINDOW_MS, CARD_LOADS_PER_WINDOW } from '@/lib/avatar-budget';
 import { proxy } from '@/proxy';
 
 import { MAKO_ADDRESS, makoAbi, MarketType, Outcome, type MarketWithId } from '../contract';
@@ -139,14 +139,14 @@ describe('a flood of well-formed, made-up card URLs', () => {
   it('stops reaching the chain at the site-wide cap, from any number of visitors, and the refusals are not cached', async () => {
     const res = [];
     for (let i = 0; i < 50; i++) res.push(await image(madeUp(i), '', `198.51.100.${i}`));
-    expect(rpc.receipts).toBe(CARD_LOADS_PER_SECOND);
-    expect(rpc.pools).toBe(CARD_LOADS_PER_SECOND);
-    const refused = res.slice(CARD_LOADS_PER_SECOND);
+    expect(rpc.receipts).toBe(CARD_LOADS_PER_WINDOW);
+    expect(rpc.pools).toBe(CARD_LOADS_PER_WINDOW);
+    const refused = res.slice(CARD_LOADS_PER_WINDOW);
     expect(refused.every((r) => r.status === 429 && r.headers.get('cache-control') === 'no-store')).toBe(true);
-    // The window passes: the next second has its budget again.
-    store.now += 1_000;
+    // The window passes: the next window has its budget again.
+    store.now += CARD_LOAD_WINDOW_MS;
     await image(madeUp(99), '', '198.51.100.99');
-    expect(rpc.receipts).toBe(CARD_LOADS_PER_SECOND + 1);
+    expect(rpc.receipts).toBe(CARD_LOADS_PER_WINDOW + 1);
   });
 
   it('spends no RPC call for a visitor over its own limit, with site-wide budget to spare', async () => {
@@ -174,7 +174,7 @@ describe('a flood of well-formed, made-up card URLs', () => {
     }
     // vitest has no React request scope, so cache() does not share the load here as it does in the app: each call
     // reserves on its own, and still none past the cap reaches the chain.
-    expect(rpc.receipts).toBe(CARD_LOADS_PER_SECOND);
+    expect(rpc.receipts).toBe(CARD_LOADS_PER_WINDOW);
   });
 });
 
@@ -225,5 +225,23 @@ describe('Proxy, which sees the query before Next strips any key', () => {
   it('lets the canonical image, and the card page with a query (a tracking tag on a shared link), through', async () => {
     expect((await at(IMG)).headers.get('x-middleware-next')).toBe('1');
     expect((await at(`/pools/138/pnl/${TX}/5/result?utm_source=x`)).headers.get('x-middleware-next')).toBe('1');
+  });
+
+  it.each([[`/pools/1%338/pnl/${TX}/5/result`], [`/pools/138/pnl/%30x${TX.slice(2)}/5/placed`], [`/pools/138/pnl/${TX}/5/resul%74/image.png`], [`/pools/138/pnl/${TX}/5/result/image.png?`]])(
+    'refuses %s, another spelling of a card URL: 404, not cached',
+    async (path) => {
+      // As next.config.ts's skipProxyUrlNormalize makes it in the app: req.url is the URL as received.
+      vi.stubEnv('__NEXT_NO_MIDDLEWARE_URL_NORMALIZE', '1');
+      const res = await at(path);
+      vi.unstubAllEnvs();
+      expect(res.status).toBe(404);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(res.headers.get('x-middleware-next')).toBeNull();
+    },
+  );
+
+  it('gets the URL as received only while next.config.ts sets skipProxyUrlNormalize', async () => {
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync('next.config.ts', 'utf8')).toMatch(/^\s*skipProxyUrlNormalize: true,$/m);
   });
 });

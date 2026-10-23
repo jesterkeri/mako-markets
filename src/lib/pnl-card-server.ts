@@ -41,18 +41,20 @@ export type CardBettor = { address: `0x${string}`; isYes: boolean; amount: bigin
 export type LoadedCard =
   | { ok: true; state: CardState; card: ShareCard; bettor: CardBettor; poolId: bigint; displayName: string | null; storedPhoto: string | null }
   // unavailable: the chain could not be read just now (429, timeout); like refused, it says nothing about the card.
-  // not_yet: a result link for a pool not settled in a finalized block yet. settled: a bet placed link for a pool that
-  // reads as settled at the latest block (the page sends it on to the result); not final, a reorg can undo it.
+  // not_yet: a result link for a pool not settled in a finalized block yet, or a bet placed link whose receipt the
+  // server's RPC node has not seen yet. settled: a bet placed link for a pool that reads as settled at the latest block
+  // (the page sends it on to the result); not final, a reorg can undo it.
   | { ok: false; reason: 'not_found' | 'not_yet' | 'settled' | 'refused' | 'unavailable' };
 
 /// The BetPlaced log at `logIndex` of `tx`, if it is a bet on `poolId` emitted by the live contract; null when the
-/// chain says it is not; 'unavailable' when the chain could not be asked (only a missing receipt means "no such bet").
-export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Promise<CardBettor | null | 'unavailable'> {
+/// receipt says it is not; 'no_receipt' when the node has no receipt for `tx` (made up, or not seen by this node yet);
+/// 'unavailable' when the chain could not be asked.
+export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Promise<CardBettor | null | 'no_receipt' | 'unavailable'> {
   let receipt;
   try {
     receipt = await shareClient().getTransactionReceipt({ hash: tx });
   } catch (e) {
-    return e instanceof TransactionReceiptNotFoundError ? null : 'unavailable';
+    return e instanceof TransactionReceiptNotFoundError ? 'no_receipt' : 'unavailable';
   }
   if (receipt.status !== 'success') return null;
   const log = receipt.logs.find((l) => l.logIndex === logIndex);
@@ -89,6 +91,10 @@ export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: strin
   // close), so the bet's receipt is final too.
   const [bettor, market] = await Promise.all([readBetLog(poolId, txRaw as Hex, Number(logRaw)), readPoolForShare(poolId, state === 'result' ? 'finalized' : 'latest')]);
   if (bettor === 'unavailable') return { ok: false, reason: 'unavailable' };
+  // The bet confirmation offers Share as soon as the wallet's RPC has the receipt, and the server's node can be a block
+  // behind it: a bet placed link with no receipt yet is not_yet, never cached. A result link's bet came before a
+  // settlement in a finalized block, so its receipt is final: none means no such bet.
+  if (bettor === 'no_receipt') return { ok: false, reason: state === 'placed' ? 'not_yet' : 'not_found' };
   if (!bettor) return { ok: false, reason: 'not_found' };
   // The bet's own log proves the pool exists, so no pool here means the read failed, not a missing pool.
   if (!market) return { ok: false, reason: 'unavailable' };

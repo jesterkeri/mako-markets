@@ -97,6 +97,15 @@ describe('a card URL carries its state', () => {
     expect(chain.reads).toEqual(['latest']);
   });
 
+  it('a bet placed link whose receipt has no bet at that log is still a 404 cached a minute (the receipt is there)', async () => {
+    chain.latest = OPEN;
+    const { GET } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/image.png/route');
+    const res = await GET(new Request(`http://localhost/pools/138/pnl/${TX}/6/placed/image.png`), { params: Promise.resolve({ id: '138', tx: TX, log: '6', state: 'placed' }) });
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
+    expect(drawn.variants).toEqual([]);
+  });
+
   it('stops drawing the bet placed card once the pool settles, without caching the 404 (latest is not final)', async () => {
     chain.latest = SETTLED;
     const res = await image('placed');

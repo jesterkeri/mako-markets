@@ -60,11 +60,14 @@ export function reserveAvatarVisitor(ip: string): Promise<boolean> {
 // card image passes this after its format check and before its first RPC call, site-wide and across instances, in the
 // same store and script. shareClient reads MONAD_RPC_URL, else the public Monad RPC (about 15 requests a second, shared
 // with the rest of the app); one load makes at most 3 calls (receipt, pool, and the bet's block for a bet placed card).
-// Window of one second, so a burst cannot spend a minute's worth at once.
-// 2 loads a second x 3 calls = at most 6 RPC calls a second from cards, 40% of ~15, leaving ~9 for the rest of the app.
-export const CARD_LOADS_PER_SECOND = 2;
+// A window of three seconds: one viewing of a bet placed link whose pool has settled is 3 loads within a second (the
+// page, its redirect to the result page, and the image), so a one-second window of 2 refused one viewer's image.
+// 6 loads in 3 s = 2 a second on average x 3 calls = 6 RPC calls a second, 40% of ~15; the worst burst is 6 x 3 = 18
+// calls at once (36 across a window boundary), and a 429 from the RPC is `unavailable`, a 503 with no-store.
+export const CARD_LOADS_PER_WINDOW = 6;
+export const CARD_LOAD_WINDOW_MS = 3_000;
 
-/// Reserve one share card load in the site-wide second: true when it may read the chain. Fails closed like the others.
+/// Reserve one share card load in the site-wide window: true when it may read the chain. Fails closed like the others.
 export function reserveCardLoad(): Promise<boolean> {
-  return reserve('mako:card:load', CARD_LOADS_PER_SECOND, 1_000);
+  return reserve('mako:card:load', CARD_LOADS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
 }

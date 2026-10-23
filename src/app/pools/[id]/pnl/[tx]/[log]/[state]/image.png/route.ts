@@ -27,9 +27,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id, tx, log, state } = await params;
   const c = await loadCard(id, tx, log, state, visitorIp(req));
   // A refusal (over the visitor limit or the site-wide budget, or the store down) is about the caller, an unavailable
-  // chain says nothing about the card, a result not final yet soon will be, and a bet placed link whose pool reads as
-  // settled only at the latest block can be undone by a reorg (Codex SHARE_CARDS R1 F4): none of them is cached, so no
-  // viewer or crawler keeps a missing image.
+  // chain says nothing about the card, a result not final yet (or a bet the server's node has not seen yet) soon will
+  // be, and a bet placed link whose pool reads as settled only at the latest block can be undone by a reorg (Codex
+  // SHARE_CARDS R1 F4): none of them is cached, so no viewer or crawler keeps a missing image.
   if (!c.ok) {
     const status = c.reason === 'refused' ? 429 : c.reason === 'unavailable' ? 503 : 404;
     return nothing(status, c.reason === 'not_found' ? MINUTE : 'no-store');
