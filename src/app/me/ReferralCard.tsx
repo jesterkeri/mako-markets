@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { COMPETITION_COPY, referralProgress, type ReferrerError } from '@/lib/competition/config';
 import { referralCode, referralLink } from '@/lib/ref-tag';
@@ -68,6 +68,8 @@ export function ReferralCard({ account, variant }: { account: `0x${string}`; var
 function InviterField() {
   const qc = useQueryClient();
   const [value, setValue] = useState('');
+  // Desktop and mobile are both mounted (the shell switches them by width), so each field needs its own id.
+  const id = useId();
   const save = useMutation({
     mutationFn: async (code: string) => {
       const res = await fetch('/api/user/referrer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
@@ -86,12 +88,12 @@ function InviterField() {
       }}
       style={{ marginTop: 12, paddingTop: 12, boxShadow: 'inset 0 1px 0 var(--line)' }}
     >
-      <label htmlFor="inviter-code" style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>
+      <label htmlFor={id} style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>
         {COPY.enterLabel}
       </label>
       <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
         <input
-          id="inviter-code"
+          id={id}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           autoComplete="off"
