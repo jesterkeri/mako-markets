@@ -4,7 +4,7 @@ import { cache } from 'react';
 import { decodeEventLog, getAddress, TransactionReceiptNotFoundError, type Hex } from 'viem';
 
 import { db } from '@/db/client';
-import { reserveAvatarFetch, reserveAvatarVisitor } from '@/lib/avatar-budget';
+import { reserveAvatarFetch, reserveAvatarVisitor, reserveCardLoad } from '@/lib/avatar-budget';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS, makoAbi, MarketType } from '@/lib/contract';
 import { initialOf } from '@/lib/leaderboard/board-view';
@@ -18,12 +18,13 @@ import { formatAddress } from '@/lib/user-display';
 
 // One bet's share card (/pools/<id>/pnl/<tx>/<log>/<state>): public by URL, because Share to X can only post a link
 // and the bet is public on chain. The bet is identified by its BetPlaced log, verified on chain, never by anything the
-// URL claims. Checks run cheapest first, so a made-up URL never reaches the database:
+// URL claims. Checks run cheapest first, so a made-up URL never reaches the chain unmetered, nor the database:
 //   1. format (canonical lower-case hash, small log index, pool id, a known state),
-//   2. chain: the receipt's log at that index, emitted by the live V4 contract, decoded as BetPlaced for this pool;
+//   2. limits, before any RPC call (Codex SHARE_CARDS R1 F1): the per-visitor limit /api/avatar uses (by IP hash), then
+//      the site-wide card load budget (avatar-budget.ts reserveCardLoad), both in Upstash and both failing closed,
+//   3. chain: the receipt's log at that index, emitted by the live V4 contract, decoded as BetPlaced for this pool;
 //      then the pool must be in the link's state. "placed": not settled yet (read at the latest block). "result":
-//      settled YES or NO in the last finalized block, so the result on it is final (refunded: no card),
-//   3. the per-visitor limit /api/avatar uses (by IP hash, in Upstash),
+//      settled YES or NO in the last finalized block, so the result's figures are final (refunded: no card),
 //   4. database: only a Mako Market account's bet has a card.
 //
 // Identity: the card shows only what the account's public profile (/u/<address>) already shows next to that address,
@@ -31,7 +32,8 @@ import { formatAddress } from '@/lib/user-display';
 // profile's resolveLabels reads (the stored photo URL stays on the server; the card embeds the image).
 
 const TX = /^0x[0-9a-f]{64}$/;
-// Canonical forms only (no leading zeros), so one bet has exactly one URL and one cache entry.
+// Canonical forms only (no leading zeros), so one bet has exactly one URL and one cache entry (the image route also
+// refuses any query string).
 const LOG = /^(0|[1-9]\d{0,4})$/;
 
 export type CardBettor = { address: `0x${string}`; isYes: boolean; amount: bigint; block: bigint };
@@ -40,7 +42,7 @@ export type LoadedCard =
   | { ok: true; state: CardState; card: ShareCard; bettor: CardBettor; poolId: bigint; displayName: string | null; storedPhoto: string | null }
   // unavailable: the chain could not be read just now (429, timeout); like refused, it says nothing about the card.
   // not_yet: a result link for a pool not settled in a finalized block yet. settled: a bet placed link for a pool that
-  // has settled since (the page sends it on to the result).
+  // reads as settled at the latest block (the page sends it on to the result); not final, a reorg can undo it.
   | { ok: false; reason: 'not_found' | 'not_yet' | 'settled' | 'refused' | 'unavailable' };
 
 /// The BetPlaced log at `logIndex` of `tx`, if it is a bet on `poolId` emitted by the live contract; null when the
@@ -81,6 +83,8 @@ export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: strin
   const poolId = poolIdFrom(idRaw);
   if (poolId === null || idRaw !== poolId.toString() || !TX.test(txRaw) || !LOG.test(logRaw) || !isState(stateRaw)) return { ok: false, reason: 'not_found' };
   const state = stateRaw;
+  // Over this visitor's limit or the site-wide budget, or the store down: refused before the first RPC call.
+  if (!(await reserveAvatarVisitor(ip)) || !(await reserveCardLoad())) return { ok: false, reason: 'refused' };
   // A pool settled in a finalized block was settled after every bet on it (bets stop at betting close, before
   // close), so the bet's receipt is final too.
   const [bettor, market] = await Promise.all([readBetLog(poolId, txRaw as Hex, Number(logRaw)), readPoolForShare(poolId, state === 'result' ? 'finalized' : 'latest')]);
@@ -100,7 +104,6 @@ export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: strin
     state === 'placed' ? placedCard(market, bettor, labels, betAt, nowSec) : pnlCard(market, bettor, labels);
   // Labels only change the side's name, so the card check runs on the default ones first: no card, no database.
   if (!draw({ yes: 'YES', no: 'NO' })) return { ok: false, reason: 'not_found' };
-  if (!(await reserveAvatarVisitor(ip))) return { ok: false, reason: 'refused' };
   if (!(await isRegistered(bettor.address))) return { ok: false, reason: 'not_found' };
   const [identity, labels] = await Promise.all([
     resolveStoredIdentities(db, [bettor.address], MONAD_TESTNET_ID),

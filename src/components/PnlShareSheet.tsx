@@ -7,7 +7,7 @@ import { SheetFrame, Svg } from '@/components/ConfirmSheet';
 import type { MeBetWire } from '@/app/api/me/bets/route';
 import { monadTestnet } from '@/lib/chain';
 import type { MePosition } from '@/lib/me-stats';
-import { betLogIndex, cardPath, type CardState } from '@/lib/pnl-card';
+import { betLogIndex, cardImage, cardPath, type CardState } from '@/lib/pnl-card';
 import { shareText } from '@/lib/pool-invite';
 import { dayTime } from '@/lib/pool-rules';
 import { usdc2 } from '@/lib/pool-list';
@@ -179,7 +179,7 @@ function SheetShell({ title, onClose, children }: { title: string; onClose: () =
 function CardPreview({ page, question, fileName }: { page: string; question: string; fileName: string }) {
   const [done, setDone] = useState<string | null>(null);
   const [broken, setBroken] = useState(false);
-  const image = `${page}/opengraph-image`;
+  const image = cardImage(page);
 
   const pngBlob = async () => {
     const r = await fetch(image);

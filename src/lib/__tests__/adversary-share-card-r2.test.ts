@@ -75,6 +75,7 @@ vi.mock('@/db/client', () => ({ db: {} }));
 const budget = vi.hoisted(() => ({ fetchAllowed: false }));
 vi.mock('@/lib/avatar-budget', () => ({
   reserveAvatarVisitor: async () => true,
+  reserveCardLoad: async () => true,
   reserveAvatarFetch: async () => budget.fetchAllowed,
   visitorIp: () => '203.0.113.7',
 }));
@@ -97,8 +98,8 @@ vi.mock('@/lib/pnl-card-image', () => ({
 }));
 
 async function image(tx: string, log: string, state: string) {
-  const { default: Image } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/opengraph-image');
-  return Image({ params: Promise.resolve({ id: '138', tx, log, state }) });
+  const { GET } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/image.png/route');
+  return GET(new Request(`http://localhost/pools/138/pnl/${tx}/${log}/${state}/image.png`), { params: Promise.resolve({ id: '138', tx, log, state }) });
 }
 
 beforeEach(() => {

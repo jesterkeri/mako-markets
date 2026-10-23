@@ -123,6 +123,10 @@ top 166px: "Target locked" (mono, yellow) over the return % (result colour). The
 Bet placed is shown for an open position. After settlement, pick the variant from the result: payout > stake is a win, payout = 0 is a loss. Refunded or voided
 positions are not covered by this design; do not show a win or loss card for them.
 
+A win or loss card's figures are final: they come only from a pool settled in the last finalized block. The image is
+still cached a minute at most, because it carries the account's current name and photo, and a rename or a removed photo
+must show on the next render. Each card image has one URL, `<card page>/image.png`, and any query string on it is refused.
+
 ## Copy rules
 
 - The brand is "Mako Market" (singular). Never "we", "our" or "us" on the card.

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
 import { visitorIp } from '@/lib/avatar-budget';
-import { cardPath, type ShareCard } from '@/lib/pnl-card';
+import { cardImage, cardPath, type ShareCard } from '@/lib/pnl-card';
 import { loadCard } from '@/lib/pnl-card-server';
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://makomarket.xyz').replace(/\/+$/, '');
@@ -21,14 +21,14 @@ const summary = (card: ShareCard) =>
     ? `My call: ${card.side}.${card.est ? ` ${card.est.ret.sign}${card.est.ret.text} est. return if right.` : ''}`
     : `${card.ret.sign}${card.ret.text} on ${card.side}.`;
 
-/// A shared card link unfurls as the card itself (./opengraph-image.tsx).
+/// A shared card link unfurls as the card itself (./image.png/route.ts), at the one URL that route serves.
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { id, tx, log, c } = await load(params);
   if (!c.ok) return { title: 'Share card · Mako Market Beta' };
   const title = `${c.card.question} · Mako Market Beta`;
   const description = `${summary(c.card)} A prediction pool on Mako Market, on Monad testnet.`;
   const url = `${APP_URL}${cardPath(id, tx, log, c.state)}`;
-  const image = `${url}/opengraph-image`;
+  const image = cardImage(url);
   return {
     title,
     description,
@@ -38,7 +38,9 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 }
 
 /// /pools/[id]/pnl/[tx]/[log]/[state]: one bet's share card, the page a shared card links to, with a way into the pool.
-/// A bet placed link whose pool has settled since goes on to that bet's result.
+/// A bet placed link whose pool has settled since goes on to that bet's result. That settlement is read at the latest
+/// block, so a reorg can undo it (Codex SHARE_CARDS R1 F4): the page reads headers(), so Next sends it, the redirect
+/// included, as `private, no-cache, no-store`, and no shared cache keeps the redirect.
 export default async function ShareCardPage({ params }: { params: Params }) {
   const { id, tx, log, c } = await load(params);
   if (!c.ok && c.reason === 'settled') redirect(cardPath(id, tx, log, 'result'));
@@ -47,7 +49,7 @@ export default async function ShareCardPage({ params }: { params: Params }) {
     <section style={{ padding: '24px 16px', maxWidth: 1040, margin: '0 auto', color: 'var(--mako-canvas-fg)' }}>
       {c.ok ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={`${cardPath(id, tx, log, c.state)}/opengraph-image`} width={1600} height={900} alt={c.card.question} style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 16 }} />
+        <img src={cardImage(cardPath(id, tx, log, c.state))} width={1600} height={900} alt={c.card.question} style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 16 }} />
       ) : (
         <p style={{ fontFamily: 'var(--mako-font-mono)', fontSize: 14 }}>
           {c.reason === 'refused' ? 'Too many requests just now. Try again in a minute.' : 'The chain could not be read just now. Try again in a minute.'}

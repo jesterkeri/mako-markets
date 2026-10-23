@@ -47,6 +47,7 @@ vi.mock('@/lib/pool-share', () => ({
 vi.mock('@/db/client', () => ({ db: {} }));
 vi.mock('@/lib/avatar-budget', () => ({
   reserveAvatarVisitor: vi.fn(async () => true),
+  reserveCardLoad: vi.fn(async () => true),
   reserveAvatarFetch: vi.fn(async () => false),
   visitorIp: () => '203.0.113.7',
 }));
@@ -66,8 +67,8 @@ const betLog = () => ({
 });
 
 async function image() {
-  const { default: Image } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/opengraph-image');
-  return Image({ params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'result' }) });
+  const { GET } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/image.png/route');
+  return GET(new Request(`http://localhost/pools/138/pnl/${TX}/5/result/image.png`), { params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'result' }) });
 }
 
 describe('card image caching when the chain read fails', () => {

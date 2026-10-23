@@ -62,7 +62,7 @@ vi.mock('@/lib/pool-share', () => ({
   }),
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
-vi.mock('@/lib/avatar-budget', () => ({ reserveAvatarVisitor: async () => true, reserveAvatarFetch: async () => false, visitorIp: () => '203.0.113.7' }));
+vi.mock('@/lib/avatar-budget', () => ({ reserveAvatarVisitor: async () => true, reserveCardLoad: async () => true, reserveAvatarFetch: async () => false, visitorIp: () => '203.0.113.7' }));
 vi.mock('@/lib/leaderboard/identity', () => ({ resolveStoredIdentities: async () => new Map() }));
 vi.mock('@/lib/leaderboard/profile', () => ({ isRegistered: async () => true }));
 vi.mock('@/lib/mako-labels-server', () => ({ getMakoLabels: async () => null }));
@@ -78,8 +78,8 @@ vi.mock('@/lib/pnl-card-image', () => ({
 }));
 
 async function image(state: string) {
-  const { default: Image } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/opengraph-image');
-  return Image({ params: Promise.resolve({ id: '138', tx: TX, log: '5', state }) });
+  const { GET } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/image.png/route');
+  return GET(new Request(`http://localhost/pools/138/pnl/${TX}/5/${state}/image.png`), { params: Promise.resolve({ id: '138', tx: TX, log: '5', state }) });
 }
 
 beforeEach(() => {
@@ -97,21 +97,22 @@ describe('a card URL carries its state', () => {
     expect(chain.reads).toEqual(['latest']);
   });
 
-  it('stops drawing the bet placed card once the pool settles', async () => {
+  it('stops drawing the bet placed card once the pool settles, without caching the 404 (latest is not final)', async () => {
     chain.latest = SETTLED;
     const res = await image('placed');
     expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toBe('no-store');
     expect(drawn.variants).toEqual([]);
   });
 
-  it('draws the result only from the finalized block, and caches it for good', async () => {
+  it('draws the result only from the finalized block, cached a minute (it carries the current name and photo)', async () => {
     chain.latest = SETTLED;
     chain.finalized = SETTLED;
     const res = await image('result');
     expect(res.status).toBe(200);
     expect(drawn.variants).toEqual(['win']);
     expect(chain.reads).toEqual(['finalized']);
-    expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, s-maxage=31536000, immutable');
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
   });
 
   it('refuses a result settled at the latest block but not yet finalized, without caching the refusal', async () => {
@@ -133,6 +134,29 @@ describe('a card URL carries its state', () => {
     const { default: Page } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/page');
     const err = await Page({ params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'placed' }) }).then(() => null, (e: unknown) => e);
     expect((err as { digest?: string } | null)?.digest).toContain(`/pools/138/pnl/${TX}/5/result`);
+  });
+
+  it('a settlement seen only at the latest block and then reorged away: the 404 is not kept, the card draws again', async () => {
+    chain.latest = SETTLED;
+    const gone = await image('placed');
+    expect(gone.status).toBe(404);
+    expect(gone.headers.get('cache-control')).toBe('no-store');
+    chain.latest = OPEN; // the settling block was reorged out; the pool is open again
+    const back = await image('placed');
+    expect(back.status).toBe(200);
+    expect(back.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
+    expect(drawn.variants).toEqual(['placed']);
+  });
+
+  it('the page follows the same reorg: on to the result while settled at latest, the card again once open', async () => {
+    const { default: Page } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/page');
+    const open = () => Page({ params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'placed' }) });
+    chain.latest = SETTLED;
+    const err = await open().then(() => null, (e: unknown) => e);
+    expect((err as { digest?: string } | null)?.digest).toContain(`/pools/138/pnl/${TX}/5/result`);
+    chain.latest = OPEN;
+    const page = (await open()) as { props: { children: { props: { src?: string } }[] } };
+    expect(page.props.children[0].props.src).toBe(`/pools/138/pnl/${TX}/5/placed/image.png`);
   });
 
   it('knows no other state', async () => {

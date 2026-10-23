@@ -26,9 +26,9 @@ const SCRIPT =
   "local n = redis.call('INCR', KEYS[1]) if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end " +
   'if n > tonumber(ARGV[2]) then return -1 end return n';
 
-async function reserve(key: string, cap: number): Promise<boolean> {
+async function reserve(key: string, cap: number, windowMs = 60_000): Promise<boolean> {
   try {
-    const n = await upstashCommand(['EVAL', SCRIPT, 1, key, 60_000, cap]);
+    const n = await upstashCommand(['EVAL', SCRIPT, 1, key, windowMs, cap]);
     // The script always counts this call, so anything but a whole number from 1 up to the cap (or -1, over the cap) is
     // a broken reply: refuse, never read it as room to spare.
     return typeof n === 'number' && Number.isSafeInteger(n) && n >= 1 && n <= cap;
@@ -54,4 +54,17 @@ export function visitorIp(req: { headers: Headers }): string {
 /// Reserve one request in this visitor's minute: true when it may go ahead. The IP is stored only as a hash.
 export function reserveAvatarVisitor(ip: string): Promise<boolean> {
   return reserve(`mako:avatar:ip:${createHash('sha256').update(ip).digest('hex')}`, AVATAR_VISITOR_PER_MINUTE);
+}
+
+// Share card loads that reach the chain (pnl-card-server.ts loadCard, Codex SHARE_CARDS R1 F1): every card page and
+// card image passes this after its format check and before its first RPC call, site-wide and across instances, in the
+// same store and script. shareClient reads MONAD_RPC_URL, else the public Monad RPC (about 15 requests a second, shared
+// with the rest of the app); one load makes at most 3 calls (receipt, pool, and the bet's block for a bet placed card).
+// Window of one second, so a burst cannot spend a minute's worth at once.
+// 2 loads a second x 3 calls = at most 6 RPC calls a second from cards, 40% of ~15, leaving ~9 for the rest of the app.
+export const CARD_LOADS_PER_SECOND = 2;
+
+/// Reserve one share card load in the site-wide second: true when it may read the chain. Fails closed like the others.
+export function reserveCardLoad(): Promise<boolean> {
+  return reserve('mako:card:load', CARD_LOADS_PER_SECOND, 1_000);
 }

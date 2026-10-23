@@ -189,9 +189,12 @@ export function placedCard(m: MarketWithId, bet: CardBet, labels: { yes: string;
   };
 }
 
-/// One bet's card page; its image is this path + "/opengraph-image". The hash is lower-case, the one form served.
+/// One bet's card page. The hash is lower-case, the one form served.
 export const cardPath = (poolId: bigint | string, tx: string, logIndex: number | string, state: CardState) =>
   `/pools/${poolId.toString()}/pnl/${tx.toLowerCase()}/${logIndex.toString()}/${state}`;
+
+/// A card page's image, its one canonical URL (no query string is ever served): the unfurl, the page and the share sheet.
+export const cardImage = (page: string) => `${page}/image.png`;
 
 type ReceiptLog = { address: string; logIndex: number | null; data: Hex; topics: readonly Hex[] };
 
