@@ -21,6 +21,7 @@ export async function competitionDb(): Promise<TestDb> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       email text,
       wallet_address text,
+      magic_eoa text,
       display_name text,
       avatar_url text,
       ref text,
@@ -34,11 +35,11 @@ export async function competitionDb(): Promise<TestDb> {
 /// A wallet account (lowercase wallet_address), or an email account with a CHECKSUMMED Safe as production stores it.
 export async function account(
   t: TestDb,
-  o: { wallet?: string; safe?: string; ref?: string | null; createdAt?: Date; name?: string },
+  o: { wallet?: string; safe?: string; eoa?: string; ref?: string | null; createdAt?: Date; name?: string },
 ): Promise<string> {
   const res = await t.client.query<{ id: string }>(
-    `INSERT INTO users (email, wallet_address, ref, created_at, display_name) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [o.safe ? 'never-selected@example.com' : null, o.wallet ?? null, o.ref ?? null, (o.createdAt ?? at(1)).toISOString(), o.name ?? null],
+    `INSERT INTO users (email, wallet_address, magic_eoa, ref, created_at, display_name) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [o.safe ? 'never-selected@example.com' : null, o.wallet ?? null, o.eoa ?? null, o.ref ?? null, (o.createdAt ?? at(1)).toISOString(), o.name ?? null],
   );
   const id = res.rows[0].id;
   if (o.safe) await t.client.query(`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES ($1, $2, $3)`, [id, CHAIN, o.safe]);

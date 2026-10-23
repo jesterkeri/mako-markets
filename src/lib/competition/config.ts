@@ -1,9 +1,10 @@
 // The $100 trading competition (REFERRAL_COMPETITION_PLAN r1 + owner answers, 2026-10-23): its window, its rules and
 // every word it shows. Browser-safe: the standings page, the leaderboard link and the Me card all read it.
 
-// MERGE-TODO: placeholder. Set to the hour this reaches main, rounded UP to the next full hour UTC (owner Q1).
-// END follows from it, so this is the only value to change at merge.
-export const COMPETITION_START = new Date('2026-10-23T20:00:00Z');
+// Owner decision 2026-10-23: the competition starts at noon UTC on Saturday 24 October 2026 and runs 14 days. It must
+// be after the production release; RELEASE_RUNBOOK checks the live page shows it before the promote. END follows from
+// it, so a slipped release changes only this value, in a reviewed commit.
+export const COMPETITION_START = new Date('2026-10-24T12:00:00Z');
 export const COMPETITION_END = new Date(COMPETITION_START.getTime() + 14 * 24 * 60 * 60 * 1000);
 
 /// Qualifying referrals (a friend's new account through the link, plus one bet) needed to enter.
@@ -22,7 +23,7 @@ export const COMPETITION_COPY = {
   title: '$100 trading competition',
   rules: [
     `Runs from ${fmtUtc(COMPETITION_START)} to ${fmtUtc(COMPETITION_END)} UTC.`,
-    'To enter, invite 2 friends with your link on the Me page. A friend counts once they create a Mako Market account through your link and place a bet.',
+    'To enter, invite 2 friends with your link or code from the Me page. A friend counts once they create a Mako Market account through your link, or add your code on their Me page, and place a bet, both during the competition. Link and code are the same invite.',
     'Ranked by profit during the competition: winnings and refunds claimed minus stakes placed, both between the dates above. Only pools you first bet on after the start count.',
     'Claim your winnings before the end. Unclaimed winnings do not count.',
     'You need at least 5 settled pools to be ranked. Ties go to the higher win rate: settled pools won out of settled pools played. Refunded pools do not count.',

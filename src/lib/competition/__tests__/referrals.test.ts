@@ -51,6 +51,15 @@ describe('setReferrer', () => {
     expect(await refOf(t, old)).toBeNull();
   });
 
+  it('refuses the same person through the embedded EOA as "own" (Codex referral R1 F2)', async () => {
+    t = await competitionDb();
+    const S = addr('d1');
+    const E = addr('d2');
+    await account(t, { safe: getAddress(S), eoa: getAddress(E) });
+    const twin = await account(t, { wallet: E, createdAt: at(0) });
+    expect(await setReferrer(t.db as never, twin, codeOf(S))).toEqual({ ok: false, error: 'own' });
+  });
+
   it('writes once: a second call, or a concurrent one, is refused and the first code stays', async () => {
     t = await competitionDb();
     await account(t, { wallet: REF });
@@ -88,6 +97,7 @@ describe('referralCounts', () => {
     await event(t, { actor: addr('b3'), market: 1, kind: 'bet', amount: 100_000n, when: COMPETITION_END }); // too late
     await account(t, { wallet: `${REF.slice(0, 32)}ffffffffff`, ref: codeOf(REF) }); // self-referral
     await account(t, { wallet: addr('b4'), ref: codeOf(addr('c1')) }); // someone else's friend
+    await account(t, { wallet: addr('b5'), ref: codeOf(REF), createdAt: at(-1) }); // signed up before the start
     expect(await referralCounts(t.db as never, me, codeOf(REF))).toEqual({ joined: 3, qualified: 1, canAddInviter: true });
   });
 

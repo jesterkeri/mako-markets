@@ -53,7 +53,7 @@ describe('who is entered', () => {
     await account(t, { wallet, ref: codeOf(REF) });
     await account(t, { safe: getAddress(safe), ref: codeOf(REF) });
     await event(t, { actor: wallet, market: 1, kind: 'bet', amount: U, when: at(1) });
-    await event(t, { actor: safe, market: 1, kind: 'bet', amount: U / 10n, when: at(-100) }); // any bet before END counts
+    await event(t, { actor: safe, market: 1, kind: 'bet', amount: U / 10n, when: at(100) }); // any bet inside the window counts
     expect(entrants(await readPositions(t.db as never))).toEqual([REF]);
   });
 
@@ -81,6 +81,40 @@ describe('who is entered', () => {
     const twin = `${REF.slice(0, 32)}ffffffffff`;
     await account(t, { safe: getAddress(twin), ref: codeOf(REF) });
     await event(t, { actor: twin, market: 1, kind: 'bet', amount: U, when: at(1) });
+    expect(await readPositions(t.db as never)).toEqual([]);
+  });
+
+  it('a friend whose account or only bet is from before the start does not count (Codex referral R1 F1)', async () => {
+    t = await competitionDb();
+    await referrerWith(t, REF, 1);
+    // Created before the start, bet inside the window: no.
+    await account(t, { wallet: addr('c1'), ref: codeOf(REF), createdAt: at(-1) });
+    await event(t, { actor: addr('c1'), market: 1, kind: 'bet', amount: U, when: at(1) });
+    // Created after the start, but its only bet is from before it (a direct bet, then the sign-up): no.
+    await account(t, { wallet: addr('c2'), ref: codeOf(REF), createdAt: at(2) });
+    await event(t, { actor: addr('c2'), market: 1, kind: 'bet', amount: U, when: at(-1) });
+    expect(await readPositions(t.db as never)).toEqual([]);
+  });
+
+  it('the same person through the embedded EOA does not count, either way round (Codex referral R1 F2)', async () => {
+    t = await competitionDb();
+    // An email referrer (Safe S, embedded EOA E) and a wallet account signed in with E, using S's code.
+    const S = addr('d1');
+    const E = addr('d2');
+    await account(t, { safe: getAddress(S), eoa: getAddress(E) });
+    await account(t, { wallet: addr('f0'), ref: codeOf(S) });
+    await event(t, { actor: addr('f0'), market: 1, kind: 'bet', amount: U, when: at(1) });
+    await account(t, { wallet: E, ref: codeOf(S) });
+    await event(t, { actor: E, market: 1, kind: 'bet', amount: U, when: at(1) });
+    // A wallet referrer W and an email account whose embedded EOA is W, using W's code.
+    const W = addr('d3');
+    await account(t, { wallet: W });
+    await account(t, { wallet: addr('f1'), ref: codeOf(W) });
+    await event(t, { actor: addr('f1'), market: 1, kind: 'bet', amount: U, when: at(1) });
+    const twinSafe = addr('d4');
+    await account(t, { safe: getAddress(twinSafe), eoa: getAddress(W), ref: codeOf(W) });
+    await event(t, { actor: twinSafe, market: 1, kind: 'bet', amount: U, when: at(1) });
+    // Each referrer has one real friend and one twin: neither is entered.
     expect(await readPositions(t.db as never)).toEqual([]);
   });
 
