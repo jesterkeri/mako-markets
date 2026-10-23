@@ -35,6 +35,7 @@ import {
   type MeView,
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
+import { ReferralCard } from './ReferralCard';
 import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from './use-creator-totals';
 import { NAME_RESERVED, NAME_TAKEN, validateDisplayName } from './profile-rules';
 import { useNameCheck } from './use-name-check';
@@ -160,7 +161,10 @@ function Identity(v: MeView) {
           <span>· {emailAccount ? 'signed in with email · gas sponsored' : 'signed in with a wallet · you pay gas in MON'}</span>
         </div>
       </div>
-      <TestUsdc account={account} />
+      <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <TestUsdc account={account} />
+        <ReferralCard account={account} variant="desktop" />
+      </div>
     </div>
   );
 }
