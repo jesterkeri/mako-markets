@@ -65,9 +65,12 @@ describe('GET /api/notifications', () => {
     as('a');
     const r1 = await listNotifications(new Request('http://x/api/notifications?limit=20'));
     expect(r1.headers.get('cache-control')).toBe('private, no-store');
-    const p1 = (await r1.json()) as { items: { id: string; data: { poolId: string } }[]; next: string };
+    const p1 = (await r1.json()) as { items: { id: string; data: { poolId: string }; key: string }[]; next: string };
     expect(p1.items).toHaveLength(20);
     expect(p1.items[0].data.poolId).toBe('24');
+    // Each item's key is the cursor that starts just below it, in feed order (the list compares them, R3 F1).
+    expect(p1.items[19].key).toBe(p1.next);
+    expect(p1.items.every((it, i) => it.key.endsWith(`_${it.id}`) && (i === 0 || it.key < p1.items[i - 1].key))).toBe(true);
     const p2 = (await (await listNotifications(new Request(`http://x/api/notifications?limit=20&cursor=${p1.next}`))).json()) as { items: unknown[]; next: string | null };
     expect(p2.items).toHaveLength(5);
     expect(p2.next).toBeNull();

@@ -4,15 +4,17 @@ import { db } from '@/db/client';
 import { isUuid } from '@/lib/comments/validate';
 import { getUserSession } from '@/lib/user-session';
 
-// GET /api/notifications?cursor=<id>&limit=<1..30> -> { items: [{ id, kind, data, eventAt, read }], next }
+// GET /api/notifications?cursor=<id>&limit=<1..30> -> { items: [{ id, kind, data, eventAt, read, key }], next }
 // The signed-in user's notifications, newest first (#214, NOTIFICATIONS_PLAN r8 §3.5). Session only, and every
 // query is scoped by `user_id = session.userId`, so a cursor from another account matches nothing. Keyset on
 // (created_at, id): the cursor carries the last item's boundary itself, `<created_at to the microsecond, UTC>_<id>`,
 // never a row to look up, so an older page never repeats an item and a pruned or deleted cursor row does not end the
 // feed early. A row that rises above the cursor after the first page (a re-opened reply, plan §3.2(3)) or arrives
 // since is not on an older page: it is on the top page, which the list fetches again with every "Load more" and puts
-// at the top (components/notifications/NotificationList.tsx; Codex S1 code review R1 F1, R2). A cursor only bounds
-// the caller's own rows. `next` is null on the last page. Signed out: 401. Never cached.
+// at the top (components/notifications/NotificationList.tsx; Codex S1 code review R1 F1, R2, R3). Each item carries
+// its own boundary as `key` (the cursor that would start just below it), so the list can tell whether the top page
+// reached what it already showed. A cursor only bounds the caller's own rows. `next` is null on the last page.
+// Signed out: 401. Never cached.
 
 export const dynamic = 'force-dynamic';
 
@@ -60,6 +62,7 @@ export async function GET(req: Request) {
         data: r.data,
         eventAt: new Date(r.event_at).toISOString(),
         read: r.read_at !== null,
+        key: `${r.ca}_${r.id}`,
       })),
       next: rows.length > limit ? `${page[page.length - 1].ca}_${page[page.length - 1].id}` : null,
     },

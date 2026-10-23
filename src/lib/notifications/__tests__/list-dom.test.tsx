@@ -81,31 +81,133 @@ describe('NotificationList', () => {
     expect(await screen.findByText(/Nothing yet/)).toBeTruthy();
   });
 
-  it('"Load more" also brings up a reply re-opened above the cursor after the first page, without repeats (Codex S1 code review R2)', async () => {
+  /// A fake of GET /api/notifications that pages exactly as the route does (route.ts): newest first by key, `limit`
+  /// items, `next` = the last item's key when more exist, an older page strictly below the cursor. `bump` re-opens a
+  /// row or adds a new one at the top (created_at = now()). `failNext` fails the next GET whose cursor matches.
+  function feed(start: number) {
+    let clock = 0;
+    const key = () => `2026-10-22T10:00:00.${String(++clock).padStart(6, '0')}Z`;
     const id = (n: number) => `a0000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-    const item = (n: number, read = true) => ({ id: id(n), kind: 'reply', data: { poolId: String(n), count: 1 }, eventAt: '2026-10-22T10:00:00Z', read });
-    let reopened = false;
-    vi.stubGlobal('fetch', async (url: string, init?: { method?: string }) => {
-      if (init?.method === 'POST') return new Response(JSON.stringify({ updated: 1 }));
-      const cursor = new URL(url, 'http://x').searchParams.get('cursor');
-      // Before "Load more": page one = 9, 8, next = cursor; page two would hold 7 and R (= 1).
-      if (!cursor) return new Response(JSON.stringify({ items: reopened ? [item(1, false), item(9), item(8)] : [item(9), item(8)], next: 'c1' }));
-      // After R was re-opened it sits above the cursor, so the older page no longer holds it.
-      return new Response(JSON.stringify({ items: reopened ? [item(7)] : [item(7), item(1)], next: null }));
-    });
+    const rows = new Map<number, { ca: string; read: boolean }>();
+    for (let n = 1; n <= start; n++) rows.set(n, { ca: key(), read: true });
+    const posted: string[] = [];
+    const fails: Array<'top' | 'older'> = [];
+    const fetchFake = async (url: string, init?: { method?: string; body?: string }) => {
+      if (init?.method === 'POST') {
+        posted.push(...(JSON.parse(init.body!) as { ids: string[] }).ids);
+        return new Response(JSON.stringify({ updated: 1 }));
+      }
+      const q = new URL(url, 'http://x').searchParams;
+      const cursor = q.get('cursor');
+      const limit = Number(q.get('limit'));
+      const which = cursor ? 'older' : 'top';
+      const f = fails.indexOf(which);
+      if (f >= 0) {
+        fails.splice(f, 1);
+        return new Response('no', { status: 500 });
+      }
+      const all = [...rows].map(([n, r]) => ({ n, r, k: `${r.ca}_${id(n)}` })).sort((a, b) => (a.k < b.k ? 1 : -1));
+      const below = cursor ? all.filter((x) => x.k < cursor) : all;
+      const page = below.slice(0, limit);
+      return new Response(
+        JSON.stringify({
+          items: page.map((x) => ({ id: id(x.n), kind: 'reply', data: { poolId: String(x.n), count: 1 }, eventAt: '2026-10-22T10:00:00Z', read: x.r.read, key: x.k })),
+          next: below.length > limit ? page[page.length - 1].k : null,
+        }),
+      );
+    };
+    return {
+      fetchFake,
+      posted,
+      id,
+      bump: (n: number) => rows.set(n, { ca: key(), read: false }),
+      unread: (n: number) => void (rows.get(n)!.read = false),
+      failNext: (which: 'top' | 'older') => fails.push(which),
+      all: () => [...rows.keys()],
+    };
+  }
+  const shownPools = () => screen.queryAllByRole('link').map((a) => Number(a.getAttribute('href')!.split('/').pop()));
+  const mount = (limit: number) =>
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <NotificationList limit={2} paged={true} />
+        <NotificationList limit={limit} paged={true} />
       </QueryClientProvider>,
     );
-    await screen.findByText('Load more');
-    reopened = true;
+  const clickMore = async () => {
+    const before = shownPools().join(',');
     screen.getByText('Load more').click();
-    await waitFor(() => expect(screen.queryByText('Load more')).toBeNull());
-    const pools = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
-    // R (pool 1) is shown, at the top, and nothing appears twice.
-    expect(pools).toHaveLength(4);
-    expect(new Set(pools).size).toBe(4);
-    expect(pools[0]).toContain('1');
+    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+    return before;
+  };
+  const drain = async () => {
+    for (let i = 0; i < 50 && screen.queryByText('Load more'); i++) await clickMore();
+  };
+
+  it('"Load more" also brings up a reply re-opened above the cursor after the first page, without repeats (Codex S1 code review R2)', async () => {
+    const f = feed(4); // newest first: 4, 3 | 2, 1
+    vi.stubGlobal('fetch', f.fetchFake);
+    mount(2);
+    await screen.findByText('Load more');
+    f.bump(1); // re-opened: 1 now sorts above the cursor
+    await drain();
+    const pools = shownPools();
+    expect(pools[0]).toBe(1);
+    expect(pools.slice().sort()).toEqual([1, 2, 3, 4]);
   });
+
+  it('more arrivals and re-opens than one top page holds are all shown, exactly once (Codex S1 code review R3 F1)', async () => {
+    const f = feed(6); // 6, 5 | 4, 3 | 2, 1
+    vi.stubGlobal('fetch', f.fetchFake);
+    mount(2);
+    await screen.findByText('Load more');
+    // limit + 1 = 3 rows rise above everything shown: two re-opened from below the cursor, one new.
+    f.bump(2);
+    f.bump(1);
+    f.bump(7);
+    await drain();
+    const pools = shownPools();
+    expect(pools.length).toBe(new Set(pools).size);
+    expect(pools.slice().sort()).toEqual(f.all().sort());
+  });
+
+  it('any mix of arrivals and re-opens between clicks, then paging to the end: every row is shown exactly once', async () => {
+    let seed = 7;
+    const rand = (k: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % k);
+    for (let run = 0; run < 12; run++) {
+      const f = feed(9);
+      vi.stubGlobal('fetch', f.fetchFake);
+      const { unmount } = mount(3);
+      await screen.findByText('Load more');
+      let next = 10;
+      for (let i = 0; i < 8 && screen.queryByText('Load more'); i++) {
+        const burst = rand(6); // 0..5: up to limit + 2 changes before a click
+        for (let b = 0; b < burst; b++) (rand(2) === 0 ? f.bump(next++) : f.bump(1 + rand(next - 1)));
+        await clickMore();
+      }
+      await drain(); // the changes stop; paging continues to the end of the feed
+      const pools = shownPools();
+      expect(pools.length).toBe(new Set(pools).size);
+      expect(pools.slice().sort((a, b) => a - b)).toEqual(f.all().sort((a, b) => a - b));
+      unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  for (const failing of ['top', 'older'] as const) {
+    it(`if the ${failing} page of a "Load more" fails, nothing it did not render is marked read (Codex S1 code review R3 F2)`, async () => {
+      const f = feed(4); // 4, 3 | 2, 1
+      vi.stubGlobal('fetch', f.fetchFake);
+      mount(2);
+      await screen.findByText('Load more');
+      f.unread(2); // an unread item on the older page
+      f.bump(5); // a new unread item on the top page
+      f.failNext(failing);
+      screen.getByText('Load more').click();
+      expect(await screen.findByText('More could not be loaded. Try again.')).toBeTruthy();
+      await new Promise((r) => setTimeout(r, 20));
+      const shownIds = shownPools().map(f.id);
+      expect(f.posted.filter((x) => !shownIds.includes(x))).toEqual([]);
+      expect(shownPools().sort()).toEqual([3, 4]);
+    });
+  }
 });

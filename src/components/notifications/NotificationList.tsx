@@ -9,10 +9,10 @@ import { USER_QUERY_KEY } from '@/lib/use-user';
 
 // #214 The notification list shared by the bell's panel and /notifications (NOTIFICATIONS_PLAN r8 §3.5). It loads a
 // page from /api/notifications and then marks exactly the ids it rendered as read (mark read on open, Q10): an item
-// that arrives after the load stays unread. Items keep their unread dot for this view. The text comes only from
+// that arrives after the load stays unread, and a page fetched but not rendered marks nothing. Items keep their unread dot for this view. The text comes only from
 // render(), so nothing user-written is ever shown.
 
-type Item = { id: string; kind: string; data: unknown; eventAt: string; read: boolean };
+type Item = { id: string; kind: string; data: unknown; eventAt: string; read: boolean; key: string };
 
 const when = (iso: string) =>
   new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
@@ -40,50 +40,75 @@ export function NotificationList({ limit, paged, onNavigate }: { limit: number; 
   const alive = useRef(true);
   useEffect(() => () => void (alive.current = false), []);
 
-  /// One page; the ids it holds that are unread are then marked read (the ids rendered, never a "created up to"
-  /// cut). A failed mark only leaves them unread; the badge refetches either way.
+  /// Marks exactly the ids now on screen that were unread (never a "created up to" cut). Called only after a load has
+  /// been rendered, so a page that was fetched and then discarded marks nothing (Codex S1 code review R3 F2). A failed
+  /// mark only leaves them unread; the badge refetches either way.
+  const markRead = useCallback(
+    (shown: Item[]) => {
+      const unread = shown.filter((i) => !i.read).map((i) => i.id);
+      if (unread.length === 0) return;
+      void fetch('/api/notifications/read', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ids: unread }),
+      })
+        .catch(() => undefined)
+        .finally(() => void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY }));
+    },
+    [queryClient],
+  );
+
   const fetchPage = useCallback(
     async (cursor: string | null) => {
       const q = new URLSearchParams({ limit: String(limit), ...(cursor ? { cursor } : {}) });
       const res = await fetch(`/api/notifications?${q}`, { credentials: 'same-origin', cache: 'no-store' });
       if (!res.ok) throw new Error(`notifications ${res.status}`);
-      const page = (await res.json()) as { items: Item[]; next: string | null };
-      const unread = page.items.filter((i) => !i.read).map((i) => i.id);
-      if (unread.length > 0) {
-        void fetch('/api/notifications/read', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ids: unread }),
-        })
-          .catch(() => undefined)
-          .finally(() => void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY }));
-      }
-      return page;
+      return (await res.json()) as { items: Item[]; next: string | null };
     },
-    [limit, queryClient],
+    [limit],
   );
+
+  /// The key of the newest item shown. Every item that arrived or was re-opened since sorts above it.
+  const head = useRef<string | null>(null);
 
   /// "Load more" fetches the next older page AND the top page again. The cursor bounds the older page by value, so an
   /// item that rose above it after the first page was read (a re-opened reply, plan §3.2(3)) or arrived since is not
-  /// on the older page; it is on the top page, so it is put at the top (replacing its old place if it was shown), and
-  /// the older page adds only ids not already shown. Nothing is skipped and nothing repeats in this view (Codex S1 code
-  /// review R2).
+  /// on the older page; it is on the top page. If the top page reaches the newest item shown before (its last key is
+  /// at or below `head`, or it is the whole feed), it holds every such item: they go to the top (replacing their old
+  /// place) and the older page adds only ids not already shown. If more arrived than one top page holds, the view
+  /// starts again from the top page and pages down from there, so nothing is skipped (Codex S1 code review R2, R3 F1).
+  /// Nothing repeats in this view either way.
   const load = useCallback(
     (cursor: string | null) =>
       (cursor ? Promise.all([fetchPage(cursor), fetchPage(null)]) : fetchPage(null).then((p) => [p, null] as const)).then(
         ([page, top]) => {
           if (!alive.current) return;
-          setItems((prev) => {
-            if (!cursor) return page.items;
-            const topIds = new Set(top!.items.map((i) => i.id));
-            const kept = [...top!.items, ...prev.filter((i) => !topIds.has(i.id))];
-            const shown = new Set(kept.map((i) => i.id));
-            return [...kept, ...page.items.filter((i) => !shown.has(i.id))];
-          });
-          setNext(page.next);
+          const bridged = top !== null && (top.next === null || (head.current !== null && top.next <= head.current));
+          let shown: Item[];
+          if (top === null) {
+            shown = page.items;
+            setItems(page.items);
+            setNext(page.next);
+          } else if (bridged) {
+            shown = [...top.items, ...page.items];
+            setItems((prev) => {
+              const topIds = new Set(top.items.map((i) => i.id));
+              const kept = [...top.items, ...prev.filter((i) => !topIds.has(i.id))];
+              const seen = new Set(kept.map((i) => i.id));
+              return [...kept, ...page.items.filter((i) => !seen.has(i.id))];
+            });
+            setNext(page.next);
+          } else {
+            shown = top.items;
+            setItems(top.items);
+            setNext(top.next);
+          }
+          const newest = (top ?? page).items[0];
+          if (newest) head.current = newest.key;
           setStatus('ready');
           setMore(false);
+          markRead(shown);
         },
         () => {
           if (!alive.current) return;
@@ -91,7 +116,7 @@ export function NotificationList({ limit, paged, onNavigate }: { limit: number; 
           setMore(false);
         },
       ),
-    [fetchPage],
+    [fetchPage, markRead],
   );
   useEffect(() => {
     void load(null);
