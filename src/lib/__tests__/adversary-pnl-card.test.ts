@@ -51,9 +51,10 @@ vi.mock('@/lib/avatar-budget', () => ({
   visitorIp: () => '203.0.113.7',
 }));
 vi.mock('@/lib/leaderboard/identity', () => ({
-  registeredAddresses: vi.fn(async () => new Set<string>()),
   resolveStoredIdentities: vi.fn(async () => new Map()),
 }));
+vi.mock('@/lib/leaderboard/profile', () => ({ isRegistered: vi.fn(async () => false) }));
+vi.mock('@/lib/pool-qr', () => ({ poolQr: vi.fn(async () => 'data:image/svg+xml;base64,') }));
 vi.mock('@/lib/mako-labels-server', () => ({ getMakoLabels: vi.fn(async () => null) }));
 vi.mock('next/headers', () => ({ headers: async () => new Headers() }));
 
@@ -65,8 +66,8 @@ const betLog = () => ({
 });
 
 async function image() {
-  const { default: Image } = await import('@/app/pools/[id]/pnl/[tx]/[log]/opengraph-image');
-  return Image({ params: Promise.resolve({ id: '138', tx: TX, log: '5' }) });
+  const { default: Image } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/opengraph-image');
+  return Image({ params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'result' }) });
 }
 
 describe('card image caching when the chain read fails', () => {
@@ -93,10 +94,10 @@ describe('card image caching when the chain read fails', () => {
 
   it('control: the harness reaches the database step for the real log (bettor not registered: 404)', async () => {
     chain.receipt = async () => ({ status: 'success', logs: [betLog()] });
-    const { registeredAddresses } = await import('@/lib/leaderboard/identity');
+    const { isRegistered } = await import('@/lib/leaderboard/profile');
     const res = await image();
     expect(res.status).toBe(404);
-    expect(registeredAddresses).toHaveBeenCalled();
+    expect(isRegistered).toHaveBeenCalled();
   });
 });
 

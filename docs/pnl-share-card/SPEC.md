@@ -118,6 +118,7 @@ top 166px: "Target locked" (mono, yellow) over the return % (result colour). The
 | Date | settlement date (win/loss), bet date (bet placed) | `23 Oct 2026` (rendered uppercase) |
 | Est. payout | bet placed only: the pool's current estimate for this position | 2 decimals + `USDC` |
 | Settles | bet placed only: pool settlement time | `Sat 25 Oct` |
+| Target | price pools only (crypto, forex, metals, stocks): the target in the pool's settlement reference | `Above $83,368`, `Below 1.1`; the last stats pill column on all three cards. Added in the app (owner, 2026-10-23); entry and current prices follow from the price recorder |
 
 Bet placed is shown for an open position. After settlement, pick the variant from the result: payout > stake is a win, payout = 0 is a loss. Refunded or voided
 positions are not covered by this design; do not show a win or loss card for them.

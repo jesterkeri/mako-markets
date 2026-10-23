@@ -1,13 +1,18 @@
-// The PnL share card (docs/pnl-share-card/SPEC.md): every figure for one bet, from the pool and the bet's own
-// BetPlaced log. Pure, so the per-bet maths and the formatting are tested without a chain or a renderer.
+// The share cards (docs/pnl-share-card/SPEC.md): every figure for one bet, from the pool and the bet's own BetPlaced
+// log. Pure, so the per-bet maths and the formatting are tested without a chain or a renderer.
 //
-// One card per bet (owner, 2026-10-23): two bets on one pool are two cards. A bet's payout is the contract's pro-rata
-// for its own amount (computeResolvedClaim, the formula `claim()` uses for a side's whole stake); a bet on the losing
-// side pays 0. Refunded or unresolved pools have no card.
+// One card per bet (owner, 2026-10-23): two bets on one pool are two cards. While the pool is unsettled the bet has a
+// "bet placed" card; once it settles YES or NO, a win or loss card. A bet's payout is the contract's pro-rata for its
+// own amount (computeResolvedClaim, the formula `claim()` uses for a side's whole stake); a bet on the losing side pays
+// 0. A refunded pool has no card.
+
+import { decodeEventLog, type Hex } from 'viem';
 
 import { computeResolvedClaim } from './bet';
-import { marketTypeLabel, Outcome, type MarketWithId } from './contract';
+import { MAKO_ADDRESS, makoAbi, marketTypeLabel, Outcome, type MarketWithId } from './contract';
 import { usdc2 } from './pool-list';
+import { priceTarget } from './pool-create';
+import { parseOracleRef, unsettleable } from './pool-rules';
 
 export type CardBet = { isYes: boolean; amount: bigint };
 
@@ -33,7 +38,48 @@ export type PnlCard = {
   ret: Signed;
   /// The pool's close date, UTC: "23 OCT 2026" (V4 stores no settlement time; Me orders by close too).
   date: string;
+  target: string | null;
 };
+
+/// The bet placed card: shared while the pool is unsettled (SPEC.md, "Bet placed variant").
+export type PlacedCard = {
+  variant: 'placed';
+  category: string;
+  question: string;
+  questionPx: number;
+  /// The headline: YES / NO, or a house pool's own name, shortened to fit.
+  side: string;
+  sidePx: number;
+  isYes: boolean;
+  stake: string;
+  /// What this bet pays if its side wins with the pot as it stands now, fees included. Null while nobody is on the
+  /// other side: the stake back is not an estimate worth a card (the spec drops the fields rather than guess).
+  est: { payout: string; ret: Signed } | null;
+  /// Betting has closed, so the pot no longer moves.
+  potFinal: boolean;
+  /// "Sat 25 Oct": the pool's close, after which Mako Market settles it. Null for a pool the resolver cannot read,
+  /// which is never settled automatically.
+  settles: string | null;
+  /// The bet's own date, "23 OCT 2026".
+  date: string;
+  target: string | null;
+};
+
+export type ShareCard = PnlCard | PlacedCard;
+
+/// Which card a link asks for. It is part of the URL, so a cached bet placed card can never stand in for the result.
+export type CardState = 'placed' | 'result';
+export const CARD_STATES: readonly CardState[] = ['placed', 'result'];
+
+/// A price pool's target, "Above $83,368" or "Below 1.1", from its settlement reference on chain, formatted as the
+/// pool's title shows it; null for sports and house pools, and for a reference the resolver cannot read. Entry and
+/// current prices come later, from the price recorder (owner, 2026-10-23: Data Streams, the feed that settles).
+export function cardTarget(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): string | null {
+  const ref = parseOracleRef(m);
+  if (ref?.kind !== 'price') return null;
+  const t = priceTarget(m.mType, ref.strike);
+  return t === null ? null : `${ref.op === 'gt' ? 'Above' : 'Below'} ${t}`;
+}
 
 /// What `claim()` pays for this one bet, or null when the pool has no win or loss result (unresolved, or refunded).
 export function betPayout(m: MarketWithId, bet: CardBet): bigint | null {
@@ -76,6 +122,21 @@ export function questionPx(q: string): number {
   return n <= 32 ? 66 : n <= 64 ? 50 : n <= 80 ? 46 : 40;
 }
 
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/// "Sat 25 Oct", in UTC like the card date.
+export function settleDay(sec: bigint): string {
+  const d = new Date(Number(sec) * 1000);
+  const mon = MONTHS[d.getUTCMonth()];
+  return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${mon[0]}${mon.slice(1).toLowerCase()}`;
+}
+
+/// The bet placed headline's size: the design's 186px for YES or NO, smaller for a long house side name so it ends
+/// within about 900px, clear of the art (Bricolage 800 caps run about 0.62em).
+export function sidePx(side: string): number {
+  return Math.min(186, Math.floor(900 / (0.62 * [...side].length)));
+}
+
 const SIDE_MAX = 10;
 
 /// A side name that fits the pill: up to 10 characters, else 9 and an ellipsis.
@@ -101,9 +162,50 @@ export function pnlCard(m: MarketWithId, bet: CardBet, labels: { yes: string; no
     netWord: payout < bet.amount ? 'loss' : 'profit',
     ret: returnPct(payout, bet.amount),
     date: cardDate(m.closeTime),
+    target: cardTarget(m),
+  };
+}
+
+/// The bet placed card for one bet, or null once the pool is settled (or for an empty bet).
+export function placedCard(m: MarketWithId, bet: CardBet, labels: { yes: string; no: string }, betAtSec: bigint, nowSec: number): PlacedCard | null {
+  if (m.resolved || bet.amount <= 0n) return null;
+  const [mine, other] = bet.isYes ? [m.totalYes, m.totalNo] : [m.totalNo, m.totalYes];
+  const payout = other === 0n ? null : computeResolvedClaim(mine, other, bet.amount, BigInt(m.protocolFeeBpsSnapshot), BigInt(m.creatorFeeBpsSnapshot));
+  const side = shortSide(bet.isYes ? labels.yes : labels.no);
+  return {
+    variant: 'placed',
+    category: `The call · ${marketTypeLabel(m.mType)} pool`,
+    question: m.question,
+    questionPx: questionPx(m.question),
+    side,
+    sidePx: sidePx(side),
+    isYes: bet.isYes,
+    stake: usdc2(bet.amount),
+    est: payout === null ? null : { payout: usdc2(payout), ret: returnPct(payout, bet.amount) },
+    potFinal: nowSec >= Number(m.bettingCloseTime),
+    settles: unsettleable(m) ? null : settleDay(m.closeTime),
+    date: cardDate(betAtSec),
+    target: cardTarget(m),
   };
 }
 
 /// One bet's card page; its image is this path + "/opengraph-image". The hash is lower-case, the one form served.
-export const cardPath = (poolId: bigint | string, tx: string, logIndex: number | string) =>
-  `/pools/${poolId.toString()}/pnl/${tx.toLowerCase()}/${logIndex.toString()}`;
+export const cardPath = (poolId: bigint | string, tx: string, logIndex: number | string, state: CardState) =>
+  `/pools/${poolId.toString()}/pnl/${tx.toLowerCase()}/${logIndex.toString()}/${state}`;
+
+type ReceiptLog = { address: string; logIndex: number | null; data: Hex; topics: readonly Hex[] };
+
+/// The log index of the account's bet on this pool in a bet transaction's receipt: the one BetPlaced log the live
+/// contract emitted for it. Null when there is none or more than one, so a Share button never guesses which bet.
+export function betLogIndex(logs: readonly ReceiptLog[], poolId: bigint, account: string): number | null {
+  const hits = logs.flatMap((l) => {
+    if (l.logIndex === null || l.address.toLowerCase() !== MAKO_ADDRESS.toLowerCase()) return [];
+    try {
+      const ev = decodeEventLog({ abi: makoAbi, data: l.data, topics: l.topics as [Hex, ...Hex[]], strict: true });
+      return ev.eventName === 'BetPlaced' && ev.args.id === poolId && ev.args.user.toLowerCase() === account.toLowerCase() ? [l.logIndex] : [];
+    } catch {
+      return [];
+    }
+  });
+  return hits.length === 1 ? hits[0] : null;
+}

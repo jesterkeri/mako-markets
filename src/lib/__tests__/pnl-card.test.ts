@@ -112,7 +112,8 @@ describe('formatting', () => {
     expect(c.side).toBe('Barcelona');
   });
 
-  it('builds the card path with a lower-case hash', () => {
-    expect(cardPath(138n, '0xABCD', 5)).toBe('/pools/138/pnl/0xabcd/5');
+  it('builds the card path with a lower-case hash and the card state', () => {
+    expect(cardPath(138n, '0xABCD', 5, 'result')).toBe('/pools/138/pnl/0xabcd/5/result');
+    expect(cardPath(138n, '0xABCD', 5, 'placed')).toBe('/pools/138/pnl/0xabcd/5/placed');
   });
 });

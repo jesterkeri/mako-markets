@@ -46,7 +46,7 @@ import { useNameCheck } from './use-name-check';
 
 /// How to play from its first step.
 const TOUR_START = tourHref(0);
-// The last column holds Share on a settled win or loss, else the arrow.
+// The last column holds Share on a position with a card (bet placed while unsettled, or a win or loss), else the arrow.
 const COLS = 'minmax(0,1fr) 90px 110px 150px 120px 72px';
 
 export function MeDesktop(v: MeView) {

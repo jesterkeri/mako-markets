@@ -59,6 +59,8 @@ type Props = {
   onCancel: () => void;
   onRetry: () => void;
   onClose: () => void;
+  /// Shown in the done tile under the transaction link (the bet confirmation's Share).
+  doneExtra?: React.ReactNode;
 };
 
 const WALLET_ICON = 'M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3M4 7.5v10A2.5 2.5 0 0 0 6.5 20H20v-4M4 7.5A2.5 2.5 0 0 0 6.5 10H20v3M16 13h4v3h-4a1.5 1.5 0 0 1 0-3z';
@@ -149,7 +151,7 @@ function CheckIn({ size }: { size: number }) {
   );
 }
 
-function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, variant, confirmRef, stepEntering }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null>; stepEntering: boolean }) {
+function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, doneExtra, variant, confirmRef, stepEntering }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null>; stepEntering: boolean }) {
   const rows: ConfirmRow[] = [...spec.rows];
   const feeText = wallet.kind === 'mako' ? 'Free · gas covered' : 'Paid in MON by your wallet';
   const titleSize = variant === 'desktop' ? 32 : 30;
@@ -266,6 +268,7 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
                   Transaction · {formatAddress(phase.txHash)} ↗
                 </a>
               )}
+              {doneExtra}
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               {spec.doneSecondary && <ActionButton action={spec.doneSecondary} primary={false} onRetry={onRetry} onClose={onClose} />}
