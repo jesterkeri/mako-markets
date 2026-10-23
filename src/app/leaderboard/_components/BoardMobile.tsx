@@ -1,5 +1,8 @@
 'use client';
 
+import Link from 'next/link';
+
+import { COMPETITION_COPY } from '@/lib/competition/config';
 import { BOARD_COPY } from '@/lib/leaderboard/board-copy';
 import { betsText, NEXT_SORT, PERIODS, SCOPES, SORTS } from '@/lib/leaderboard/board-view';
 
@@ -53,6 +56,9 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
       <div style={{ padding: '6px 20px 0' }}>
         <h1 style={{ margin: 0, ...display, fontSize: 40, lineHeight: 1, letterSpacing: '-0.035em' }}>{BOARD_COPY.title}</h1>
         <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 8 }}>{BOARD_COPY.subtitleMobile}</div>
+        <Link href="/leaderboard/competition" style={{ display: 'inline-block', marginTop: 8, fontSize: 14, fontWeight: 700, color: 'inherit', textDecoration: 'underline' }}>
+          {COMPETITION_COPY.boardLink}
+        </Link>
         {syncing && (
           <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, color: 'var(--dim)' }}>
             <span aria-hidden="true" style={{ flex: 'none', width: 7, height: 7, borderRadius: '50%', background: 'var(--mako-gold)' }} />

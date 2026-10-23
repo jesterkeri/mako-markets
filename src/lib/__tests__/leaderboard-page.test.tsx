@@ -101,10 +101,13 @@ describe('Leaderboard page', () => {
     expect(url.searchParams.get('me')).toBe(ME);
   });
 
-  it('every registered player opens their profile at /u/<address> (13a), and nothing else on the board is a link', async () => {
+  it('every registered player opens their profile at /u/<address> (13a), and nothing else on the board is a link but the competition', async () => {
     const { container } = mount();
     await screen.findAllByText('kemi');
-    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    const all = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    // The $100 competition link under the title, once per layout (REFERRAL_COMPETITION_PLAN section 4).
+    expect(all.filter((h) => h === '/leaderboard/competition')).toHaveLength(2);
+    const hrefs = all.filter((h) => h !== '/leaderboard/competition');
     expect(hrefs.length).toBeGreaterThan(0);
     for (const h of hrefs) expect(h, h).toMatch(/^\/u\/0x[0-9a-f]{40}$/);
     expect(hrefs).toContain('/u/0x00000000000000000000000000000000000000a1');

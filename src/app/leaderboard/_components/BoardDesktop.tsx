@@ -1,5 +1,8 @@
 'use client';
 
+import Link from 'next/link';
+
+import { COMPETITION_COPY } from '@/lib/competition/config';
 import { BOARD_COPY } from '@/lib/leaderboard/board-copy';
 import { PERIODS, SCOPES, SORTS, type PlayerView } from '@/lib/leaderboard/board-view';
 
@@ -93,6 +96,9 @@ export function BoardDesktop({ view, state, scope, setScope, period, setPeriod, 
         <div>
           <h1 style={{ margin: 0, ...display, fontSize: 64, lineHeight: 1, letterSpacing: '-0.04em' }}>{BOARD_COPY.title}</h1>
           <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 10 }}>{BOARD_COPY.subtitleDesktop}</div>
+          <Link href="/leaderboard/competition" style={{ display: 'inline-block', marginTop: 10, fontSize: 15, fontWeight: 700, color: 'inherit', textDecoration: 'underline' }}>
+            {COMPETITION_COPY.boardLink}
+          </Link>
           {syncing && (
             <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, ...mono, fontSize: 11, color: 'var(--dim)' }}>
               <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--mako-gold)' }} />
