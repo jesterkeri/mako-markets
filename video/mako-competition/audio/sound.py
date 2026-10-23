@@ -1,6 +1,6 @@
 # Music bed and sound effects for the $100 trading competition video (48.5 s), synthesized with numpy.
-# Match-day broadcast feel: a 128 BPM stadium beat, crowd ambience, a referee whistle, stinger whooshes
-# on every cut, a slam on the title, coin ticks on the prize count-up and a full-time whistle.
+# Sports-and-markets broadcast feel: a 128 BPM arena beat, crowd ambience, an opening sting, stinger
+# whooshes on every cut, a slam on the title, coin ticks on the prize count-up and an arena horn to close.
 # Usage: python3 audio/sound.py out.wav
 import sys
 import wave
@@ -179,9 +179,25 @@ def thud(t0, g=1.0):
     put(np.sin(2 * np.pi * 120 * t) * np.exp(-t / 0.05) * 0.5 + fnoise(d, 800, 4000) * np.exp(-t / 0.01) * 0.3, t0, g)
 
 
-whistle(0.15, 0.32)
-whistle(0.6, 0.9)
-slam(0.42, 1.0)
+def sting(t0, g=1.0):  # broadcast open: rising sweep into a bright chord hit
+    d = 0.9
+    t = tt(d)
+    sweep = np.sin(2 * np.pi * np.cumsum(300 + 1500 * (t / d) ** 2) / SR) * (t / d) ** 2 * 0.25
+    put(sweep + fnoise(d, 2000, 9000) * (t / d) ** 3 * 0.2, t0 - d, g)
+    for f in (440, 554.37, 659.25, 880):
+        tc = tt(1.2)
+        put(np.sin(2 * np.pi * f * tc) * np.exp(-tc / 0.35) * 0.18, t0, g, pan=rng.uniform(-0.4, 0.4))
+
+
+def buzzer(t0, d, g=1.0):  # arena horn for the close
+    t = tt(d)
+    s = np.sign(np.sin(2 * np.pi * 220 * t)) * 0.5 + np.sign(np.sin(2 * np.pi * 277 * t)) * 0.35
+    env = np.minimum(1, t / 0.02) * np.minimum(1, (d - t) / 0.08)
+    put(lowpass(s, 2200) * env * 0.22, t0, g)
+
+
+sting(0.42, 1.0)
+slam(0.42, 0.9)
 for c in CUTS:
     whoosh(c)
 # panel landings
@@ -194,9 +210,7 @@ for p0 in (35.5 + 1.2, 35.5 + 1.5, 35.5 + 1.8):
     for k in range(7):
         coin(p0 + k * 0.11, 0.8)
 thud(35.5 + 3.6, 0.8)  # VAR banner
-whistle(46.4, 0.35)
-whistle(46.85, 0.35)
-whistle(47.3, 1.0)
+buzzer(46.9, 1.1)
 
 mix = music * 0.55 + out
 mix /= np.abs(mix).max() + 1e-9

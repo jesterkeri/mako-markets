@@ -1,8 +1,11 @@
 # Mako Market $100 trading competition video
 
-A 48.5 s, 16:9 announcement for X, built in HyperFrames. The look is a match-day football broadcast: a mown
-pitch, a scorebug, a fixture card, a team sheet, a league table, a prize podium, a VAR check and a live
-ticker. Music and sound effects, no voiceover; every fact is on screen, so it works muted.
+A 48.5 s, 16:9 announcement for X, built in HyperFrames. The look is a sports-and-markets broadcast that
+covers every Mako Market category: each scene sits on a different arena (football pitch, NBA court, crypto
+chart, politics seating chart), the open and close show all four as a video wall, and the scorebug tag
+switches with them. A schedule card, invite cards, a leaderboard, a prize podium, an "under review" banner
+and a live ticker carry the facts. Music and sound effects, no voiceover; every fact is on screen, so it
+works muted.
 
 Every on-screen fact comes from the brief and is listed in `claims.md`. Weekday names and "tomorrow" are
 left out on purpose: the video is posted on the start day.
@@ -14,17 +17,17 @@ This folder is a standalone project. It is not part of the Next.js app.
 | Time | Scene |
 | --- | --- |
 | 0.0 to 4.5 s | Open: "$100 trading competition", lower third |
-| 4.5 to 9.5 s | Fixture: starts, ends, 14 days |
-| 9.5 to 16.5 s | How to enter: team sheet, invite 2 friends |
+| 4.5 to 9.5 s | Schedule: starts, ends, 14 days |
+| 9.5 to 16.5 s | How to enter: invite 2 friends |
 | 16.5 to 22.0 s | Entry rules: invite codes |
 | 22.0 to 28.0 s | How players are ranked: the profit formula |
 | 28.0 to 35.5 s | The small print: four ranking rules |
-| 35.5 to 42.5 s | Prizes: podium count-up, VAR check |
+| 35.5 to 42.5 s | Prizes: podium count-up, under review |
 | 42.5 to 48.5 s | Live standings, start time, lockup |
 
 ## Layout
 
-- `build/gen.py` generates `index.html` (pitch, scorebug, ticker, stinger wipes) and `compositions/s1.html`
+- `build/gen.py` generates `index.html` (arena backgrounds, scorebug, ticker, stinger wipes) and `compositions/s1.html`
   to `s8.html`. Edit it, then run `python3 build/gen.py`.
 - `audio/sound.py` synthesizes the music bed and sound effects with numpy. Its cut times match `SCENES` in
   `gen.py`.

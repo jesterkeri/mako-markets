@@ -15,8 +15,8 @@ audio: music-and-sfx
 ## Intent
 
 A short announcement video for X, posted on 24 October 2026, the day the competition starts. Look:
-**match-day broadcast**, like a football TV broadcast (scoreboard bug, fixture card, team sheet, league
-table, VAR check, live ticker). It must look different from the earlier Mako Market designs (no dark
+**sports-and-markets broadcast**: scorebug, schedule card, leaderboard, live ticker. Revised on the user's
+note that the video must cover every category (football, NBA, crypto, politics), not football only. It must look different from the earlier Mako Market designs (no dark
 mission-control cards, no yellow poster, no painted art). Every fact is on screen; the video works muted.
 
 ## Facts (use exactly; source of truth: `claims.md`)

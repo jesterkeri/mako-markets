@@ -133,7 +133,7 @@ scenes["s2"] = (
 #s2-root .strip{position:absolute;left:120px;top:860px;width:1680px;height:16px;background:#FACC15}
 """,
     """
-        <div class="chip"><i></i>Fixture</div>
+        <div class="chip"><i></i>Schedule</div>
         <div class="h1">$100 trading competition</div>
         <div class="card">
           <div class="col"><div class="lab">Starts</div><div class="date">24 October 2026</div><div class="time">12:00 UTC</div></div>
@@ -154,9 +154,8 @@ scenes["s2"] = (
 """,
 )
 
-SHIRT = ('<svg class="shirt" viewBox="0 0 200 190"><path d="M62 8 L100 22 L138 8 L192 40 L170 84 L150 74 L150 182 '
-         'L50 182 L50 74 L30 84 L8 40 Z" fill="{f}" stroke="#0C1410" stroke-width="8" stroke-linejoin="round"/>'
-         '<path d="M82 14 Q100 38 118 14" fill="none" stroke="#0C1410" stroke-width="8"/></svg>')
+SHIRT = ('<svg class="shirt" viewBox="0 0 200 190"><circle cx="100" cy="95" r="88" fill="{f}" stroke="#0C1410" stroke-width="8"/>'
+         '<circle cx="100" cy="74" r="30" fill="#0C1410"/><path d="M46 160 Q100 96 154 160" fill="#0C1410"/></svg>')
 
 # S3: team sheet, how to enter.
 scenes["s3"] = (
@@ -180,7 +179,7 @@ scenes["s3"] = (
         <div class="h1">Invite 2 friends</div>
         <div class="body">with your invite link or code, found on the Me page. The link and the code are the same invite.</div>
         <div class="xi">
-          <div class="xi-lab mono">Team sheet</div>
+          <div class="xi-lab mono">Your invites</div>
           <div class="p p1">{SHIRT.format(f=ACCENT)}<b>You</b></div>
           <div class="p p2">{SHIRT.format(f=PAPER)}<b>Friend 1</b></div>
           <div class="p p3">{SHIRT.format(f=PAPER)}<b>Friend 2</b></div>
@@ -211,21 +210,21 @@ scenes["s4"] = (
 #s4-root .h1{left:120px;top:250px;font-size:96px}
 #s4-root .rule{position:absolute;left:120px;width:1680px;min-height:190px;padding:40px 60px 40px 190px;background:#F6F4EE;color:#0C1410;font:600 46px/1.2 "Inter",sans-serif;display:flex;align-items:center}
 #s4-root .r1{top:420px}#s4-root .r2{top:650px}
-#s4-root .card{position:absolute;left:56px;top:50%;width:76px;height:104px;margin-top:-52px;background:#FACC15;border:4px solid #0C1410;border-radius:6px}
+#s4-root .card{position:absolute;left:50px;top:50%;width:96px;height:96px;margin-top:-48px;background:#FACC15;border:4px solid #0C1410;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 52px/1 "Bricolage",sans-serif;color:#0C1410}
 """,
     """
         <div class="chip"><i></i>Entry rules</div>
         <div class="h1">Invite codes</div>
-        <div class="rule r1"><div class="card"></div>Only accounts created after the competition starts can add an inviter's code.</div>
-        <div class="rule r2"><div class="card"></div>You can't use your own code, and an account can only have one inviter.</div>
+        <div class="rule r1"><div class="card">1</div>Only accounts created after the competition starts can add an inviter's code.</div>
+        <div class="rule r2"><div class="card">2</div>You can't use your own code, and an account can only have one inviter.</div>
 """,
     """
           tl.fromTo(q(".chip"), { x: -40, opacity: 0 }, { x: 0, opacity: 1, duration: .4, ease: "power3.out" }, .3);
           tl.fromTo(q(".h1"), { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: .5, ease: "power3.out" }, .4);
           tl.fromTo(q(".r1"), { x: 1800 }, { x: 0, duration: .6, ease: "expo.out" }, .7);
-          tl.fromTo(q(".r1 .card"), { rotation: -35, y: -60, opacity: 0 }, { rotation: -8, y: 0, opacity: 1, duration: .5, ease: "back.out(2)" }, 1.15);
+          tl.fromTo(q(".r1 .card"), { scale: 0, rotation: -90 }, { scale: 1, rotation: 0, duration: .5, ease: "back.out(2)" }, 1.15);
           tl.fromTo(q(".r2"), { x: 1800 }, { x: 0, duration: .6, ease: "expo.out" }, 2.1);
-          tl.fromTo(q(".r2 .card"), { rotation: 35, y: -60, opacity: 0 }, { rotation: 8, y: 0, opacity: 1, duration: .5, ease: "back.out(2)" }, 2.55);
+          tl.fromTo(q(".r2 .card"), { scale: 0, rotation: 90 }, { scale: 1, rotation: 0, duration: .5, ease: "back.out(2)" }, 2.55);
 """,
 )
 
@@ -243,7 +242,7 @@ scenes["s5"] = (
 #s5-root .cap{position:absolute;left:120px;top:780px;font:600 40px/1.2 "Inter",sans-serif}
 """,
     """
-        <div class="chip"><i></i>League table</div>
+        <div class="chip"><i></i>Leaderboard</div>
         <div class="h1">How players are ranked</div>
         <div class="by">By profit during the competition</div>
         <div class="row">
@@ -276,8 +275,8 @@ scenes["s6"] = (
 #s6-root .chip{left:120px;top:170px}
 #s6-root .h1{left:120px;top:250px;font-size:96px}
 #s6-root .tbl{position:absolute;left:120px;top:390px;width:1680px}
-#s6-root .tr{display:flex;align-items:center;min-height:130px;margin-bottom:12px;background:rgba(12,20,16,.72);border-left:10px solid #FACC15}
-#s6-root .tr:nth-child(even){background:rgba(12,20,16,.55)}
+#s6-root .tr{display:flex;align-items:center;min-height:130px;margin-bottom:12px;background:rgba(8,10,14,.78);border-left:10px solid #FACC15}
+#s6-root .tr:nth-child(even){background:rgba(8,10,14,.66)}
 #s6-root .n{flex:none;width:120px;font:800 64px/1 "Bricolage",sans-serif;color:#FACC15;text-align:center}
 #s6-root .t{padding:22px 40px 22px 10px;font:500 38px/1.25 "Inter",sans-serif}
 #s6-root .t b{font-weight:800;color:#FACC15}
@@ -322,7 +321,7 @@ scenes["s7"] = (
         <div class="pod p2"><b data-v="30">$30</b><span>2nd</span></div>
         <div class="pod p1"><b data-v="50">$50</b><span>1st</span></div>
         <div class="pod p3"><b data-v="20">$20</b><span>3rd</span></div>
-        <div class="var"><div class="tag">VAR CHECK</div><div class="msg">Mako Market reviews the winners first and may disqualify duplicate or fake accounts.</div></div>
+        <div class="var"><div class="tag">UNDER REVIEW</div><div class="msg">Mako Market reviews the winners first and may disqualify duplicate or fake accounts.</div></div>
 """,
     """
           tl.fromTo(q(".chip"), { x: -40, opacity: 0 }, { x: 0, opacity: 1, duration: .4, ease: "power3.out" }, .3);
@@ -375,9 +374,93 @@ for sid, start, end in SCENES:
     css, html, js = scenes[sid]
     (ROOT / "compositions" / f"{sid}.html").write_text(scene_file(sid, round(end - start, 3), css, html, js))
 
+
+# ---------- arena backgrounds: one per market category ----------
+import math, random
+
+def svg_wrap(body, cls=""):
+    return f'<svg class="arena-svg {cls}" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">{body}</svg>'
+
+def arena_football():
+    b = '<rect width="1920" height="1080" fill="#0D3B2A"/>'
+    b += "".join(f'<rect x="{x}" y="0" width="190" height="1080" fill="#0B3324"/>' for x in range(190, 1920, 380))
+    b += '<rect x="1437" y="0" width="6" height="1080" fill="rgba(246,244,238,.18)"/>'
+    b += '<circle cx="1440" cy="540" r="300" fill="none" stroke="rgba(246,244,238,.18)" stroke-width="6"/>'
+    b += '<circle cx="1440" cy="540" r="14" fill="rgba(246,244,238,.22)"/>'
+    return svg_wrap(b)
+
+def arena_nba():
+    b = '<rect width="1920" height="1080" fill="#7A4521"/>'
+    b += "".join(f'<rect x="0" y="{y}" width="1920" height="36" fill="{"#83502A" if (y // 36) % 2 else "#744020"}"/>' for y in range(0, 1080, 36))
+    b += '<rect x="1580" y="350" width="340" height="380" fill="rgba(234,88,12,.35)" stroke="rgba(246,244,238,.3)" stroke-width="6"/>'
+    b += '<circle cx="1920" cy="540" r="640" fill="none" stroke="rgba(246,244,238,.25)" stroke-width="6"/>'
+    b += '<circle cx="1580" cy="540" r="140" fill="none" stroke="rgba(246,244,238,.25)" stroke-width="6"/>'
+    b += '<rect x="1060" y="0" width="6" height="1080" fill="rgba(246,244,238,.25)"/>'
+    b += '<circle cx="1063" cy="540" r="170" fill="none" stroke="rgba(246,244,238,.25)" stroke-width="6"/>'
+    b += '<rect width="1920" height="1080" fill="rgba(10,8,6,.5)"/>'
+    return svg_wrap(b)
+
+def arena_crypto():
+    rnd = random.Random(11)
+    b = '<rect width="1920" height="1080" fill="#0A1424"/>'
+    b += "".join(f'<rect x="{x}" y="0" width="2" height="1080" fill="rgba(246,244,238,.06)"/>' for x in range(0, 1920, 120))
+    b += "".join(f'<rect x="0" y="{y}" width="1920" height="2" fill="rgba(246,244,238,.06)"/>' for y in range(0, 1080, 120))
+    price, c = 620, []
+    for i in range(46):
+        o = price; price += rnd.uniform(-38, 44); cl = price
+        hi, lo = max(o, cl) + rnd.uniform(6, 30), min(o, cl) - rnd.uniform(6, 30)
+        x = 60 + i * 44; up = cl < o  # y grows downward, so a smaller y is a higher price
+        col = "#16A34A" if up else "#E53935"
+        c.append(f'<rect x="{x+13}" y="{lo:.0f}" width="4" height="{hi-lo:.0f}" fill="{col}" opacity=".5"/>')
+        c.append(f'<rect x="{x}" y="{min(o,cl):.0f}" width="30" height="{max(abs(cl-o),6):.0f}" fill="{col}" opacity=".55"/>')
+    b += f'<g class="candles">{"".join(c)}</g>'
+    return svg_wrap(b)
+
+def arena_politics():
+    b = '<rect width="1920" height="1080" fill="#111833"/>'
+    cols = ["#3B82F6", "#3B82F6", "#E53935", "#E53935", "#A3A3A3", "#FACC15"]
+    seats = []
+    for row in range(9):
+        r = 230 + row * 44; n = int(math.pi * r / 40)
+        for k in range(n + 1):
+            a = math.pi - math.pi * k / n
+            x, y = 1440 + r * math.cos(a), 900 - r * math.sin(a)
+            col = cols[min(5, int(6 * k / (n + 1)))]
+            seats.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="13" fill="{col}" opacity=".42"/>')
+    b += f'<g class="seats">{"".join(seats)}</g>'
+    b += '<rect x="1340" y="860" width="200" height="120" rx="8" fill="rgba(246,244,238,.12)"/>'
+    return svg_wrap(b)
+
+ARENAS = {"football": arena_football, "nba": arena_nba, "crypto": arena_crypto, "politics": arena_politics}
+ARENA_LABEL = {"football": "FOOTBALL", "nba": "NBA", "crypto": "CRYPTO", "politics": "POLITICS"}
+WALL = ["football", "nba", "crypto", "politics"]
+SCENE_ARENA = {"s1": "wall", "s2": "crypto", "s3": "nba", "s4": "politics", "s5": "football", "s6": "crypto", "s7": "nba", "s8": "wall"}
+
+def arena_layer(sid, kind, s, e):
+    if kind == "wall":
+        cells = "".join(f'<div class="cell c{i}">{ARENAS[k]()}<div class="cell-lab">{ARENA_LABEL[k]}</div></div>' for i, k in enumerate(WALL))
+        inner = f'<div class="wall">{cells}</div>'
+    else:
+        inner = ARENAS[kind]()
+    return (f'    <div id="bg-{sid}" class="clip bg bg-{kind}" data-start="{s}" data-duration="{round(e - s, 3)}" data-track-index="0">'
+            f'{inner}<div class="shade"></div></div>')
+
+bgs = "\n".join(arena_layer(sid, SCENE_ARENA[sid], s, e) for sid, s, e in SCENES)
+bg_js = "\n".join(
+    f'      tl.fromTo("#bg-{sid} .arena-svg", {{ scale: 1.0 }}, {{ scale: 1.06, duration: {round(e - s, 3)}, ease: "none" }}, {s});'
+    if SCENE_ARENA[sid] != "wall" else
+    f'      tl.fromTo("#bg-{sid} .cell", {{ scale: .9, opacity: 0 }}, {{ scale: 1, opacity: 1, duration: .5, ease: "power3.out", stagger: .12 }}, {s + (0.05 if s == 0 else 0.3)});'
+    for sid, s, e in SCENES)
+CAT_SEQ = ["ALL MARKETS" if SCENE_ARENA[sid] == "wall" else ARENA_LABEL[SCENE_ARENA[sid]] for sid, _, _ in SCENES]
+cat_html = "".join(f"<b>{c}</b>" for c in CAT_SEQ)
+cat_js = "\n".join(f'      tl.fromTo("#bug .cat-in b:nth-child({i+1})", {{ opacity: 0, y: 30 }}, {{ opacity: 1, y: 0, duration: .25, ease: "power2.out", immediateRender: false }}, {max(s, .9)});'
+                   + (f'\n      tl.fromTo("#bug .cat-in b:nth-child({i+1})", {{ opacity: 1 }}, {{ opacity: 0, duration: .01, immediateRender: false }}, {e});' if i < len(SCENES) - 1 else "")
+                   for i, (sid, s, e) in enumerate(SCENES))
+
 # ---------- index.html: the persistent broadcast layer ----------
 TICK_ITEMS = [
     "$100 trading competition",
+    "Football", "NBA", "Crypto", "Politics",
     "24 October 2026, 12:00 UTC to 7 November 2026, 12:00 UTC",
     "The top 3 share $100",
     "Live standings: makomarket.xyz/leaderboard/competition",
@@ -410,21 +493,28 @@ index = f"""<!doctype html>
     <script src="assets/gsap.min.js"></script>
     <style>{FONTS}
       * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-      html, body {{ width: 100%; height: 100%; overflow: hidden; background: {PITCH}; }}
-      #root {{ position: relative; width: 100%; height: 100%; overflow: hidden; background: {PITCH}; font-family: "Inter", sans-serif; }}
+      html, body {{ width: 100%; height: 100%; overflow: hidden; background: {INK}; }}
+      #root {{ position: relative; width: 100%; height: 100%; overflow: hidden; background: {INK}; font-family: "Inter", sans-serif; }}
       #root > .shot {{ position: absolute; inset: 0; z-index: 10; }}
-      #pitch {{ position: absolute; left: -200px; top: 0; width: 2320px; height: 1080px; z-index: 0;
-        background: repeating-linear-gradient(90deg, {PITCH} 0 190px, {PITCH2} 190px 380px); }}
-      #lines {{ position: absolute; inset: 0; z-index: 1; }}
-      #lines .half {{ position: absolute; left: 1440px; top: 0; width: 6px; height: 1080px; background: rgba(246,244,238,.16); }}
-      #lines .ring {{ position: absolute; left: 1143px; top: 240px; width: 600px; height: 600px; border-radius: 50%; border: 6px solid rgba(246,244,238,.16); }}
-      #lines .spot {{ position: absolute; left: 1428px; top: 528px; width: 30px; height: 30px; border-radius: 50%; background: rgba(246,244,238,.2); }}
-      #vig {{ position: absolute; inset: 0; z-index: 2; background: radial-gradient(ellipse at 40% 45%, rgba(0,0,0,0) 40%, rgba(5,20,13,.55) 100%); }}
+      .bg {{ position: absolute; inset: 0; z-index: 0; overflow: hidden; }}
+      .arena-svg {{ position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }}
+      .bg .shade {{ position: absolute; inset: 0; background: radial-gradient(ellipse at 30% 45%, rgba(6,9,12,.5) 0%, rgba(6,9,12,.25) 60%, rgba(6,9,12,.6) 100%); }}
+      .wall {{ position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 8px; background: {INK}; }}
+      .cell {{ position: relative; overflow: hidden; }}
+      .cell .arena-svg {{ width: 100%; height: 100%; }}
+      .c0 .cell-lab, .c1 .cell-lab {{ top: 130px; }}
+      .c2 .cell-lab {{ bottom: 100px; }}
+      .c3 .cell-lab {{ top: 24px; }}
+      .cell-lab {{ position: absolute; right: 24px; padding: 10px 16px; background: rgba(8,10,14,.82); color: {PAPER}; font: 800 24px/1 "JetBrains Mono", monospace; letter-spacing: .14em; }}
+      .bg-wall .shade {{ background: rgba(6,9,12,.42); }}
       #bug {{ position: absolute; left: 60px; top: 46px; z-index: 40; display: flex; height: 64px; }}
       #bug .lg {{ width: 84px; background: {ACCENT}; display: flex; align-items: center; justify-content: center; }}
       #bug .lg svg {{ width: 50px; height: 40px; }}
       #bug .nm {{ display: flex; align-items: center; padding: 0 22px; background: {INK}; color: {PAPER}; font: 800 30px/1 "Bricolage", sans-serif; letter-spacing: -.01em; }}
       #bug .cp {{ display: flex; align-items: center; padding: 0 22px; background: {PAPER}; color: {INK}; font: 800 24px/1 "JetBrains Mono", monospace; letter-spacing: .12em; }}
+      #bug .cat {{ position: relative; height: 64px; width: 230px; overflow: hidden; background: {ACCENT}; }}
+      #bug .cat-in {{ position: absolute; inset: 0; }}
+      #bug .cat-in b {{ position: absolute; inset: 0; opacity: 0; display: flex; align-items: center; justify-content: center; height: 64px; color: {INK}; font: 800 24px/1 "JetBrains Mono", monospace; letter-spacing: .12em; }}
       #net {{ position: absolute; right: 60px; top: 46px; z-index: 40; height: 64px; display: flex; align-items: center; padding: 0 22px; border: 3px solid rgba(246,244,238,.6); color: {PAPER}; font: 700 24px/1 "JetBrains Mono", monospace; letter-spacing: .12em; }}
       #tick {{ position: absolute; left: 0; bottom: 0; width: 1920px; height: 72px; z-index: 40; background: {INK}; border-top: 4px solid {ACCENT}; overflow: hidden; }}
       #tick .crawl {{ position: absolute; left: 0; top: 0; height: 100%; display: flex; align-items: center; white-space: nowrap; color: {PAPER}; font: 700 26px/1 "JetBrains Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }}
@@ -439,11 +529,9 @@ index = f"""<!doctype html>
   </head>
   <body>
     <div id="root" data-composition-id="main" data-start="0" data-duration="{TOTAL}" data-width="{W}" data-height="{H}">
-    <div id="pitch"></div>
-    <div id="lines"><div class="half"></div><div class="ring"></div><div class="spot"></div></div>
-    <div id="vig"></div>
+{bgs}
 {hosts}
-    <div id="bug" class="clip" data-start="0.6" data-duration="{round(TOTAL - .6, 3)}" data-track-index="2"><div class="lg">{logo("bug-logo", INK)}</div><div class="nm">Mako Market</div><div class="cp">$100 COMP</div></div>
+    <div id="bug" class="clip" data-start="0.6" data-duration="{round(TOTAL - .6, 3)}" data-track-index="2"><div class="lg">{logo("bug-logo", INK)}</div><div class="nm">Mako Market</div><div class="cp">$100 COMP</div><div class="cat"><div class="cat-in">{cat_html}</div></div></div>
     <div id="net" class="clip" data-start="0.6" data-duration="{round(TOTAL - .6, 3)}" data-track-index="2">MONAD TESTNET</div>
     <div id="tick" class="clip" data-start="4.5" data-duration="{round(TOTAL - 4.5, 3)}" data-track-index="2"><div class="crawl" data-layout-allow-overflow>{tick_html}</div></div>
     <div id="tab" class="clip" data-start="4.5" data-duration="{round(TOTAL - 4.5, 3)}" data-track-index="2">MAKO MARKET</div>
@@ -451,8 +539,8 @@ index = f"""<!doctype html>
     </div>
     <script>
       var tl = gsap.timeline({{ paused: true }});
-      tl.fromTo("#pitch", {{ x: 0 }}, {{ x: 190, duration: {TOTAL}, ease: "none" }}, 0);
-      tl.fromTo("#lines .ring", {{ scale: 1 }}, {{ scale: 1.06, duration: 6, ease: "sine.inOut", yoyo: true, repeat: {int(TOTAL // 6) - 1} }}, 0);
+{bg_js}
+{cat_js}
       tl.fromTo("#bug", {{ x: -500 }}, {{ x: 0, duration: .6, ease: "expo.out" }}, .6);
       tl.fromTo("#net", {{ x: 500 }}, {{ x: 0, duration: .6, ease: "expo.out" }}, .75);
       tl.fromTo("#tick", {{ y: 80 }}, {{ y: 0, duration: .5, ease: "power3.out" }}, 4.5);

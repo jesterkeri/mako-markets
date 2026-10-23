@@ -20,15 +20,15 @@
 #s4-root .h1{left:120px;top:250px;font-size:96px}
 #s4-root .rule{position:absolute;left:120px;width:1680px;min-height:190px;padding:40px 60px 40px 190px;background:#F6F4EE;color:#0C1410;font:600 46px/1.2 "Inter",sans-serif;display:flex;align-items:center}
 #s4-root .r1{top:420px}#s4-root .r2{top:650px}
-#s4-root .card{position:absolute;left:56px;top:50%;width:76px;height:104px;margin-top:-52px;background:#FACC15;border:4px solid #0C1410;border-radius:6px}
+#s4-root .card{position:absolute;left:50px;top:50%;width:96px;height:96px;margin-top:-48px;background:#FACC15;border:4px solid #0C1410;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 52px/1 "Bricolage",sans-serif;color:#0C1410}
 
       </style>
       <div id="s4-root" data-composition-id="s4" data-width="1920" data-height="1080" data-duration="5.5">
 
         <div class="chip"><i></i>Entry rules</div>
         <div class="h1">Invite codes</div>
-        <div class="rule r1"><div class="card"></div>Only accounts created after the competition starts can add an inviter's code.</div>
-        <div class="rule r2"><div class="card"></div>You can't use your own code, and an account can only have one inviter.</div>
+        <div class="rule r1"><div class="card">1</div>Only accounts created after the competition starts can add an inviter's code.</div>
+        <div class="rule r2"><div class="card">2</div>You can't use your own code, and an account can only have one inviter.</div>
 
       </div>
       <script>
@@ -40,9 +40,9 @@
           tl.fromTo(q(".chip"), { x: -40, opacity: 0 }, { x: 0, opacity: 1, duration: .4, ease: "power3.out" }, .3);
           tl.fromTo(q(".h1"), { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: .5, ease: "power3.out" }, .4);
           tl.fromTo(q(".r1"), { x: 1800 }, { x: 0, duration: .6, ease: "expo.out" }, .7);
-          tl.fromTo(q(".r1 .card"), { rotation: -35, y: -60, opacity: 0 }, { rotation: -8, y: 0, opacity: 1, duration: .5, ease: "back.out(2)" }, 1.15);
+          tl.fromTo(q(".r1 .card"), { scale: 0, rotation: -90 }, { scale: 1, rotation: 0, duration: .5, ease: "back.out(2)" }, 1.15);
           tl.fromTo(q(".r2"), { x: 1800 }, { x: 0, duration: .6, ease: "expo.out" }, 2.1);
-          tl.fromTo(q(".r2 .card"), { rotation: 35, y: -60, opacity: 0 }, { rotation: 8, y: 0, opacity: 1, duration: .5, ease: "back.out(2)" }, 2.55);
+          tl.fromTo(q(".r2 .card"), { scale: 0, rotation: 90 }, { scale: 1, rotation: 0, duration: .5, ease: "back.out(2)" }, 2.55);
 
           window.__timelines["s4"] = tl;
         })();

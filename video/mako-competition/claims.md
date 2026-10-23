@@ -8,6 +8,7 @@ and time only.
 | --- | --- | --- |
 | Open | Mako Market, prediction market app on Monad testnet | "Mako Market is a prediction market app on Monad testnet." |
 | Open | $100 trading competition | "Name: $100 trading competition." |
+| Open, close, scorebug, ticker | Category labels: Football, NBA, Crypto, Politics | The user's note that Mako Market has football, trading, NBA and politics pools (the app labels trading pools CRYPTO). Shown as labels only, with no claim about which pools count. |
 | Fixture | Starts 24 October 2026, 12:00 UTC | "Runs from Saturday 24 October 2026, 12:00 UTC" |
 | Fixture | Ends 7 November 2026, 12:00 UTC | "to Saturday 7 November 2026, 12:00 UTC" |
 | Fixture | 14 days | "(14 days)" |
