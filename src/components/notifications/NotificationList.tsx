@@ -12,6 +12,9 @@ import { USER_QUERY_KEY } from '@/lib/use-user';
 // that arrives after the load stays unread, and a page fetched but not rendered marks nothing. Items keep their unread dot for this view. The text comes only from
 // render(), so nothing user-written is ever shown.
 
+/// MAX_READ_IDS in src/app/api/notifications/read/route.ts.
+const READ_BATCH = 30;
+
 type Item = { id: string; kind: string; data: unknown; eventAt: string; read: boolean; key: string };
 
 const when = (iso: string) =>
@@ -41,20 +44,25 @@ export function NotificationList({ limit, paged, onNavigate }: { limit: number; 
   useEffect(() => () => void (alive.current = false), []);
 
   /// Marks exactly the ids now on screen that were unread (never a "created up to" cut). Called only after a load has
-  /// been rendered, so a page that was fetched and then discarded marks nothing (Codex S1 code review R3 F2). A failed
-  /// mark only leaves them unread; the badge refetches either way.
+  /// been rendered, so a page that was fetched and then discarded marks nothing (Codex S1 code review R3 F2). A merged
+  /// "Load more" can show up to two pages of unread items, so the ids go in requests of at most READ_BATCH, the read
+  /// route's limit (R4). A failed mark only leaves those unread; the badge refetches once all have settled.
   const markRead = useCallback(
     (shown: Item[]) => {
-      const unread = shown.filter((i) => !i.read).map((i) => i.id);
+      const unread = [...new Set(shown.filter((i) => !i.read).map((i) => i.id))];
       if (unread.length === 0) return;
-      void fetch('/api/notifications/read', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ids: unread }),
-      })
-        .catch(() => undefined)
-        .finally(() => void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY }));
+      const posts = [];
+      for (let i = 0; i < unread.length; i += READ_BATCH) {
+        posts.push(
+          fetch('/api/notifications/read', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: unread.slice(i, i + READ_BATCH) }),
+          }).catch(() => undefined),
+        );
+      }
+      void Promise.all(posts).finally(() => void queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY }));
     },
     [queryClient],
   );

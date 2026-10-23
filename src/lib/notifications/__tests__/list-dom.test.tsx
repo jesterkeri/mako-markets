@@ -84,18 +84,24 @@ describe('NotificationList', () => {
   /// A fake of GET /api/notifications that pages exactly as the route does (route.ts): newest first by key, `limit`
   /// items, `next` = the last item's key when more exist, an older page strictly below the cursor. `bump` re-opens a
   /// row or adds a new one at the top (created_at = now()). `failNext` fails the next GET whose cursor matches.
-  function feed(start: number) {
+  function feed(start: number, startUnread = false) {
     let clock = 0;
     const key = () => `2026-10-22T10:00:00.${String(++clock).padStart(6, '0')}Z`;
     const id = (n: number) => `a0000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
     const rows = new Map<number, { ca: string; read: boolean }>();
-    for (let n = 1; n <= start; n++) rows.set(n, { ca: key(), read: true });
+    for (let n = 1; n <= start; n++) rows.set(n, { ca: key(), read: !startUnread });
     const posted: string[] = [];
+    const posts: number[] = [];
     const fails: Array<'top' | 'older'> = [];
     const fetchFake = async (url: string, init?: { method?: string; body?: string }) => {
       if (init?.method === 'POST') {
-        posted.push(...(JSON.parse(init.body!) as { ids: string[] }).ids);
-        return new Response(JSON.stringify({ updated: 1 }));
+        // The read route's limits (read/route.ts MAX_READ_IDS): 1 to 30 ids, else 400 and nothing marked.
+        const ids = (JSON.parse(init.body!) as { ids: string[] }).ids;
+        posts.push(ids.length);
+        if (ids.length < 1 || ids.length > 30) return new Response('bad_body', { status: 400 });
+        posted.push(...ids);
+        for (const x of ids) rows.get(Number(x.slice(-12)))!.read = true;
+        return new Response(JSON.stringify({ updated: ids.length }));
       }
       const q = new URL(url, 'http://x').searchParams;
       const cursor = q.get('cursor');
@@ -119,6 +125,7 @@ describe('NotificationList', () => {
     return {
       fetchFake,
       posted,
+      posts,
       id,
       bump: (n: number) => rows.set(n, { ca: key(), read: false }),
       unread: (n: number) => void (rows.get(n)!.read = false),
@@ -191,6 +198,27 @@ describe('NotificationList', () => {
       unmount();
       vi.unstubAllGlobals();
     }
+  });
+
+  it('a merged "Load more" showing more unread items than one read request takes marks every one, 30 at most per request (Codex S1 code review R4)', async () => {
+    // Page limit 20. 40 unread rows: page one shows 21..40. Then 11 new unread rows arrive; the top page (11 new + 9
+    // shown) reaches the old head, so it merges with the older page (20 unread): 31 unread ids on screen at once.
+    const f = feed(40, true);
+    vi.stubGlobal('fetch', f.fetchFake);
+    mount(20);
+    await screen.findByText('Load more');
+    await waitFor(() => expect(f.posted).toHaveLength(20));
+    f.posted.length = 0;
+    f.posts.length = 0;
+    for (let n = 41; n <= 51; n++) f.bump(n);
+    await clickMore();
+    await waitFor(() => expect(f.posted.length).toBeGreaterThanOrEqual(31));
+    expect(f.posts.every((n) => n >= 1 && n <= 30)).toBe(true);
+    // Every rendered item that was unread when fetched is posted exactly once: 11 new + 20 older (page one's 21..40
+    // were already marked by the first load and are read on the top page now).
+    const expected = [...Array.from({ length: 11 }, (_, i) => 41 + i), ...Array.from({ length: 20 }, (_, i) => 1 + i)].map(f.id);
+    expect(f.posted.slice().sort()).toEqual(expected.sort());
+    expect(shownPools().slice().sort((a, b) => a - b)).toEqual(Array.from({ length: 51 }, (_, i) => i + 1));
   });
 
   for (const failing of ['top', 'older'] as const) {
