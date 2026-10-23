@@ -18,7 +18,8 @@ export async function unreadCount(userId: string): Promise<number | null> {
     const n = Number((raw as { n: number | string }[])[0]?.n);
     return Number.isInteger(n) && n >= 0 ? n : null;
   } catch (err) {
-    console.warn('[notifications] unread count failed:', err instanceof Error ? err.message : String(err));
+    // The error's name only: a driver message can carry connection details (plan §4).
+    console.warn('[notifications] unread count failed:', err instanceof Error && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : 'unknown');
     return null;
   }
 }

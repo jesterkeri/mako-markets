@@ -1,6 +1,6 @@
 // #214 S1: Invariant R, the roster rule (NOTIFICATIONS_PLAN r8 §3.2 "Recipient history"; §8 S1 "Roster", Codex R2
 // F1), for pools and rounds, plus the Rounds scan itself (§3.2(2)).
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GateClosed, runLeaderboardIndexerOnce } from '@/lib/leaderboard/indexer';
 import { runRoundsScanOnce } from '@/lib/notifications/rounds-scan';
@@ -177,6 +177,24 @@ describe('roster: pools (beta shape, V4 cursor at F − 1)', () => {
 });
 
 const round = (over: Partial<RoundState>): RoundState => ({ status: 2, outcome: 1, refundReason: 0, upEntrants: 1, downEntrants: 1, ...over });
+
+describe('scan errors', () => {
+  it('a floor read that fails before the scan starts reports a fixed code, not the driver message (Codex S1 code review R1 F2)', async () => {
+    t = await createNotifyDb();
+    await t.client.query('DROP TABLE notify_cursor');
+    const chain = mockChain({ head: HEAD, logs: [] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const r = await runV4(chain);
+      expect(r.mutex).toBe('error');
+      expect(r.error).toMatch(/^scan_failed:/);
+      expect(r.error).not.toContain('notify_cursor');
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('notify_cursor');
+    } finally {
+      warn.mockRestore();
+    }
+  }, 30_000);
+});
 
 describe('rounds scan', () => {
   it('no row and no floor: nothing is scanned, noFloor is reported, and no state row is created', async () => {

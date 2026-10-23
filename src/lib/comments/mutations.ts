@@ -131,9 +131,10 @@ export async function createComment(
 }
 
 /// One row per parent comment for its author. An unread row counts one more reply; a row already read is re-opened
-/// as a new item (count 1, unread, fresh times, out of any pending email). poolId is the parent's market_id, which the
-/// validators constrain to a canonical uint256; no name and no body.
-async function upsertReplyNotification(tx: DbOrTx, parentUserId: string, parentId: string, marketId: string) {
+/// (count 1, unread, a fresh event_at, out of any pending email). created_at never changes: it is the feed's keyset
+/// order, so moving it would let "Load more" skip or repeat a row (Codex S1 code review R1 F1). poolId is the parent's
+/// market_id, which the validators constrain to a canonical uint256; no name and no body.
+export async function upsertReplyNotification(tx: DbOrTx, parentUserId: string, parentId: string, marketId: string) {
   await tx.execute(sql`
     INSERT INTO notifications (user_id, kind, dedupe_key, data, event_at)
     SELECT ${parentUserId}::uuid, 'reply', ${replyKey(parentId)}, jsonb_build_object('poolId', ${marketId}::text, 'count', 1), now()
@@ -143,7 +144,6 @@ async function upsertReplyNotification(tx: DbOrTx, parentUserId: string, parentI
       data = jsonb_set(notifications.data, '{count}',
         to_jsonb(CASE WHEN notifications.read_at IS NULL THEN (notifications.data->>'count')::int + 1 ELSE 1 END)),
       event_at = now(),
-      created_at = now(),
       email_id = CASE WHEN notifications.read_at IS NULL THEN notifications.email_id ELSE NULL END,
       read_at = NULL`);
 }

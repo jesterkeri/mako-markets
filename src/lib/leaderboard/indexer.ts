@@ -644,9 +644,7 @@ export async function scanContract<L extends ScanLog>(a: ScanContractArgs<L>): P
           await releaseContractMutex(a.db, a.chainId, c, token);
         }
       } catch (err) {
-        releaseWarning = `lock release failed for ${c}: ${
-          err instanceof Error ? err.message : String(err)
-        } (self-heals via stale recovery after ${a.staleLockMs}ms)`;
+        releaseWarning = `lock release failed for ${c}: ${scanErrorCode(err)} (self-heals via stale recovery after ${a.staleLockMs}ms)`;
         console.warn(`[leaderboard-indexer] ${releaseWarning}`);
       }
     }
@@ -934,8 +932,9 @@ export async function runLeaderboardIndexerOnce(
         }),
       );
     } catch (err) {
-      // The floor read itself failed (before any lock): record it and move on.
-      const message = err instanceof Error ? err.message : String(err);
+      // The floor read itself failed (before any lock): record it and move on. A fixed code, never the message
+      // (scanErrorCode; Codex S1 code review R1 F2).
+      const message = scanErrorCode(err);
       console.warn(`[leaderboard-indexer] ${contractLower} scan failed: ${message}; continuing with remaining contracts`);
       results.push({
         contractAddress: contractLower, mutex: 'error', fromBlock: null, scannedTo: null, scanTarget: null,

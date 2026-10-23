@@ -117,8 +117,9 @@ jobs:
 
       # The comments, leaderboard and private-markets suites were not in CI, so a stale users stub in the comments
       # test database failed them silently from migration 0010 until 2026-10-01.
-      - name: Run comments, leaderboard and private-markets tests
-        run: pnpm test:comments && pnpm test:lb && pnpm test:pm
+      # Notifications (#214) joined them for the same reason; its race tests skip without a local PostgreSQL 16.
+      - name: Run comments, leaderboard, private-markets and notifications tests
+        run: pnpm test:comments && pnpm test:lb && pnpm test:pm && pnpm test:notify
 
       - name: Build
         run: pnpm build

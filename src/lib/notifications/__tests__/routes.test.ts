@@ -16,6 +16,8 @@ import { GET as listNotifications } from '../../../app/api/notifications/route';
 import { POST as markRead } from '../../../app/api/notifications/read/route';
 import { GET as getPrefs, POST as postPrefs } from '../../../app/api/user/notification-prefs/route';
 import { unreadCount } from '@/lib/notifications/unread';
+import { upsertReplyNotification } from '@/lib/comments/mutations';
+import { replyKey } from '@/lib/notifications/keys';
 
 import { createNotifyDb, emailAccount, walletAccount, type NotifyDb } from './harness';
 
@@ -72,6 +74,28 @@ describe('GET /api/notifications', () => {
     as('b');
     const pb = (await (await listNotifications(new Request(`http://x/api/notifications?cursor=${p1.next}`))).json()) as { items: unknown[] };
     expect(pb.items).toHaveLength(0);
+  });
+
+  it('re-opening reply rows between pages neither skips nor repeats an item (Codex S1 code review R1 F1)', async () => {
+    const parent = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+    for (let i = 0; i < 25; i += 1) {
+      await t.client.query(
+        `INSERT INTO notifications (user_id, kind, dedupe_key, data, event_at, created_at, read_at)
+         VALUES ($1, 'reply', $2, $3::jsonb, now(), now() - ($4 || ' seconds')::interval, now())`,
+        [ids.a, replyKey(parent(i)), JSON.stringify({ poolId: String(i), count: 1 }), String(25 - i)],
+      );
+    }
+    as('a');
+    type Page = { items: { id: string; data: { poolId: string } }[]; next: string | null };
+    const p1 = (await (await listNotifications(new Request('http://x/api/notifications?limit=20'))).json()) as Page;
+    // Re-open (a) a row on the next page and (b) the cursor row itself, as new replies to those parents would.
+    const cursorPool = p1.items[p1.items.length - 1].data.poolId;
+    await upsertReplyNotification(t.db as never, ids.a, parent(0), '0');
+    await upsertReplyNotification(t.db as never, ids.a, parent(Number(cursorPool)), cursorPool);
+    const p2 = (await (await listNotifications(new Request(`http://x/api/notifications?limit=20&cursor=${p1.next}`))).json()) as Page;
+    const all = [...p1.items, ...p2.items].map((i) => i.data.poolId);
+    expect(new Set(all).size).toBe(all.length);
+    expect(all.length).toBe(25);
   });
 
   it('a bad limit or cursor is a 400', async () => {
