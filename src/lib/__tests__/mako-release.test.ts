@@ -46,6 +46,8 @@ const LOADERS: [string, () => Promise<unknown>][] = [
   ['use-pool-tx', () => import('@/lib/use-pool-tx')],
   ['sponsor route', () => import('@/app/api/aa/sponsor/route')],
   ['send route', () => import('@/app/api/aa/send/route')],
+  // The request boundary: Next awaits Proxy before every page and route, including ones that never import contract.ts.
+  ['proxy', () => import('@/proxy')],
 ];
 
 describe('root guard 1: an unreviewed address loads nothing', () => {
@@ -62,6 +64,14 @@ describe('root guard 1: an unreviewed address loads nothing', () => {
       await expect(register()).rejects.toThrow(NOT_REVIEWED);
     });
   }
+
+  it('the proxy lets every request through for the V4 record (Codex naming code review R1 F1)', async () => {
+    withEnv(V4, '32603678');
+    const { proxy, config } = await import('@/proxy');
+    expect(proxy().headers.get('x-middleware-next')).toBe('1');
+    // No matcher gap for pages or API routes: only build assets are left out.
+    expect(config.matcher).toEqual(['/((?!_next/static|_next/image|favicon.ico).*)']);
+  });
 
   it('register() resolves for the V4 record', async () => {
     withEnv(V4, '32603678');

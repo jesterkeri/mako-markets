@@ -77,12 +77,15 @@ const shown = buildPool(draft, OPENED);
 if (!shown.ok) throw new Error(shown.reason);
 
 let clock = OPENED;
+let mono = OPENED; // the monotonic clock, in seconds (performance.now() / 1000)
 function setClock(sec: number) {
   clock = sec;
+  mono = sec;
 }
 
 function setup(user: 'magic' | 'wallet') {
   vi.spyOn(Date, 'now').mockImplementation(() => clock * 1000);
+  vi.spyOn(performance, 'now').mockImplementation(() => mono * 1000);
   mocks.user = user === 'magic' ? magicUser : walletUser;
   mocks.connected = user === 'wallet' ? WALLET : undefined;
   mocks.readContract.mockImplementation(async () => mocks.allowance);
@@ -91,12 +94,14 @@ function setup(user: 'magic' | 'wallet') {
   mocks.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [], transactionHash: TX });
   mocks.runSponsoredRequest.mockResolvedValue({ kind: 'sent', pendingUserOpId: 'p1', txHash: TX, userOpHash: TX });
   const hook = renderHook(() => usePoolTx());
-  act(() => hook.result.current.open({ kind: 'create', draft, nowSec: OPENED, seed: 1_000_000n, seedYes: true }));
+  setClock(OPENED);
+  act(() => hook.result.current.open({ kind: 'create', draft, nowSec: OPENED, openedAtMs: OPENED * 1000, seed: 1_000_000n, seedYes: true }));
   return hook;
 }
 
-async function confirm(hook: ReturnType<typeof setup>, at: number, how: 'confirm' | 'retry' = 'confirm') {
+async function confirm(hook: ReturnType<typeof setup>, at: number, how: 'confirm' | 'retry' = 'confirm', wallAt = at) {
   setClock(at);
+  clock = wallAt; // a device clock moved by hand: the wall clock alone changes
   await act(async () => {
     await hook.result.current[how]();
   });
@@ -156,6 +161,14 @@ describe('email account (gas-free)', () => {
     expect(mocks.buildCreateBody).toHaveBeenCalledTimes(1);
     expect(mocks.runSponsoredRequest).toHaveBeenCalledTimes(1);
   });
+
+  it('a device clock moved back: 100 s after opening, the wall clock reads only 5 s later; refused, nothing read, signed or sent (Codex R1 F2)', async () => {
+    const hook = setup('magic');
+    expect(await confirm(hook, OPENED + 100, 'confirm', OPENED + 5)).toEqual(movedOn);
+    expect(mocks.readContract).not.toHaveBeenCalled();
+    expect(mocks.buildCreateBody).not.toHaveBeenCalled();
+    expect(mocks.runSponsoredRequest).not.toHaveBeenCalled();
+  });
 });
 
 describe('wallet account', () => {
@@ -191,5 +204,13 @@ describe('wallet account', () => {
     // The approval landed and is kept (it moves no USDC); the sheet says the pool was not placed, and why.
     expect(phase).toMatchObject({ step: 'failed', nothingMoved: true });
     expect((phase as { body: string }).body).toContain('hold for 30 seconds');
+  });
+
+  it('a device clock moved back: 100 s after opening, the wall clock reads only 5 s later; refused, nothing read, simulated or sent (Codex R1 F2)', async () => {
+    const hook = setup('wallet');
+    expect(await confirm(hook, OPENED + 100, 'confirm', OPENED + 5)).toEqual(movedOn);
+    expect(mocks.readContract).not.toHaveBeenCalled();
+    expect(mocks.simulateContract).not.toHaveBeenCalled();
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled();
   });
 });

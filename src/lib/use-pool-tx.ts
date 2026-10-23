@@ -33,7 +33,7 @@ export type PoolTx =
   /// A new pool: built from the draft with `nowSec`, the moment its confirm sheet opened, so the title and times sent
   /// are exactly the ones the sheet showed (they hold for SHEET_HOLD_SEC), with the creator's first bet (`seed`, at
   /// least 1 USDC) on one side.
-  | { kind: 'create'; draft: CreateDraft; nowSec: number; seed: bigint; seedYes: boolean };
+  | { kind: 'create'; draft: CreateDraft; nowSec: number; openedAtMs: number; seed: bigint; seedYes: boolean };
 
 const WORDS: Record<PoolTx['kind'], OutcomeWords> = {
   bet: { noun: 'bet', failTitle: "Bet didn't go through" },
@@ -105,7 +105,11 @@ function afterApproval(a: Approval, p: ConfirmPhase, w: OutcomeWords): ConfirmPh
 /// A new pool's times are fixed when its sheet opens and hold for SHEET_HOLD_SEC (naming plan r8 §7.7): past that the
 /// title on chain could differ from the one confirmed, or the pool miss a margin, so nothing is read, signed or sent.
 /// "Try again" re-runs with the same times, so it answers this at once; the user reopens the sheet for new times.
-const holdExpired = (nowSec: number) => Math.floor(Date.now() / 1000) - nowSec > SHEET_HOLD_SEC;
+/// The hold is measured twice: on the wall clock against `nowSec` (the times shown), and on the browser's monotonic
+/// clock against `openedAtMs` (performance.now() when the sheet opened), so a device clock moved backwards cannot
+/// stretch it (Codex naming code review R1 F2).
+const holdExpired = (t: { nowSec: number; openedAtMs: number }) =>
+  Math.floor(Date.now() / 1000) - t.nowSec > SHEET_HOLD_SEC || performance.now() - t.openedAtMs > SHEET_HOLD_SEC * 1000;
 const TIMES_MOVED_ON: ConfirmPhase = {
   step: 'failed',
   title: 'Times moved on',
@@ -243,7 +247,7 @@ export function usePoolTx(onLanded?: () => void) {
         (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [u.safeAddress as `0x${string}`, MAKO_ADDRESS] })) as bigint;
       let body;
       if (t.kind === 'create') {
-        if (holdExpired(t.nowSec)) return TIMES_MOVED_ON;
+        if (holdExpired(t)) return TIMES_MOVED_ON;
         const built = buildPool(t.draft, t.nowSec);
         if (!built.ok) {
           return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
@@ -340,7 +344,7 @@ export function usePoolTx(onLanded?: () => void) {
         let sent = false;
         try {
           if (t.kind === 'create') {
-            if (holdExpired(t.nowSec)) return TIMES_MOVED_ON;
+            if (holdExpired(t)) return TIMES_MOVED_ON;
             const built = buildPool(t.draft, t.nowSec);
             if (!built.ok) return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
             const args = [built.pool.mType, toBytes32(built.pool.oracleRef), built.pool.bettingCloseTime, built.pool.closeTime, built.pool.question, t.seed, t.seedYes] as const;
@@ -349,7 +353,7 @@ export function usePoolTx(onLanded?: () => void) {
               return undone(w, 'Your USDC approval was turned down on Monad, so the pool was not created.');
             }
             // Again after the approval, which can take a while; an approval that landed is kept and moves no USDC.
-            if (holdExpired(t.nowSec)) return TIMES_MOVED_ON;
+            if (holdExpired(t)) return TIMES_MOVED_ON;
             try {
               await publicClient.simulateContract({ ...makoContract, functionName: 'createMarket', args, account });
             } catch (err) {

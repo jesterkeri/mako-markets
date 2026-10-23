@@ -193,7 +193,7 @@ export function CreatePoolClient() {
       doneSecondary: { label: 'View in Pools', href: '/pools' },
     });
     // The same `now` the sheet's pool was built from, so the chain gets exactly the title and times shown.
-    tx.open({ kind: 'create', draft, nowSec: now, seed, seedYes });
+    tx.open({ kind: 'create', draft, nowSec: now, openedAtMs: performance.now(), seed, seedYes });
   };
 
   const v: ViewProps = {
