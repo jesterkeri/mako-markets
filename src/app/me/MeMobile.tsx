@@ -36,6 +36,7 @@ import {
   type MeView,
 } from './MeParts';
 import { CreatorEarningsSection } from './CreatorEarningsSection';
+import { ReferralCard } from './ReferralCard';
 import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from './use-creator-totals';
 import { NAME_RESERVED, NAME_TAKEN, validateDisplayName } from './profile-rules';
 import { useNameCheck } from './use-name-check';
@@ -57,6 +58,7 @@ export function MeMobile(v: MeView) {
       <Identity {...v} />
       <Tiles {...v} />
       <TestUsdc account={v.account} />
+      <ReferralCard account={v.account} variant="mobile" />
       <div style={{ padding: '10px 16px 0' }}>
         <RowLink href={CREATE_HREF} icon={<Svg d={PLUS} size={20} />} iconBg="var(--mako-signal)" title="Create a pool" sub={v.chain.status === 'ready' ? createdLine(v.chain.created) : 'Anyone can create one'} />
       </div>
