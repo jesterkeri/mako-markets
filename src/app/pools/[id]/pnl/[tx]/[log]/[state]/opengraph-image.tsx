@@ -10,7 +10,8 @@ import { poolQr } from '@/lib/pool-qr';
 /// (owner, 2026-10-23):
 ///  - placed: drawn again when opened, cached a minute at most, because the estimate moves with the pot;
 ///  - result: the pool settled in a finalized block, so the card is complete and cached for good, with the name and
-///    photo it was first drawn with.
+///    photo it was first drawn with. A card drawn without the account's photo (the photo could not be fetched) is
+///    never cached, so it never stands in for the account's card.
 /// Not a card (made-up, refunded, not an account's bet, a placed link once settled): 404, cached a minute.
 export const alt = 'Mako Market share card';
 export const size = CARD_SIZE;
@@ -31,5 +32,8 @@ export default async function Image({ params }: { params: Promise<{ id: string; 
     return new Response(null, { status, headers: { 'cache-control': keep ? MINUTE : 'no-store' } });
   }
   const qr = c.card.variant === 'placed' ? await poolQr(c.poolId) : null;
-  return renderShareCard(c.card, await cardWho(c), qr, { 'cache-control': c.state === 'result' ? FOREVER : MINUTE });
+  const { who, complete } = await cardWho(c);
+  // Drawn without the account's photo (avatar budget spent, or the photo fetch failed): shown, never cached.
+  const cache = !complete ? 'no-store' : c.state === 'result' ? FOREVER : MINUTE;
+  return renderShareCard(c.card, who, qr, { 'cache-control': cache });
 }

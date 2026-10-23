@@ -90,6 +90,9 @@ export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: strin
   if (!market) return { ok: false, reason: 'unavailable' };
   if (state === 'placed' && market.resolved) return { ok: false, reason: 'settled' };
   if (state === 'result' && !market.resolved) return { ok: false, reason: 'not_yet' };
+  // The receipt and the pool are separate reads, possibly from different RPC nodes: a pool read a block behind the
+  // bet has a pot without it, and its estimate would be made up. Unreadable for now, not a card that is wrong.
+  if (state === 'placed' && (bettor.isYes ? market.totalYes : market.totalNo) < bettor.amount) return { ok: false, reason: 'unavailable' };
   const betAt = state === 'placed' ? await blockTime(bettor.block) : 0n;
   if (betAt === null) return { ok: false, reason: 'unavailable' };
   const nowSec = Math.floor(Date.now() / 1000);
@@ -111,17 +114,19 @@ export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: strin
 const PHOTO_TYPES = new Set(['image/png', 'image/jpeg']);
 
 /// The name, letter and photo for the card. The photo is fetched only within the site-wide avatar budget and only as
-/// PNG or JPEG (what the renderer reads); anything else, or a failure, is the letter avatar.
-export async function cardWho(c: Extract<LoadedCard, { ok: true }>): Promise<CardWho> {
+/// PNG or JPEG (what the renderer reads); anything else, or a failure, is the letter avatar. `complete` is false when
+/// the account has a photo the card could not draw: that card must not be cached as the account's card.
+export async function cardWho(c: Extract<LoadedCard, { ok: true }>): Promise<{ who: CardWho; complete: boolean }> {
   const name = c.displayName?.trim() || null;
   const who: CardWho = { handle: name ? `@${name}` : formatAddress(getAddress(c.bettor.address)), initial: initialOf(name, c.bettor.address), photo: null };
-  if (!c.storedPhoto || !(await reserveAvatarFetch())) return who;
+  if (!c.storedPhoto) return { who, complete: true };
+  if (!(await reserveAvatarFetch())) return { who, complete: false };
   try {
     const res = await fetch(c.storedPhoto, { signal: AbortSignal.timeout(5_000) });
     const type = (res.headers.get('content-type') ?? '').split(';')[0].trim();
-    if (!res.ok || !PHOTO_TYPES.has(type)) return who;
-    return { ...who, photo: `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}` };
+    if (!res.ok || !PHOTO_TYPES.has(type)) return { who, complete: false };
+    return { who: { ...who, photo: `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}` }, complete: true };
   } catch {
-    return who;
+    return { who, complete: false };
   }
 }
