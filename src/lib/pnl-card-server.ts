@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { cache } from 'react';
-import { decodeEventLog, type Hex } from 'viem';
+import { decodeEventLog, TransactionReceiptNotFoundError, type Hex } from 'viem';
 
 import { db } from '@/db/client';
 import { reserveAvatarFetch, reserveAvatarVisitor } from '@/lib/avatar-budget';
@@ -25,21 +25,24 @@ import { formatAddress } from '@/lib/user-display';
 //   4. database: only a Mako Market account's bet has a card (the /u rule), then its name and photo.
 
 const TX = /^0x[0-9a-f]{64}$/;
-const LOG = /^\d{1,5}$/;
+// Canonical forms only (no leading zeros), so one bet has exactly one URL and one cache entry.
+const LOG = /^(0|[1-9]\d{0,4})$/;
 
 export type CardBettor = { address: `0x${string}`; isYes: boolean; amount: bigint };
 
 export type LoadedCard =
   | { ok: true; card: PnlCard; bettor: CardBettor; poolId: bigint; displayName: string | null; storedPhoto: string | null }
-  | { ok: false; reason: 'not_found' | 'refused' };
+  // unavailable: the chain could not be read just now (429, timeout); like refused, it says nothing about the card.
+  | { ok: false; reason: 'not_found' | 'refused' | 'unavailable' };
 
-/// The BetPlaced log at `logIndex` of `tx`, if it is a bet on `poolId` emitted by the live contract; else null.
-export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Promise<CardBettor | null> {
+/// The BetPlaced log at `logIndex` of `tx`, if it is a bet on `poolId` emitted by the live contract; null when the
+/// chain says it is not; 'unavailable' when the chain could not be asked (only a missing receipt means "no such bet").
+export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Promise<CardBettor | null | 'unavailable'> {
   let receipt;
   try {
     receipt = await shareClient().getTransactionReceipt({ hash: tx });
-  } catch {
-    return null;
+  } catch (e) {
+    return e instanceof TransactionReceiptNotFoundError ? null : 'unavailable';
   }
   if (receipt.status !== 'success') return null;
   const log = receipt.logs.find((l) => l.logIndex === logIndex);
@@ -57,9 +60,12 @@ export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Pro
 /// load per request.
 export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: string, ip: string): Promise<LoadedCard> => {
   const poolId = poolIdFrom(idRaw);
-  if (poolId === null || !TX.test(txRaw) || !LOG.test(logRaw)) return { ok: false, reason: 'not_found' };
+  if (poolId === null || idRaw !== poolId.toString() || !TX.test(txRaw) || !LOG.test(logRaw)) return { ok: false, reason: 'not_found' };
   const [bettor, market] = await Promise.all([readBetLog(poolId, txRaw as Hex, Number(logRaw)), readPoolForShare(poolId)]);
-  if (!bettor || !market) return { ok: false, reason: 'not_found' };
+  if (bettor === 'unavailable') return { ok: false, reason: 'unavailable' };
+  if (!bettor) return { ok: false, reason: 'not_found' };
+  // The bet's own log proves the pool exists, so no pool here means the read failed, not a missing pool.
+  if (!market) return { ok: false, reason: 'unavailable' };
   // Labels only change the side's name, so the result check runs on the default ones first: no card, no database.
   if (!pnlCard(market, bettor, { yes: 'YES', no: 'NO' })) return { ok: false, reason: 'not_found' };
   if (!(await reserveAvatarVisitor(ip))) return { ok: false, reason: 'refused' };

@@ -42,7 +42,9 @@ export default async function PnlCardPage({ params }: { params: Params }) {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={`${cardPath(id, tx, log)}/opengraph-image`} width={1600} height={900} alt={c.card.question} style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 16 }} />
       ) : (
-        <p style={{ fontFamily: 'var(--mako-font-mono)', fontSize: 14 }}>Too many requests just now. Try again in a minute.</p>
+        <p style={{ fontFamily: 'var(--mako-font-mono)', fontSize: 14 }}>
+          {c.reason === 'refused' ? 'Too many requests just now. Try again in a minute.' : 'The chain could not be read just now. Try again in a minute.'}
+        </p>
       )}
       <Link
         href={`/pools/${id}`}

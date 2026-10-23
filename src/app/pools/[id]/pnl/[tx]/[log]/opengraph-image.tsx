@@ -16,7 +16,11 @@ const MINUTE = 'public, max-age=60, s-maxage=60';
 export default async function Image({ params }: { params: Promise<{ id: string; tx: string; log: string }> }) {
   const { id, tx, log } = await params;
   const c = await loadCard(id, tx, log, visitorIp({ headers: await headers() }));
-  // A refusal is about the caller (over the visitor limit, or the store down): never cached.
-  if (!c.ok) return new Response(null, { status: c.reason === 'refused' ? 429 : 404, headers: { 'cache-control': c.reason === 'refused' ? 'no-store' : MINUTE } });
+  // Only "not a card" is cached. A refusal (over the visitor limit, or the store down) is about the caller and an
+  // unavailable chain says nothing about the card: never cached, so no viewer or crawler keeps a missing image.
+  if (!c.ok) {
+    const status = c.reason === 'not_found' ? 404 : c.reason === 'refused' ? 429 : 503;
+    return new Response(null, { status, headers: { 'cache-control': c.reason === 'not_found' ? MINUTE : 'no-store' } });
+  }
   return renderPnlCard(c.card, await cardWho(c), { 'cache-control': MINUTE });
 }
