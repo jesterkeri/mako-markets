@@ -1,12 +1,16 @@
-# PnL share card
+# Share cards: bet placed, win, loss
 
-The card a user shares after a pool settles. It is part of the app UI, not a marketing post. One layout,
-two variants picked by the result: **win** (rocket art) and **loss** (crying mascot art).
+The cards a user shares from the app. They are part of the app UI, not marketing posts. One layout, three
+variants:
+
+- **Bet placed** (lever art): shared right after a bet goes in, while the pool is still open.
+- **Win** (rocket art) and **loss** (crying mascot art): shared after the pool settles, picked by the result.
 
 | File | What it is |
 | --- | --- |
-| `render-win.png`, `render-loss.png` | The approved designs. Match these. |
-| `win.html`, `loss.html` | The exact markup and CSS the renders came from (open in a browser; fonts load from Google Fonts). |
+| `render-placed.png`, `render-win.png`, `render-loss.png` | The approved designs. Match these. |
+| `placed.html`, `win.html`, `loss.html` | The exact markup and CSS the renders came from (open in a browser; fonts load from Google Fonts). |
+| `../../public/share/bet-placed.png` | Bet placed background art, 1670x942 PNG, full quality. |
 | `../../public/share/pnl-win.png` | Win background art, 1672x941 PNG, full quality. |
 | `../../public/share/pnl-loss.png` | Loss background art, 1672x941 PNG, full quality. |
 | `../../public/share/qr-makomarket.png` | QR code for `https://makomarket.xyz`, dark on cream, no quiet zone (the tile adds the padding). |
@@ -29,6 +33,7 @@ two variants picked by the result: **win** (rocket art) and **loss** (crying mas
 | Side on yellow (YES) | `#0D6B30` | Side value inside the yellow pill only (the site green is too pale on yellow) |
 | Side on yellow (NO) | `#B71C1C` | Same, for NO |
 | Won | `#14B8A6` | "Called it" status |
+| Live | `#D946EF` | "Call live" status (bet placed) |
 | Signal yellow | `#FACC15` | BETA tag, stats pill, url pill, avatar fallback, win reticle |
 | Cream | `#EDE6D6` | Body text, brand name, handle |
 | Title cream | `#F4EFE4` | Market question |
@@ -72,6 +77,27 @@ Top to bottom:
    - Right: QR tile (84px, `#EDE6D6`, radius 14px, padding 9px) then a 14px gap and the url pill
      (`makomarket.xyz`, Bricolage 800 28px, black on `#FACC15`, radius 999px, padding 16px 30px).
 
+The layout above is written for the win and loss cards. The bet placed card changes these parts and keeps
+everything else:
+
+## Bet placed variant
+
+- Art: `bet-placed.png` at `right -20px bottom 10px / 1440px auto` (not `cover`), so the lever clears the
+  stats pill. Same left-to-right shade over it.
+- Status: "Call live" in `#D946EF` (the site's live colour).
+- Return block label: "My call". The big value is the side word (`YES` / `NO`) in the side colour
+  (`#16A34A` / `#E53935`), same size and weight as the return %, with no optical pull to the left.
+- Line under it: estimated return % (e.g. `+64%`, profit green) then `est. return if right` (Inter 500 24px,
+  muted). Return = (estimated payout - stake) / stake, same formatting rules as the return %.
+- Stats pill columns: Stake, Est. payout, Settles. Settles is the settlement date as `Sat 25 Oct` (no unit).
+- No reticle.
+- The estimate is only an estimate: it moves as other people bet. Work it out from the pool's state at the
+  moment the card is made and always keep the "est." / "Est." labels. If a pool type cannot give a reliable
+  estimate, drop the Est. payout column and the estimate line rather than guess.
+- The QR code on this card should open the pool page, so someone who scans it can take the other side.
+
+## Win reticle
+
 **Win only:** a reticle over the rocket. 130px circle, 2px `rgba(250,204,21,.9)`, at left 1366px top 214px,
 with four 22px tick marks outside it. Label to its upper left, right-aligned in a 200px box at left 1146px
 top 166px: "Target locked" (mono, yellow) over the return % (result colour). The loss card has no reticle.
@@ -89,9 +115,11 @@ top 166px: "Target locked" (mono, yellow) over the return % (result colour). The
 | Return | (payout - stake) / stake | sign + 1 decimal + `%`; drop a trailing `.0` (`-100%`) |
 | Handle | user display handle | `@handle` |
 | Avatar | user avatar | image in the 64px circle; fallback is the first letter on yellow |
-| Date | settlement date | `23 Oct 2026` (rendered uppercase) |
+| Date | settlement date (win/loss), bet date (bet placed) | `23 Oct 2026` (rendered uppercase) |
+| Est. payout | bet placed only: the pool's current estimate for this position | 2 decimals + `USDC` |
+| Settles | bet placed only: pool settlement time | `Sat 25 Oct` |
 
-Pick the variant from the result: payout > stake is a win, payout = 0 is a loss. Refunded or voided
+Bet placed is shown for an open position. After settlement, pick the variant from the result: payout > stake is a win, payout = 0 is a loss. Refunded or voided
 positions are not covered by this design; do not show a win or loss card for them.
 
 ## Copy rules
