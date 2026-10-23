@@ -7,12 +7,15 @@ import { getUserSession } from '@/lib/user-session';
 // GET /api/notifications?cursor=<id>&limit=<1..30> -> { items: [{ id, kind, data, eventAt, read }], next }
 // The signed-in user's notifications, newest first (#214, NOTIFICATIONS_PLAN r8 §3.5). Session only, and every
 // query is scoped by `user_id = session.userId`, so a cursor from another account matches nothing. Keyset on
-// (created_at, id): the cursor is the last item's id, compared through its own row so no timestamp precision is lost.
-// `next` is null on the last page. Signed out: 401. Never cached.
+// (created_at, id): the cursor carries the last item's boundary itself, `<created_at to the microsecond, UTC>_<id>`,
+// never a row to look up, so a row that moves (a re-opened reply rises to the top) or is pruned between pages can
+// neither skip nor repeat an item nor end the feed early (Codex S1 code review R1 F1 and its adversary pass). A cursor
+// only bounds the caller's own rows. `next` is null on the last page. Signed out: 401. Never cached.
 
 export const dynamic = 'force-dynamic';
 
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
+const CURSOR_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)_([0-9a-f-]{36})$/;
 
 interface Row {
   id: string;
@@ -20,6 +23,8 @@ interface Row {
   data: unknown;
   event_at: Date | string;
   read_at: Date | string | null;
+  /// created_at to the microsecond, UTC, for the cursor (a JS Date would drop the microseconds).
+  ca: string;
 }
 
 export async function GET(req: Request) {
@@ -30,14 +35,15 @@ export async function GET(req: Request) {
   const limit = rawLimit === null ? 20 : Number(rawLimit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 30) return Response.json({ error: 'bad_limit' }, { status: 400, headers: NO_STORE });
   const cursor = params.get('cursor');
-  if (cursor !== null && !isUuid(cursor)) return Response.json({ error: 'bad_cursor' }, { status: 400, headers: NO_STORE });
+  const bound = cursor === null ? null : CURSOR_RE.exec(cursor);
+  if (cursor !== null && (bound === null || !isUuid(bound[2]) || Number.isNaN(Date.parse(bound[1])))) {
+    return Response.json({ error: 'bad_cursor' }, { status: 400, headers: NO_STORE });
+  }
 
-  const after =
-    cursor === null
-      ? sql``
-      : sql`AND (n.created_at, n.id) < (SELECT c.created_at, c.id FROM notifications c WHERE c.id = ${cursor}::uuid AND c.user_id = ${session.userId}::uuid)`;
+  const after = bound === null ? sql`` : sql`AND (n.created_at, n.id) < (${bound[1]}::timestamptz, ${bound[2]}::uuid)`;
   const res = await db.execute(sql`
-    SELECT n.id, n.kind, n.data, n.event_at, n.read_at
+    SELECT n.id, n.kind, n.data, n.event_at, n.read_at,
+           to_char(n.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ca
       FROM notifications n
      WHERE n.user_id = ${session.userId}::uuid ${after}
      ORDER BY n.created_at DESC, n.id DESC
@@ -53,7 +59,7 @@ export async function GET(req: Request) {
         eventAt: new Date(r.event_at).toISOString(),
         read: r.read_at !== null,
       })),
-      next: rows.length > limit ? page[page.length - 1].id : null,
+      next: rows.length > limit ? `${page[page.length - 1].ca}_${page[page.length - 1].id}` : null,
     },
     { headers: NO_STORE },
   );

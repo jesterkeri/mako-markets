@@ -86,21 +86,28 @@ describe('GET /api/notifications', () => {
       );
     }
     as('a');
-    type Page = { items: { id: string; data: { poolId: string } }[]; next: string | null };
+    type Page = { items: { id: string; data: { poolId: string }; read: boolean }[]; next: string | null };
     const p1 = (await (await listNotifications(new Request('http://x/api/notifications?limit=20'))).json()) as Page;
     // Re-open (a) a row on the next page and (b) the cursor row itself, as new replies to those parents would.
     const cursorPool = p1.items[p1.items.length - 1].data.poolId;
     await upsertReplyNotification(t.db as never, ids.a, parent(0), '0');
     await upsertReplyNotification(t.db as never, ids.a, parent(Number(cursorPool)), cursorPool);
-    const p2 = (await (await listNotifications(new Request(`http://x/api/notifications?limit=20&cursor=${p1.next}`))).json()) as Page;
+    const p2 = (await (await listNotifications(new Request(`http://x/api/notifications?limit=20&cursor=${encodeURIComponent(p1.next!)}`))).json()) as Page;
     const all = [...p1.items, ...p2.items].map((i) => i.data.poolId);
+    // Nothing repeats, and every row that did not move appears exactly once across the two pages.
     expect(new Set(all).size).toBe(all.length);
-    expect(all.length).toBe(25);
+    const moved = new Set(['0', cursorPool]);
+    const stayed = Array.from({ length: 25 }, (_, i) => String(i)).filter((x) => !moved.has(x));
+    for (const x of stayed) expect(all.filter((y) => y === x)).toHaveLength(1);
+    // The re-opened rows rose to the top as new, unread items (plan §3.2(3)): a fresh first page starts with them.
+    const fresh = (await (await listNotifications(new Request('http://x/api/notifications?limit=20'))).json()) as Page;
+    expect(new Set(fresh.items.slice(0, 2).map((i) => i.data.poolId))).toEqual(moved);
+    expect(fresh.items.slice(0, 2).every((i) => !i.read)).toBe(true);
   });
 
   it('a bad limit or cursor is a 400', async () => {
     as('a');
-    for (const q of ['limit=0', 'limit=31', 'limit=x', 'cursor=nope']) {
+    for (const q of ['limit=0', 'limit=31', 'limit=x', 'cursor=nope', 'cursor=00000000-0000-4000-8000-000000000001', 'cursor=2026-13-45T00:00:00.000000Z_00000000-0000-4000-8000-000000000001']) {
       expect((await listNotifications(new Request(`http://x/api/notifications?${q}`))).status).toBe(400);
     }
   });

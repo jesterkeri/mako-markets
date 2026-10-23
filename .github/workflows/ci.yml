@@ -64,6 +64,23 @@ jobs:
     # runs after them, so 15 minutes cancelled a passing run mid-build.
     timeout-minutes: 25
 
+    # A throwaway PostgreSQL for the notifications two-connection race tests (#214 S1,
+    # src/lib/notifications/__pg_tests__/race.test.ts, plan r8 §8 S1). Same 16.13 as the local runs; the suite drops and
+    # recreates its public schema and refuses any non-local host. Never Neon.
+    services:
+      postgres:
+        image: postgres:16.13
+        env:
+          POSTGRES_PASSWORD: ci-throwaway
+          POSTGRES_DB: notify_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       # Build-time placeholders. None are real values — they only need to
       # satisfy the `process.env.X` reads in the client bundle so
@@ -117,8 +134,10 @@ jobs:
 
       # The comments, leaderboard and private-markets suites were not in CI, so a stale users stub in the comments
       # test database failed them silently from migration 0010 until 2026-10-01.
-      # Notifications (#214) joined them for the same reason; its race tests skip without a local PostgreSQL 16.
+      # Notifications (#214) joined them for the same reason; its race tests run on the postgres service above.
       - name: Run comments, leaderboard, private-markets and notifications tests
+        env:
+          NOTIFY_PG_TEST_URL: postgres://postgres:ci-throwaway@localhost:5432/notify_test
         run: pnpm test:comments && pnpm test:lb && pnpm test:pm && pnpm test:notify
 
       - name: Build
