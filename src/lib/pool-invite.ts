@@ -9,10 +9,9 @@ import type { MarketWithId } from './contract';
 import { MIN_BET } from './pool-bet-rules';
 import { formatPays, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, type PoolCat, type PoolState } from './pool-list';
 import { poolClock, unsettleable } from './pool-rules';
-import { parseRefTag } from './ref-tag';
+import { parseRefTag, SHARE_ORIGIN } from './ref-tag';
 
-/// Shared links always point at production, never at the preview or local host the sharer happens to be on.
-export const SHARE_ORIGIN = 'https://makomarket.xyz';
+export { SHARE_ORIGIN };
 
 /// Where a link is going. It becomes `utm_source`, so Vercel Analytics counts visits per target.
 export type ShareTarget = 'x' | 'whatsapp' | 'telegram' | 'link';
