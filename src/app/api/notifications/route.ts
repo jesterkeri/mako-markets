@@ -8,9 +8,11 @@ import { getUserSession } from '@/lib/user-session';
 // The signed-in user's notifications, newest first (#214, NOTIFICATIONS_PLAN r8 §3.5). Session only, and every
 // query is scoped by `user_id = session.userId`, so a cursor from another account matches nothing. Keyset on
 // (created_at, id): the cursor carries the last item's boundary itself, `<created_at to the microsecond, UTC>_<id>`,
-// never a row to look up, so a row that moves (a re-opened reply rises to the top) or is pruned between pages can
-// neither skip nor repeat an item nor end the feed early (Codex S1 code review R1 F1 and its adversary pass). A cursor
-// only bounds the caller's own rows. `next` is null on the last page. Signed out: 401. Never cached.
+// never a row to look up, so an older page never repeats an item and a pruned or deleted cursor row does not end the
+// feed early. A row that rises above the cursor after the first page (a re-opened reply, plan §3.2(3)) or arrives
+// since is not on an older page: it is on the top page, which the list fetches again with every "Load more" and puts
+// at the top (components/notifications/NotificationList.tsx; Codex S1 code review R1 F1, R2). A cursor only bounds
+// the caller's own rows. `next` is null on the last page. Signed out: 401. Never cached.
 
 export const dynamic = 'force-dynamic';
 

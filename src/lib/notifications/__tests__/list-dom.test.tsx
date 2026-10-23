@@ -80,4 +80,32 @@ describe('NotificationList', () => {
     retry.click();
     expect(await screen.findByText(/Nothing yet/)).toBeTruthy();
   });
+
+  it('"Load more" also brings up a reply re-opened above the cursor after the first page, without repeats (Codex S1 code review R2)', async () => {
+    const id = (n: number) => `a0000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const item = (n: number, read = true) => ({ id: id(n), kind: 'reply', data: { poolId: String(n), count: 1 }, eventAt: '2026-10-22T10:00:00Z', read });
+    let reopened = false;
+    vi.stubGlobal('fetch', async (url: string, init?: { method?: string }) => {
+      if (init?.method === 'POST') return new Response(JSON.stringify({ updated: 1 }));
+      const cursor = new URL(url, 'http://x').searchParams.get('cursor');
+      // Before "Load more": page one = 9, 8, next = cursor; page two would hold 7 and R (= 1).
+      if (!cursor) return new Response(JSON.stringify({ items: reopened ? [item(1, false), item(9), item(8)] : [item(9), item(8)], next: 'c1' }));
+      // After R was re-opened it sits above the cursor, so the older page no longer holds it.
+      return new Response(JSON.stringify({ items: reopened ? [item(7)] : [item(7), item(1)], next: null }));
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <NotificationList limit={2} paged={true} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Load more');
+    reopened = true;
+    screen.getByText('Load more').click();
+    await waitFor(() => expect(screen.queryByText('Load more')).toBeNull());
+    const pools = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
+    // R (pool 1) is shown, at the top, and nothing appears twice.
+    expect(pools).toHaveLength(4);
+    expect(new Set(pools).size).toBe(4);
+    expect(pools[0]).toContain('1');
+  });
 });

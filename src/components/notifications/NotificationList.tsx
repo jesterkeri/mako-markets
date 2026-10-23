@@ -64,12 +64,23 @@ export function NotificationList({ limit, paged, onNavigate }: { limit: number; 
     [limit, queryClient],
   );
 
+  /// "Load more" fetches the next older page AND the top page again. The cursor bounds the older page by value, so an
+  /// item that rose above it after the first page was read (a re-opened reply, plan §3.2(3)) or arrived since is not
+  /// on the older page; it is on the top page, so it is put at the top (replacing its old place if it was shown), and
+  /// the older page adds only ids not already shown. Nothing is skipped and nothing repeats in this view (Codex S1 code
+  /// review R2).
   const load = useCallback(
     (cursor: string | null) =>
-      fetchPage(cursor).then(
-        (page) => {
+      (cursor ? Promise.all([fetchPage(cursor), fetchPage(null)]) : fetchPage(null).then((p) => [p, null] as const)).then(
+        ([page, top]) => {
           if (!alive.current) return;
-          setItems((prev) => (cursor ? [...prev, ...page.items] : page.items));
+          setItems((prev) => {
+            if (!cursor) return page.items;
+            const topIds = new Set(top!.items.map((i) => i.id));
+            const kept = [...top!.items, ...prev.filter((i) => !topIds.has(i.id))];
+            const shown = new Set(kept.map((i) => i.id));
+            return [...kept, ...page.items.filter((i) => !shown.has(i.id))];
+          });
           setNext(page.next);
           setStatus('ready');
           setMore(false);

@@ -132,8 +132,9 @@ export async function createComment(
 
 /// One row per parent comment for its author. An unread row counts one more reply; a row already read is re-opened
 /// as a new item (count 1, unread, fresh times, out of any pending email), so it rises to the top of the feed and
-/// survives the 90-day prune. The feed's cursor carries its own (created_at, id) boundary, so a row moving up never
-/// makes "Load more" skip or repeat one (api/notifications/route.ts). poolId is the parent's market_id, which the
+/// survives the 90-day prune. The feed's cursor carries its own (created_at, id) boundary, and the list re-reads the
+/// top page with every "Load more", so a row moving up is shown at the top, never skipped or repeated
+/// (api/notifications/route.ts, NotificationList.tsx). poolId is the parent's market_id, which the
 /// validators constrain to a canonical uint256; no name and no body.
 export async function upsertReplyNotification(tx: DbOrTx, parentUserId: string, parentId: string, marketId: string) {
   await tx.execute(sql`
