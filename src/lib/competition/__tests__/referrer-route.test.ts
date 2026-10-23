@@ -36,6 +36,13 @@ describe('POST /api/user/referrer', () => {
     expect(m.setReferrer).toHaveBeenCalledWith({}, 'u1', CODE);
   });
 
+  it('accepts the whole invite link pasted instead of the code', async () => {
+    expect(await answer(await POST(req({ code: ` https://makomarket.xyz/?ref=${CODE} ` })))).toEqual({ status: 200, body: { ok: true } });
+    expect(m.setReferrer).toHaveBeenCalledWith({}, 'u1', CODE);
+    // A link carrying only a campaign tag is still not a referral code.
+    expect(await answer(await POST(req({ code: 'https://makomarket.xyz/?utm_campaign=pool-7' })))).toEqual({ status: 400, body: { error: 'invalid' } });
+  });
+
   it('refuses before any write: cross origin, throttled, no session, store down, not a referral code', async () => {
     expect(await answer(await POST(req({ code: CODE }, 'https://evil.example')))).toEqual({ status: 403, body: { error: 'cross_origin' } });
     m.budget = 'limited';

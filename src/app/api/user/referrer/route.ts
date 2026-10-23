@@ -2,7 +2,7 @@ import { db } from '@/db/client';
 import { setReferrer } from '@/lib/competition/referrals';
 import { checkSameOrigin } from '@/lib/csrf';
 import { reserveSessionCheck } from '@/lib/name-check-budget';
-import { isReferralTag, parseRefTag } from '@/lib/ref-tag';
+import { isReferralTag, parseRefTag, refFromSearch } from '@/lib/ref-tag';
 import { getUserSession } from '@/lib/user-session';
 
 // POST /api/user/referrer { code } -> { ok: true } | { error }
@@ -24,7 +24,10 @@ export async function POST(req: Request) {
 
   let code: string | null = null;
   try {
-    code = parseRefTag(((await req.json()) as { code?: unknown } | null)?.code);
+    const raw = ((await req.json()) as { code?: unknown } | null)?.code;
+    // A friend may paste the whole invite link instead of the code: take its ?ref= tag.
+    const text = typeof raw === 'string' ? raw.trim() : raw;
+    code = typeof text === 'string' && text.includes('?') ? refFromSearch(text.slice(text.indexOf('?'))) : parseRefTag(text);
   } catch {
     // Not JSON: the same answer as a bad code.
   }

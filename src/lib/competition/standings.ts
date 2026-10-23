@@ -3,7 +3,8 @@ import 'server-only';
 // Standings of the $100 trading competition (REFERRAL_COMPETITION_PLAN r1, section 3). Three steps:
 //   1. one SQL query: the entrants (registered accounts whose code has REQUIRED_REFERRALS qualifying referrals) and,
 //      per entrant and counted pool, the YES and NO stakes and the claims inside the window;
-//   2. one multicall of getMarket over those pools for the outcomes (a failed read is unsettled, never a loss);
+//   2. one multicall of getMarket over those pools for the outcomes; if any pool cannot be read, the whole read fails
+//      and the page shows its error line (prizes are paid from this page, so no pool silently drops out);
 //   3. names and photos from the leaderboard's identity rules (never an email or a user id).
 //
 // Counted pools: only pools whose first bet by that player falls inside [START, END). Bets and claims on a pool the
@@ -140,17 +141,21 @@ export function rankEntrants(scores: Iterable<EntrantScore>, minSettled: number)
   return { ranked, unranked };
 }
 
-/// Step 2. Throws when the whole read fails (the page shows its error line; nothing is cached).
+/// Step 2. Throws when ANY pool's read fails, so the page shows its error line and nothing is cached. viem's multicall
+/// with allowFailure turns a failed request (RPC down, rate limited, timed out) into per-call failures instead of
+/// throwing, which would otherwise show an outage as a real board where nobody is ranked, or quietly push a real
+/// player under the settled-pool minimum (adversary pass on 1ba67fe).
 async function readOutcomes(markets: readonly string[]): Promise<Map<string, PoolOutcome>> {
   if (markets.length === 0) return new Map();
   const results = await getAaPublicClient(MONAD_TESTNET_ID).multicall({
     contracts: markets.map((id) => ({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket' as const, args: [BigInt(id)] as const })),
     allowFailure: true,
   });
+  if (results.some((r) => r.status !== 'success')) throw new Error('competition: a pool outcome could not be read');
   return new Map(
     results.map((r, i) => {
-      const m = r.status === 'success' ? (r.result as { resolved: boolean; outcome: number }) : null;
-      return [markets[i], m ? { resolved: m.resolved, outcome: Number(m.outcome) } : null];
+      const m = r.result as { resolved: boolean; outcome: number };
+      return [markets[i], { resolved: m.resolved, outcome: Number(m.outcome) }];
     }),
   );
 }
