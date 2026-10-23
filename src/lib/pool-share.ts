@@ -24,10 +24,12 @@ export function poolIdFrom(segment: string): bigint | null {
   return /^\d{1,18}$/.test(segment) ? BigInt(segment) : null;
 }
 
+/// The server's read client for share previews (public chain reads only).
+export const shareClient = () => createPublicClient({ chain: monadTestnet, transport: http(RPC_URL) });
+
 export async function readPoolForShare(id: bigint): Promise<MarketWithId | null> {
   try {
-    const client = createPublicClient({ chain: monadTestnet, transport: http(RPC_URL) });
-    const m = (await client.readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket', args: [id] })) as Omit<MarketWithId, 'id'>;
+    const m = (await shareClient().readContract({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket', args: [id] })) as Omit<MarketWithId, 'id'>;
     // The page title and the preview image show the pool page's title, without the original-wording line.
     return m && m.question ? { ...m, id, question: poolTitle({ ...m, id }, MAKO_RELEASE).title } : null;
   } catch {

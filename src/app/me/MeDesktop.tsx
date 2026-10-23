@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRef } from 'react';
 
 import { ListStateDesktop } from '@/components/ListState';
+import { hasPnlCard, PnlShareButton } from '@/components/PnlShareSheet';
 import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { estPayouts, ME_RANGES, positionMeta, resultLabel, signedUsdc, type MePosition } from '@/lib/me-stats';
 import { usdc2 } from '@/lib/pool-list';
@@ -45,7 +46,8 @@ import { useNameCheck } from './use-name-check';
 
 /// How to play from its first step.
 const TOUR_START = tourHref(0);
-const COLS = 'minmax(0,1fr) 90px 110px 150px 120px 20px';
+// The last column holds Share on a settled win or loss, else the arrow.
+const COLS = 'minmax(0,1fr) 90px 110px 150px 120px 72px';
 
 export function MeDesktop(v: MeView) {
   return (
@@ -445,9 +447,13 @@ function PositionRow({ p, v }: { p: MePosition; v: MeView }) {
         </span>
       )}
       <span style={{ ...pillStyle, background: pill.bg, color: pill.fg, fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{pill.label}</span>
-      <span aria-hidden="true" style={{ ...display }}>
-        →
-      </span>
+      {hasPnlCard(p) ? (
+        <PnlShareButton p={p} account={v.account} labels={labels} style={{ justifySelf: 'end' }} />
+      ) : (
+        <span aria-hidden="true" style={{ ...display, justifySelf: 'end' }}>
+          →
+        </span>
+      )}
     </div>
   );
 }

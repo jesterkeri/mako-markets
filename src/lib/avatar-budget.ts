@@ -44,7 +44,7 @@ export function reserveAvatarFetch(): Promise<boolean> {
 
 /// The requesting visitor's IP as the platform reports it: `x-real-ip`, else the first `x-forwarded-for` entry. Every
 /// request without one shares a single "unknown" bucket.
-export function visitorIp(req: Request): string {
+export function visitorIp(req: { headers: Headers }): string {
   const real = req.headers.get('x-real-ip')?.trim();
   if (real) return real;
   const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
