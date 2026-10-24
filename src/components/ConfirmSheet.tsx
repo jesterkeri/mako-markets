@@ -136,8 +136,9 @@ export const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, f
 /// The same black in every theme and sheet (the yellow phone sheet included); the edge keeps it apart from a black sheet.
 const sideTile: React.CSSProperties = { position: 'relative', isolation: 'isolate', overflow: 'hidden', borderRadius: 28, background: '#000', color: 'var(--mako-paper)', boxShadow: 'inset 0 0 0 1.5px rgba(235, 229, 217, 0.22)', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 };
 
-/// The Mako mark behind the text, cropped at the bottom right; z-index -1 inside the tile's own stacking context.
-const tileMark: React.CSSProperties = { position: 'absolute', right: -28, bottom: -40, zIndex: -1, opacity: 0.1, pointerEvents: 'none', lineHeight: 0 };
+/// The Mako mark in brand yellow behind the text (Joshua 2026-10-24), cropped at the bottom right; z-index -1 inside
+/// the tile's own stacking context.
+const tileMark: React.CSSProperties = { position: 'absolute', right: -28, bottom: -40, zIndex: -1, color: '#FACC15', opacity: 0.4, pointerEvents: 'none', lineHeight: 0 };
 
 const chip: React.CSSProperties = { alignSelf: 'flex-start', height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', borderRadius: 9999, background: 'color-mix(in srgb, currentColor 14%, transparent)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'inherit', textDecoration: 'none' };
 
