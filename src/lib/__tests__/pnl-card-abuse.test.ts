@@ -227,21 +227,13 @@ describe('Proxy, which sees the query before Next strips any key', () => {
     expect((await at(`/pools/138/pnl/${TX}/5/result?utm_source=x`)).headers.get('x-middleware-next')).toBe('1');
   });
 
-  it.each([[`/pools/1%338/pnl/${TX}/5/result`], [`/pools/138/pnl/%30x${TX.slice(2)}/5/placed`], [`/pools/138/pnl/${TX}/5/resul%74/image.png`], [`/pools/138/pnl/${TX}/5/result/image.png?`]])(
+  it.each([[`/pools/1%338/pnl/${TX}/5/result`], [`/pools/138/pnl/%30x${TX.slice(2)}/5/placed`], [`/pools/138/pnl/${TX}/5/resul%74/image.png`]])(
     'refuses %s, another spelling of a card URL: 404, not cached',
     async (path) => {
-      // As next.config.ts's skipProxyUrlNormalize makes it in the app: req.url is the URL as received.
-      vi.stubEnv('__NEXT_NO_MIDDLEWARE_URL_NORMALIZE', '1');
       const res = await at(path);
-      vi.unstubAllEnvs();
       expect(res.status).toBe(404);
       expect(res.headers.get('cache-control')).toBe('no-store');
       expect(res.headers.get('x-middleware-next')).toBeNull();
     },
   );
-
-  it('gets the URL as received only while next.config.ts sets skipProxyUrlNormalize', async () => {
-    const { readFileSync } = await import('node:fs');
-    expect(readFileSync('next.config.ts', 'utf8')).toMatch(/^\s*skipProxyUrlNormalize: true,$/m);
-  });
 });

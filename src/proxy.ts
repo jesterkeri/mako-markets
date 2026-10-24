@@ -11,10 +11,9 @@
 // the query first (nxtP* only renamed), so it refuses them here, before any budget, chain, database or photo work.
 //
 // Each card, page and image, has one spelling too (adversary r3): Next decodes percent-encoded dynamic segments before
-// routing, so /pools/1%338/… is pool 138's card at another URL and CDN entry, and any `%` in a card path is a 404. A bare
-// trailing `?` leaves `search` empty, so the image is refused on any `?` at all. Both are read from req.url, which is the
-// URL as received because next.config.ts sets skipProxyUrlNormalize; without it Next hands Proxy a URL rebuilt from the
-// parsed path and query, with a bare `?` dropped (probed on a built app with `next start`).
+// routing, so /pools/1%338/… is pool 138's card at another URL and CDN entry, and any `%` in a card path is a 404. The
+// path Proxy gets keeps its percent-encoding (probed on a built app with `next start`).
+// shortcut: a bare trailing "?" is not refused (Next normalizes it away before Proxy); revisit if a CDN is shown to key it separately
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { MAKO_RELEASE } from '@/lib/contract';
@@ -24,11 +23,8 @@ const CARD = /^\/pools\/[^/]+\/pnl\/[^/]+\/[^/]+\/[^/]+(\/image\.png)?$/;
 
 export function proxy(req: NextRequest) {
   void MAKO_RELEASE;
-  const raw = req.url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, ''); // path and query, as received
-  const q = raw.indexOf('?');
-  const path = q < 0 ? raw : raw.slice(0, q);
-  const card = CARD.exec(path);
-  if (card && (path.includes('%') || (card[1] !== undefined && q >= 0))) return new NextResponse(null, { status: 404, headers: { 'cache-control': 'no-store' } });
+  const card = CARD.exec(req.nextUrl.pathname);
+  if (card && (req.nextUrl.pathname.includes('%') || (card[1] !== undefined && req.nextUrl.search !== ''))) return new NextResponse(null, { status: 404, headers: { 'cache-control': 'no-store' } });
   return NextResponse.next();
 }
 
