@@ -117,6 +117,13 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   /// render, as Me does, so a pool that settles or refunds while it is open changes or drops the card (adversary on
   /// ed9518f), and another account signing in never sees it.
   const [myCardFor, setMyCardFor] = useState<string | null>(null);
+  // A sign-out or account switch forgets the open sheet, so signing back in never reopens it unasked (adversary on
+  // c5da33e). Reset during render, the repo's pattern for state that follows a value.
+  const [cardAccount, setCardAccount] = useState(account);
+  if (cardAccount !== account) {
+    setCardAccount(account);
+    setMyCardFor(null);
+  }
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
