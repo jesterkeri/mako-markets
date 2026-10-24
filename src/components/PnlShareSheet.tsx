@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react';
 import { usePublicClient } from 'wagmi';
 
 import { SheetFrame, Svg } from '@/components/ConfirmSheet';
+import { ShareLinks } from '@/components/PoolShareSheet';
 import type { MeBetWire } from '@/app/api/me/bets/route';
 import { monadTestnet } from '@/lib/chain';
 import type { MePosition } from '@/lib/me-stats';
 import { betLogIndex, cardImage, cardPath, type CardState } from '@/lib/pnl-card';
-import { shareText } from '@/lib/pool-invite';
 import { dayTime } from '@/lib/pool-rules';
 import { usdc2 } from '@/lib/pool-list';
 
@@ -16,7 +16,8 @@ import { usdc2 } from '@/lib/pool-list';
 // card per bet (owner, 2026-10-23). Me's sheet lists the account's bets on the pool, from its own-account route
 // (/api/me/bets); the ledger behind that route runs behind the chain, so the rows are checked against the stake Me read
 // on chain and, until they add up, the sheet says so instead of offering a partial list. The bet confirmation shares
-// the bet it just placed, found in its own receipt (useBetLog). Each preview has Download, Copy image and Share to X.
+// the bet it just placed, found in its own receipt (useBetLog). Each preview has Download and Copy image, then the
+// pool invite's share targets and Copy link, all carrying the card's own link (Joshua 2026-10-24).
 
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
@@ -129,7 +130,7 @@ export function PnlShareSheet({
         </div>
       )}
 
-      {bet && <CardPreview key={`${bet.tx}:${bet.log}`} page={cardPath(id, bet.tx, bet.log, state)} question={question} fileName={`mako-market-pool-${id.toString()}-bet-${pick + 1}.png`} />}
+      {bet && <CardPreview key={`${bet.tx}:${bet.log}`} poolId={id} page={cardPath(id, bet.tx, bet.log, state)} question={question} fileName={`mako-market-pool-${id.toString()}-bet-${pick + 1}.png`} />}
       {onPool && (
         <button type="button" onClick={onPool} className="m3-press" style={{ display: 'block', marginTop: 14, padding: '6px 0', ...mono, fontSize: 13, fontWeight: 700, color: 'var(--dim)', textDecoration: 'underline', textUnderlineOffset: 3 }}>
           Share the pool instead →
@@ -143,7 +144,7 @@ export function PnlShareSheet({
 export function BetCardSheet({ poolId, tx, log, question, onClose }: { poolId: bigint; tx: string; log: number; question: string; onClose: () => void }) {
   return (
     <SheetShell title={sheetTitle('placed')} onClose={onClose}>
-      <CardPreview page={cardPath(poolId, tx, log, 'placed')} question={question} fileName={`mako-market-pool-${poolId.toString()}-bet.png`} />
+      <CardPreview poolId={poolId} page={cardPath(poolId, tx, log, 'placed')} question={question} fileName={`mako-market-pool-${poolId.toString()}-bet.png`} />
     </SheetShell>
   );
 }
@@ -199,8 +200,8 @@ function SheetShell({ title, onClose, children }: { title: string; onClose: () =
   );
 }
 
-/// One card's preview with Download, Copy image and Share to X.
-function CardPreview({ page, question, fileName }: { page: string; question: string; fileName: string }) {
+/// One card's preview with Download and Copy image, then the share targets and Copy link for the card's page.
+function CardPreview({ poolId, page, question, fileName }: { poolId: bigint; page: string; question: string; fileName: string }) {
   const [done, setDone] = useState<string | null>(null);
   const [broken, setBroken] = useState(false);
   const image = cardImage(page);
@@ -232,7 +233,6 @@ function CardPreview({ page, question, fileName }: { page: string; question: str
       setDone('Copy failed');
     }
   };
-  const xHref = `https://x.com/intent/tweet?text=${encodeURIComponent(shareText(question))}&url=${encodeURIComponent(`${window.location.origin}${page}`)}`;
   const canCopy = typeof ClipboardItem !== 'undefined' && typeof navigator.clipboard?.write === 'function';
 
   const action: React.CSSProperties = { flex: 1, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9999, ...mono, fontSize: 13, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' };
@@ -251,10 +251,8 @@ function CardPreview({ page, question, fileName }: { page: string; question: str
             Copy image
           </button>
         )}
-        <a href={xHref} target="_blank" rel="noopener noreferrer" className="m3-press" style={{ ...action, background: '#000', color: '#fff' }}>
-          Share to X
-        </a>
       </div>
+      <ShareLinks id={poolId} question={question} path={page} />
       <div aria-live="polite" style={{ ...mono, fontSize: 12, color: 'var(--dim)', minHeight: 18, marginTop: 8 }}>
         {done}
       </div>

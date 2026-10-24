@@ -170,6 +170,16 @@ describe('a card URL carries its state', () => {
     expect(page.props.children[0].props.src).toBe(`/pools/138/pnl/${TX}/5/placed/image.png`);
   });
 
+  it('"See the pool" keeps the link’s share tags, for a browser that never runs the forward (Codex CARD_LINKS R1 F1)', async () => {
+    const { default: Page } = await import('@/app/pools/[id]/pnl/[tx]/[log]/[state]/page');
+    chain.latest = OPEN;
+    const searchParams = Promise.resolve({ utm_source: 'x', utm_campaign: 'pool-138', tag: ['a', 'b'], empty: '' });
+    const page = (await Page({ params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'placed' }), searchParams })) as { props: { children: { props: { href?: string } }[] } };
+    expect(page.props.children[1].props.href).toBe('/pools/138?utm_source=x&utm_campaign=pool-138&tag=a&tag=b&empty=');
+    const bare = (await Page({ params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'placed' }) })) as typeof page;
+    expect(bare.props.children[1].props.href).toBe('/pools/138');
+  });
+
   it('knows no other state', async () => {
     chain.latest = OPEN;
     for (const s of ['win', 'Placed', 'result/', '']) expect((await image(s)).status).toBe(404);

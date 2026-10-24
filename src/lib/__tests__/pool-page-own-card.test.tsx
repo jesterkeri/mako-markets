@@ -100,6 +100,19 @@ describe('pool page Share: the account’s own card', () => {
     const img = (await screen.findAllByRole('img', { name: /Your share card/ }))[0];
     expect(img.getAttribute('src')).toBe(`/pools/7/pnl/0x${'1'.padStart(64, 'b')}/0/result/image.png`);
 
+    // The card carries the pool invite's targets and Copy link, all pointing at this card's own page (Joshua 2026-10-24).
+    const card = `/pools/7/pnl/0x${'1'.padStart(64, 'b')}/0/result`;
+    const x = new URL(screen.getAllByRole('link', { name: 'Share on X' })[0].getAttribute('href') ?? '');
+    expect(x.searchParams.get('url')).toBe(`https://makomarket.xyz${card}?utm_source=x&utm_campaign=pool-7`);
+    expect(screen.getAllByRole('link', { name: 'Share on WhatsApp' })[0].getAttribute('href')).toContain(encodeURIComponent(`https://makomarket.xyz${card}?`));
+    expect(new URL(screen.getAllByRole('link', { name: 'Share on Telegram' })[0].getAttribute('href') ?? '').searchParams.get('url')).toBe(`https://makomarket.xyz${card}?utm_source=telegram&utm_campaign=pool-7`);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Copy link' })[0]);
+    });
+    expect(writeText).toHaveBeenCalledWith(`https://makomarket.xyz${card}?utm_source=link&utm_campaign=pool-7`);
+
     await act(async () => {
       fireEvent.click(screen.getAllByRole('button', { name: 'Share the pool instead →' })[0]);
     });
