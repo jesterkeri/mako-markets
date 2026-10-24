@@ -2,7 +2,7 @@
 // caller's own, and the "Invited by a friend?" field shows only while the account may still take an inviter.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -55,5 +55,24 @@ describe('ReferralCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect((await screen.findByRole('alert')).textContent).toBe("You can't use your own code");
     expect(posted).toEqual([JSON.stringify({ code: CODE })]);
+  });
+
+  it('scrolls each refusal into view, since focus stays on Add (Codex ME_ASIDE R1 F2)', async () => {
+    const scrolled: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.textContent ?? '');
+    };
+    try {
+      mount({ joined: 0, qualified: 0, canAddInviter: true }, () => Response.json({ error: 'invalid' }, { status: 400 }));
+      fireEvent.change(await screen.findByLabelText('Invited by a friend? Enter their code'), { target: { value: CODE } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+      await screen.findByRole('alert');
+      await waitFor(() => expect(scrolled).toEqual(['That code is not valid']));
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+      await waitFor(() => expect(scrolled).toEqual(['That code is not valid', 'That code is not valid']));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 });

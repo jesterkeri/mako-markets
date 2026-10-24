@@ -95,7 +95,8 @@ function Identity(v: MeView) {
     (check === 'taken' ? NAME_TAKEN : check === 'reserved' ? NAME_RESERVED : edit.nameError || (check === 'checking' ? 'Checking the name...' : 'Looks good. This is how you show up in comments and the leaderboard.'));
   const hintIsError = invalid !== null || check === 'taken' || check === 'reserved' || edit.nameError !== '';
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 22, padding: '22px 4px 24px' }}>
+    // flex-start: the capped side column can be taller than the profile, which stays at the top (Codex ME_ASIDE R1 F1).
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 22, padding: '22px 4px 24px' }}>
       <button
         type="button"
         onClick={() => v.setPhotoOpen(!v.photoOpen)}
@@ -163,7 +164,9 @@ function Identity(v: MeView) {
           <span>· {emailAccount ? 'signed in with email · gas sponsored' : 'signed in with a wallet · you pay gas in MON'}</span>
         </div>
       </div>
-      <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Scrolls on its own, so the invite card never stretches the profile row (Joshua 2026-10-24). A named, focusable
+          region, so a keyboard can scroll it (Codex ME_ASIDE R1 F2). */}
+      <div role="region" aria-label="Account tools" tabIndex={0} style={{ flex: 'none', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 240, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin' }}>
         <TestUsdc account={account} />
         <ReferralCard account={account} variant="desktop" />
       </div>
