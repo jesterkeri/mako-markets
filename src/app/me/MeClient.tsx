@@ -2,7 +2,8 @@
 
 import { useRef, useState } from 'react';
 
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { claimTile, ConfirmSheet, TileShareButton, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { cardStateOf, PnlShareSheet } from '@/components/PnlShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
 import type { MeRound } from '@/lib/me-rounds';
@@ -47,8 +48,9 @@ function roundClaimSpec(r: MeRound): ConfirmSpec {
     pendingTitle: refund ? 'Claiming your refund' : 'Claiming',
     rows,
     note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the round settled; the claim pays out the rest.',
-    doneTitle: refund ? 'Refund claimed' : 'Claimed',
+    doneTitle: refund ? 'Refund claimed' : r.position.kind === 'won' ? 'You won' : 'Claimed',
     doneBody: `${amt} USDC is in your balance.`,
+    doneTile: claimTile(amt, refund),
   };
 }
 
@@ -66,8 +68,9 @@ function claimSpec(p: MePosition): ConfirmSpec {
       { label: refund ? 'Refund' : 'Payout', value: `${amt} USDC` },
     ],
     note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the pool settled; the claim pays out the rest.',
-    doneTitle: refund ? 'Refund claimed' : 'Claimed',
+    doneTitle: refund ? 'Refund claimed' : 'You won',
     doneBody: `${amt} USDC is in your balance.`,
+    doneTile: claimTile(amt, refund),
   };
 }
 
@@ -97,6 +100,8 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   const [landed, setLanded] = useState<ReadonlyMap<string, MePosition>>(() => new Map());
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
   const claiming = useRef<MePosition | null>(null);
+  /// The pool whose claim is in the sheet, when it has a win card to share once the claim lands (Joshua 2026-10-24).
+  const [winCard, setWinCard] = useState<{ p: MePosition; open: boolean } | null>(null);
   const tx = usePoolTx(() => {
     const p = claiming.current;
     if (p) setLanded((prev) => new Map(prev).set(p.market.id.toString(), p));
@@ -117,6 +122,7 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
       if (c.p.claim === null) return;
       claiming.current = c.p;
       setSheetSpec(claimSpec(c.p));
+      setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false } : null);
       tx.open({ kind: 'claim', marketId: c.p.market.id });
     } else {
       if (c.r.claim === null) return;
@@ -201,7 +207,40 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
       <div className="mk-mob mk-m">
         <MeMobile {...view} />
       </div>
-      {spec && <ConfirmSheet spec={spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} />}
+      {spec && (
+        <ConfirmSheet
+          spec={spec}
+          phase={tx.phase}
+          wallet={walletOf(user)}
+          onConfirm={tx.confirm}
+          onCancel={tx.close}
+          onRetry={tx.retry}
+          onClose={tx.close}
+          doneExtra={
+            tx.phase.step === 'done' && winCard ? (
+              <TileShareButton
+                onClick={() => {
+                  setWinCard({ p: winCard.p, open: true });
+                  tx.close();
+                }}
+              >
+                Share your win
+              </TileShareButton>
+            ) : undefined
+          }
+        />
+      )}
+      {winCard?.open && (
+        <PnlShareSheet
+          poolId={winCard.p.market.id}
+          question={winCard.p.market.question}
+          stake={winCard.p.bet}
+          state="result"
+          account={account}
+          labels={data.labelsOf(winCard.p)}
+          onClose={() => setWinCard(null)}
+        />
+      )}
       {roundSpec && (
         <ConfirmSheet spec={roundSpec} phase={roundTx.phase} wallet={walletOf(user)} onConfirm={roundTx.confirm} onCancel={roundTx.close} onRetry={roundTx.retry} onClose={roundTx.close} />
       )}

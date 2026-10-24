@@ -86,7 +86,7 @@ describe('ConfirmSheet', () => {
   it('a placed bet is done on a black tile with the Mako mark: the side in big type and the stake, then Share and the transaction', () => {
     const handlers = { onConfirm: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(), onClose: vi.fn() };
     vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
-    const spec: ConfirmSpec = { ...SPEC, doneSide: { name: 'NO', amount: '10.00 USDC' } };
+    const spec: ConfirmSpec = { ...SPEC, doneTile: { big: 'NO', small: '10.00 USDC' } };
     render(<ConfirmSheet spec={spec} phase={{ step: 'done', txHash: TX }} wallet={MAKO} {...handlers} doneExtra={<button type="button">Share your call</button>} />);
     const status = screen.getAllByRole('status')[0];
     expect(status.textContent).toBe('Bet placedNO10.00 USDC');
