@@ -60,7 +60,7 @@ export const COMPETITION_COPY = {
     invalid: 'That code is not valid',
     own: "You can't use your own code",
     already: 'Your account already has an inviter',
-    too_old: `Only accounts created from ${fmtUtc(REFERRALS_OPEN)} UTC can add an inviter`,
+    too_old: 'This account can no longer add an inviter',
     unauthorized: 'Sign in again to add an inviter',
     rate_limited: 'Too many tries. Try again later',
     unavailable: 'Something went wrong. Try again',
