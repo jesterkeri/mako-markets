@@ -8,7 +8,7 @@ import { useReadContract, useReadContracts } from 'wagmi';
 import { PoolCommentsDesktop, PoolCommentsMobile } from '@/components/comments/PoolComments';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { CreatorEarningsCard, creatorFeeConfirmSpec } from '@/components/CreatorEarnings';
-import { BetCardSheet, useBetLog } from '@/components/PnlShareSheet';
+import { BetCardSheet, PnlShareSheet, useBetLog } from '@/components/PnlShareSheet';
 import { PoolShareSheet } from '@/components/PoolShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
@@ -20,7 +20,8 @@ import { addTouchSample, shouldCloseDrawer, type TouchSample } from '@/lib/drawe
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
 import { firstWorded } from '@/lib/pool-display';
-import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
+import type { CardState } from '@/lib/pnl-card';
+import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type Position, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
@@ -112,6 +113,17 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   /// The share sheet (15a), opened from the receipt's SHARE control.
   const [shareOpen, setShareOpen] = useState(false);
   const closeShare = useCallback(() => setShareOpen(false), []);
+  /// The account the own-card sheet was opened for (Joshua 2026-10-24); which card it shows is worked out on every
+  /// render, as Me does, so a pool that settles or refunds while it is open changes or drops the card (adversary on
+  /// ed9518f), and another account signing in never sees it.
+  const [myCardFor, setMyCardFor] = useState<string | null>(null);
+  // A sign-out or account switch forgets the open sheet, so signing back in never reopens it unasked (adversary on
+  // c5da33e). Reset during render, the repo's pattern for state that follows a value.
+  const [cardAccount, setCardAccount] = useState(account);
+  if (cardAccount !== account) {
+    setCardAccount(account);
+    setMyCardFor(null);
+  }
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
@@ -138,6 +150,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const creatorStats = creatorStatsOf(markets, market);
 
   const claimAmount = claimable(row.position);
+  const myCard = account ? poolCardState(row.position, market.resolved) : null;
   const openBet = () => {
     if (amount === null || why || tx.tx) return;
     setSheetSpec(confirmSpec('bet', market, row, labels, amount, side, estimate, claimAmount));
@@ -184,7 +197,10 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     lastCreatorClaimTx: tx.tx?.kind === 'creatorFee' && tx.phase.step === 'done' ? tx.phase.txHash : undefined,
     rulesOpen,
     setRulesOpen,
-    openShare: () => setShareOpen(true),
+    openShare: () => {
+      if (account && myCard) setMyCardFor(account);
+      else setShareOpen(true);
+    },
   };
 
   const spec = tx.tx ? sheetSpec : null;
@@ -198,6 +214,21 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
         <PoolMobile {...view} />
       </div>
       {shareOpen && <PoolShareSheet market={market} now={now} labels={labels} by={by} onClose={closeShare} />}
+      {myCard && account && myCardFor === account && userBet && (
+        <PnlShareSheet
+          poolId={id}
+          question={market.question}
+          stake={userBet}
+          state={myCard}
+          account={account}
+          labels={labels}
+          onClose={() => setMyCardFor(null)}
+          onPool={() => {
+            setMyCardFor(null);
+            setShareOpen(true);
+          }}
+        />
+      )}
       {spec && user && (
         <ConfirmSheet
           spec={spec}
@@ -217,7 +248,8 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
                   setBetCard({ tx: betTx, log: betLog.log });
                   tx.close();
                 }}
-                className="m3-press"
+                // mk-onsig: the dark yellow phone sheet turns the signal fill black, so the label turns yellow.
+                className="m3-press mk-onsig"
                 style={{ alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, opacity: betLog.status === 'found' ? 1 : 0.5 }}
               >
                 {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
@@ -229,6 +261,14 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
       {betCard && <BetCardSheet poolId={id} tx={betCard.tx} log={betCard.log} question={market.question} onClose={() => setBetCard(null)} />}
     </>
   );
+}
+
+/// Which of the account's own cards the pool page's Share opens, as Me picks it: bet placed while the pool is
+/// unsettled, the result once won or lost; none for a refund or no stake (docs/pnl-share-card/SPEC.md).
+export function poolCardState(p: Position | null, resolved: boolean): CardState | null {
+  if (!p) return null;
+  if (p.kind === 'won' || p.kind === 'lost') return 'result';
+  return p.kind === 'staked' && !resolved ? 'placed' : null;
 }
 
 /// The creator's pools on chain and the share that got money on both sides: the design's creator card, from real
@@ -290,6 +330,7 @@ function confirmSpec(
     doneTitle: 'Bet placed',
     doneBody: `${amt} USDC on ${name}.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
+    doneSide: { name, amount: `${amt} USDC`, bg: isYes ? 'var(--mako-yes)' : 'var(--mako-no)', fg: 'var(--mako-on-side)' },
   };
 }
 

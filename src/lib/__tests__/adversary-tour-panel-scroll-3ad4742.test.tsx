@@ -88,12 +88,6 @@ const { HowToPlay } = await import('@/components/shell/HowToPlay');
 const rect = (top: number, bottom: number, left: number, right: number) =>
   ({ top, bottom, left, right, width: right - left, height: bottom - top, x: left, y: top, toJSON() {} }) as DOMRect;
 
-/// The nearest ancestor that clips and scrolls on its own (not the window), or null.
-function ownScroller(el: HTMLElement): HTMLElement | null {
-  for (let p = el.parentElement; p; p = p.parentElement) if (p.style.overflowY === 'auto' || p.style.overflowY === 'scroll') return p;
-  return null;
-}
-
 /// Test USDC's top on screen. The panel (y 20 to 748) shows it at 42 when scrolled to its top.
 let anchorTop = -400;
 let intoView: ReturnType<typeof vi.fn>;
