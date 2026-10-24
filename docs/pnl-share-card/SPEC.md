@@ -131,6 +131,11 @@ Caching and chain reads:
 - The bet is looked up in the leaderboard's bet ledger first. A bet found there needs only the pool read from the chain.
   A bet not there yet (placed in the last ~30 minutes, or made up) is read from its receipt, under a small site-wide
   budget of its own, so made-up links cannot hold up cards for known bets.
+- The ledger lookup itself is capped site-wide (30 in 3 seconds), before the database is read. Under a flood of made-up
+  links, a card nobody has opened yet answers "try again" (429, never cached) for a few seconds; a result card whose
+  final figures the server already holds makes no lookup and keeps working.
+- A real card's account reads (name, photo, labels) are capped site-wide too (15 in 3 seconds), as no image is cached.
+  Made-up links never reach them; a flood of one real card makes every card answer "try again" for a few seconds.
 - No card image is cached at the CDN (`no-store`), so a rename or a removed photo shows on the very next view.
 - A result card's final figures (the bet and the settled pool) are cached on the server with no expiry, so redrawing it
   reads no chain. The name, photo and labels are read fresh on every render. A bet placed card reads the pool each time.

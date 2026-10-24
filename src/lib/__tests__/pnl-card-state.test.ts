@@ -63,7 +63,8 @@ vi.mock('@/lib/pool-share', () => ({
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
 vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
-vi.mock('@/lib/avatar-budget', () => ({ reserveAvatarVisitor: async () => true, reserveCardLoad: async () => true, reserveAvatarFetch: async () => false, visitorIp: () => '203.0.113.7' }));
+vi.mock('@/lib/avatar-budget', () => ({ reserveAvatarVisitor: async () => true, reserveCardLoad: async () => true,
+  reserveCardLookup: async () => true, reserveCardRender: async () => true, reserveAvatarFetch: async () => false, visitorIp: () => '203.0.113.7' }));
 vi.mock('@/lib/leaderboard/identity', () => ({ resolveStoredIdentities: async () => new Map() }));
 vi.mock('@/lib/leaderboard/profile', () => ({ isRegistered: async () => true }));
 vi.mock('@/lib/mako-labels-server', () => ({ getMakoLabels: async () => null }));

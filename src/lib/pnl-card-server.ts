@@ -7,7 +7,7 @@ import { decodeEventLog, getAddress, TransactionReceiptNotFoundError, type Hex }
 
 import { db } from '@/db/client';
 import { makoMarketEvents } from '@/db/schema';
-import { reserveAvatarFetch, reserveAvatarVisitor, reserveCardLoad, reserveKnownCardLoad } from '@/lib/avatar-budget';
+import { reserveAvatarFetch, reserveAvatarVisitor, reserveCardLoad, reserveCardLookup, reserveCardRender, reserveKnownCardLoad } from '@/lib/avatar-budget';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS, makoAbi, MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import { initialOf } from '@/lib/leaderboard/board-view';
@@ -24,7 +24,9 @@ import { formatAddress } from '@/lib/user-display';
 // URL claims. Checks run cheapest first, so a made-up URL never reaches the chain unmetered, nor the database:
 //   1. format (canonical lower-case hash, small log index, pool id, a known state),
 //   2. the per-visitor limit /api/avatar uses (by IP hash), in Upstash, failing closed,
-//   3. the bet ledger first (Codex SHARE_CARDS R2 F1, owner 2026-10-24): a bet the leaderboard indexer recorded (16
+//   3. the bet ledger first (Codex SHARE_CARDS R2 F1, owner 2026-10-24), behind its own site-wide lookup budget (Codex
+//      SHARE_CARDS R3 F1, owner 2026-10-24: under a flood of made-up links a card nobody opened yet is refused for a few
+//      seconds, while a result card whose facts are kept on the server makes no lookup at all): a bet the leaderboard indexer recorded (16
 //      blocks deep) gives the bettor and the bet time with no RPC call, and only the pool read touches the chain, from
 //      the known-bet budget. A bet not in the ledger yet (fresh, or made up) is read from its receipt: its log at that
 //      index, emitted by the live V4 contract, decoded as BetPlaced for this pool, from the small unknown-bet budget.
@@ -32,7 +34,8 @@ import { formatAddress } from '@/lib/user-display';
 //   4. the pool must be in the link's state. "placed": not settled yet (read at the latest block). "result": settled
 //      YES or NO in the last finalized block, so the result's figures are final (refunded: no card). Those final facts
 //      (bettor and pool) are kept on the server for good (finalFacts), so a result card's later loads read no chain,
-//   5. database: only a Mako Market account's bet has a card.
+//   5. database: only a Mako Market account's bet has a card. These account reads have their own site-wide budget
+//      (reserveCardRender), so one real card flooded from many visitors cannot load the shared database either.
 //
 // Identity: the card shows only what the account's public profile (/u/<address>) already shows next to that address,
 // its name and photo, from the same records: isRegistered is the /u gate, and resolveStoredIdentities is what the
@@ -108,6 +111,7 @@ async function blockTime(block: bigint): Promise<bigint | null> {
 /// The bet and its pool from the chain (steps 3 and 4 above), or why there is none. not_found here is final: a receipt
 /// with no matching BetPlaced log, or a ledger row for another pool.
 async function readFacts(poolId: bigint, tx: Hex, logIndex: number, state: CardState): Promise<Facts | Miss> {
+  if (!(await reserveCardLookup())) return 'refused';
   const row = await ledgerBet(tx, logIndex);
   const tag = state === 'result' ? 'finalized' : 'latest';
   let bettor: CardBettor, market: MarketWithId | null;
@@ -189,6 +193,8 @@ export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: strin
     state === 'placed' ? placedCard(market, bettor, labels, betAt, nowSec) : pnlCard(market, bettor, labels);
   // Labels only change the side's name, so the card check runs on the default ones first: no card, no database.
   if (!draw({ yes: 'YES', no: 'NO' })) return { ok: false, reason: 'not_found' };
+  // A real card's account reads (Codex SHARE_CARDS R3 F1): their own site-wide budget, which made-up links never reach.
+  if (!(await reserveCardRender())) return { ok: false, reason: 'refused' };
   if (!(await isRegistered(bettor.address))) return { ok: false, reason: 'not_found' };
   const [identity, labels] = await Promise.all([
     resolveStoredIdentities(db, [bettor.address], MONAD_TESTNET_ID),

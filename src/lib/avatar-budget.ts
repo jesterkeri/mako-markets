@@ -72,6 +72,28 @@ export const CARD_LOADS_PER_WINDOW = 6;
 export const KNOWN_CARD_LOADS_PER_WINDOW = 12;
 export const CARD_LOAD_WINDOW_MS = 3_000;
 
+/// The bet ledger lookup every card load that is not a kept result makes first (Codex SHARE_CARDS R3 F1): one indexed
+/// read of mako_market_events in the shared database, so made-up links are capped site-wide before it, not only per
+/// visitor. 30 in 3 s = 10 primary-key reads a second at most. Owner 2026-10-24: under a flood a card nobody opened
+/// yet answers 429 (no-store) for a few seconds; a result card already kept on the server makes no lookup.
+export const CARD_LOOKUPS_PER_WINDOW = 30;
+
+/// Reserve one card ledger lookup in the site-wide window: true when it may query the database. Fails closed.
+export function reserveCardLookup(): Promise<boolean> {
+  return reserve('mako:card:lookup', CARD_LOOKUPS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
+}
+
+/// A real card's account reads (registered check, name and photo, labels: about five indexed reads), made on every
+/// render because no card image is cached. Only a URL that reached a real bet in a pool in the right state gets
+/// here, so made-up links never spend it; a flood of one real card does, and then every card answers 429 (no-store)
+/// for a few seconds. 15 in 3 s = 5 renders a second, about 25 reads a second at most.
+export const CARD_RENDERS_PER_WINDOW = 15;
+
+/// Reserve one card render's account reads in the site-wide window. Fails closed.
+export function reserveCardRender(): Promise<boolean> {
+  return reserve('mako:card:render', CARD_RENDERS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
+}
+
 /// Reserve one unknown-bet card load in the site-wide window: true when it may read the chain. Fails closed.
 export function reserveCardLoad(): Promise<boolean> {
   return reserve('mako:card:load', CARD_LOADS_PER_WINDOW, CARD_LOAD_WINDOW_MS);

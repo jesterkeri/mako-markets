@@ -77,6 +77,7 @@ const budget = vi.hoisted(() => ({ fetchAllowed: false }));
 vi.mock('@/lib/avatar-budget', () => ({
   reserveAvatarVisitor: async () => true,
   reserveCardLoad: async () => true,
+  reserveCardLookup: async () => true, reserveCardRender: async () => true,
   reserveAvatarFetch: async () => budget.fetchAllowed,
   visitorIp: () => '203.0.113.7',
 }));

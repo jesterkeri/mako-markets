@@ -56,6 +56,7 @@ vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 vi.mock('@/lib/avatar-budget', () => ({
   reserveAvatarVisitor: async () => true,
   reserveCardLoad: async () => true,
+  reserveCardLookup: async () => true, reserveCardRender: async () => true,
   reserveAvatarFetch: async () => true,
   visitorIp: () => '203.0.113.7',
 }));

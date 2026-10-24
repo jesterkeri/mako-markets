@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { makoMarketEvents } from '@/db/schema';
-import { CARD_LOADS_PER_WINDOW } from '@/lib/avatar-budget';
+import { CARD_LOADS_PER_WINDOW, CARD_LOOKUPS_PER_WINDOW, CARD_RENDERS_PER_WINDOW } from '@/lib/avatar-budget';
 import { createTestDb, type TestDb } from '@/lib/leaderboard/__tests__/test-db';
 
 import { MAKO_ADDRESS, MarketType, Outcome, type MarketWithId } from '../contract';
@@ -77,13 +77,17 @@ vi.mock('@/lib/pool-share', () => ({
   }),
 }));
 let t: TestDb;
+// Every other database read on this path is mocked below, so each select on db is one ledger lookup.
+const dbReads = vi.hoisted(() => ({ n: 0, accounts: 0 }));
 vi.mock('@/db/client', () => ({
   get db() {
-    return t.db;
+    return new Proxy(t.db, {
+      get: (target, k, r) => (k === 'select' ? (...a: unknown[]) => (dbReads.n++, (target.select as (...x: unknown[]) => unknown)(...a)) : Reflect.get(target, k, r)),
+    });
   },
 }));
 const profile = vi.hoisted(() => ({ displayName: 'jester' as string | null, avatarUrl: 'https://store.public.blob.vercel-storage.com/avatars/42/a.png' as string | null }));
-vi.mock('@/lib/leaderboard/profile', () => ({ isRegistered: async () => true }));
+vi.mock('@/lib/leaderboard/profile', () => ({ isRegistered: async () => (dbReads.accounts++, true) }));
 vi.mock('@/lib/leaderboard/identity', () => ({
   resolveStoredIdentities: async (_db: unknown, addrs: string[]) => new Map(addrs.map((a) => [a, { displayName: profile.displayName, avatarUrl: profile.avatarUrl }])),
 }));
@@ -126,6 +130,8 @@ beforeEach(async () => {
   dataCache.clear();
   Object.assign(chain, { latest: OPEN, finalized: SETTLED, pools: 0, receipts: 0, blocks: 0 });
   drawn.who = [];
+  dbReads.n = 0;
+  dbReads.accounts = 0;
   profile.displayName = 'jester';
   profile.avatarUrl = 'https://store.public.blob.vercel-storage.com/avatars/42/a.png';
   vi.stubGlobal('fetch', async () => new Response(new Uint8Array([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } }));
@@ -135,8 +141,8 @@ afterEach(async () => {
 });
 
 describe('decision A: the bet ledger first', () => {
-  it('a flood of made-up hashes cannot 429 a known bet, which makes no receipt or block call', async () => {
-    for (let i = 0; i < 50; i++) await image(`0x${i.toString(16).padStart(64, 'f')}`, 'placed', '138', `198.51.100.${i}`);
+  it('made-up hashes past the unknown-bet budget cannot 429 a known bet, which makes no receipt or block call', async () => {
+    for (let i = 0; i < 20; i++) await image(`0x${i.toString(16).padStart(64, 'f')}`, 'placed', '138', `198.51.100.${i}`);
     expect(chain.receipts).toBe(CARD_LOADS_PER_WINDOW);
     const before = { ...chain };
     const res = await image(TX, 'placed');
@@ -146,6 +152,36 @@ describe('decision A: the bet ledger first', () => {
     // The same bet under another pool's URL is final: a 404 cached a minute.
     const other = await image(TX, 'placed', '139');
     expect([other.status, other.headers.get('cache-control')]).toEqual([404, 'public, max-age=60, s-maxage=60']);
+  });
+});
+
+describe('Codex R3 F1: the ledger lookup has its own site-wide budget', () => {
+  it('a flood of made-up links from many IPs makes a bounded number of ledger reads, and a kept result card still draws', async () => {
+    // A result card opened once: its final facts are kept on the server.
+    expect((await image(TX, 'result')).status).toBe(200);
+    const kept = dbReads.n;
+    for (let i = 0; i < 200; i++) await image(`0x${i.toString(16).padStart(64, 'e')}`, 'placed', '138', `198.51.${i >> 8}.${i & 255}`);
+    // Bounded by the lookup budget, though the unknown RPC budget ran out after 6.
+    expect(dbReads.n).toBe(CARD_LOOKUPS_PER_WINDOW);
+    expect(kept).toBe(1);
+    expect(chain.receipts).toBe(CARD_LOADS_PER_WINDOW);
+    // Owner 2026-10-24: a card nobody opened yet is refused for now, never cached; the kept result makes no read.
+    const fresh = await image(TX, 'placed');
+    expect([fresh.status, fresh.headers.get('cache-control')]).toEqual([429, 'no-store']);
+    const again = await image(TX, 'result');
+    expect(again.status).toBe(200);
+    expect(dbReads.n).toBe(CARD_LOOKUPS_PER_WINDOW);
+  });
+});
+
+describe('Codex R3 F1: a real card flooded from many IPs', () => {
+  it('makes a bounded number of account reads, then answers 429 never cached', async () => {
+    const codes: number[] = [];
+    for (let i = 0; i < 60; i++) codes.push((await image(TX, 'result', '138', `192.0.2.${i}`)).status);
+    expect(dbReads.accounts).toBe(CARD_RENDERS_PER_WINDOW);
+    expect(codes.filter((c) => c === 200)).toHaveLength(CARD_RENDERS_PER_WINDOW);
+    expect(codes.filter((c) => c === 429)).toHaveLength(60 - CARD_RENDERS_PER_WINDOW);
+    expect((await image(TX, 'result')).headers.get('cache-control')).toBe('no-store');
   });
 });
 
