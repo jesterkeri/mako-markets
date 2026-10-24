@@ -36,7 +36,7 @@ export function ReferralCard({ account, variant }: { account: `0x${string}`; var
   const progress = data ? referralProgress(data.joined, data.qualified) : null;
   const pill: React.CSSProperties = { height: desk ? 48 : 44, borderRadius: 9999, ...display, fontSize: desk ? 15 : 14, display: 'flex', alignItems: 'center', justifyContent: 'center' };
   return (
-    <div style={desk ? { flex: 'none', width: 380, padding: '16px 18px', borderRadius: 14, background: 'var(--raise)', boxShadow: 'var(--edge)' } : { margin: '10px 16px 0', padding: '14px 18px', borderRadius: 28, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
+    <div style={desk ? { padding: '16px 18px', borderRadius: 14, background: 'var(--raise)', boxShadow: 'var(--edge)' } : { margin: '10px 16px 0', padding: '14px 18px', borderRadius: 28, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
       <div style={{ ...display, fontSize: desk ? 20 : 16 }}>{COPY.title}</div>
       <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 4 }}>{COPY.body}</div>
       <CopyButton text={referralLink(account)} className="mk-press97" style={{ ...pill, width: '100%', marginTop: 12, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)' }}>

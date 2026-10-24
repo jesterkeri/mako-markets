@@ -41,45 +41,60 @@ import { CREATOR_EARNINGS_ANCHOR, creatorTotalsLabel, useCreatorTotals } from '.
 import { NAME_RESERVED, NAME_TAKEN, validateDisplayName } from './profile-rules';
 import { useNameCheck } from './use-name-check';
 
-// Me on desktop (11a), in the terminal look: identity and test USDC, the four totals, profit and badges, then the
-// positions beside Ready to claim.
+// Me on desktop (11a), in the terminal look, in two columns (Joshua 2026-10-24): identity, the totals, profit and
+// positions on the left; test USDC, invite, badges, Ready to claim and creator earnings in a sticky right panel.
 
 /// How to play from its first step.
 const TOUR_START = tourHref(0);
 // The last column holds Share on a position with a card (bet placed while unsettled, or a win or loss), else the arrow.
-const COLS = 'minmax(0,1fr) 90px 110px 150px 120px 72px';
+// Tight fixed columns: the table sits in the left column beside the account panel (Joshua 2026-10-24).
+const COLS = 'minmax(0,1fr) 64px 96px 130px 100px 64px';
 
 export function MeDesktop(v: MeView) {
   return (
-    <div style={{ paddingBottom: 28 }}>
-      <Identity {...v} />
-      {v.photoOpen && <PhotoPanel {...v} />}
-      <Totals {...v} />
-      {v.chain.status === 'ready' ? (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 380px', gap: 40, marginTop: 26, padding: '0 4px' }}>
-            <Profit {...v} />
-            <Badges />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 380px', gap: 40, marginTop: 26, padding: '0 4px' }}>
-            <Positions {...v} />
-            <div>
-              <ReadyToClaim {...v} />
-              <Creator created={v.chain.created} />
-              <CreatorEarningsSection user={v.user} account={v.account} variant="desktop" />
+    // Two columns (Joshua 2026-10-24): the profile, totals, profit and positions on the left; every account tool on the
+    // right, in one panel that sticks and scrolls on its own.
+    // The panel narrows on smaller desktops so the positions table keeps room for the market name.
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) clamp(340px, 28vw, 380px)', gap: 32, paddingBottom: 28 }}>
+      <div style={{ minWidth: 0 }}>
+        <Identity {...v} />
+        {v.photoOpen && <PhotoPanel {...v} />}
+        <Totals {...v} />
+        {v.chain.status === 'ready' ? (
+          <>
+            <div style={{ marginTop: 26, padding: '0 4px' }}>
+              <Profit {...v} />
             </div>
+            <div style={{ marginTop: 26, padding: '0 4px' }}>
+              <Positions {...v} />
+            </div>
+          </>
+        ) : (
+          <div style={{ marginTop: 26 }}>
+            <ListStateDesktop kind="me" state={v.chain.status} onRetry={v.retry} explorerHref={v.explorerHref} />
           </div>
-        </>
-      ) : (
-        <div style={{ marginTop: 26 }}>
-          <ListStateDesktop kind="me" state={v.chain.status} onRetry={v.retry} explorerHref={v.explorerHref} />
-          {/* The creator list reads only the pools, so it stays here when the stake or rounds read failed: the
-              Creator earnings card in the totals row always has its list to lead to (adversary on 03bbb76). */}
-          <div style={{ maxWidth: 380, marginLeft: 'auto', padding: '0 4px' }}>
-            <CreatorEarningsSection user={v.user} account={v.account} variant="desktop" />
+        )}
+      </div>
+      {/* A named, focusable region, so a keyboard can scroll it (Codex ME_ASIDE R1 F2). */}
+      <aside
+        role="region"
+        aria-label="Account tools"
+        tabIndex={0}
+        style={{ position: 'sticky', top: 20, alignSelf: 'start', maxHeight: 'calc(100dvh - 40px)', overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin', display: 'flex', flexDirection: 'column', gap: 26, padding: '22px 4px 4px' }}
+      >
+        <TestUsdc account={v.account} />
+        <ReferralCard account={v.account} variant="desktop" />
+        <Badges />
+        {v.chain.status === 'ready' && (
+          <div>
+            <ReadyToClaim {...v} />
+            <Creator created={v.chain.created} />
           </div>
-        </div>
-      )}
+        )}
+        {/* The creator list reads only the pools, so it stays when the stake or rounds read failed: the Creator
+            earnings card in the totals row always has its list to lead to (adversary on 03bbb76). */}
+        <CreatorEarningsSection user={v.user} account={v.account} variant="desktop" />
+      </aside>
     </div>
   );
 }
@@ -95,7 +110,6 @@ function Identity(v: MeView) {
     (check === 'taken' ? NAME_TAKEN : check === 'reserved' ? NAME_RESERVED : edit.nameError || (check === 'checking' ? 'Checking the name...' : 'Looks good. This is how you show up in comments and the leaderboard.'));
   const hintIsError = invalid !== null || check === 'taken' || check === 'reserved' || edit.nameError !== '';
   return (
-    // flex-start: the capped side column can be taller than the profile, which stays at the top (Codex ME_ASIDE R1 F1).
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 22, padding: '22px 4px 24px' }}>
       <button
         type="button"
@@ -164,12 +178,6 @@ function Identity(v: MeView) {
           <span>· {emailAccount ? 'signed in with email · gas sponsored' : 'signed in with a wallet · you pay gas in MON'}</span>
         </div>
       </div>
-      {/* Scrolls on its own, so the invite card never stretches the profile row (Joshua 2026-10-24). A named, focusable
-          region, so a keyboard can scroll it (Codex ME_ASIDE R1 F2). */}
-      <div role="region" aria-label="Account tools" tabIndex={0} style={{ flex: 'none', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 240, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin' }}>
-        <TestUsdc account={account} />
-        <ReferralCard account={account} variant="desktop" />
-      </div>
     </div>
   );
 }
@@ -177,13 +185,13 @@ function Identity(v: MeView) {
 /// Test USDC comes from Circle's faucet, which asks for the account's address: the address and Copy sit beside it.
 function TestUsdc({ account }: { account: `0x${string}` }) {
   return (
-    <div data-tour-anchor="test-usdc" style={{ flex: 'none', width: 380, padding: '16px 18px', borderRadius: 14, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
+    <div data-tour-anchor="test-usdc" style={{ padding: '16px 18px', borderRadius: 14, background: 'var(--raise)', boxShadow: 'var(--edge)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ ...display, fontSize: 20 }}>Test USDC</span>
         <span style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>MONAD TESTNET</span>
       </div>
       <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 4 }}>Free test USDC to try Mako Market comes from Circle’s faucet. Choose {FAUCET_NETWORK} there, then paste your address.</div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
         <a
           href={CIRCLE_FAUCET_URL}
           target="_blank"
@@ -266,9 +274,11 @@ function Totals(v: MeView) {
     ['IN PLAY', from((s) => s.inPlay)],
     ['READY TO CLAIM', v.ready, 'var(--up-text)'],
   ];
-  const cell: React.CSSProperties = { padding: '14px 18px', boxShadow: 'inset 1px 0 0 var(--line)' };
+  // Each cell draws its own top line, so a wrapped second row is ruled too.
+  const cell: React.CSSProperties = { padding: '14px 18px', boxShadow: 'inset 1px 0 0 var(--line), inset 0 1px 0 var(--line)' };
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', boxShadow: 'inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line)' }}>
+    // Three a row in the left column: five side by side do not fit a figure like 22.83 USDC on one line.
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
       {cells.map(([label, value, colour]) => (
         <div key={label} style={cell}>
           <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>{label}</div>
@@ -388,7 +398,7 @@ function Positions(v: MeView) {
           );
         })}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 18, padding: '10px 0', boxShadow: 'inset 0 1px 0 var(--line)', ...mono, fontSize: 10, color: 'var(--dim)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, padding: '10px 0', boxShadow: 'inset 0 1px 0 var(--line)', ...mono, fontSize: 10, color: 'var(--dim)' }}>
         <span>MARKET</span>
         <span>SIDE</span>
         <span style={{ textAlign: 'right' }}>STAKE</span>
@@ -423,7 +433,7 @@ function PositionRow({ p, v }: { p: MePosition; v: MeView }) {
   const pays = estPayouts(p.market, p.bet);
   const pillStyle: React.CSSProperties = { justifySelf: 'start', maxWidth: '100%', height: 24, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, color: '#000', boxShadow: 'var(--edge)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
   return (
-    <div className="mk-row" style={{ display: 'grid', gridTemplateColumns: COLS, gap: 18, alignItems: 'center', padding: '15px 0', boxShadow: 'inset 0 1px 0 var(--line)' }}>
+    <div className="mk-row" style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, alignItems: 'center', padding: '15px 0', boxShadow: 'inset 0 1px 0 var(--line)' }}>
       <div style={{ minWidth: 0 }}>
         <Link href={poolHref(p.market.id)} className="mk-rowlink" style={{ display: 'block', ...display, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'inherit', textDecoration: 'none' }}>
           {p.market.question}
