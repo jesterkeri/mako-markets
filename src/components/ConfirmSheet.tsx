@@ -264,8 +264,9 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, done
                     <CheckIn size={18} />
                     {spec.doneTitle}
                   </div>
-                  {/* A house pool's side can be a long name: it wraps at a smaller size instead of overflowing. */}
-                  <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: spec.doneSide.name.length <= 6 ? 64 : 40, lineHeight: 0.95, letterSpacing: '-0.03em', marginTop: 14, overflowWrap: 'anywhere' }}>{spec.doneSide.name}</div>
+                  {/* A house pool's side can be a long name: past 4 characters (YES, NO fit) it is smaller and wraps instead of
+                      overflowing a phone, whatever its glyph widths. */}
+                  <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: spec.doneSide.name.length <= 4 ? 64 : 40, lineHeight: 0.95, letterSpacing: '-0.03em', marginTop: 14, overflowWrap: 'anywhere' }}>{spec.doneSide.name}</div>
                   <div style={{ fontSize: 17, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{spec.doneSide.amount}</div>
                 </div>
               ) : (

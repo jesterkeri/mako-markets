@@ -113,8 +113,10 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   /// The share sheet (15a), opened from the receipt's SHARE control.
   const [shareOpen, setShareOpen] = useState(false);
   const closeShare = useCallback(() => setShareOpen(false), []);
-  /// The account's own card, opened by the same Share when it holds a bet here (Joshua 2026-10-24).
-  const [myCard, setMyCard] = useState<CardState | null>(null);
+  /// The account the own-card sheet was opened for (Joshua 2026-10-24); which card it shows is worked out on every
+  /// render, as Me does, so a pool that settles or refunds while it is open changes or drops the card (adversary on
+  /// ed9518f), and another account signing in never sees it.
+  const [myCardFor, setMyCardFor] = useState<string | null>(null);
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
@@ -141,6 +143,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const creatorStats = creatorStatsOf(markets, market);
 
   const claimAmount = claimable(row.position);
+  const myCard = account ? poolCardState(row.position, market.resolved) : null;
   const openBet = () => {
     if (amount === null || why || tx.tx) return;
     setSheetSpec(confirmSpec('bet', market, row, labels, amount, side, estimate, claimAmount));
@@ -188,8 +191,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     rulesOpen,
     setRulesOpen,
     openShare: () => {
-      const own = account ? poolCardState(row.position, market.resolved) : null;
-      if (own) setMyCard(own);
+      if (account && myCard) setMyCardFor(account);
       else setShareOpen(true);
     },
   };
@@ -205,7 +207,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
         <PoolMobile {...view} />
       </div>
       {shareOpen && <PoolShareSheet market={market} now={now} labels={labels} by={by} onClose={closeShare} />}
-      {myCard && account && userBet && (
+      {myCard && account && myCardFor === account && userBet && (
         <PnlShareSheet
           poolId={id}
           question={market.question}
@@ -213,9 +215,9 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
           state={myCard}
           account={account}
           labels={labels}
-          onClose={() => setMyCard(null)}
+          onClose={() => setMyCardFor(null)}
           onPool={() => {
-            setMyCard(null);
+            setMyCardFor(null);
             setShareOpen(true);
           }}
         />
