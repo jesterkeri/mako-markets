@@ -85,6 +85,7 @@ vi.mock('@/lib/pool-share', () => ({
   }),
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 vi.mock('@/lib/leaderboard/profile', () => ({ isRegistered: async () => true }));
 vi.mock('@/lib/leaderboard/identity', () => ({
   resolveStoredIdentities: async (_db: unknown, addrs: string[]) => new Map(addrs.map((a) => [a, { displayName: 'jester', avatarUrl: null, branch: 'wallet' }])),

@@ -56,18 +56,28 @@ export function reserveAvatarVisitor(ip: string): Promise<boolean> {
   return reserve(`mako:avatar:ip:${createHash('sha256').update(ip).digest('hex')}`, AVATAR_VISITOR_PER_MINUTE);
 }
 
-// Share card loads that reach the chain (pnl-card-server.ts loadCard, Codex SHARE_CARDS R1 F1): every card page and
-// card image passes this after its format check and before its first RPC call, site-wide and across instances, in the
-// same store and script. shareClient reads MONAD_RPC_URL, else the public Monad RPC (about 15 requests a second, shared
-// with the rest of the app); one load makes at most 3 calls (receipt, pool, and the bet's block for a bet placed card).
-// A window of three seconds: one viewing of a bet placed link whose pool has settled is 3 loads within a second (the
-// page, its redirect to the result page, and the image), so a one-second window of 2 refused one viewer's image.
-// 6 loads in 3 s = 2 a second on average x 3 calls = 6 RPC calls a second, 40% of ~15; the worst burst is 6 x 3 = 18
-// calls at once (36 across a window boundary), and a 429 from the RPC is `unavailable`, a 503 with no-store.
+// Share card loads that reach the chain (pnl-card-server.ts, Codex SHARE_CARDS R1 F1 and R2 F1), two budgets, each
+// reserved just before the RPC calls it pays for, site-wide and across instances, in the same store and script. A load
+// that makes no RPC call (a result card whose final facts the server already holds) reserves neither.
+//  - Known bets (found in the leaderboard's bet ledger, mako_market_events, for this pool): 1 call, the pool read.
+//    Reserved only after the ledger lookup found the bet, so made-up links can never spend it.
+//  - Unknown bets (not in the ledger yet: placed in the last ~30 minutes, or made up): at most 3 calls (receipt, pool,
+//    and the bet's block for a bet placed card). A flood of made-up links can only spend this one.
+// shareClient reads MONAD_RPC_URL, else the public Monad RPC (about 15 requests a second, shared with the rest of the
+// app). Windows of three seconds: one viewing of a bet placed link whose pool has settled is 3 loads within a second
+// (the page, its redirect to the result page, and the image). Known 12 x 1 + unknown 6 x 3 = 30 calls per 3 s = 10 a
+// second at most, two thirds of ~15, leaving 5 a second for the rest of the app; a 429 from the RPC is `unavailable`,
+// a 503 with no-store.
 export const CARD_LOADS_PER_WINDOW = 6;
+export const KNOWN_CARD_LOADS_PER_WINDOW = 12;
 export const CARD_LOAD_WINDOW_MS = 3_000;
 
-/// Reserve one share card load in the site-wide window: true when it may read the chain. Fails closed like the others.
+/// Reserve one unknown-bet card load in the site-wide window: true when it may read the chain. Fails closed.
 export function reserveCardLoad(): Promise<boolean> {
   return reserve('mako:card:load', CARD_LOADS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
+}
+
+/// Reserve one known-bet card load (one pool read) in its own site-wide window. Fails closed.
+export function reserveKnownCardLoad(): Promise<boolean> {
+  return reserve('mako:card:known', KNOWN_CARD_LOADS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
 }

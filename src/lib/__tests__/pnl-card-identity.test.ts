@@ -52,6 +52,7 @@ vi.mock('@/lib/pool-share', () => ({
   }),
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 vi.mock('@/lib/avatar-budget', () => ({
   reserveAvatarVisitor: async () => true,
   reserveCardLoad: async () => true,
@@ -80,7 +81,7 @@ function result() {
   return GET(new Request(`http://localhost/pools/138/pnl/${TX}/5/result/image.png`), { params: Promise.resolve({ id: '138', tx: TX, log: '5', state: 'result' }) });
 }
 
-const MINUTE = 'public, max-age=60, s-maxage=60';
+const NO_STORE = 'no-store';
 
 beforeEach(() => {
   drawn.who = [];
@@ -90,20 +91,20 @@ beforeEach(() => {
 });
 
 describe('a result card after the account changes its profile', () => {
-  it('shows the new name on the next render, and no render is cached past a minute', async () => {
+  it('shows the new name on the next render, and no render is cached at all', async () => {
     const first = await result();
     profile.displayName = 'keri';
     const next = await result();
     expect(drawn.who.map((w) => w.handle)).toEqual(['@jester', '@keri']);
-    expect([first.headers.get('cache-control'), next.headers.get('cache-control')]).toEqual([MINUTE, MINUTE]);
+    expect([first.headers.get('cache-control'), next.headers.get('cache-control')]).toEqual([NO_STORE, NO_STORE]);
   });
 
-  it('stops showing a removed photo on the next render: the letter avatar, cached a minute like any complete card', async () => {
+  it('stops showing a removed photo on the next render: the letter avatar, never cached', async () => {
     const first = await result();
     expect(drawn.who[0].photo).toBe('data:image/png;base64,iVBORw==');
     profile.avatarUrl = null;
     const next = await result();
     expect(drawn.who[1].photo).toBeNull();
-    expect([first.headers.get('cache-control'), next.headers.get('cache-control')]).toEqual([MINUTE, MINUTE]);
+    expect([first.headers.get('cache-control'), next.headers.get('cache-control')]).toEqual([NO_STORE, NO_STORE]);
   });
 });

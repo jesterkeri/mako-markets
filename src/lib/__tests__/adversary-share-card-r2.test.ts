@@ -72,6 +72,7 @@ vi.mock('@/lib/pool-share', () => ({
   }),
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 const budget = vi.hoisted(() => ({ fetchAllowed: false }));
 vi.mock('@/lib/avatar-budget', () => ({
   reserveAvatarVisitor: async () => true,

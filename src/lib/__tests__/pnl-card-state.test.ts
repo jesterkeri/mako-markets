@@ -62,6 +62,7 @@ vi.mock('@/lib/pool-share', () => ({
   }),
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 vi.mock('@/lib/avatar-budget', () => ({ reserveAvatarVisitor: async () => true, reserveCardLoad: async () => true, reserveAvatarFetch: async () => false, visitorIp: () => '203.0.113.7' }));
 vi.mock('@/lib/leaderboard/identity', () => ({ resolveStoredIdentities: async () => new Map() }));
 vi.mock('@/lib/leaderboard/profile', () => ({ isRegistered: async () => true }));
@@ -88,12 +89,12 @@ beforeEach(() => {
 });
 
 describe('a card URL carries its state', () => {
-  it('draws the bet placed card for an unsettled pool, cached a minute (the estimate moves)', async () => {
+  it('draws the bet placed card for an unsettled pool, never cached (the estimate moves)', async () => {
     chain.latest = OPEN;
     const res = await image('placed');
     expect(res.status).toBe(200);
     expect(drawn.variants).toEqual(['placed']);
-    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
+    expect(res.headers.get('cache-control')).toBe('no-store');
     expect(chain.reads).toEqual(['latest']);
   });
 
@@ -114,14 +115,14 @@ describe('a card URL carries its state', () => {
     expect(drawn.variants).toEqual([]);
   });
 
-  it('draws the result only from the finalized block, cached a minute (it carries the current name and photo)', async () => {
+  it('draws the result only from the finalized block, never cached (it carries the current name and photo)', async () => {
     chain.latest = SETTLED;
     chain.finalized = SETTLED;
     const res = await image('result');
     expect(res.status).toBe(200);
     expect(drawn.variants).toEqual(['win']);
     expect(chain.reads).toEqual(['finalized']);
-    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   it('refuses a result settled at the latest block but not yet finalized, without caching the refusal', async () => {
@@ -153,7 +154,7 @@ describe('a card URL carries its state', () => {
     chain.latest = OPEN; // the settling block was reorged out; the pool is open again
     const back = await image('placed');
     expect(back.status).toBe(200);
-    expect(back.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
+    expect(back.headers.get('cache-control')).toBe('no-store');
     expect(drawn.variants).toEqual(['placed']);
   });
 

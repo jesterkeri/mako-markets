@@ -1,12 +1,15 @@
 import 'server-only';
 
+import { and, eq } from 'drizzle-orm';
+import { unstable_cache } from 'next/cache';
 import { cache } from 'react';
 import { decodeEventLog, getAddress, TransactionReceiptNotFoundError, type Hex } from 'viem';
 
 import { db } from '@/db/client';
-import { reserveAvatarFetch, reserveAvatarVisitor, reserveCardLoad } from '@/lib/avatar-budget';
+import { makoMarketEvents } from '@/db/schema';
+import { reserveAvatarFetch, reserveAvatarVisitor, reserveCardLoad, reserveKnownCardLoad } from '@/lib/avatar-budget';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
-import { MAKO_ADDRESS, makoAbi, MarketType } from '@/lib/contract';
+import { MAKO_ADDRESS, makoAbi, MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import { initialOf } from '@/lib/leaderboard/board-view';
 import { resolveStoredIdentities } from '@/lib/leaderboard/identity';
 import { isRegistered } from '@/lib/leaderboard/profile';
@@ -20,12 +23,16 @@ import { formatAddress } from '@/lib/user-display';
 // and the bet is public on chain. The bet is identified by its BetPlaced log, verified on chain, never by anything the
 // URL claims. Checks run cheapest first, so a made-up URL never reaches the chain unmetered, nor the database:
 //   1. format (canonical lower-case hash, small log index, pool id, a known state),
-//   2. limits, before any RPC call (Codex SHARE_CARDS R1 F1): the per-visitor limit /api/avatar uses (by IP hash), then
-//      the site-wide card load budget (avatar-budget.ts reserveCardLoad), both in Upstash and both failing closed,
-//   3. chain: the receipt's log at that index, emitted by the live V4 contract, decoded as BetPlaced for this pool;
-//      then the pool must be in the link's state. "placed": not settled yet (read at the latest block). "result":
-//      settled YES or NO in the last finalized block, so the result's figures are final (refunded: no card),
-//   4. database: only a Mako Market account's bet has a card.
+//   2. the per-visitor limit /api/avatar uses (by IP hash), in Upstash, failing closed,
+//   3. the bet ledger first (Codex SHARE_CARDS R2 F1, owner 2026-10-24): a bet the leaderboard indexer recorded (16
+//      blocks deep) gives the bettor and the bet time with no RPC call, and only the pool read touches the chain, from
+//      the known-bet budget. A bet not in the ledger yet (fresh, or made up) is read from its receipt: its log at that
+//      index, emitted by the live V4 contract, decoded as BetPlaced for this pool, from the small unknown-bet budget.
+//      Each budget (avatar-budget.ts) is reserved just before its RPC calls and fails closed,
+//   4. the pool must be in the link's state. "placed": not settled yet (read at the latest block). "result": settled
+//      YES or NO in the last finalized block, so the result's figures are final (refunded: no card). Those final facts
+//      (bettor and pool) are kept on the server for good (finalFacts), so a result card's later loads read no chain,
+//   5. database: only a Mako Market account's bet has a card.
 //
 // Identity: the card shows only what the account's public profile (/u/<address>) already shows next to that address,
 // its name and photo, from the same records: isRegistered is the /u gate, and resolveStoredIdentities is what the
@@ -41,8 +48,8 @@ export type CardBettor = { address: `0x${string}`; isYes: boolean; amount: bigin
 export type LoadedCard =
   | { ok: true; state: CardState; card: ShareCard; bettor: CardBettor; poolId: bigint; displayName: string | null; storedPhoto: string | null }
   // unavailable: the chain could not be read just now (429, timeout); like refused, it says nothing about the card.
-  // not_yet: a result link for a pool not settled in a finalized block yet, or a bet placed link whose receipt the
-  // server's RPC node has not seen yet. settled: a bet placed link for a pool that reads as settled at the latest block
+  // not_yet: a result link for a pool not settled in a finalized block yet, or a link whose bet is neither in the
+  // ledger nor in a receipt the server's RPC node has (fresh, or made up). settled: a bet placed link for a pool that reads as settled at the latest block
   // (the page sends it on to the result); not final, a reorg can undo it.
   | { ok: false; reason: 'not_found' | 'not_yet' | 'settled' | 'refused' | 'unavailable' };
 
@@ -70,6 +77,25 @@ export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Pro
 
 const isState = (s: string): s is CardState => (CARD_STATES as readonly string[]).includes(s);
 
+type Miss = Extract<LoadedCard, { ok: false }>['reason'];
+type Facts = { bettor: CardBettor; market: MarketWithId; betAt: bigint };
+
+/// The bet as the leaderboard ledger has it, read the way src/lib/leaderboard reads it; null when it is not there, or
+/// the database could not answer (then the receipt path, behind its small budget, decides).
+async function ledgerBet(tx: string, logIndex: number) {
+  try {
+    const e = makoMarketEvents;
+    const [row] = await db
+      .select({ marketId: e.marketId, actor: e.actor, isYes: e.isYes, amount: e.amount, block: e.blockNumber, at: e.blockTimestamp })
+      .from(e)
+      .where(and(eq(e.chainId, MONAD_TESTNET_ID), eq(e.contractAddress, MAKO_ADDRESS.toLowerCase()), eq(e.kind, 'bet'), eq(e.txHash, tx), eq(e.logIndex, logIndex)))
+      .limit(1);
+    return row ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /// The bet's block time, for the bet placed card's date; null when the chain could not be read.
 async function blockTime(block: bigint): Promise<bigint | null> {
   try {
@@ -79,32 +105,85 @@ async function blockTime(block: bigint): Promise<bigint | null> {
   }
 }
 
+/// The bet and its pool from the chain (steps 3 and 4 above), or why there is none. not_found here is final: a receipt
+/// with no matching BetPlaced log, or a ledger row for another pool.
+async function readFacts(poolId: bigint, tx: Hex, logIndex: number, state: CardState): Promise<Facts | Miss> {
+  const row = await ledgerBet(tx, logIndex);
+  const tag = state === 'result' ? 'finalized' : 'latest';
+  let bettor: CardBettor, market: MarketWithId | null;
+  if (row) {
+    if (row.marketId !== poolId.toString()) return 'not_found';
+    if (!(await reserveKnownCardLoad())) return 'refused';
+    bettor = { address: row.actor as `0x${string}`, isYes: row.isYes === true, amount: BigInt(row.amount), block: BigInt(row.block) };
+    market = await readPoolForShare(poolId, tag);
+  } else {
+    if (!(await reserveCardLoad())) return 'refused';
+    const [b, m] = await Promise.all([readBetLog(poolId, tx, logIndex), readPoolForShare(poolId, tag)]);
+    if (b === 'unavailable') return 'unavailable';
+    // The bet confirmation offers Share as soon as the wallet's RPC has the receipt, and the server's node can be a
+    // block behind it. A result link too (Codex SHARE_CARDS R2 F3): the receipt and the finalized pool can come from
+    // different RPC backends, so one's answer proves nothing about the other's. No receipt is not_yet, never cached.
+    if (b === 'no_receipt') return 'not_yet';
+    if (!b) return 'not_found';
+    bettor = b;
+    market = m;
+  }
+  // The bet proves the pool exists, so no pool here means the read failed, not a missing pool.
+  if (!market) return 'unavailable';
+  if (state === 'placed' && market.resolved) return 'settled';
+  if (state === 'result' && !market.resolved) return 'not_yet';
+  // The bet and the pool are separate reads, possibly from different RPC nodes: a pool read a block behind the bet has
+  // a pot without it, and its estimate would be made up. Unreadable for now, not a card that is wrong.
+  if (state === 'placed' && (bettor.isYes ? market.totalYes : market.totalNo) < bettor.amount) return 'unavailable';
+  const betAt = row ? BigInt(Math.floor(row.at.getTime() / 1000)) : state === 'placed' ? await blockTime(bettor.block) : 0n;
+  if (betAt === null) return 'unavailable';
+  return { bettor, market, betAt };
+}
+
+class NotFinal extends Error {
+  constructor(readonly reason: Miss) {
+    super(reason);
+  }
+}
+
+const BIG = new Set(['id', 'createdAt', 'closeTime', 'bettingCloseTime', 'totalYes', 'totalNo', 'amount', 'block', 'betAt']);
+
+/// A result card's final facts, kept in Next's data cache (unstable_cache: this app does not enable Cache Components,
+/// which 'use cache' needs) with no expiry, by contract and (pool, tx, log): a pool settled YES or NO in a finalized
+/// block, and the bet before it, cannot change. Every other answer is thrown, so it is never kept. Only chain facts
+/// are kept: name, photo and labels are read fresh on every render. The data cache stores JSON, so bigints travel as
+/// strings.
+const finalFacts = unstable_cache(
+  async (pool: string, tx: string, logIndex: number): Promise<string> => {
+    const f = await readFacts(BigInt(pool), tx as Hex, logIndex, 'result');
+    if (typeof f === 'string') throw new NotFinal(f);
+    if (f.market.outcome !== Outcome.YES && f.market.outcome !== Outcome.NO) throw new NotFinal('not_found');
+    return JSON.stringify(f, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
+  },
+  ['pnl-card-final-v1', String(MONAD_TESTNET_ID), MAKO_ADDRESS.toLowerCase()],
+  { revalidate: false },
+);
+
+async function resultFacts(poolId: bigint, tx: string, logIndex: number): Promise<Facts | Miss> {
+  try {
+    return JSON.parse(await finalFacts(poolId.toString(), tx, logIndex), (k, v) => (BIG.has(k) && typeof v === 'string' ? BigInt(v) : v));
+  } catch (e) {
+    if (e instanceof NotFinal) return e.reason;
+    throw e;
+  }
+}
+
 /// Everything the card page and its image need, or why there is none. cache(): the page and its metadata share one
 /// load per request.
 export const loadCard = cache(async (idRaw: string, txRaw: string, logRaw: string, stateRaw: string, ip: string): Promise<LoadedCard> => {
   const poolId = poolIdFrom(idRaw);
   if (poolId === null || idRaw !== poolId.toString() || !TX.test(txRaw) || !LOG.test(logRaw) || !isState(stateRaw)) return { ok: false, reason: 'not_found' };
   const state = stateRaw;
-  // Over this visitor's limit or the site-wide budget, or the store down: refused before the first RPC call.
-  if (!(await reserveAvatarVisitor(ip)) || !(await reserveCardLoad())) return { ok: false, reason: 'refused' };
-  // A pool settled in a finalized block was settled after every bet on it (bets stop at betting close, before
-  // close), so the bet's receipt is final too.
-  const [bettor, market] = await Promise.all([readBetLog(poolId, txRaw as Hex, Number(logRaw)), readPoolForShare(poolId, state === 'result' ? 'finalized' : 'latest')]);
-  if (bettor === 'unavailable') return { ok: false, reason: 'unavailable' };
-  // The bet confirmation offers Share as soon as the wallet's RPC has the receipt, and the server's node can be a block
-  // behind it: a bet placed link with no receipt yet is not_yet, never cached. A result link's bet came before a
-  // settlement in a finalized block, so its receipt is final: none means no such bet.
-  if (bettor === 'no_receipt') return { ok: false, reason: state === 'placed' ? 'not_yet' : 'not_found' };
-  if (!bettor) return { ok: false, reason: 'not_found' };
-  // The bet's own log proves the pool exists, so no pool here means the read failed, not a missing pool.
-  if (!market) return { ok: false, reason: 'unavailable' };
-  if (state === 'placed' && market.resolved) return { ok: false, reason: 'settled' };
-  if (state === 'result' && !market.resolved) return { ok: false, reason: 'not_yet' };
-  // The receipt and the pool are separate reads, possibly from different RPC nodes: a pool read a block behind the
-  // bet has a pot without it, and its estimate would be made up. Unreadable for now, not a card that is wrong.
-  if (state === 'placed' && (bettor.isYes ? market.totalYes : market.totalNo) < bettor.amount) return { ok: false, reason: 'unavailable' };
-  const betAt = state === 'placed' ? await blockTime(bettor.block) : 0n;
-  if (betAt === null) return { ok: false, reason: 'unavailable' };
+  // Over this visitor's limit, or the store down: refused before anything else.
+  if (!(await reserveAvatarVisitor(ip))) return { ok: false, reason: 'refused' };
+  const facts = state === 'result' ? await resultFacts(poolId, txRaw, Number(logRaw)) : await readFacts(poolId, txRaw as Hex, Number(logRaw), state);
+  if (typeof facts === 'string') return { ok: false, reason: facts };
+  const { bettor, market, betAt } = facts;
   const nowSec = Math.floor(Date.now() / 1000);
   const draw = (labels: { yes: string; no: string }): ShareCard | null =>
     state === 'placed' ? placedCard(market, bettor, labels, betAt, nowSec) : pnlCard(market, bettor, labels);

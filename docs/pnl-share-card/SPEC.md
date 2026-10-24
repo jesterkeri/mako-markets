@@ -123,9 +123,19 @@ top 166px: "Target locked" (mono, yellow) over the return % (result colour). The
 Bet placed is shown for an open position. After settlement, pick the variant from the result: payout > stake is a win, payout = 0 is a loss. Refunded or voided
 positions are not covered by this design; do not show a win or loss card for them.
 
-A win or loss card's figures are final: they come only from a pool settled in the last finalized block. The image is
-still cached a minute at most, because it carries the account's current name and photo, and a rename or a removed photo
-must show on the next render. Each card image has one URL, `<card page>/image.png`, and any query string on it is refused.
+A win or loss card's figures are final: they come only from a pool settled in the last finalized block. Each card image
+has one URL, `<card page>/image.png`, and any query string on it is refused.
+
+Caching and chain reads:
+
+- The bet is looked up in the leaderboard's bet ledger first. A bet found there needs only the pool read from the chain.
+  A bet not there yet (placed in the last ~30 minutes, or made up) is read from its receipt, under a small site-wide
+  budget of its own, so made-up links cannot hold up cards for known bets.
+- No card image is cached at the CDN (`no-store`), so a rename or a removed photo shows on the very next view.
+- A result card's final figures (the bet and the settled pool) are cached on the server with no expiry, so redrawing it
+  reads no chain. The name, photo and labels are read fresh on every render. A bet placed card reads the pool each time.
+- A bet the server cannot see yet, on either link, is a 404 that is never cached. Only a final "not a card" (no such
+  bet in the receipt, a bet on another pool, a refunded pool, not an account's bet) is a 404 cached a minute.
 
 ## Copy rules
 

@@ -45,6 +45,7 @@ vi.mock('@/lib/pool-share', () => ({
   shareClient: () => ({ getTransactionReceipt: () => chain.receipt() }),
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 vi.mock('@/lib/avatar-budget', () => ({
   reserveAvatarVisitor: vi.fn(async () => true),
   reserveCardLoad: vi.fn(async () => true),
@@ -72,13 +73,13 @@ async function image() {
 }
 
 describe('card image caching when the chain read fails', () => {
-  it('control: a tx the chain does not know is a publicly cached 404 (a made-up URL)', async () => {
+  it('a result link whose receipt is missing while its finalized pool reads settled is a 404 never cached (Codex R2 F3)', async () => {
     chain.receipt = async () => {
       throw new TransactionReceiptNotFoundError({ hash: TX });
     };
     const res = await image();
     expect(res.status).toBe(404);
-    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=60');
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   it('a transient RPC failure (429 / -32011) on a real card is never cached publicly as "not a card"', async () => {

@@ -89,6 +89,7 @@ vi.mock('@/lib/pool-share', () => ({
   },
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('next/cache', () => ({ unstable_cache: (fn: () => unknown) => fn }));
 const work = vi.hoisted(() => ({ registered: 0, identities: 0, drawn: 0 }));
 vi.mock('@/lib/leaderboard/profile', () => ({
   isRegistered: async () => {
