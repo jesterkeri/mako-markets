@@ -212,6 +212,9 @@ export function useRoundTx(onLanded?: () => void) {
       let approval: { hash: `0x${string}`; state: 'sent' | 'confirmed' } | null = null;
 
       async function write(request: Parameters<typeof writeContractAsync>[0]): Promise<`0x${string}`> {
+        // Another account signed in on the tab since Confirm (adversary on a3ac5a7): the wallet may still be connected,
+        // but this sheet is no longer that account's to send.
+        if (accountNow.current !== accountAddress(u)) throw new WalletSwitched();
         if (!connectedNow.current || isWalletDrifted(u, connectedNow.current)) throw new WalletSwitched();
         return writeContractAsync({ ...request, account: account! } as Parameters<typeof writeContractAsync>[0]);
       }
