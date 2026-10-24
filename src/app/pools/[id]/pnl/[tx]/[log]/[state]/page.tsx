@@ -7,6 +7,8 @@ import { visitorIp } from '@/lib/avatar-budget';
 import { cardImage, cardPath, type ShareCard } from '@/lib/pnl-card';
 import { loadCard } from '@/lib/pnl-card-server';
 
+import { ForwardToPool } from './ForwardToPool';
+
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://makomarket.xyz').replace(/\/+$/, '');
 
 type Params = Promise<{ id: string; tx: string; log: string; state: string }>;
@@ -37,7 +39,8 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   };
 }
 
-/// /pools/[id]/pnl/[tx]/[log]/[state]: one bet's share card, the page a shared card links to, with a way into the pool.
+/// /pools/[id]/pnl/[tx]/[log]/[state]: one bet's share card, the page a shared card links to. Previews show the card;
+/// a visitor is sent on to the pool (ForwardToPool).
 /// A bet placed link whose pool has settled since goes on to that bet's result. That settlement is read at the latest
 /// block, so a reorg can undo it (Codex SHARE_CARDS R1 F4): the page reads headers(), so Next sends it, the redirect
 /// included, as `private, no-cache, no-store`, and no shared cache keeps the redirect.
@@ -62,6 +65,7 @@ export default async function ShareCardPage({ params }: { params: Params }) {
       >
         See the pool
       </Link>
+      <ForwardToPool id={id} />
     </section>
   );
 }
