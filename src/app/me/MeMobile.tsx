@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Fragment, useRef } from 'react';
 
 import { ListStateMobile } from '@/components/ListState';
+import { hasPnlCard, PnlShareButton } from '@/components/PnlShareSheet';
 import { ICON } from '@/components/shell/icons';
 import { openFeedback } from '@/lib/feedback-store';
 import { tourHref } from '@/lib/tour';
@@ -434,41 +435,46 @@ function PositionCard({ p, v }: { p: MePosition; v: MeView }) {
   const side = sideOf(p, labels);
   const pill = statePill(p.state);
   const pays = estPayouts(p.market, p.bet);
+  const share = hasPnlCard(p);
   // Positioned above the card's own press tint (.m3-press::after), so a darkening card never dims a chip's small text.
   const chip: React.CSSProperties = { position: 'relative', zIndex: 1, height: 26, display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 9999, color: '#000', boxShadow: 'var(--edge)', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '45%' };
   return (
-    <Link href={poolHref(p.market.id)} className="m3-press" style={{ display: 'block', borderRadius: 26, background: 'var(--raise)', padding: '14px 16px', color: 'inherit', textDecoration: 'none' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ ...chip, background: side.bg, color: side.fg }}>{side.text}</span>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>Pool</span>
-        <span style={{ ...chip, marginLeft: 'auto', background: pill.bg, color: pill.fg }}>{pill.label}</span>
-      </div>
-      <div style={{ ...display, fontSize: 18, lineHeight: 1.22, marginTop: 10 }}>{p.market.question}</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 10, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
-        <span style={{ whiteSpace: 'nowrap' }}>
-          <span style={{ color: 'var(--dim)' }}>Stake</span>{' '}
-          <span style={{ fontWeight: 800 }}>
-            <FlashValue value={p.stake} text={usdc2(p.stake)} kind="direction" />
-          </span>
-        </span>
-        {p.settlement ? (
-          <span style={{ fontWeight: 800, color: resultColour(p), textAlign: 'right' }}>{resultLabel(p.settlement, p.stake)} USDC</span>
-        ) : (
-          <span style={{ textAlign: 'right', minWidth: 0 }}>
-            <span style={{ color: 'var(--dim)' }}>Est. payout</span>{' '}
+    // Share sits outside the card's link (a button inside a link is invalid), over the space the link leaves for it.
+    <div style={{ position: 'relative' }}>
+      <Link href={poolHref(p.market.id)} className="m3-press" style={{ display: 'block', borderRadius: 26, background: 'var(--raise)', padding: share ? '14px 16px 58px' : '14px 16px', color: 'inherit', textDecoration: 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ ...chip, background: side.bg, color: side.fg }}>{side.text}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dim)' }}>Pool</span>
+          <span style={{ ...chip, marginLeft: 'auto', background: pill.bg, color: pill.fg }}>{pill.label}</span>
+        </div>
+        <div style={{ ...display, fontSize: 18, lineHeight: 1.22, marginTop: 10 }}>{p.market.question}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 10, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--dim)' }}>Stake</span>{' '}
             <span style={{ fontWeight: 800 }}>
-              {pays.map((e, i) => (
-                <Fragment key={e.side}>
-                  {i > 0 && ' · '}
-                  {pays.length > 1 && `${e.side === 'yes' ? labels.yes : labels.no} `}
-                  <FlashValue value={e.payout} text={usdc2(e.payout)} kind="direction" />
-                </Fragment>
-              ))}
+              <FlashValue value={p.stake} text={usdc2(p.stake)} kind="direction" />
             </span>
           </span>
-        )}
-      </div>
-    </Link>
+          {p.settlement ? (
+            <span style={{ fontWeight: 800, color: resultColour(p), textAlign: 'right' }}>{resultLabel(p.settlement, p.stake)} USDC</span>
+          ) : (
+            <span style={{ textAlign: 'right', minWidth: 0 }}>
+              <span style={{ color: 'var(--dim)' }}>Est. payout</span>{' '}
+              <span style={{ fontWeight: 800 }}>
+                {pays.map((e, i) => (
+                  <Fragment key={e.side}>
+                    {i > 0 && ' · '}
+                    {pays.length > 1 && `${e.side === 'yes' ? labels.yes : labels.no} `}
+                    <FlashValue value={e.payout} text={usdc2(e.payout)} kind="direction" />
+                  </Fragment>
+                ))}
+              </span>
+            </span>
+          )}
+        </div>
+      </Link>
+      {share && <PnlShareButton p={p} account={v.account} labels={labels} style={{ position: 'absolute', left: 16, bottom: 14, height: 34 }} />}
+    </div>
   );
 }
 

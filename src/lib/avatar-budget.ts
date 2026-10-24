@@ -26,9 +26,9 @@ const SCRIPT =
   "local n = redis.call('INCR', KEYS[1]) if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end " +
   'if n > tonumber(ARGV[2]) then return -1 end return n';
 
-async function reserve(key: string, cap: number): Promise<boolean> {
+async function reserve(key: string, cap: number, windowMs = 60_000): Promise<boolean> {
   try {
-    const n = await upstashCommand(['EVAL', SCRIPT, 1, key, 60_000, cap]);
+    const n = await upstashCommand(['EVAL', SCRIPT, 1, key, windowMs, cap]);
     // The script always counts this call, so anything but a whole number from 1 up to the cap (or -1, over the cap) is
     // a broken reply: refuse, never read it as room to spare.
     return typeof n === 'number' && Number.isSafeInteger(n) && n >= 1 && n <= cap;
@@ -44,7 +44,7 @@ export function reserveAvatarFetch(): Promise<boolean> {
 
 /// The requesting visitor's IP as the platform reports it: `x-real-ip`, else the first `x-forwarded-for` entry. Every
 /// request without one shares a single "unknown" bucket.
-export function visitorIp(req: Request): string {
+export function visitorIp(req: { headers: Headers }): string {
   const real = req.headers.get('x-real-ip')?.trim();
   if (real) return real;
   const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
@@ -54,4 +54,53 @@ export function visitorIp(req: Request): string {
 /// Reserve one request in this visitor's minute: true when it may go ahead. The IP is stored only as a hash.
 export function reserveAvatarVisitor(ip: string): Promise<boolean> {
   return reserve(`mako:avatar:ip:${createHash('sha256').update(ip).digest('hex')}`, AVATAR_VISITOR_PER_MINUTE);
+}
+
+// Share card loads that reach the chain (pnl-card-server.ts, Codex SHARE_CARDS R1 F1 and R2 F1), two budgets, each
+// reserved just before the RPC calls it pays for, site-wide and across instances, in the same store and script. A load
+// that makes no RPC call (a result card whose final facts the server already holds) reserves neither.
+//  - Known bets (found in the leaderboard's bet ledger, mako_market_events, for this pool): 1 call, the pool read.
+//    Reserved only after the ledger lookup found the bet, so made-up links can never spend it.
+//  - Unknown bets (not in the ledger yet: placed in the last ~30 minutes, or made up): at most 3 calls (receipt, pool,
+//    and the bet's block for a bet placed card). A flood of made-up links can only spend this one.
+// shareClient reads MONAD_RPC_URL, else the public Monad RPC (about 15 requests a second, shared with the rest of the
+// app). Windows of three seconds: one viewing of a bet placed link whose pool has settled is 3 loads within a second
+// (the page, its redirect to the result page, and the image). Known 12 x 1 + unknown 6 x 3 = 30 calls per 3 s = 10 a
+// second at most, two thirds of ~15, leaving 5 a second for the rest of the app; a 429 from the RPC is `unavailable`,
+// a 503 with no-store.
+export const CARD_LOADS_PER_WINDOW = 6;
+export const KNOWN_CARD_LOADS_PER_WINDOW = 12;
+export const CARD_LOAD_WINDOW_MS = 3_000;
+
+/// The bet ledger lookup every card load that is not a kept result makes first (Codex SHARE_CARDS R3 F1): one indexed
+/// read of mako_market_events in the shared database, so made-up links are capped site-wide before it, not only per
+/// visitor. 30 in 3 s = 10 primary-key reads a second at most. Owner 2026-10-24: under a flood a card nobody opened
+/// yet answers 429 (no-store) for a few seconds; a result card already kept on the server makes no lookup.
+export const CARD_LOOKUPS_PER_WINDOW = 30;
+
+/// Reserve one card ledger lookup in the site-wide window: true when it may query the database. Fails closed.
+export function reserveCardLookup(): Promise<boolean> {
+  return reserve('mako:card:lookup', CARD_LOOKUPS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
+}
+
+/// A real card's account reads, made on every render because no card image is cached: at most five indexed reads
+/// (registeredAddresses 2, resolveStoredIdentities 2, both on raw-column indexes since Codex SHARE_CARDS R4 F1, and
+/// one Mako label read for a Mako pool). Only a URL that reached a real bet in a pool in the right state gets
+/// here, so made-up links never spend it; a flood of one real card does, and then every card answers 429 (no-store)
+/// for a few seconds. 15 in 3 s = 5 renders a second, 25 indexed reads a second at most.
+export const CARD_RENDERS_PER_WINDOW = 15;
+
+/// Reserve one card render's account reads in the site-wide window. Fails closed.
+export function reserveCardRender(): Promise<boolean> {
+  return reserve('mako:card:render', CARD_RENDERS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
+}
+
+/// Reserve one unknown-bet card load in the site-wide window: true when it may read the chain. Fails closed.
+export function reserveCardLoad(): Promise<boolean> {
+  return reserve('mako:card:load', CARD_LOADS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
+}
+
+/// Reserve one known-bet card load (one pool read) in its own site-wide window. Fails closed.
+export function reserveKnownCardLoad(): Promise<boolean> {
+  return reserve('mako:card:known', KNOWN_CARD_LOADS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
 }

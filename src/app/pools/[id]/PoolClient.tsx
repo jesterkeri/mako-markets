@@ -8,6 +8,7 @@ import { useReadContract, useReadContracts } from 'wagmi';
 import { PoolCommentsDesktop, PoolCommentsMobile } from '@/components/comments/PoolComments';
 import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { CreatorEarningsCard, creatorFeeConfirmSpec } from '@/components/CreatorEarnings';
+import { BetCardSheet, useBetLog } from '@/components/PnlShareSheet';
 import { PoolShareSheet } from '@/components/PoolShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
@@ -114,6 +115,10 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
+  /// The bet confirmation's Share: the bet a confirmed bet transaction placed, once its receipt names it.
+  const betTx = tx.tx?.kind === 'bet' && tx.phase.step === 'done' ? tx.phase.txHash : undefined;
+  const betLog = useBetLog(betTx, id, account);
+  const [betCard, setBetCard] = useState<{ tx: string; log: number } | null>(null);
 
   if (market && market.closeTime === 0n) notFound();
 
@@ -194,8 +199,34 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
       </div>
       {shareOpen && <PoolShareSheet market={market} now={now} labels={labels} by={by} onClose={closeShare} />}
       {spec && user && (
-        <ConfirmSheet spec={spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} />
+        <ConfirmSheet
+          spec={spec}
+          phase={tx.phase}
+          wallet={walletOf(user)}
+          onConfirm={tx.confirm}
+          onCancel={tx.close}
+          onRetry={tx.retry}
+          onClose={tx.close}
+          doneExtra={
+            betTx && betLog.status !== 'none' ? (
+              <button
+                type="button"
+                disabled={betLog.status !== 'found'}
+                onClick={() => {
+                  if (betLog.status !== 'found') return;
+                  setBetCard({ tx: betTx, log: betLog.log });
+                  tx.close();
+                }}
+                className="m3-press"
+                style={{ alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, opacity: betLog.status === 'found' ? 1 : 0.5 }}
+              >
+                {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
+              </button>
+            ) : undefined
+          }
+        />
       )}
+      {betCard && <BetCardSheet poolId={id} tx={betCard.tx} log={betCard.log} question={market.question} onClose={() => setBetCard(null)} />}
     </>
   );
 }
