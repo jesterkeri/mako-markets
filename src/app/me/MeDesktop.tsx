@@ -287,7 +287,8 @@ function Totals(v: MeView) {
         </div>
       ))}
       <CreatorTotalsCell account={v.account} style={cell} />
-      <div style={cell}>
+      {/* Five cells three a row: the last spans the rest of its row so the rules close (Joshua 2026-10-24). */}
+      <div style={{ ...cell, gridColumn: 'span 2' }}>
         <div style={{ ...mono, fontSize: 11, color: 'var(--dim)' }}>WON ALL TIME</div>
         <Amount value={from((s) => s.wonAllTime)} />
       </div>

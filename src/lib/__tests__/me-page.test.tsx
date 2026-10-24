@@ -161,6 +161,16 @@ describe('Me page', () => {
     expect(screen.getAllByText('You’ve created 1 pool.').length).toBeGreaterThan(0);
   });
 
+  // Joshua 2026-10-24: the lines broke where five cells left the sixth slot of the 3-column grid empty.
+  it('the desktop totals fill whole rows of the grid, so every rule closes', () => {
+    renderMe();
+    const grid = screen.getByText('BALANCE').parentElement!.parentElement!;
+    const cols = grid.style.gridTemplateColumns.match(/repeat\((\d+)/)?.[1];
+    expect(cols).toBe('3');
+    const used = Array.from(grid.children).reduce((n, c) => n + Number((c as HTMLElement).style.gridColumn.match(/span (\d+)/)?.[1] ?? 1), 0);
+    expect(used % 3).toBe(0);
+  });
+
   it('shows the error, not zeros, when the stake read failed every retry with nothing read', () => {
     betFails = 'nothing-read';
     renderMe();
