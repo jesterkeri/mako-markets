@@ -46,12 +46,12 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 /// included, as `private, no-cache, no-store`, and no shared cache keeps the redirect.
 export default async function ShareCardPage({ params, searchParams }: { params: Params; searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const { id, tx, log, c } = await load(params);
-  if (!c.ok && c.reason === 'settled') {
-    // The link's share tags ride along, so the result card and then the pool still see them (adversary on e2614db).
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries((await searchParams) ?? {})) for (const x of [v ?? []].flat()) q.append(k, x);
-    redirect(`${cardPath(id, tx, log, 'result')}${q.size ? `?${q}` : ''}`);
-  }
+  // The link's share tags ride along on every way out, so the result card and the pool still see them (adversary on
+  // e2614db; Codex CARD_LINKS R1 F1 for "See the pool").
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries((await searchParams) ?? {})) for (const x of [v ?? []].flat()) q.append(k, x);
+  const query = q.size ? `?${q}` : '';
+  if (!c.ok && c.reason === 'settled') redirect(`${cardPath(id, tx, log, 'result')}${query}`);
   if (!c.ok && (c.reason === 'not_found' || c.reason === 'not_yet')) notFound();
   return (
     <section style={{ padding: '24px 16px', maxWidth: 1040, margin: '0 auto', color: 'var(--mako-canvas-fg)' }}>
@@ -64,7 +64,7 @@ export default async function ShareCardPage({ params, searchParams }: { params: 
         </p>
       )}
       <Link
-        href={`/pools/${id}`}
+        href={`/pools/${id}${query}`}
         className="mk-press96"
         style={{ display: 'inline-flex', alignItems: 'center', height: 44, padding: '0 20px', marginTop: 16, borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 15, textDecoration: 'none' }}
       >
