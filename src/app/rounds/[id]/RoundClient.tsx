@@ -248,7 +248,8 @@ function claimSpec(r: Round, p: Position, creatorFee: bigint | null, total: bigi
     doneTitle: refund ? 'Refund claimed' : p.kind === 'won' ? 'You won' : 'Claimed',
     doneBody: `${amt} USDC is in your balance.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
-    doneTile: claimTile(amt, refund),
+    // A host-fee-only claim is creator earnings: it keeps the plain tile (adversary on 93cc619).
+    doneTile: p.kind === 'won' || refund ? claimTile(amt, refund) : undefined,
   };
 }
 

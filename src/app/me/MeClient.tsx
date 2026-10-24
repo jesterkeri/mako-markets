@@ -50,7 +50,8 @@ function roundClaimSpec(r: MeRound): ConfirmSpec {
     note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the round settled; the claim pays out the rest.',
     doneTitle: refund ? 'Refund claimed' : r.position.kind === 'won' ? 'You won' : 'Claimed',
     doneBody: `${amt} USDC is in your balance.`,
-    doneTile: claimTile(amt, refund),
+    // A host-fee-only claim is creator earnings: it keeps the plain tile (adversary on 93cc619).
+    doneTile: r.position.kind === 'won' || refund ? claimTile(amt, refund) : undefined,
   };
 }
 
