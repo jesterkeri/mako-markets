@@ -157,6 +157,16 @@ async function creatorFeeRefusal(client: Client, marketId: bigint, account: stri
   }
 }
 
+/// Another account signed in while this one's send was being prepared: stop before anything goes out.
+const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
+  step: 'failed',
+  title: w.failTitle,
+  body: 'Another account signed in, so nothing was sent.',
+  nothingMoved: true,
+  primary: { label: 'Close' },
+  secondary: { label: 'Close' },
+});
+
 export function usePoolTx(onLanded?: () => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
@@ -174,6 +184,10 @@ export function usePoolTx(onLanded?: () => void) {
   /// for anyone else (Codex CLAIM_TILE R1 F1): a sheet, and the done step after it, belong to one account.
   const account = user ? accountAddress(user) : null;
   const [owner, setOwner] = useState<string | null>(null);
+  /// The signed-in account as of the latest render, for the checks after an await, right before a send goes out
+  /// (adversary on 36dfef4: a switch during the creator-fee pre-check read still sent the claim, under the new session).
+  const accountNow = useRef(account);
+  accountNow.current = account;
   if (tx && owner !== account && phase.step !== 'pending') {
     setTx(null);
     setPhase({ step: 'review' });
@@ -281,6 +295,7 @@ export function usePoolTx(onLanded?: () => void) {
       } else {
         body = buildClaimCreatorFeeBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
       }
+      if (accountNow.current !== accountAddress(u)) return switchedAccount(w);
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
       if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
       // A creator-fee claim is held from the moment it is sent (src/lib/creator-claim-pending.ts): no Claim button and
