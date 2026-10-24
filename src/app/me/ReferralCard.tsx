@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { COMPETITION_COPY, referralProgress, type ReferrerError } from '@/lib/competition/config';
 import { referralCode, referralLink } from '@/lib/ref-tag';
@@ -80,6 +80,11 @@ function InviterField() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
   });
   const error = save.error ? COMPETITION_COPY.referrerErrors[save.error.message as ReferrerError] : null;
+  // The card can sit in a capped scroll column (MeDesktop): bring each refusal into view, since focus stays on Add.
+  const alertRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (save.error) alertRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [save.error]);
   return (
     <form
       onSubmit={(e) => {
@@ -106,7 +111,7 @@ function InviterField() {
         </button>
       </div>
       {error && (
-        <div role="alert" style={{ fontSize: 13, color: 'var(--mako-red)', marginTop: 6 }}>
+        <div ref={alertRef} role="alert" style={{ fontSize: 13, color: 'var(--mako-red)', marginTop: 6 }}>
           {error}
         </div>
       )}
