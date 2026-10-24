@@ -10,7 +10,7 @@ import { getUserSession } from '@/lib/user-session';
 // A friend's referral code typed on the Me page, for someone who signed up on another device than the one that opened
 // the link (owner change 2026-10-23). setReferrer writes users.ref in ONE conditional UPDATE, only when the code is a
 // referral tag of a registered account, not the caller's own, the caller has no referral tag yet, and the caller's
-// account was created at or after the competition start. Errors are fixed codes and never say whose code it is:
+// account was created at or after REFERRALS_OPEN. Errors are fixed codes and never say whose code it is:
 // 400 invalid | own | already | too_old, 401 unauthorized, 403 cross_origin, 429 rate_limited, 503 unavailable.
 // Throttled per session before any database query, in the Me page's existing name-check window (30 a minute).
 export async function POST(req: Request) {

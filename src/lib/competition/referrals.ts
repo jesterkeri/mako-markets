@@ -13,7 +13,14 @@ import type { DbOrTx } from '@/db/client';
 import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS } from '@/lib/contract';
 
-import { COMPETITION_END, COMPETITION_START } from './config';
+import { COMPETITION_END, REFERRALS_OPEN } from './config';
+
+const OPEN = REFERRALS_OPEN.toISOString();
+const END = COMPETITION_END.toISOString();
+
+/// After the end, an account created during the competition may no longer add an inviter: a code typed then would
+/// enter its referrer into the finished competition (adversary 63a2710 B). Read per call, from the JS clock.
+const lateCode = () => (Date.now() >= COMPETITION_END.getTime() ? sql`AND u.created_at >= ${END}::timestamptz` : sql``);
 
 /// The referral-tag rule as SQL (isReferralTag): marketing tags such as `r-launch` never count.
 export const REFERRAL_RE = '^r-[0-9a-f]{30}$';
@@ -38,10 +45,13 @@ const LINKED = sql`EXISTS (
       )`;
 
 /// Referred accounts that count, as `qualified (code)`: a referral tag, not the account's own code nor the same
-/// person, an account created at or after the start, and a bet from the account's own address inside [START, END)
-/// (Codex referral code review R1 F1: no pre-start sign-up or bet counts). Each is one users row, so it counts once,
-/// for one referrer.
-export const QUALIFIED_CTE = sql`
+/// person, an account created at or after REFERRALS_OPEN, and a bet from the account's own address at or after it
+/// (Codex referral code review R1 F1: no older sign-up or bet counts). A referral is earned once and keeps counting
+/// (owner 2026-10-24), so there is no end, except `before`: the standings pass COMPETITION_END, and both the friend's
+/// account and bet must be before it, so nobody enters a finished competition (adversary 63a2710 A); a code typed
+/// later on an older account is refused by setReferrer. Each is one users row, so it counts once, for one referrer.
+export function qualifiedCte(before?: Date) {
+  return sql`
   qualified AS (
     SELECT a.ref AS code
     FROM accounts a
@@ -49,15 +59,17 @@ export const QUALIFIED_CTE = sql`
       AND a.addr IS NOT NULL
       AND 'r-' || substr(a.addr, 3, 30) <> a.ref
       AND NOT ${LINKED}
-      AND a.created_at >= ${COMPETITION_START.toISOString()}::timestamptz
+      AND a.created_at >= ${OPEN}::timestamptz
+      ${before ? sql`AND a.created_at < ${before.toISOString()}::timestamptz` : sql``}
       AND EXISTS (
         SELECT 1 FROM mako_market_events e
         WHERE e.chain_id = ${MONAD_TESTNET_ID} AND e.contract_address = ${CONTRACT_LOWER}
           AND e.kind = 'bet' AND e.actor = a.addr
-          AND e.block_timestamp >= ${COMPETITION_START.toISOString()}::timestamptz
-          AND e.block_timestamp < ${COMPETITION_END.toISOString()}::timestamptz
+          AND e.block_timestamp >= ${OPEN}::timestamptz
+          ${before ? sql`AND e.block_timestamp < ${before.toISOString()}::timestamptz` : sql``}
       )
   )`;
+}
 
 // Both adapters expose row arrays; pglite wraps them in `{ rows }` (leaderboard/queries.ts).
 export function unwrapRows(result: unknown): Record<string, unknown>[] {
@@ -73,17 +85,18 @@ export async function referralCounts(
 ): Promise<{ joined: number; qualified: number; canAddInviter: boolean }> {
   const rows = unwrapRows(
     await db.execute(sql`
-      WITH ${ACCOUNTS_CTE}, ${QUALIFIED_CTE}
+      WITH ${ACCOUNTS_CTE}, ${qualifiedCte()}
       SELECT
         (SELECT count(*) FROM accounts a
           WHERE a.ref = ${code} AND (a.addr IS NULL OR 'r-' || substr(a.addr, 3, 30) <> a.ref) AND NOT ${LINKED}
-            AND a.created_at >= ${COMPETITION_START.toISOString()}::timestamptz)::int AS "joined",
+            AND a.created_at >= ${OPEN}::timestamptz)::int AS "joined",
         (SELECT count(*) FROM qualified q WHERE q.code = ${code})::int AS "qualified",
         EXISTS (
           SELECT 1 FROM users u
           WHERE u.id = ${userId}::uuid
             AND (u.ref IS NULL OR u.ref !~ ${REFERRAL_RE})
-            AND u.created_at >= ${COMPETITION_START.toISOString()}::timestamptz
+            AND u.created_at >= ${OPEN}::timestamptz
+            ${lateCode()}
         ) AS "canAddInviter"
     `),
   );
@@ -104,7 +117,8 @@ export async function setReferrer(db: DbOrTx, userId: string, code: string): Pro
       UPDATE users u SET ref = ${code}
       WHERE u.id = ${userId}::uuid
         AND (u.ref IS NULL OR u.ref !~ ${REFERRAL_RE})
-        AND u.created_at >= ${COMPETITION_START.toISOString()}::timestamptz
+        AND u.created_at >= ${OPEN}::timestamptz
+        ${lateCode()}
         AND (SELECT 'r-' || substr(a.addr, 3, 30) FROM accounts a WHERE a.id = u.id) IS DISTINCT FROM ${code}
         AND EXISTS (SELECT 1 FROM accounts a WHERE a.addr IS NOT NULL AND 'r-' || substr(a.addr, 3, 30) = ${code})
         AND NOT EXISTS (
@@ -122,7 +136,7 @@ export async function setReferrer(db: DbOrTx, userId: string, code: string): Pro
       WITH ${ACCOUNTS_CTE}
       SELECT
         a.ref ~ ${REFERRAL_RE} AS "already",
-        a.created_at < ${COMPETITION_START.toISOString()}::timestamptz AS "tooOld",
+        (a.created_at < ${OPEN}::timestamptz OR NOT EXISTS (SELECT 1 FROM users u WHERE u.id = a.id ${lateCode()})) AS "tooOld",
         ('r-' || substr(a.addr, 3, 30) = ${code} OR EXISTS (
           SELECT 1 FROM accounts r
           WHERE r.addr IS NOT NULL AND 'r-' || substr(r.addr, 3, 30) = ${code}

@@ -22,7 +22,7 @@ import { MAKO_ADDRESS, makoAbi, Outcome } from '@/lib/contract';
 import { resolveLabels } from '@/lib/leaderboard/identity';
 
 import { COMPETITION_END, COMPETITION_START, MIN_SETTLED, REQUIRED_REFERRALS } from './config';
-import { ACCOUNTS_CTE, CONTRACT_LOWER, QUALIFIED_CTE, unwrapRows } from './referrals';
+import { ACCOUNTS_CTE, CONTRACT_LOWER, qualifiedCte, unwrapRows } from './referrals';
 
 /// One entrant's position on one counted pool; market is null for an entrant with no counted pool yet.
 export interface PositionRow {
@@ -65,10 +65,12 @@ export async function readPositions(dbx: DbOrTx): Promise<PositionRow[]> {
   const end = COMPETITION_END.toISOString();
   const rows = unwrapRows(
     await dbx.execute(sql`
-      WITH ${ACCOUNTS_CTE}, ${QUALIFIED_CTE},
+      WITH ${ACCOUNTS_CTE}, ${qualifiedCte(COMPETITION_END)},
       eligible AS (SELECT code FROM qualified GROUP BY code HAVING count(*) >= ${REQUIRED_REFERRALS}),
       entrants AS (
+        -- The referrer's own account must exist before the end too, or a sign-up after it would enter (adversary d193ce9).
         SELECT DISTINCT a.addr FROM accounts a JOIN eligible g ON g.code = 'r-' || substr(a.addr, 3, 30)
+        WHERE a.created_at < ${end}::timestamptz
       ),
       counted AS (
         SELECT e.actor, e.market_id, e.kind, e.is_yes, e.amount
