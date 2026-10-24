@@ -163,7 +163,8 @@ function Identity(v: MeView) {
           <span>· {emailAccount ? 'signed in with email · gas sponsored' : 'signed in with a wallet · you pay gas in MON'}</span>
         </div>
       </div>
-      <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Scrolls on its own, so the invite card never stretches the profile row (Joshua 2026-10-24). */}
+      <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 240, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin' }}>
         <TestUsdc account={account} />
         <ReferralCard account={account} variant="desktop" />
       </div>

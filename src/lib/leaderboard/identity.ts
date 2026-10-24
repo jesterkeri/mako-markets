@@ -7,9 +7,14 @@
 //     viem getAddress(), safe.ts:154; inserted as-is, auth/route.ts).
 //     A Magic user's on-chain BetPlaced.user IS this safe address.
 //   - users.wallet_address is LOWERCASE (user-upsert.ts:178 + DB CHECK).
-// The ledger's actor column is lowercase. So BOTH branches lower()
-// their DB side here — a naive equality join silently renders every
-// Magic user anonymous on their own leaderboard.
+// The ledger's actor column is lowercase. A naive equality join
+// silently renders every Magic user anonymous on their own leaderboard.
+// So the input is lowercased once, each branch compares its RAW column
+// with the forms that column stores (safe: lowercase and checksummed;
+// wallet: lowercase), and the selected address is lowercased in code.
+// Never lower() the column in a predicate: it defeats the column's
+// index and every share card render would scan the table (Codex
+// SHARE_CARDS R4 F1).
 //
 // Precedence when one address matches multiple rows (plan, Codex r1
 // MINOR-3 — deterministic, exactly one label per address):
