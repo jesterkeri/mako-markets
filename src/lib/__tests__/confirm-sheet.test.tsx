@@ -83,6 +83,22 @@ describe('ConfirmSheet', () => {
     expect(link?.getAttribute('href')).toBe(`https://testnet.monadvision.com/tx/${TX}`);
   });
 
+  it('a placed bet is done on its side’s colour: the side in big type and the stake, then Share and the transaction', () => {
+    const handlers = { onConfirm: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(), onClose: vi.fn() };
+    vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+    const spec: ConfirmSpec = { ...SPEC, doneSide: { name: 'NO', amount: '10.00 USDC', bg: 'var(--mako-no)', fg: 'var(--mako-on-side)' } };
+    render(<ConfirmSheet spec={spec} phase={{ step: 'done', txHash: TX }} wallet={MAKO} {...handlers} doneExtra={<button type="button">Share your call</button>} />);
+    const status = screen.getAllByRole('status')[0];
+    expect(status.textContent).toBe('Bet placedNO10.00 USDC');
+    const tile = status.parentElement as HTMLElement;
+    expect(tile.style.background).toBe('var(--mako-no)');
+    expect(tile.style.color).toBe('var(--mako-on-side)');
+    // The old body line is not repeated under the big side.
+    expect(screen.queryByText('10.00 USDC on NO.')).toBeNull();
+    expect(screen.getAllByText(/Transaction · 0x71c3…aaaa/).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Share your call' }).length).toBeGreaterThan(0);
+  });
+
   it('claims "No USDC left your wallet" only when the flow knows nothing moved', () => {
     const base = { step: 'failed' as const, title: 'Betting closed first', body: 'The pool closed before your bet reached Monad.', primary: { label: 'Browse pools', href: '/pools' }, secondary: { label: 'Close' } };
     mount({ ...base, nothingMoved: true });

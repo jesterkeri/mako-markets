@@ -28,6 +28,8 @@ export type ConfirmSpec = {
   doneBody: string;
   /// The second button once done ("Share round", "View in Me").
   doneSecondary?: { label: string; href: string };
+  /// A placed bet's done tile: the side in big type on its own colour, then the stake (Joshua 2026-10-24).
+  doneSide?: { name: string; amount: string; bg: string; fg: string };
 };
 
 export type ConfirmAction = { label: string; href?: string; retry?: true };
@@ -255,14 +257,28 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, done
 
         {phase.step === 'done' && (
           <>
-            <div className="wl-tile" style={{ borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--m3-inv-fg)', color: 'var(--m3-inv)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CheckIn size={26} />
-              </span>
-              <div role="status">
-                <div style={tileTitle}>{spec.doneTitle}</div>
-                <div style={tileBody}>{spec.doneBody}</div>
-              </div>
+            <div className="wl-tile" style={{ borderRadius: 28, background: spec.doneSide?.bg ?? 'var(--m3-inv)', color: spec.doneSide?.fg ?? 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: spec.doneSide ? '18px 20px' : '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {spec.doneSide ? (
+                <div role="status">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700 }}>
+                    <CheckIn size={18} />
+                    {spec.doneTitle}
+                  </div>
+                  {/* A house pool's side can be a long name: it wraps at a smaller size instead of overflowing. */}
+                  <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: spec.doneSide.name.length <= 6 ? 64 : 40, lineHeight: 0.95, letterSpacing: '-0.03em', marginTop: 14, overflowWrap: 'anywhere' }}>{spec.doneSide.name}</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{spec.doneSide.amount}</div>
+                </div>
+              ) : (
+                <>
+                  <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--m3-inv-fg)', color: 'var(--m3-inv)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <CheckIn size={26} />
+                  </span>
+                  <div role="status">
+                    <div style={tileTitle}>{spec.doneTitle}</div>
+                    <div style={tileBody}>{spec.doneBody}</div>
+                  </div>
+                </>
+              )}
               {phase.txHash && (
                 <a href={explorerUrl('tx', phase.txHash)} target="_blank" rel="noopener noreferrer" style={chip}>
                   Transaction · {formatAddress(phase.txHash)} ↗

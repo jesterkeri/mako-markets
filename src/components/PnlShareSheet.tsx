@@ -49,7 +49,7 @@ export function PnlShareButton({ p, account, labels, style }: { p: MePosition; a
       >
         Share
       </button>
-      {open && <PnlShareSheet p={p} state={state} account={account} labels={labels} onClose={() => setOpen(false)} />}
+      {open && <PnlShareSheet poolId={p.market.id} question={p.market.question} stake={p.bet} state={state} account={account} labels={labels} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -62,12 +62,31 @@ export function betsMatchStake(bets: readonly MeBetWire[], stake: { yes: bigint;
   return bets.length > 0 && sum(true) === stake.yes && sum(false) === stake.no;
 }
 
-function PnlShareSheet({ p, state, account, labels, onClose }: { p: MePosition; state: CardState; account: `0x${string}`; labels: Labels; onClose: () => void }) {
+/// One account's cards on one pool. `onPool` adds a link to the pool's own invite (the pool page's Share).
+export function PnlShareSheet({
+  poolId: id,
+  question,
+  stake,
+  state,
+  account,
+  labels,
+  onClose,
+  onPool,
+}: {
+  poolId: bigint;
+  question: string;
+  /// The account's stake per side, read on chain.
+  stake: { yes: bigint; no: bigint };
+  state: CardState;
+  account: `0x${string}`;
+  labels: Labels;
+  onClose: () => void;
+  onPool?: () => void;
+}) {
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [pick, setPick] = useState(0);
 
-  const { id } = p.market;
-  const { yes, no } = p.bet;
+  const { yes, no } = stake;
   useEffect(() => {
     let live = true;
     fetch(`/api/me/bets?account=${account}&pool=${id.toString()}`, { cache: 'no-store' })
@@ -110,7 +129,12 @@ function PnlShareSheet({ p, state, account, labels, onClose }: { p: MePosition; 
         </div>
       )}
 
-      {bet && <CardPreview key={`${bet.tx}:${bet.log}`} page={cardPath(id, bet.tx, bet.log, state)} question={p.market.question} fileName={`mako-market-pool-${id.toString()}-bet-${pick + 1}.png`} />}
+      {bet && <CardPreview key={`${bet.tx}:${bet.log}`} page={cardPath(id, bet.tx, bet.log, state)} question={question} fileName={`mako-market-pool-${id.toString()}-bet-${pick + 1}.png`} />}
+      {onPool && (
+        <button type="button" onClick={onPool} className="m3-press" style={{ display: 'block', marginTop: 14, padding: '6px 0', ...mono, fontSize: 13, fontWeight: 700, color: 'var(--dim)', textDecoration: 'underline', textUnderlineOffset: 3 }}>
+          Share the pool instead →
+        </button>
+      )}
     </SheetShell>
   );
 }
