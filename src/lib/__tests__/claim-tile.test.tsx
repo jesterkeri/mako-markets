@@ -51,7 +51,7 @@ const SETTLED: MarketWithId = {
 };
 const REFUNDED: MarketWithId = { ...SETTLED, outcome: Outcome.REFUND };
 
-const state = vi.hoisted(() => ({ market: null as unknown, bet: null as unknown, signedIn: true }));
+const state = vi.hoisted(() => ({ market: null as unknown, bet: null as unknown, signedIn: true, account: '0x00000000000000000000000000000000000000a1' }));
 
 vi.mock('wagmi', () => ({
   useReadContract: (q: { functionName?: string }) => ({ data: q.functionName === 'getUserBet' ? state.bet : undefined, refetch: vi.fn() }),
@@ -68,9 +68,9 @@ vi.mock('@/lib/hooks', () => ({
 }));
 vi.mock('@/lib/use-user', () => ({
   useUser: () => ({
-    user: state.signedIn ? { authed: true, authType: 'wallet', walletAddress: ACCOUNT, displayName: null, avatarUrl: null, lastSignInAt: null } : null,
+    user: state.signedIn ? { authed: true, authType: 'wallet', walletAddress: state.account, displayName: null, avatarUrl: null, lastSignInAt: null } : null,
   }),
-  accountAddress: () => ACCOUNT,
+  accountAddress: (u: { walletAddress: string }) => u.walletAddress,
 }));
 
 const { PoolClient } = await import('@/app/pools/[id]/PoolClient');
@@ -78,16 +78,18 @@ const { PoolClient } = await import('@/app/pools/[id]/PoolClient');
 afterEach(() => {
   state.market = null;
   state.bet = null;
+  state.account = ACCOUNT;
   cleanup();
   vi.restoreAllMocks();
 });
 
 async function claim(name: RegExp) {
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
-  render(<PoolClient id={7n} initialSide={null} />);
+  const view = render(<PoolClient id={7n} initialSide={null} />);
   await act(async () => {
     fireEvent.click(screen.getAllByRole('button', { name })[0]);
   });
+  return view;
 }
 
 const tileOf = (text: string) => screen.getAllByText(text)[0].closest('.wl-tile') as HTMLElement;
@@ -118,6 +120,15 @@ describe('pool page claim tile', () => {
     expect(screen.getAllByText('Refund claimed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('2.00 USDC').length).toBeGreaterThan(0);
     expect(tileOf('Your full stake is back in your balance.').style.background).toBe('#000');
+    expect(screen.queryByRole('button', { name: 'Share your win' })).toBeNull();
+  });
+
+  it('another account signing in while the tile is up gets no Share, even when it won the pool too', async () => {
+    state.bet = [10n * USDC, 0n, false];
+    const view = await claim(/^Claim [\d.]+ USDC$/);
+    expect(screen.getAllByRole('button', { name: 'Share your win' }).length).toBeGreaterThan(0);
+    state.account = '0x00000000000000000000000000000000000000b2';
+    view.rerender(<PoolClient id={7n} initialSide={null} />);
     expect(screen.queryByRole('button', { name: 'Share your win' })).toBeNull();
   });
 });

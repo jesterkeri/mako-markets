@@ -127,6 +127,8 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
+  /// The account a won claim was opened for: its done tile shares that account's win card, and no other's.
+  const [winFor, setWinFor] = useState<string | null>(null);
   /// The bet confirmation's Share: the bet a confirmed bet transaction placed, once its receipt names it.
   const betTx = tx.tx?.kind === 'bet' && tx.phase.step === 'done' ? tx.phase.txHash : undefined;
   const betLog = useBetLog(betTx, id, account);
@@ -159,6 +161,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const openClaim = () => {
     if (claimAmount === null || tx.tx) return;
     setSheetSpec(confirmSpec('claim', market, row, labels, amount, side, estimate, claimAmount));
+    setWinFor(myCard === 'result' ? account : null);
     tx.open({ kind: 'claim', marketId: id });
   };
   // Creator earnings: only the pool's creator sees them, from the pool's own on-chain state.
@@ -250,7 +253,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
               >
                 {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
               </TileShareButton>
-            ) : tx.tx?.kind === 'claim' && tx.phase.step === 'done' && myCard === 'result' && account ? (
+            ) : tx.tx?.kind === 'claim' && tx.phase.step === 'done' && myCard === 'result' && account && winFor === account ? (
               // A won pool's claim shares the win card (Joshua 2026-10-24); a refund has no card.
               <TileShareButton
                 onClick={() => {

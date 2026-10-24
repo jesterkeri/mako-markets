@@ -102,6 +102,13 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   const claiming = useRef<MePosition | null>(null);
   /// The pool whose claim is in the sheet, when it has a win card to share once the claim lands (Joshua 2026-10-24).
   const [winCard, setWinCard] = useState<{ p: MePosition; open: boolean } | null>(null);
+  // Another account signing in on this tab forgets it, so that account never gets this one's card (adversary on
+  // ba2ddc0). Reset during render, as the pool page does.
+  const [cardAccount, setCardAccount] = useState(account);
+  if (cardAccount !== account) {
+    setCardAccount(account);
+    setWinCard(null);
+  }
   const tx = usePoolTx(() => {
     const p = claiming.current;
     if (p) setLanded((prev) => new Map(prev).set(p.market.id.toString(), p));
