@@ -44,9 +44,14 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 /// A bet placed link whose pool has settled since goes on to that bet's result. That settlement is read at the latest
 /// block, so a reorg can undo it (Codex SHARE_CARDS R1 F4): the page reads headers(), so Next sends it, the redirect
 /// included, as `private, no-cache, no-store`, and no shared cache keeps the redirect.
-export default async function ShareCardPage({ params }: { params: Params }) {
+export default async function ShareCardPage({ params, searchParams }: { params: Params; searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const { id, tx, log, c } = await load(params);
-  if (!c.ok && c.reason === 'settled') redirect(cardPath(id, tx, log, 'result'));
+  if (!c.ok && c.reason === 'settled') {
+    // The link's share tags ride along, so the result card and then the pool still see them (adversary on e2614db).
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries((await searchParams) ?? {})) for (const x of [v ?? []].flat()) q.append(k, x);
+    redirect(`${cardPath(id, tx, log, 'result')}${q.size ? `?${q}` : ''}`);
+  }
   if (!c.ok && (c.reason === 'not_found' || c.reason === 'not_yet')) notFound();
   return (
     <section style={{ padding: '24px 16px', maxWidth: 1040, margin: '0 auto', color: 'var(--mako-canvas-fg)' }}>
