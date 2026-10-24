@@ -66,6 +66,12 @@ describe('the shared link', () => {
     expect(url.searchParams.get('utm_source')).toBe('link');
   });
 
+  it('points at a page of the pool when given one, such as a bet’s share card', () => {
+    const card = '/pools/88/pnl/0xabc/2/placed';
+    expect(poolInviteLink(88n, 'x', card)).toBe('https://makomarket.xyz/pools/88/pnl/0xabc/2/placed?utm_source=x&utm_campaign=pool-88');
+    expect(new URL(intentUrl('telegram', 88n, 'Q', card)).searchParams.get('url')).toBe(poolInviteLink(88n, 'telegram', card));
+  });
+
   it('prints without the scheme', () => {
     expect(linkDisplay(poolInviteLink(88n, 'link'))).toBe('makomarket.xyz/pools/88?utm_source=link&utm_campaign=pool-88');
   });

@@ -28,9 +28,6 @@ const CLOSE = 'M7 7l10 10M17 7L7 17';
 export function PoolShareSheet({ market, now, labels, by, onClose }: Props) {
   const card = poolInviteCard(market, now, labels);
   const link = poolInviteLink(market.id, 'link');
-  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
-  // The sheet only exists after a tap, so reading the browser here never meets server rendering.
-  const [canShare] = useState(() => typeof navigator !== 'undefined' && typeof navigator.share === 'function');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -39,22 +36,6 @@ export function PoolShareSheet({ market, now, labels, by, onClose }: Props) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
-
-  const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopy('copied');
-    } catch {
-      setCopy('failed');
-    }
-  };
-  const nativeShare = async () => {
-    try {
-      await navigator.share({ title: market.question, text: shareText(market.question), url: link });
-    } catch {
-      // Cancelled, or the device refused: nothing was sent and there is nothing to undo.
-    }
-  };
 
   return (
     <SheetFrame label="Share" onScrim={onClose} width={500} yellowOnDark={false}>
@@ -79,24 +60,57 @@ export function PoolShareSheet({ market, now, labels, by, onClose }: Props) {
 
           <InviteCardView card={card} question={market.question} by={by} link={link} variant={variant} />
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, padding: '0 6px', marginTop: 16 }}>
-            <Target href={intentUrl('x', market.id, market.question)} label="X" name="Share on X" bg="#000" fg="#fff" icon={<XIcon />} />
-            <Target href={intentUrl('whatsapp', market.id, market.question)} label="WhatsApp" name="Share on WhatsApp" bg="#25D366" fg="#fff" icon={<WhatsAppIcon />} />
-            <Target href={intentUrl('telegram', market.id, market.question)} label="Telegram" name="Share on Telegram" bg="#229ED9" fg="#fff" icon={<TelegramIcon />} />
-            {canShare && <Target onClick={nativeShare} label="More" name="More ways to share" bg="var(--raise2)" fg="var(--mako-canvas-fg)" icon={<MoreIcon />} />}
+          <ShareLinks id={market.id} question={market.question}>
             {/* Rendering the card to an image needs a new dependency, which waits for approval: the slot stays, off. */}
             <Target comingSoon label="Save image" bg="var(--mako-paper)" fg="#000" icon={<SaveIcon />} />
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, padding: '6px 6px 6px 18px', borderRadius: 9999, background: '#000', color: '#EBE5D9', boxShadow: 'inset 0 0 0 1.5px var(--mako-signal)' }}>
-            <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{linkDisplay(link)}</span>
-            <button onClick={copyLink} className="m3-press" style={{ flex: 'none', height: 42, padding: '0 18px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>
-              {copy === 'copied' ? 'Copied' : copy === 'failed' ? 'Copy failed' : 'Copy link'}
-            </button>
-          </div>
+          </ShareLinks>
         </div>
       )}
     </SheetFrame>
+  );
+}
+
+/// The share targets (X, WhatsApp, Telegram, the device's own share) and the Copy link box, for a pool's invite or,
+/// with `path`, one page of the pool such as a bet's share card. `children` add targets at the end of the row.
+export function ShareLinks({ id, question, path, children }: { id: bigint; question: string; path?: string; children?: React.ReactNode }) {
+  const link = poolInviteLink(id, 'link', path);
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
+  // The sheet only exists after a tap, so reading the browser here never meets server rendering.
+  const [canShare] = useState(() => typeof navigator !== 'undefined' && typeof navigator.share === 'function');
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopy('copied');
+    } catch {
+      setCopy('failed');
+    }
+  };
+  const nativeShare = async () => {
+    try {
+      await navigator.share({ title: question, text: shareText(question), url: link });
+    } catch {
+      // Cancelled, or the device refused: nothing was sent and there is nothing to undo.
+    }
+  };
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, padding: '0 6px', marginTop: 16 }}>
+        <Target href={intentUrl('x', id, question, path)} label="X" name="Share on X" bg="#000" fg="#fff" icon={<XIcon />} />
+        <Target href={intentUrl('whatsapp', id, question, path)} label="WhatsApp" name="Share on WhatsApp" bg="#25D366" fg="#fff" icon={<WhatsAppIcon />} />
+        <Target href={intentUrl('telegram', id, question, path)} label="Telegram" name="Share on Telegram" bg="#229ED9" fg="#fff" icon={<TelegramIcon />} />
+        {canShare && <Target onClick={nativeShare} label="More" name="More ways to share" bg="var(--raise2)" fg="var(--mako-canvas-fg)" icon={<MoreIcon />} />}
+        {children}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, padding: '6px 6px 6px 18px', borderRadius: 9999, background: '#000', color: '#EBE5D9', boxShadow: 'inset 0 0 0 1.5px var(--mako-signal)' }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{linkDisplay(link)}</span>
+        <button onClick={copyLink} className="m3-press" style={{ flex: 'none', height: 42, padding: '0 18px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>
+          {copy === 'copied' ? 'Copied' : copy === 'failed' ? 'Copy failed' : 'Copy link'}
+        </button>
+      </div>
+    </>
   );
 }
 
