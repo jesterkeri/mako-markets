@@ -84,16 +84,24 @@ describe('who is entered', () => {
     expect(await readPositions(t.db as never)).toEqual([]);
   });
 
-  it('a friend whose account or only bet is from before the start does not count (Codex referral R1 F1)', async () => {
+  it('a friend whose account or only bet is from before REFERRALS_OPEN does not count (Codex referral R1 F1)', async () => {
     t = await competitionDb();
     await referrerWith(t, REF, 1);
-    // Created before the start, bet inside the window: no.
-    await account(t, { wallet: addr('c1'), ref: codeOf(REF), createdAt: at(-1) });
+    // at(-12) is REFERRALS_OPEN (midnight UTC on the start day). Created before it, bet inside the window: no.
+    await account(t, { wallet: addr('c1'), ref: codeOf(REF), createdAt: at(-13) });
     await event(t, { actor: addr('c1'), market: 1, kind: 'bet', amount: U, when: at(1) });
-    // Created after the start, but its only bet is from before it (a direct bet, then the sign-up): no.
+    // Created after it, but its only bet is from before it (a direct bet, then the sign-up): no.
     await account(t, { wallet: addr('c2'), ref: codeOf(REF), createdAt: at(2) });
-    await event(t, { actor: addr('c2'), market: 1, kind: 'bet', amount: U, when: at(-1) });
+    await event(t, { actor: addr('c2'), market: 1, kind: 'bet', amount: U, when: at(-13) });
     expect(await readPositions(t.db as never)).toEqual([]);
+  });
+
+  it('a friend who signed up and bet after REFERRALS_OPEN but before the start counts (owner 2026-10-24)', async () => {
+    t = await competitionDb();
+    await referrerWith(t, REF, 1);
+    await account(t, { wallet: addr('c3'), ref: codeOf(REF), createdAt: at(-11) });
+    await event(t, { actor: addr('c3'), market: 1, kind: 'bet', amount: U, when: at(-11) });
+    expect((await readPositions(t.db as never)).map((r) => r.actor)).toEqual([REF]);
   });
 
   it('the same person through the embedded EOA does not count, either way round (Codex referral R1 F2)', async () => {

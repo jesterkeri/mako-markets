@@ -6,6 +6,10 @@
 // it, so a slipped release changes only this value, in a reviewed commit.
 export const COMPETITION_START = new Date('2026-10-24T12:00:00Z');
 export const COMPETITION_END = new Date(COMPETITION_START.getTime() + 14 * 24 * 60 * 60 * 1000);
+/// Owner decision 2026-10-24: a referral is earned once and keeps counting, not only inside one competition, so a
+/// player needs 2 referrals one time. A friend's account counts if it was created from this instant (midnight UTC on
+/// the first competition's start day; older accounts never count) and has placed a bet. Profit still counts from START.
+export const REFERRALS_OPEN = new Date('2026-10-24T00:00:00Z');
 
 /// Qualifying referrals (a friend's new account through the link, plus one bet) needed to enter.
 export const REQUIRED_REFERRALS = 2;
@@ -23,7 +27,7 @@ export const COMPETITION_COPY = {
   title: '$100 trading competition',
   rules: [
     `Runs from ${fmtUtc(COMPETITION_START)} to ${fmtUtc(COMPETITION_END)} UTC.`,
-    'To enter, invite 2 friends with your link or code from the Me page. A friend counts once they create a Mako Market account through your link, or add your code on their Me page, and place a bet, both during the competition. Link and code are the same invite.',
+    `To enter, invite 2 friends with your link or code from the Me page. A friend counts once they create a Mako Market account through your link, or add your code on their Me page, and place a bet. Accounts created from ${fmtUtc(REFERRALS_OPEN)} UTC count, and a friend's bet must come before this competition ends. Referrals stay counted for later competitions. Link and code are the same invite.`,
     'Ranked by profit during the competition: winnings and refunds claimed minus stakes placed, both between the dates above. Only pools you first bet on after the start count.',
     'Claim your winnings before the end. Unclaimed winnings do not count.',
     'You need at least 5 settled pools to be ranked. Ties go to the higher win rate: settled pools won out of settled pools played. Refunded pools do not count.',
@@ -56,7 +60,7 @@ export const COMPETITION_COPY = {
     invalid: 'That code is not valid',
     own: "You can't use your own code",
     already: 'Your account already has an inviter',
-    too_old: 'Only accounts created after the competition started can add an inviter',
+    too_old: `Only accounts created from ${fmtUtc(REFERRALS_OPEN)} UTC can add an inviter`,
     unauthorized: 'Sign in again to add an inviter',
     rate_limited: 'Too many tries. Try again later',
     unavailable: 'Something went wrong. Try again',
