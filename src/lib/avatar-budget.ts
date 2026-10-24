@@ -83,10 +83,11 @@ export function reserveCardLookup(): Promise<boolean> {
   return reserve('mako:card:lookup', CARD_LOOKUPS_PER_WINDOW, CARD_LOAD_WINDOW_MS);
 }
 
-/// A real card's account reads (registered check, name and photo, labels: about five indexed reads), made on every
-/// render because no card image is cached. Only a URL that reached a real bet in a pool in the right state gets
+/// A real card's account reads, made on every render because no card image is cached: at most five indexed reads
+/// (registeredAddresses 2, resolveStoredIdentities 2, both on raw-column indexes since Codex SHARE_CARDS R4 F1, and
+/// one Mako label read for a Mako pool). Only a URL that reached a real bet in a pool in the right state gets
 /// here, so made-up links never spend it; a flood of one real card does, and then every card answers 429 (no-store)
-/// for a few seconds. 15 in 3 s = 5 renders a second, about 25 reads a second at most.
+/// for a few seconds. 15 in 3 s = 5 renders a second, 25 indexed reads a second at most.
 export const CARD_RENDERS_PER_WINDOW = 15;
 
 /// Reserve one card render's account reads in the site-wide window. Fails closed.

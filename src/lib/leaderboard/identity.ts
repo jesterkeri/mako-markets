@@ -28,7 +28,7 @@
 // user's own /avatars/<id>/ path), exactly as the public comments wire does; a legacy pasted URL is never served.
 // ----------------------------------------------------------------------------
 
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getAddress, isAddress } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
@@ -79,41 +79,45 @@ export async function resolveStoredIdentities(
   const lowered = [...new Set(addresses.map((a) => a.toLowerCase()))];
   if (lowered.length === 0) return new Map();
 
-  // Branch 1: Magic users via their Safe smart account. lower() BOTH
-  // sides — safe_address is stored checksummed.
-  const safeRows = await db
-    .select({
-      addr: sql<string>`lower(${userSafes.safeAddress})`,
-      displayName: users.displayName,
-      avatarUrl: users.avatarUrl,
-      userId: users.id,
-    })
-    .from(userSafes)
-    .innerJoin(users, eq(users.id, userSafes.userId))
-    .where(
-      and(
-        eq(userSafes.chainId, chainId),
-        inArray(sql`lower(${userSafes.safeAddress})`, lowered),
-      ),
-    );
+  // Raw-column predicates, as registeredAddresses, so both lookups use their indexes (Codex SHARE_CARDS R4 F1): a
+  // lower() on the column would scan the table on every share card render. Only well-formed addresses can match.
+  const valid = lowered.filter((a) => isAddress(a, { strict: false }));
+  if (valid.length === 0) return new Map();
 
-  // Branch 2: external-wallet users. wallet_address is already stored
-  // lowercase (user-upsert.ts:178 + CHECK), but lower() anyway — the
-  // join must not trust a column convention it doesn't own.
-  const walletRows = await db
-    .select({
-      addr: sql<string>`lower(${users.walletAddress})`,
-      displayName: users.displayName,
-      avatarUrl: users.avatarUrl,
-      userId: users.id,
-    })
-    .from(users)
-    .where(
-      and(
-        isNotNull(users.walletAddress),
-        inArray(sql`lower(${users.walletAddress})`, lowered),
-      ),
-    );
+  // Branch 1: Magic users via their Safe smart account. safe_address is
+  // stored checksummed (deriveSafeAddress); the lowercase form is matched
+  // too, for safety, and the result is lowercased here.
+  const safeRows = (
+    await db
+      .select({
+        addr: userSafes.safeAddress,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        userId: users.id,
+      })
+      .from(userSafes)
+      .innerJoin(users, eq(users.id, userSafes.userId))
+      .where(
+        and(
+          eq(userSafes.chainId, chainId),
+          inArray(userSafes.safeAddress, [...valid, ...valid.map((a) => getAddress(a))]),
+        ),
+      )
+  ).map((r) => ({ ...r, addr: r.addr.toLowerCase() }));
+
+  // Branch 2: external-wallet users. wallet_address is stored lowercase,
+  // enforced by the users_wallet_address_format_chk CHECK (0005).
+  const walletRows = (
+    await db
+      .select({
+        addr: users.walletAddress,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        userId: users.id,
+      })
+      .from(users)
+      .where(inArray(users.walletAddress, valid))
+  ).flatMap((r) => (r.addr ? [{ ...r, addr: r.addr }] : []));
 
   const candidates: CandidateRow[] = [
     ...safeRows.map((r) => ({ ...r, branch: 'safe' as const })),

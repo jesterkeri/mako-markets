@@ -275,3 +275,31 @@ describe('resolveLabels: profile photos are served only when this app uploaded t
   });
 });
 });
+
+describe('resolveStoredIdentities uses the column indexes (Codex SHARE_CARDS R4 F1)', () => {
+  it('neither lookup scans users or user_safes, with the production indexes', async () => {
+    const t = await freshDb();
+    // The production indexes (0000 user_safes_safe_address_idx, 0005 users_wallet_address_uniq).
+    await t.client.exec(`
+      CREATE INDEX user_safes_safe_address_idx ON user_safes USING btree (safe_address);
+      CREATE UNIQUE INDEX users_wallet_address_uniq ON users (wallet_address) WHERE wallet_address IS NOT NULL;
+      SET enable_seqscan = off;
+    `);
+    await insertMagicUser(t, { displayName: 'safe', safeAddress: SAFE_CHECKSUMMED });
+    await insertWalletUser(t, { displayName: 'wallet', walletAddress: WALLET_LOWER });
+    const seen: { q: string; p: unknown[] }[] = [];
+    const { drizzle } = await import('drizzle-orm/pglite');
+    const schema = await import('@/db/schema');
+    const logged = drizzle(t.client, { schema, logger: { logQuery: (q, p) => void seen.push({ q, p }) } });
+    const out = await resolveStoredIdentities(logged as never, [SAFE_LOWER, WALLET_LOWER], CHAIN);
+    expect([...out.keys()].sort()).toEqual([SAFE_LOWER, WALLET_LOWER].sort());
+    expect(seen).toHaveLength(2);
+    for (const { q, p } of seen) {
+      const plan = (await t.client.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${q}`, p)).rows.map((r) => r['QUERY PLAN']).join('\n');
+      // An index scan that reads every entry and filters lower(...) is the same full read: require the address in the
+      // index condition itself.
+      expect(plan).toMatch(/Index Cond: \((safe_address|wallet_address) = ANY/);
+      expect(plan).not.toMatch(/Seq Scan on (users|user_safes)|lower\(/);
+    }
+  });
+});
