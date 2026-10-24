@@ -125,6 +125,8 @@ function Tour({ index }: { index: number }) {
   const skip = () => (last ? close() : go(TOUR_LENGTH - 1));
 
   useEffect(() => {
+    // Every visit to a step scrolls once, so Back then Next scrolls again (adversary on 3ad4742).
+    scrolled.current = null;
     const measure = () => {
       const isDesk = window.matchMedia('(min-width: 1024px)').matches;
       if (isDesk) {
