@@ -75,12 +75,13 @@ export function MeDesktop(v: MeView) {
           </div>
         )}
       </div>
-      {/* A named, focusable region, so a keyboard can scroll it (Codex ME_ASIDE R1 F2). */}
+      {/* A named, focusable region, so a keyboard can scroll it (Codex ME_ASIDE R1 F2). It ends 66 px above the screen's
+          foot, clear of the fixed Feedback pill (16 to 50 px), so the pill never covers its last line. */}
       <aside
         role="region"
         aria-label="Account tools"
         tabIndex={0}
-        style={{ position: 'sticky', top: 20, alignSelf: 'start', maxHeight: 'calc(100dvh - 40px)', overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin', display: 'flex', flexDirection: 'column', gap: 26, padding: '22px 4px 4px' }}
+        style={{ position: 'sticky', top: 20, alignSelf: 'start', maxHeight: 'calc(100dvh - 86px)', overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin', display: 'flex', flexDirection: 'column', gap: 26, padding: '22px 4px 4px' }}
       >
         <TestUsdc account={v.account} />
         <ReferralCard account={v.account} variant="desktop" />

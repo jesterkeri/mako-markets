@@ -140,7 +140,21 @@ function Tour({ index }: { index: number }) {
         if (anchor) {
           scrolled.current = index;
           const r = anchor.getBoundingClientRect();
-          if (r.top < 0 || r.bottom > window.innerHeight - 280) window.scrollTo({ top: Math.max(0, window.scrollY + r.top - 120), behavior: prefersReducedMotion() ? 'instant' : 'smooth' });
+          const behavior = prefersReducedMotion() ? 'instant' : 'smooth';
+          let top = r.top;
+          // An anchor in its own scroll panel (desktop Me's right column) is scrolled into that panel first: the window
+          // cannot reach it (adversary on b4dfb12).
+          for (let p = anchor.parentElement; p && p !== document.body; p = p.parentElement) {
+            const oy = getComputedStyle(p).overflowY;
+            if (oy !== 'auto' && oy !== 'scroll') continue;
+            const box = p.getBoundingClientRect();
+            if (r.top < box.top || r.bottom > box.bottom) {
+              p.scrollTo({ top: p.scrollTop + r.top - box.top - 12, behavior });
+              top = box.top + 12;
+            }
+            break;
+          }
+          if (top < 0 || top + r.height > window.innerHeight - 280) window.scrollTo({ top: Math.max(0, window.scrollY + top - 120), behavior });
         }
       }
     };
