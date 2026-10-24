@@ -248,9 +248,10 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
                   setBetCard({ tx: betTx, log: betLog.log });
                   tx.close();
                 }}
-                // mk-onsig: the dark yellow phone sheet turns the signal fill black, so the label turns yellow.
-                className="m3-press mk-onsig"
-                style={{ alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, opacity: betLog.status === 'found' ? 1 : 0.5 }}
+                // Brand yellow as a literal: it sits on the black done tile, and the dark yellow phone sheet turns
+                // --mako-signal black, which would hide it there.
+                className="m3-press"
+                style={{ alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: 9999, background: '#FACC15', color: '#000', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, opacity: betLog.status === 'found' ? 1 : 0.5 }}
               >
                 {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
               </button>
@@ -330,7 +331,7 @@ function confirmSpec(
     doneTitle: 'Bet placed',
     doneBody: `${amt} USDC on ${name}.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
-    doneSide: { name, amount: `${amt} USDC`, bg: isYes ? 'var(--mako-yes)' : 'var(--mako-no)', fg: 'var(--mako-on-side)' },
+    doneSide: { name, amount: `${amt} USDC` },
   };
 }
 
