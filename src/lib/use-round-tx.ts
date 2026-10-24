@@ -14,7 +14,7 @@ import { runClaimRound, runEnterRound, runRefundRound, runScheduleRound } from '
 import type { RoundSide } from './rounds-model';
 import { usdcContract } from './usdc';
 import { formatAddress } from './user-display';
-import { useUser, type AuthedUser } from './use-user';
+import { accountAddress, useUser, type AuthedUser } from './use-user';
 import { isWalletDrifted } from './wallet-drift';
 
 // One Rounds action driven through the confirm sheet (19a), the way usePoolTx drives a pool action. An email
@@ -121,15 +121,24 @@ export function useRoundTx(onLanded?: () => void) {
 
   const [tx, setTx] = useState<RoundTx | null>(null);
   const [phase, setPhase] = useState<ConfirmPhase>({ step: 'review' });
+  /// The account the sheet was opened for. Another account signing in before it is sent closes it, and it never confirms
+  /// for anyone else (Codex CLAIM_TILE R1 F1): a sheet, and the done step after it, belong to one account.
+  const account = user ? accountAddress(user) : null;
+  const [owner, setOwner] = useState<string | null>(null);
+  if (tx && owner !== account && phase.step !== 'pending') {
+    setTx(null);
+    setPhase({ step: 'review' });
+  }
   const inFlight = useRef(false);
 
   const open = useCallback(
     (next: RoundTx) => {
       if (inFlight.current) return;
+      setOwner(account);
       setTx(next);
       setPhase(user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : { step: 'review' });
     },
-    [user, connected],
+    [user, connected, account],
   );
 
   const close = useCallback(() => {
@@ -139,7 +148,7 @@ export function useRoundTx(onLanded?: () => void) {
   }, []);
 
   const run = useCallback(async () => {
-    if (!tx || !user || !publicClient || inFlight.current) return;
+    if (!tx || !user || !publicClient || inFlight.current || accountAddress(user) !== owner) return;
     inFlight.current = true;
     const words = WORDS[tx.kind];
     let next: ConfirmPhase;
@@ -247,7 +256,7 @@ export function useRoundTx(onLanded?: () => void) {
         }
       }
     }
-  }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded]);
+  }, [tx, user, owner, connected, publicClient, writeContractAsync, ensureChain, onLanded]);
 
   return { tx, phase, open, close, confirm: run, retry: run };
 }

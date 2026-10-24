@@ -170,6 +170,14 @@ export function usePoolTx(onLanded?: () => void) {
 
   const [tx, setTx] = useState<PoolTx | null>(null);
   const [phase, setPhase] = useState<ConfirmPhase>({ step: 'review' });
+  /// The account the sheet was opened for. Another account signing in before it is sent closes it, and it never confirms
+  /// for anyone else (Codex CLAIM_TILE R1 F1): a sheet, and the done step after it, belong to one account.
+  const account = user ? accountAddress(user) : null;
+  const [owner, setOwner] = useState<string | null>(null);
+  if (tx && owner !== account && phase.step !== 'pending') {
+    setTx(null);
+    setPhase({ step: 'review' });
+  }
   /// The id of the pool a landed create made, read from its receipt (null until then, or if it could not be read).
   const [createdId, setCreatedId] = useState<bigint | null>(null);
   const inFlight = useRef(false);
@@ -178,12 +186,13 @@ export function usePoolTx(onLanded?: () => void) {
   const open = useCallback(
     (next: PoolTx) => {
       if (inFlight.current) return;
+      setOwner(account);
       setTx(next);
       // A drifted wallet session never reaches the review step's Confirm button.
       setPhase(user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : { step: 'review' });
       setCreatedId(null);
     },
-    [user, connected],
+    [user, connected, account],
   );
 
   /// Closes the sheet; never while a transaction is on its way.
@@ -208,7 +217,7 @@ export function usePoolTx(onLanded?: () => void) {
   );
 
   const run = useCallback(async () => {
-    if (!tx || !user || !publicClient || inFlight.current) return;
+    if (!tx || !user || !publicClient || inFlight.current || accountAddress(user) !== owner) return;
     inFlight.current = true;
     const words = WORDS[tx.kind];
     let next: ConfirmPhase;
@@ -412,7 +421,7 @@ export function usePoolTx(onLanded?: () => void) {
         }
       }
     }
-  }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
+  }, [tx, user, owner, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
 
   return { tx, phase, createdId, open, close, confirm: run, retry: run };
 }
