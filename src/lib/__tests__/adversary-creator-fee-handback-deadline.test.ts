@@ -137,7 +137,7 @@ afterAll(async () => {
 function req(body: unknown): Request {
   return new Request('http://localhost/api/aa/sponsor', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+    headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': account.address },
     body: JSON.stringify(body),
   });
 }
