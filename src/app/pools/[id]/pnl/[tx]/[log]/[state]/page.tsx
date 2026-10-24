@@ -49,7 +49,9 @@ export default async function ShareCardPage({ params, searchParams }: { params: 
   // The link's share tags ride along on every way out, so the result card and the pool still see them (adversary on
   // e2614db; Codex CARD_LINKS R1 F1 for "See the pool").
   const q = new URLSearchParams();
-  for (const [k, v] of Object.entries((await searchParams) ?? {})) for (const x of [v ?? []].flat()) q.append(k, x);
+  // Strings only: Next builds searchParams on a plain {}, so a key such as `constructor` arrives with Object's own
+  // function in its value list (adversary on 2cb62bd).
+  for (const [k, v] of Object.entries((await searchParams) ?? {})) for (const x of [v ?? []].flat()) if (typeof x === 'string') q.append(k, x);
   const query = q.size ? `?${q}` : '';
   if (!c.ok && c.reason === 'settled') redirect(`${cardPath(id, tx, log, 'result')}${query}`);
   if (!c.ok && (c.reason === 'not_found' || c.reason === 'not_yet')) notFound();
