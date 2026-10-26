@@ -61,6 +61,7 @@ import {
   USER_SESSION_MAX_AGE_SEC,
 } from '@/lib/user-session';
 import { refFromCookieHeader } from '@/lib/ref-tag';
+import { s0Log } from '@/lib/s0-signin-log'; // S0 logger: remove after the beta measurement
 import { lockCeremonies, lockRememberedRows, lockSafeRows, lockSessions } from '@/lib/account-locks';
 import { finishEmbeddedUser, IdentityConflictError, prepareEmbeddedUser } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
@@ -281,6 +282,7 @@ export async function POST(req: Request) {
     console.warn('[user/auth] Privy token verification failed', summarizeError(err));
     return Response.json({ error: 'bad_token' }, { status: 401 });
   }
+  await s0Log('final', body.privyAccessToken, read); // S0 logger: remove after the beta measurement
   if (!read.email) return Response.json({ error: 'no_email' }, { status: 422 });
   const email = read.email;
 

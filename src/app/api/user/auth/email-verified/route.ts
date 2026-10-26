@@ -22,6 +22,7 @@
 // ----------------------------------------------------------------------------
 
 import { checkSameOrigin } from '@/lib/csrf';
+import { s0Log } from '@/lib/s0-signin-log'; // S0 logger: remove after the beta measurement
 import { PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 import { accountFor, rememberedBrowserEnabled, runStepA } from '@/lib/remembered-browser';
 import { cookieSecret, EMAIL_CEREMONY_COOKIE, emailLatestVerifiedAt, hashSecret, hashSid } from '@/lib/remembered-browser-rules';
@@ -39,6 +40,7 @@ export async function POST(req: Request) {
   if (typeof body.privyAccessToken !== 'string' || body.privyAccessToken.length === 0) {
     return Response.json({ error: 'bad_body' }, { status: 400 });
   }
+  await s0Log('step_a', body.privyAccessToken); // S0 logger: remove after the beta measurement
   // The feature off: today's sign-in, nothing recorded.
   if (!rememberedBrowserEnabled()) return Response.json({ ok: true, status: 'off' });
   const secret = cookieSecret(req, EMAIL_CEREMONY_COOKIE);

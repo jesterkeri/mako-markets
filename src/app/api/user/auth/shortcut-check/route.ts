@@ -14,6 +14,7 @@
 // ----------------------------------------------------------------------------
 
 import { checkSameOrigin } from '@/lib/csrf';
+import { s0Log } from '@/lib/s0-signin-log'; // S0 logger: remove after the beta measurement
 import { PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
 import { accountFor, readShortcutState, rememberedBrowserEnabled } from '@/lib/remembered-browser';
 import {
@@ -39,6 +40,7 @@ export async function POST(req: Request) {
   if (typeof body.privyAccessToken !== 'string' || body.privyAccessToken.length === 0) {
     return Response.json({ error: 'bad_body' }, { status: 400 });
   }
+  await s0Log('shortcut_check', body.privyAccessToken); // S0 logger: remove after the beta measurement
   if (!rememberedBrowserEnabled()) return Response.json({ ok: true, status: 'off' });
 
   let read: PrivyAccountRead;

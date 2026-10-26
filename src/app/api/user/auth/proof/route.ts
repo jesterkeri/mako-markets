@@ -36,6 +36,7 @@ import { issueProofNonce } from '@/lib/privy-proof';
 import { checkpointFrom } from '@/lib/privy-gate';
 import { startOverDecision } from '@/lib/start-over';
 import { judgeAccount, PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
+import { s0Log } from '@/lib/s0-signin-log'; // S0 logger: remove after the beta measurement
 
 export const runtime = 'nodejs';
 
@@ -58,6 +59,7 @@ export async function POST(req: Request) {
     if (err instanceof PrivyConfigError) return Response.json({ error: 'internal' }, { status: 500 });
     return Response.json({ error: 'bad_token' }, { status: 401 });
   }
+  await s0Log('proof', body.privyAccessToken, read); // S0 logger: remove after the beta measurement
   if (!read.email) return Response.json({ error: 'no_email' }, { status: 422 });
 
   // [J2] C4 before anything else (see /api/user/auth): a moved login email is refused and recorded here, before an
