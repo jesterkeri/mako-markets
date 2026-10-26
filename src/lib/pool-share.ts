@@ -9,7 +9,8 @@ import { poolTitle } from './pool-display';
 import { unsettleable } from './pool-rules';
 import { humanizeUntil } from './time';
 
-const RPC_URL = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
+const PUBLIC_RPC_URL = 'https://testnet-rpc.monad.xyz/';
+const RPC_URL = process.env.MONAD_RPC_URL ?? PUBLIC_RPC_URL;
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://makomarket.xyz').replace(/\/+$/, '');
 
 const monadTestnet = {
@@ -24,8 +25,17 @@ export function poolIdFrom(segment: string): bigint | null {
   return /^\d{1,18}$/.test(segment) ? BigInt(segment) : null;
 }
 
+// No automatic retries (Codex CARD_UNFURL R2 F1): viem's default 3 retries on a 429 or 5xx would make one budgeted call
+// up to 4 requests (avatar-budget.ts counts calls), against a node that asked to back off. A failed read is already
+// `unavailable` for a card (503, no-store) and the plain brand for a pool preview.
+const NO_RETRY = { retryCount: 0 } as const;
+
 /// The server's read client for share previews (public chain reads only).
-export const shareClient = () => createPublicClient({ chain: monadTestnet, transport: http(RPC_URL) });
+export const shareClient = () => createPublicClient({ chain: monadTestnet, transport: http(RPC_URL, NO_RETRY) });
+
+/// The public Monad node, when the server is configured with another one: the browser finds a bet's log there, so a
+/// share link's log index is that node's (production's own node missed bets sent through the gas-free bundler).
+export const publicShareClient = () => (RPC_URL === PUBLIC_RPC_URL ? null : createPublicClient({ chain: monadTestnet, transport: http(PUBLIC_RPC_URL, NO_RETRY) }));
 
 /// `blockTag: 'finalized'` reads the pool as it stands in the last finalized block (a settled result's card).
 export async function readPoolForShare(id: bigint, blockTag: 'latest' | 'finalized' = 'latest'): Promise<MarketWithId | null> {

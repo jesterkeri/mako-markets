@@ -36,6 +36,7 @@ const SETTLED: MarketWithId = {
 vi.mock('@/lib/pool-share', () => ({
   poolIdFrom: (s: string) => (/^\d{1,18}$/.test(s) ? BigInt(s) : null),
   readPoolForShare: async () => SETTLED,
+  publicShareClient: () => null,
   shareClient: () => ({
     getTransactionReceipt: async () => ({
       status: 'success',

@@ -5,13 +5,14 @@
 // unstable_cache does (a thrown result is never stored). The bet is pool #138's real BetPlaced log (block 71474204,
 // tx 0xc9aa…4946, log 5; provenance in adversary-pnl-card.test.ts), recorded at the CI contract address.
 
+import { encodeAbiParameters, encodeEventTopics } from 'viem';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { makoMarketEvents } from '@/db/schema';
 import { CARD_LOADS_PER_WINDOW, CARD_LOOKUPS_PER_WINDOW, CARD_RENDERS_PER_WINDOW } from '@/lib/avatar-budget';
 import { createTestDb, type TestDb } from '@/lib/leaderboard/__tests__/test-db';
 
-import { MAKO_ADDRESS, MarketType, Outcome, type MarketWithId } from '../contract';
+import { MAKO_ADDRESS, makoAbi, MarketType, Outcome, type MarketWithId } from '../contract';
 
 const U = 1_000_000n;
 const TX = '0xc9aadd0eb54e82a93ccb9d7999684adc6546ff1b3689707dfe7604e2b6b74946';
@@ -36,6 +37,12 @@ const OPEN: MarketWithId = {
   creatorFeeBpsSnapshot: 200,
 };
 const SETTLED: MarketWithId = { ...OPEN, outcome: Outcome.YES, resolved: true };
+const BET_LOG = {
+  address: MAKO_ADDRESS.toLowerCase(),
+  logIndex: 5,
+  topics: encodeEventTopics({ abi: makoAbi, eventName: 'BetPlaced', args: { id: 138n, user: BETTOR } }),
+  data: encodeAbiParameters([{ type: 'bool' }, { type: 'uint256' }], [true, U]),
+};
 
 const store = vi.hoisted(() => ({ keys: new Map<string, number>() }));
 vi.mock('@/lib/envio-budget', () => ({
@@ -65,10 +72,12 @@ vi.mock('@/lib/pool-share', () => ({
     chain.pools++;
     return tag === 'finalized' ? chain.finalized : chain.latest;
   },
+  publicShareClient: () => null,
   shareClient: () => ({
-    getTransactionReceipt: async () => {
+    // The bet's own receipt holds its BetPlaced log at 5; any other hash (made up) has none.
+    getTransactionReceipt: async ({ hash }: { hash: string }) => {
       chain.receipts++;
-      return { status: 'success', blockNumber: 1n, logs: [] };
+      return { status: 'success', blockNumber: 71474204n, logs: hash === TX ? [BET_LOG] : [] };
     },
     getBlock: async () => {
       chain.blocks++;
@@ -141,17 +150,46 @@ afterEach(async () => {
 });
 
 describe('decision A: the bet ledger first', () => {
-  it('made-up hashes past the unknown-bet budget cannot 429 a known bet, which makes no receipt or block call', async () => {
+  it('made-up hashes past the unknown-bet budget cannot 429 a known bet, whose ledger row saves the block call', async () => {
     for (let i = 0; i < 20; i++) await image(`0x${i.toString(16).padStart(64, 'f')}`, 'placed', '138', `198.51.100.${i}`);
     expect(chain.receipts).toBe(CARD_LOADS_PER_WINDOW);
     const before = { ...chain };
     const res = await image(TX, 'placed');
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect([chain.receipts - before.receipts, chain.blocks - before.blocks, chain.pools - before.pools]).toEqual([0, 0, 1]);
-    // The same bet under another pool's URL is final: a 404 cached a minute.
+    // Codex CARD_UNFURL R1 F2: the bet itself is always read from its receipt; the ledger gives the bet time.
+    expect([chain.receipts - before.receipts, chain.blocks - before.blocks, chain.pools - before.pools]).toEqual([1, 0, 1]);
+    // The same bet under another pool's URL: the ledger row is not this pool's, so the unknown-bet budget pays (spent by
+    // the flood above, so refused for now), and once it refills the receipt's bet (pool 138's) makes it final: a 404
+    // cached a minute.
+    expect((await image(TX, 'placed', '139')).status).toBe(429);
+    store.keys.clear();
     const other = await image(TX, 'placed', '139');
     expect([other.status, other.headers.get('cache-control')]).toEqual([404, 'public, max-age=60, s-maxage=60']);
+  });
+});
+
+describe('Codex CARD_UNFURL R1 F2: the ledger never decides which bet a link names', () => {
+  it('a ledger row at the link\'s index whose receipt has no bet there (another node\'s numbering) is no card', async () => {
+    await t.db.insert(makoMarketEvents).values({
+      chainId: 10143,
+      contractAddress: MAKO_ADDRESS.toLowerCase(),
+      version: 'v4',
+      marketId: '138',
+      kind: 'bet',
+      actor: BETTOR,
+      isYes: true,
+      amount: U.toString(),
+      blockNumber: 71474204,
+      blockTimestamp: new Date(1792134750_000),
+      txHash: TX,
+      logIndex: 4,
+    });
+    const res = await GET(new Request(`http://localhost/pools/138/pnl/${TX}/4/placed/image.png`, { headers: { 'x-real-ip': '203.0.113.7' } }), {
+      params: Promise.resolve({ id: '138', tx: TX, log: '4', state: 'placed' }),
+    });
+    expect(res.status).toBe(404);
+    expect(drawn.who).toEqual([]);
   });
 });
 
@@ -164,7 +202,8 @@ describe('Codex R3 F1: the ledger lookup has its own site-wide budget', () => {
     // Bounded by the lookup budget, though the unknown RPC budget ran out after 6.
     expect(dbReads.n).toBe(CARD_LOOKUPS_PER_WINDOW);
     expect(kept).toBe(1);
-    expect(chain.receipts).toBe(CARD_LOADS_PER_WINDOW);
+    // The kept result card's first load read its receipt once, then the flood's unknown-bet budget.
+    expect(chain.receipts).toBe(1 + CARD_LOADS_PER_WINDOW);
     // Owner 2026-10-24: a card nobody opened yet is refused for now, never cached; the kept result makes no read.
     const fresh = await image(TX, 'placed');
     expect([fresh.status, fresh.headers.get('cache-control')]).toEqual([429, 'no-store']);

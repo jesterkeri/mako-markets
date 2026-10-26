@@ -15,7 +15,7 @@ import { poolQr } from '@/lib/pool-qr';
 /// only if no copy is kept. This covers bet placed (its estimate moves too), result, and a card drawn without its photo.
 /// A result card's final chain facts are kept on the server instead (pnl-card-server.ts finalFacts), so redrawing it
 /// reads no chain. Only a truly final "not a card" is a 404 cached a minute: a receipt with no matching bet log, a
-/// ledger row for another pool, a refunded pool, or not an account's bet.
+/// refunded pool, or not an account's bet.
 
 const MINUTE = 'public, max-age=60, s-maxage=60';
 

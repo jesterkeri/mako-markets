@@ -6,10 +6,10 @@ import { notFound, redirect } from 'next/navigation';
 import { visitorIp } from '@/lib/avatar-budget';
 import { cardImage, cardPath, type ShareCard } from '@/lib/pnl-card';
 import { loadCard } from '@/lib/pnl-card-server';
+import { SHARE_ORIGIN } from '@/lib/ref-tag';
 
 import { ForwardToPool } from './ForwardToPool';
 
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://makomarket.xyz').replace(/\/+$/, '');
 
 type Params = Promise<{ id: string; tx: string; log: string; state: string }>;
 
@@ -29,7 +29,8 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   if (!c.ok) return { title: 'Share card · Mako Market Beta' };
   const title = `${c.card.question} · Mako Market Beta`;
   const description = `${summary(c.card)} A prediction pool on Mako Market, on Monad testnet.`;
-  const url = `${APP_URL}${cardPath(id, tx, log, c.state)}`;
+  // The site's own domain, as the shared link is (production's NEXT_PUBLIC_APP_URL is the vercel.app address).
+  const url = `${SHARE_ORIGIN}${cardPath(id, tx, log, c.state)}`;
   const image = cardImage(url);
   return {
     title,

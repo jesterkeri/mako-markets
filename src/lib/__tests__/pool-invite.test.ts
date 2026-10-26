@@ -84,7 +84,7 @@ describe('share-intent URLs', () => {
   it('X opens the official post intent with the text and the link as separate, encoded values', () => {
     const raw = intentUrl('x', 88n, NASTY);
     const url = new URL(raw);
-    expect(`${url.origin}${url.pathname}`).toBe('https://x.com/intent/tweet');
+    expect(`${url.origin}${url.pathname}`).toBe('https://x.com/intent/post');
     expect(url.searchParams.get('text')).toBe(`${NASTY} on Mako Market`);
     expect(url.searchParams.get('url')).toBe(poolInviteLink(88n, 'x'));
     expect([...url.searchParams.keys()]).toEqual(['text', 'url']);
