@@ -1,16 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDiscover } from './use-discover';
 
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { ConfirmSheet, TileShareButton, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { PoolShareSheet } from '@/components/PoolShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
 import { MarketType, type MarketWithId } from '@/lib/contract';
 import { PAUSED_CREATE_MTYPES, PAUSED_PRICE_FEED_SYMBOLS } from '@/lib/market-availability';
 import { CRYPTO_ASSETS, formatStrikeForDisplay, roundStrike } from '@/lib/crypto-assets';
-import { useCreatorCreatesToday, useMarkets, useUsdcBalance } from '@/lib/hooks';
+import { useCreatorCreatesToday, useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { MAX_DURATION_SEC, sportsTimestamps } from '@/lib/market-timing';
 import { toBytes32 } from '@/lib/oracle';
 import { MIN_BET, parseAmount } from '@/lib/pool-bet-rules';
@@ -112,6 +113,14 @@ export function CreatePoolClient() {
   const now = useLiveNowSec();
   const { user } = useUser();
   const account = user ? accountAddress(user) : null;
+  /// The new pool whose invite card is open. Another account signing in closes it for good (render reset).
+  const [shareId, setShareId] = useState<bigint | null>(null);
+  const [shareAccount, setShareAccount] = useState(account);
+  if (shareAccount !== account) {
+    setShareAccount(account);
+    setShareId(null);
+  }
+  const closeShare = useCallback(() => setShareId(null), []);
   const balanceQ = useUsdcBalance(account ?? undefined);
   const balance = typeof balanceQ.data === 'bigint' ? balanceQ.data : null;
   const createsQ = useCreatorCreatesToday(account ?? undefined);
@@ -190,6 +199,8 @@ export function CreatePoolClient() {
       note: 'Your first bet goes into the pool like any other bet. If nobody takes the other side, everyone is refunded.',
       doneTitle: 'Your pool is live',
       doneBody: pool.question,
+      // The black tile, as for a placed bet (Joshua 2026-10-26): the creator's first bet is a bet.
+      doneTile: { big: side, small: `${usdcExact(seed)} USDC, your first bet` },
       doneSecondary: { label: 'View in Pools', href: '/pools' },
     });
     // The same `now` the sheet's pool was built from, so the chain gets exactly the title and times shown.
@@ -269,10 +280,32 @@ export function CreatePoolClient() {
           onCancel={tx.close}
           onRetry={tx.retry}
           onClose={tx.close}
+          doneExtra={
+            tx.tx.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null && account ? (
+              <TileShareButton
+                onClick={() => {
+                  setShareId(tx.createdId);
+                  tx.close();
+                }}
+              >
+                Share your pool
+              </TileShareButton>
+            ) : undefined
+          }
         />
       )}
+      {shareId !== null && account && <CreatedPoolShare id={shareId} by={user?.displayName?.trim() || formatAddress(account)} onClose={closeShare} />}
     </>
   );
+}
+
+/// The invite card for the pool just created, read from the chain like the pool page's (never the draft's figures).
+/// Mounted only while open, so the create page does not poll a market it is not showing.
+function CreatedPoolShare({ id, by, onClose }: { id: bigint; by: string; onClose: () => void }) {
+  const { market } = useMarket(id);
+  const now = useLiveNowSec();
+  if (!market || now === null) return null;
+  return <PoolShareSheet market={market} now={now} labels={{ yes: 'YES', no: 'NO' }} by={by} onClose={onClose} />;
 }
 
 type ViewProps = {
