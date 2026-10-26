@@ -279,6 +279,13 @@ export async function POST(req: Request) {
     return Response.json({ error: 'unauthenticated' }, { status: 401 });
   }
 
+  // Step 1b: the browser names the account it is acting for (x-mako-eoa). A tab still showing account A after B signed
+  // in on another tab must not spend B's daily allowance or hold B's in-flight slot: refused before any count, RPC
+  // read, sponsorship or pending row (Codex CLAIM_TILE R2 F1).
+  if (session.magicEoa && req.headers.get('x-mako-eoa')?.toLowerCase() !== session.magicEoa.toLowerCase()) {
+    return Response.json({ error: 'session_changed' }, { status: 409 });
+  }
+
   // Step 2: zod-validate body.
   let raw: unknown;
   try {

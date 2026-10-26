@@ -254,8 +254,8 @@ describe('labels', () => {
       [pool(4n, { bettingCloseTime: BigInt(NOW - 30 * HOUR), closeTime: BigInt(NOW - 25 * HOUR) }), bet(1, 0)],
       [yesWon(5n, { closeTime: BigInt(NOW - 26 * HOUR) }), bet(1, 0)],
     ]);
-    expect(positionMeta(open, NOW)).toBe('Closes in 2H 5M');
-    expect(positionMeta(closed, NOW, 'UTC')).toBe('Settles after Fri 09:00');
+    expect(positionMeta(open, NOW)).toBe('Betting closes in 2H 5M');
+    expect(positionMeta(closed, NOW, 'UTC')).toBe('Settles after Fri 15 Jan, 09:00 UTC');
     expect(positionMeta(waiting, NOW)).toBe('Waiting for the result');
     expect(positionMeta(overdue, NOW)).toBe('Not settled in 24H: it can be refunded');
     expect(positionMeta(settled, NOW)).toBe('Closed 1D ago');

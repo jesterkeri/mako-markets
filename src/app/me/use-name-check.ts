@@ -9,10 +9,13 @@ import { validateDisplayName } from './profile-rules';
 export type NameCheck = 'idle' | 'checking' | 'available' | 'taken' | 'reserved';
 
 // Me mounts the desktop and phone editors together (CSS shows one), so both ask at the same pause: one request per
-// name, shared only within that pause (the answer is dropped on the next timer turn, so a name that changes hands is
-// asked about afresh; the two editors' timers fire in the same turn). A request gives up after 10 s. null = no verdict (offline, signed out, bad reply): the check stays 'checking'
+// name, shared only within that pause (the answer is dropped SHARE_MS after it lands, well inside the 400 ms debounce,
+// so a name that changes hands is asked about afresh at the next pause). Not "the next timer turn": the two editors'
+// timers are set in one commit but other components' effects run between them, so they can land a few ms apart
+// (the Me invite card did exactly that). A request gives up after 10 s. null = no verdict (offline, signed out, bad reply): the check stays 'checking'
 // rather than showing "Looks good", and the save route still decides.
 const inflight = new Map<string, Promise<NameCheck | null>>();
+const SHARE_MS = 100;
 function ask(name: string, key: string): Promise<NameCheck | null> {
   let p = inflight.get(key);
   if (!p) {
@@ -23,7 +26,7 @@ function ask(name: string, key: string): Promise<NameCheck | null> {
         return body.available ? 'available' : body.reason === 'reserved' ? 'reserved' : body.reason === 'taken' ? 'taken' : null;
       })
       .catch(() => null)
-      .finally(() => setTimeout(() => inflight.delete(key), 0));
+      .finally(() => setTimeout(() => inflight.delete(key), SHARE_MS));
     inflight.set(key, p);
   }
   return p;

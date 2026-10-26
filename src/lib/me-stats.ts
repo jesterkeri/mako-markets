@@ -220,7 +220,7 @@ export function positionMeta(p: MePosition, nowSec: number, timeZone?: string): 
   }
   switch (p.state) {
     case 'open':
-      return `Closes in ${formatCountdown(Number(m.bettingCloseTime) - nowSec)}`;
+      return `Betting closes in ${formatCountdown(Number(m.bettingCloseTime) - nowSec)}`;
     case 'betting_closed':
       return `Settles after ${dayTime(Number(m.closeTime), timeZone)}`;
     case 'resolving':

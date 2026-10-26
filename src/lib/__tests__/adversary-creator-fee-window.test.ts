@@ -94,7 +94,7 @@ afterAll(async () => {
 function req(url: string, body: unknown): Request {
   return new Request(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+    headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': MAGIC_EOA },
     body: JSON.stringify(body),
   });
 }

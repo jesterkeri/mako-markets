@@ -11,6 +11,7 @@ import { CRYPTO_SYMBOLS } from './crypto-assets';
 import { PAUSED_PRICE_FEED_SYMBOLS } from './market-availability';
 import { PRICE_FEED_BY_SYMBOL } from './price-feed-assets';
 import { formatCountdown } from './countdown';
+import { priceSubject, priceTarget } from './pool-create';
 import type { PoolState } from './pool-list';
 
 /// The contract's RESOLUTION_GRACE: after the close time plus this, anyone may mark an unsettled pool refunded.
@@ -32,18 +33,24 @@ const FEED_CLASS: Partial<Record<number, 'forex' | 'commodities' | 'stocks'>> = 
   [MarketType.STOCKS]: 'stocks',
 };
 
+/// The settlement reference's text as stored (trailing NULs dropped, nothing trimmed), or null when it does not decode.
+/// parseOracleRef and pool-display.ts oldWording both read this, so they always see the same text.
+export function rawOracleRef(m: Pick<MarketWithId, 'oracleRef'>): string | null {
+  try {
+    return hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '');
+  } catch {
+    return null;
+  }
+}
+
 /// The pool's settlement reference, decoded and validated exactly as the resolver does (cf-worker/src/index.ts:
 /// parseCryptoOracleRef with its CRYPTO_SYMBOLS, parsePriceFeedOracleRef with PRICE_FEED_BY_SYMBOL and the class
 /// check, parseFootballOracleRef, parseBasketballOracleRef), or null when the resolver would not read it. The
 /// contract stores any reference a direct `createMarket` call passes, so a null here is a pool the resolver will
 /// never settle by price or result (Codex S3 r1).
 export function parseOracleRef(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): OracleRef | null {
-  let raw: string;
-  try {
-    raw = hexToString(m.oracleRef, { size: 32 }).replace(/\0+$/, '');
-  } catch {
-    return null;
-  }
+  const raw = rawOracleRef(m);
+  if (raw === null) return null;
   if (m.mType === MarketType.CRYPTO) {
     // The live crypto resolver reads the untrimmed text strictly: a space, '+', '.5' or '1e3' never settles.
     const cm = CRYPTO_REF.exec(raw);
@@ -77,9 +84,19 @@ export function parseOracleRef(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): Or
   return null;
 }
 
-/// "Sat 16:30" in the viewer's time zone.
+/// "Sat 25 Oct, 16:30 GMT+1" in the viewer's time zone: the date and the zone are shown because a weekday and a time
+/// alone are ambiguous for pools that run past a week or are read from another time zone (external review 2026-10).
 export function dayTime(sec: number, timeZone?: string): string {
-  return new Intl.DateTimeFormat('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone }).format(new Date(sec * 1000));
+  return new Intl.DateTimeFormat('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+    timeZone,
+  }).format(new Date(sec * 1000));
 }
 
 export type RuleLine = { k: 'YES' | 'NO' | 'CLOSES' | 'REFUND' | 'SOURCE' | 'WARNING'; v: string };
@@ -94,8 +111,6 @@ export function unsettleable(m: Pick<MarketWithId, 'mType' | 'oracleRef'>): bool
 export const UNSETTLEABLE_LINE =
   "Mako Market's resolver can't read this pool's settlement reference, so it will not be settled by a price or a result. If nobody settles it within 24H of close, anyone can mark it refunded.";
 
-const unit = (m: MarketWithId) => (m.mType === MarketType.FOREX ? '' : '$');
-
 /// The "How this pool resolves" lines.
 export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
   const close = dayTime(Number(m.closeTime), timeZone);
@@ -108,12 +123,14 @@ export function poolRules(m: MarketWithId, timeZone?: string): RuleLine[] {
   } else if (!ref) {
     lines.push({ k: 'WARNING', v: UNSETTLEABLE_LINE });
   } else if (ref.kind === 'price') {
-    const s = `${unit(m)}${ref.strike}`;
+    // Named and grouped as the title names them: "EUR/USD is above 1.095", "BTC is above $80,000".
+    const a = priceSubject(m.mType, ref.symbol);
+    const s = priceTarget(m.mType, ref.strike) ?? ref.strike;
     lines.push(
       ref.op === 'gt'
-        ? { k: 'YES', v: `${ref.symbol} is above ${s} at ${close}, the close.` }
-        : { k: 'YES', v: `${ref.symbol} is below ${s} at ${close}, the close.` },
-      ref.op === 'gt' ? { k: 'NO', v: `${ref.symbol} is at ${s} or below at the close.` } : { k: 'NO', v: `${ref.symbol} is at ${s} or above at the close.` },
+        ? { k: 'YES', v: `${a} is above ${s} at ${close}, the close.` }
+        : { k: 'YES', v: `${a} is below ${s} at ${close}, the close.` },
+      ref.op === 'gt' ? { k: 'NO', v: `${a} is at ${s} or below at the close.` } : { k: 'NO', v: `${a} is at ${s} or above at the close.` },
     );
   } else {
     const what = ref.kind === 'football' ? 'goals' : 'points';
@@ -171,7 +188,7 @@ export function poolClock(m: MarketWithId, state: PoolState, nowSec: number, tim
   const manual = unsettleable(m);
   switch (state) {
     case 'open':
-      return { label: 'Closes in', value: formatCountdown(Number(m.bettingCloseTime) - nowSec), sub: `Betting stops ${bettingClose}.` };
+      return { label: 'Betting closes in', value: formatCountdown(Number(m.bettingCloseTime) - nowSec), sub: `Betting stops ${bettingClose}.` };
     case 'betting_closed':
       return manual
         ? { label: 'Refundable in', value: formatCountdown(Number(m.closeTime) + RESOLUTION_GRACE_SEC - nowSec), sub: `Betting closed ${bettingClose}. Not settled automatically: from 24H after ${close}, anyone can mark it refunded.` }

@@ -112,7 +112,7 @@ function MakoColumn({ mako }: { mako: MakoView }) {
               <Link href={poolHref(r.id)} className="mk-row" style={{ display: 'block', padding: '12px 20px', boxShadow: 'inset 0 1px 0 var(--line)', color: 'inherit', textDecoration: 'none' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, ...mono, fontSize: 11, color: 'var(--dim)' }}>
                   <span>
-                    #{r.id.toString()} · {r.bettors} {r.bettors === 1 ? 'PLAYER' : 'PLAYERS'} · CLOSES {r.closes}
+                    #{r.id.toString()} · {r.bettors} {r.bettors === 1 ? 'PLAYER' : 'PLAYERS'} · BETS CLOSE {r.closes}
                   </span>
                   <span style={{ whiteSpace: 'nowrap' }}>{usdc2(r.pool)} USDC</span>
                 </div>
@@ -162,7 +162,7 @@ function PoolsColumn({ pools, filter, setFilter, labelsOf, retry }: Pick<Props, 
             <span>YES</span>
             <span>NO</span>
             <span style={{ textAlign: 'right' }}>POOL</span>
-            <span style={{ textAlign: 'right' }}>CLOSES</span>
+            <span style={{ textAlign: 'right' }}>BETS CLOSE</span>
           </div>
           {pools.status === 'loading' ? (
             <div aria-busy="true" aria-label="Loading pools">

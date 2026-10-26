@@ -6,8 +6,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReadContract, useReadContracts } from 'wagmi';
 
 import { PoolCommentsDesktop, PoolCommentsMobile } from '@/components/comments/PoolComments';
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { claimTile, ConfirmSheet, TileShareButton, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { CreatorEarningsCard, creatorFeeConfirmSpec } from '@/components/CreatorEarnings';
+import { BetCardSheet, PnlShareSheet, useBetLog } from '@/components/PnlShareSheet';
 import { PoolShareSheet } from '@/components/PoolShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { computeMinLiquidityRatioBps, computePreviewPayout, computeResolvedClaim, isCreatorFeeForfeited } from '@/lib/bet';
@@ -18,7 +19,9 @@ import { creatorEarningOf, isPoolCreator, type CreatorEarning } from '@/lib/crea
 import { addTouchSample, shouldCloseDrawer, type TouchSample } from '@/lib/drawer-swipe';
 import { useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { betBlocker, parseAmount, type BetLimits } from '@/lib/pool-bet-rules';
-import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type UserBet } from '@/lib/pool-list';
+import { firstWorded } from '@/lib/pool-display';
+import type { CardState } from '@/lib/pnl-card';
+import { CAT_STYLE, catTitle, claimable, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, usdcExact, type PoolRow, type PoolState, type Position, type UserBet } from '@/lib/pool-list';
 import { dayTime, poolClock, poolRules, poolSteps, RESOLUTION_GRACE_SEC, resultSteps, unsettleable } from '@/lib/pool-rules';
 import { openSignIn } from '@/lib/sign-in-store';
 import { useAddressNames } from '@/lib/use-address-names';
@@ -110,9 +113,26 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   /// The share sheet (15a), opened from the receipt's SHARE control.
   const [shareOpen, setShareOpen] = useState(false);
   const closeShare = useCallback(() => setShareOpen(false), []);
+  /// The account the own-card sheet was opened for (Joshua 2026-10-24); which card it shows is worked out on every
+  /// render, as Me does, so a pool that settles or refunds while it is open changes or drops the card (adversary on
+  /// ed9518f), and another account signing in never sees it.
+  const [myCardFor, setMyCardFor] = useState<string | null>(null);
+  // A sign-out or account switch forgets the open sheet, so signing back in never reopens it unasked (adversary on
+  // c5da33e). Reset during render, the repo's pattern for state that follows a value.
+  const [cardAccount, setCardAccount] = useState(account);
+  if (cardAccount !== account) {
+    setCardAccount(account);
+    setMyCardFor(null);
+  }
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
+  /// The account a won claim was opened for: its done tile shares that account's win card, and no other's.
+  const [winFor, setWinFor] = useState<string | null>(null);
+  /// The bet confirmation's Share: the bet a confirmed bet transaction placed, once its receipt names it.
+  const betTx = tx.tx?.kind === 'bet' && tx.phase.step === 'done' ? tx.phase.txHash : undefined;
+  const betLog = useBetLog(betTx, id, account);
+  const [betCard, setBetCard] = useState<{ tx: string; log: number } | null>(null);
 
   if (market && market.closeTime === 0n) notFound();
 
@@ -132,6 +152,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const creatorStats = creatorStatsOf(markets, market);
 
   const claimAmount = claimable(row.position);
+  const myCard = account ? poolCardState(row.position, market.resolved) : null;
   const openBet = () => {
     if (amount === null || why || tx.tx) return;
     setSheetSpec(confirmSpec('bet', market, row, labels, amount, side, estimate, claimAmount));
@@ -140,6 +161,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const openClaim = () => {
     if (claimAmount === null || tx.tx) return;
     setSheetSpec(confirmSpec('claim', market, row, labels, amount, side, estimate, claimAmount));
+    setWinFor(myCard === 'result' ? account : null);
     tx.open({ kind: 'claim', marketId: id });
   };
   // Creator earnings: only the pool's creator sees them, from the pool's own on-chain state.
@@ -178,7 +200,10 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     lastCreatorClaimTx: tx.tx?.kind === 'creatorFee' && tx.phase.step === 'done' ? tx.phase.txHash : undefined,
     rulesOpen,
     setRulesOpen,
-    openShare: () => setShareOpen(true),
+    openShare: () => {
+      if (account && myCard) setMyCardFor(account);
+      else setShareOpen(true);
+    },
   };
 
   const spec = tx.tx ? sheetSpec : null;
@@ -192,11 +217,67 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
         <PoolMobile {...view} />
       </div>
       {shareOpen && <PoolShareSheet market={market} now={now} labels={labels} by={by} onClose={closeShare} />}
-      {spec && user && (
-        <ConfirmSheet spec={spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} />
+      {myCard && account && myCardFor === account && userBet && (
+        <PnlShareSheet
+          poolId={id}
+          question={market.question}
+          stake={userBet}
+          state={myCard}
+          account={account}
+          labels={labels}
+          onClose={() => setMyCardFor(null)}
+          onPool={() => {
+            setMyCardFor(null);
+            setShareOpen(true);
+          }}
+        />
       )}
+      {spec && user && (
+        <ConfirmSheet
+          spec={spec}
+          phase={tx.phase}
+          wallet={walletOf(user)}
+          onConfirm={tx.confirm}
+          onCancel={tx.close}
+          onRetry={tx.retry}
+          onClose={tx.close}
+          doneExtra={
+            betTx && betLog.status !== 'none' ? (
+              <TileShareButton
+                disabled={betLog.status !== 'found'}
+                onClick={() => {
+                  if (betLog.status !== 'found') return;
+                  setBetCard({ tx: betTx, log: betLog.log });
+                  tx.close();
+                }}
+              >
+                {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
+              </TileShareButton>
+            ) : tx.tx?.kind === 'claim' && tx.phase.step === 'done' && myCard === 'result' && account && winFor === account ? (
+              // A won pool's claim shares the win card (Joshua 2026-10-24); a refund has no card.
+              <TileShareButton
+                onClick={() => {
+                  setMyCardFor(account);
+                  tx.close();
+                }}
+              >
+                Share your win
+              </TileShareButton>
+            ) : undefined
+          }
+        />
+      )}
+      {betCard && <BetCardSheet poolId={id} tx={betCard.tx} log={betCard.log} question={market.question} onClose={() => setBetCard(null)} />}
     </>
   );
+}
+
+/// Which of the account's own cards the pool page's Share opens, as Me picks it: bet placed while the pool is
+/// unsettled, the result once won or lost; none for a refund or no stake (docs/pnl-share-card/SPEC.md).
+export function poolCardState(p: Position | null, resolved: boolean): CardState | null {
+  if (!p) return null;
+  if (p.kind === 'won' || p.kind === 'lost') return 'result';
+  return p.kind === 'staked' && !resolved ? 'placed' : null;
 }
 
 /// The creator's pools on chain and the share that got money on both sides: the design's creator card, from real
@@ -233,9 +314,10 @@ function confirmSpec(
         { label: refund ? 'Refund' : 'Payout', value: `${amt} USDC` },
       ],
       note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the pool settled; the claim pays out the rest.',
-      doneTitle: refund ? 'Refund claimed' : 'Claimed',
+      doneTitle: refund ? 'Refund claimed' : 'You won',
       doneBody: `${amt} USDC is in your balance.`,
       doneSecondary: { label: 'View in Me', href: '/me' },
+      doneTile: claimTile(amt, refund),
     };
   }
   const isYes = side === 'yes';
@@ -258,6 +340,7 @@ function confirmSpec(
     doneTitle: 'Bet placed',
     doneBody: `${amt} USDC on ${name}.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
+    doneTile: { big: name, small: `${amt} USDC` },
   };
 }
 
@@ -392,6 +475,7 @@ function PoolDesktop(v: ViewProps) {
             </span>
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 52, lineHeight: 1.02, letterSpacing: '-0.035em', maxWidth: 720, textWrap: 'balance' }}>{m.question}</h1>
+          {m.originalWording && <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 8, maxWidth: 720 }}>{firstWorded(m.originalWording)}</div>}
           <div style={{ fontSize: 15, color: 'var(--dim)', marginTop: 10 }}>
             {catTitle(row.cat)} · betting closes {dayTime(Number(m.bettingCloseTime))}. Hosted by <Host m={m} by={by} style={{ color: 'var(--mako-canvas-fg)', fontWeight: 700 }} />
           </div>
@@ -867,6 +951,7 @@ function PoolMobile(v: ViewProps) {
             </span>
           </div>
           <h1 style={{ margin: '14px 0 0', ...display, fontSize: 28, lineHeight: 1.08, letterSpacing: '-0.025em' }}>{m.question}</h1>
+          {m.originalWording && <div style={{ fontSize: 13, fontWeight: 600, opacity: 0.65, marginTop: 6 }}>{firstWorded(m.originalWording)}</div>}
           <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.65, marginTop: 8 }}>
             Closes {dayTime(Number(m.bettingCloseTime))} · Hosted by <Host m={m} by={by} /> · <FlashValue value={row.bettors} text={String(row.bettors)} kind="neutral" /> {row.bettors === 1 ? 'bettor' : 'bettors'}
           </div>

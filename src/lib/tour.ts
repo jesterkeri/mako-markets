@@ -9,7 +9,7 @@ import type { NavKey } from '@/lib/shell-nav';
 
 // How to play (20a): the seven-step tour. Each step opens the page it explains (`?tour=<n>` on that page, so the
 // wallet menu's `/?tour=1` and Settings' Replay start it), lights that page's tab, and says only what is true of the
-// product today: rounds are not live, so their step says "coming soon"; the creator fee and refunds follow the
+// product today: rounds are live (the copy said "coming soon" until 2026-10-21); the creator fee and refunds follow the
 // Pools contract (MakoMarketsV4: 2% of the whole pool, forfeited below the minimum side ratio; a one-sided pool
 // settles as a refund); gas is sponsored for email accounts up to SPONSOR_CAP_PER_USER_PER_DAY; test USDC comes from
 // Circle's faucet.
@@ -53,8 +53,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     pose: 'mako-wave',
     motion: 'sway',
     title: 'Everything at a glance',
-    body: 'Pools closing soon and market news, with 15-minute BTC rounds coming soon. Tap the Mako logo to come back here.',
-    bodyMobile: 'Pools are open now: bet YES or NO on what happens next. BTC rounds are coming soon.',
+    body: 'Pools closing soon, market news and 15-minute BTC rounds. Tap the Mako logo to come back here.',
+    bodyMobile: 'Pools are open now: bet YES or NO on what happens next, or call BTC in a 15-minute round.',
     mobile: { dir: 'row', width: 120 },
   },
   {
@@ -65,11 +65,11 @@ export const TOUR_STEPS: readonly TourStep[] = [
     pose: '14-timer',
     motion: 'tick',
     title: 'Call BTC in 15 minutes',
-    body: 'Coming soon: rounds are not live yet. When they open, this tab lists them. You go UP or DOWN on BTC over 15 minutes, settled on Chainlink prices.',
-    bodyMobile: 'Coming soon: 15-minute BTC rounds, UP or DOWN, settled on Chainlink prices.',
+    body: 'This tab lists the rounds. You go UP or DOWN on BTC over 15 minutes, settled on Chainlink prices.',
+    bodyMobile: '15-minute BTC rounds: go UP or DOWN, settled on Chainlink prices.',
     facts: [
       ['LENGTH', '15 MIN'],
-      ['STATUS', 'COMING SOON'],
+      ['STATUS', 'LIVE'],
       ['SETTLED BY', 'CHAINLINK'],
     ],
     mobile: { dir: 'row', width: 118 },

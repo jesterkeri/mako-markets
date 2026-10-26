@@ -12,6 +12,7 @@ import { createdMarketIdFor, MAKO_ADDRESS, makoContract } from './contract';
 import { clearCreatorClaimSent, creatorClaimHeld, markCreatorClaimSent } from './creator-claim-pending';
 import { creatorEarningNote, creatorEarningOf, isPoolCreator } from './creator-earnings';
 import { toBytes32 } from './oracle';
+import { SHEET_HOLD_SEC } from './market-timing';
 import { buildPool, type CreateDraft } from './pool-create';
 import { decodeMarket, useEnsureMonadChain } from './hooks';
 import { USDC_ADDRESS, usdcContract } from './usdc';
@@ -29,9 +30,10 @@ export type PoolTx =
   | { kind: 'claim'; marketId: bigint }
   /// A creator's earnings on a pool it created: MakoMarketsV4.claimCreatorFee(id).
   | { kind: 'creatorFee'; marketId: bigint }
-  /// A new pool: built from the draft at the moment of confirming (a price pool runs from then), with the creator's
-  /// first bet (`seed`, at least 1 USDC) on one side.
-  | { kind: 'create'; draft: CreateDraft; seed: bigint; seedYes: boolean };
+  /// A new pool: built from the draft with `nowSec`, the moment its confirm sheet opened, so the title and times sent
+  /// are exactly the ones the sheet showed (they hold for SHEET_HOLD_SEC), with the creator's first bet (`seed`, at
+  /// least 1 USDC) on one side.
+  | { kind: 'create'; draft: CreateDraft; nowSec: number; openedAtMs: number; seed: bigint; seedYes: boolean };
 
 const WORDS: Record<PoolTx['kind'], OutcomeWords> = {
   bet: { noun: 'bet', failTitle: "Bet didn't go through" },
@@ -100,6 +102,23 @@ function afterApproval(a: Approval, p: ConfirmPhase, w: OutcomeWords): ConfirmPh
   };
 }
 
+/// A new pool's times are fixed when its sheet opens and hold for SHEET_HOLD_SEC (naming plan r8 §7.7): past that the
+/// title on chain could differ from the one confirmed, or the pool miss a margin, so nothing is read, signed or sent.
+/// "Try again" re-runs with the same times, so it answers this at once; the user reopens the sheet for new times.
+/// The hold is measured twice: on the wall clock against `nowSec` (the times shown), and on the browser's monotonic
+/// clock against `openedAtMs` (performance.now() when the sheet opened), so a device clock moved backwards cannot
+/// stretch it (Codex naming code review R1 F2).
+const holdExpired = (t: { nowSec: number; openedAtMs: number }) =>
+  Math.floor(Date.now() / 1000) - t.nowSec > SHEET_HOLD_SEC || performance.now() - t.openedAtMs > SHEET_HOLD_SEC * 1000;
+const TIMES_MOVED_ON: ConfirmPhase = {
+  step: 'failed',
+  title: 'Times moved on',
+  body: `A new pool's times are set when this sheet opens and hold for ${SHEET_HOLD_SEC} seconds. Close this and press Create pool again for new times.`,
+  nothingMoved: true,
+  primary: { label: 'Close' },
+  secondary: { label: 'Close' },
+};
+
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
 /// The browser wallet changed between Confirm and a wallet request: nothing was asked of it.
@@ -138,6 +157,16 @@ async function creatorFeeRefusal(client: Client, marketId: bigint, account: stri
   }
 }
 
+/// Another account signed in while this one's send was being prepared: stop before anything goes out.
+const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
+  step: 'failed',
+  title: w.failTitle,
+  body: 'Another account signed in, so nothing was sent.',
+  nothingMoved: true,
+  primary: { label: 'Close' },
+  secondary: { label: 'Close' },
+});
+
 export function usePoolTx(onLanded?: () => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
@@ -151,6 +180,18 @@ export function usePoolTx(onLanded?: () => void) {
 
   const [tx, setTx] = useState<PoolTx | null>(null);
   const [phase, setPhase] = useState<ConfirmPhase>({ step: 'review' });
+  /// The account the sheet was opened for. Another account signing in before it is sent closes it, and it never confirms
+  /// for anyone else (Codex CLAIM_TILE R1 F1): a sheet, and the done step after it, belong to one account.
+  const account = user ? accountAddress(user) : null;
+  const [owner, setOwner] = useState<string | null>(null);
+  /// The signed-in account as of the latest render, for the checks after an await, right before a send goes out
+  /// (adversary on 36dfef4: a switch during the creator-fee pre-check read still sent the claim, under the new session).
+  const accountNow = useRef(account);
+  accountNow.current = account;
+  if (tx && owner !== account && phase.step !== 'pending') {
+    setTx(null);
+    setPhase({ step: 'review' });
+  }
   /// The id of the pool a landed create made, read from its receipt (null until then, or if it could not be read).
   const [createdId, setCreatedId] = useState<bigint | null>(null);
   const inFlight = useRef(false);
@@ -159,12 +200,13 @@ export function usePoolTx(onLanded?: () => void) {
   const open = useCallback(
     (next: PoolTx) => {
       if (inFlight.current) return;
+      setOwner(account);
       setTx(next);
       // A drifted wallet session never reaches the review step's Confirm button.
       setPhase(user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : { step: 'review' });
       setCreatedId(null);
     },
-    [user, connected],
+    [user, connected, account],
   );
 
   /// Closes the sheet; never while a transaction is on its way.
@@ -189,7 +231,7 @@ export function usePoolTx(onLanded?: () => void) {
   );
 
   const run = useCallback(async () => {
-    if (!tx || !user || !publicClient || inFlight.current) return;
+    if (!tx || !user || !publicClient || inFlight.current || accountAddress(user) !== owner) return;
     inFlight.current = true;
     const words = WORDS[tx.kind];
     let next: ConfirmPhase;
@@ -228,7 +270,8 @@ export function usePoolTx(onLanded?: () => void) {
         (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [u.safeAddress as `0x${string}`, MAKO_ADDRESS] })) as bigint;
       let body;
       if (t.kind === 'create') {
-        const built = buildPool(t.draft, Math.floor(Date.now() / 1000));
+        if (holdExpired(t)) return TIMES_MOVED_ON;
+        const built = buildPool(t.draft, t.nowSec);
         if (!built.ok) {
           return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
         }
@@ -252,6 +295,7 @@ export function usePoolTx(onLanded?: () => void) {
       } else {
         body = buildClaimCreatorFeeBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
       }
+      if (accountNow.current !== accountAddress(u)) return switchedAccount(w);
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
       if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
       // A creator-fee claim is held from the moment it is sent (src/lib/creator-claim-pending.ts): no Claim button and
@@ -293,6 +337,9 @@ export function usePoolTx(onLanded?: () => void) {
       /// Every wallet request goes through here: the browser wallet must still be the signed-in one at the moment of
       /// asking, and the request names that account, so wagmi refuses rather than sign from another.
       async function write(request: Parameters<typeof writeContractAsync>[0]): Promise<`0x${string}`> {
+        // Another account signed in on the tab since Confirm (adversary on a3ac5a7): the wallet may still be connected,
+        // but this sheet is no longer that account's to send.
+        if (accountNow.current !== accountAddress(u)) throw new WalletSwitched();
         if (!connectedNow.current || isWalletDrifted(u, connectedNow.current)) throw new WalletSwitched();
         return writeContractAsync({ ...request, account: account! } as Parameters<typeof writeContractAsync>[0]);
       }
@@ -324,13 +371,16 @@ export function usePoolTx(onLanded?: () => void) {
         let sent = false;
         try {
           if (t.kind === 'create') {
-            const built = buildPool(t.draft, Math.floor(Date.now() / 1000));
+            if (holdExpired(t)) return TIMES_MOVED_ON;
+            const built = buildPool(t.draft, t.nowSec);
             if (!built.ok) return { step: 'failed', title: w.failTitle, body: built.reason, nothingMoved: true, primary: { label: 'Close' }, secondary: { label: 'Close' } };
             const args = [built.pool.mType, toBytes32(built.pool.oracleRef), built.pool.bettingCloseTime, built.pool.closeTime, built.pool.question, t.seed, t.seedYes] as const;
             const allowance = (await publicClient.readContract({ ...usdcContract, functionName: 'allowance', args: [account, MAKO_ADDRESS] })) as bigint;
             if (allowance < t.seed && (await approve()) === 'reverted') {
               return undone(w, 'Your USDC approval was turned down on Monad, so the pool was not created.');
             }
+            // Again after the approval, which can take a while; an approval that landed is kept and moves no USDC.
+            if (holdExpired(t)) return TIMES_MOVED_ON;
             try {
               await publicClient.simulateContract({ ...makoContract, functionName: 'createMarket', args, account });
             } catch (err) {
@@ -389,7 +439,7 @@ export function usePoolTx(onLanded?: () => void) {
         }
       }
     }
-  }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
+  }, [tx, user, owner, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
 
   return { tx, phase, createdId, open, close, confirm: run, retry: run };
 }

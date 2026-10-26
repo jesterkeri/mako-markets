@@ -104,27 +104,33 @@ afterEach(() => {
 const region = () => screen.getByRole('region', { name: 'Creator earnings' });
 
 describe.each(['desktop', 'mobile'] as const)('Me creator earnings (%s)', (variant) => {
-  it('lists claimable pools with their total, then claimed and forfeited, and counts the rest', () => {
+  it('lists claimable pools with their total, hides claimed and forfeited until asked, and counts the rest', () => {
     render(<CreatorEarningsSection user={user} account={SAFE} variant={variant} />);
     const r = within(region());
     expect(r.getByText('1.00 USDC to claim')).toBeTruthy();
     expect(r.getByRole('button', { name: 'Claim 0.80 USDC' })).toBeTruthy();
     expect(r.getByRole('button', { name: 'Claim 0.20 USDC' })).toBeTruthy();
-    expect(r.getAllByRole('button')).toHaveLength(2);
-    expect(r.getByText('Claimed')).toBeTruthy();
-    expect(r.getByText('Forfeited')).toBeTruthy();
+    // Claimed and forfeited rows are history: hidden behind one button (owner, 2026-10-21).
+    expect(r.queryByText('Claimed')).toBeNull();
+    expect(r.queryByText('Forfeited')).toBeNull();
+    expect(r.getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['/pools/2', '/pools/1']);
     expect(r.getByText('Also: 1 not resolved yet · 1 refunded, no fee.')).toBeTruthy();
     expect(r.queryByText('Pool number 8?')).toBeNull();
     expect(r.queryByText('Pool number 9?')).toBeNull();
-    const links = r.getAllByRole('link').map((a) => a.getAttribute('href'));
-    expect(links).toEqual(['/pools/2', '/pools/1', '/pools/3', '/pools/4']);
+    fireEvent.click(r.getByRole('button', { name: 'See all claimed (2)' }));
+    expect(r.getByText('Claimed')).toBeTruthy();
+    expect(r.getByText('Forfeited')).toBeTruthy();
+    expect(r.getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['/pools/2', '/pools/1', '/pools/3', '/pools/4']);
+    fireEvent.click(r.getByRole('button', { name: 'Hide claimed' }));
+    expect(r.queryByText('Claimed')).toBeNull();
   });
 
   it('says Nothing to claim when every fee is claimed or forfeited', () => {
     s.q.markets = [pool(3n, { creatorFeeClaimed: true }), pool(4n, { totalNo: 1n })];
     render(<CreatorEarningsSection user={user} account={SAFE} variant={variant} />);
     expect(within(region()).getByText('Nothing to claim')).toBeTruthy();
-    expect(within(region()).queryByRole('button')).toBeNull();
+    expect(within(region()).queryByRole('button', { name: /^Claim/ })).toBeNull();
+    expect(within(region()).getByRole('button', { name: 'See all claimed (2)' })).toBeTruthy();
   });
 
   it('renders nothing for an account that created no fee-bearing pool', () => {
@@ -166,6 +172,7 @@ describe('Me creator earnings: claiming', () => {
     expect(body.call.data).toBe(`0xb340da9c${(1n).toString(16).padStart(64, '0')}`);
     await waitFor(() => expect(within(region()).queryByRole('button', { name: 'Claim 0.80 USDC' })).toBeNull());
     expect(within(region()).getByText('0.20 USDC to claim')).toBeTruthy();
+    fireEvent.click(within(region()).getByRole('button', { name: 'See all claimed (3)' }));
     expect(within(region()).getAllByText('Claimed')).toHaveLength(2);
   });
 });

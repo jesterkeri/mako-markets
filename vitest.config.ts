@@ -35,6 +35,7 @@ export default defineConfig({
       'src/lib/private-markets/__tests__/**/*.test.ts',
       'src/lib/private-markets/__tests__/**/*.test.tsx',
       'src/lib/leaderboard/__tests__/**/*.test.ts',
+      'src/lib/competition/__tests__/**/*.test.ts',
       'src/lib/comments/__tests__/**/*.test.ts',
       'src/lib/comments/__tests__/**/*.test.tsx',
       'src/app/api/comments/**/*.test.ts',

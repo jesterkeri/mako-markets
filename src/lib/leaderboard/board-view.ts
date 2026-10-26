@@ -13,7 +13,7 @@ import { formatAddress } from '@/lib/user-display';
 /// 'week' = the last 7 days, 'month' = the last 30 days, both rolling.
 export type BoardPeriod = 'week' | 'month' | 'all';
 export type BoardSort = 'profit' | 'volume';
-export type BoardScope = 'all' | 'rounds' | 'pools';
+export type BoardScope = 'all' | 'rounds' | 'pools' | 'competition';
 
 export interface BoardWireRow {
   /// Lowercase address.
@@ -76,9 +76,11 @@ export const PERIODS: readonly { key: BoardPeriod; label: string }[] = [
 export const DEFAULT_PERIOD: BoardPeriod = 'week';
 
 /// Only pools are in the ledger, and "All markets" is every market the ledger holds, so both show the same board.
-/// Rounds are not indexed yet: that scope is shown but cannot be picked.
+/// Rounds are not indexed yet: that scope is shown but cannot be picked. Competition shows the competition's ranked
+/// players instead of the board (Joshua 2026-10-26: beside All markets, which also keeps it on a phone's screen).
 export const SCOPES: readonly { key: BoardScope; label: string; comingSoon?: true }[] = [
   { key: 'all', label: 'All markets' },
+  { key: 'competition', label: 'Competition' },
   { key: 'rounds', label: 'Rounds', comingSoon: true },
   { key: 'pools', label: 'Pools' },
 ];

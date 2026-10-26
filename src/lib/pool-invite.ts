@@ -9,22 +9,22 @@ import type { MarketWithId } from './contract';
 import { MIN_BET } from './pool-bet-rules';
 import { formatPays, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, type PoolCat, type PoolState } from './pool-list';
 import { poolClock, unsettleable } from './pool-rules';
-import { parseRefTag } from './ref-tag';
+import { parseRefTag, SHARE_ORIGIN } from './ref-tag';
 
-/// Shared links always point at production, never at the preview or local host the sharer happens to be on.
-export const SHARE_ORIGIN = 'https://makomarket.xyz';
+export { SHARE_ORIGIN };
 
 /// Where a link is going. It becomes `utm_source`, so Vercel Analytics counts visits per target.
 export type ShareTarget = 'x' | 'whatsapp' | 'telegram' | 'link';
 
 /// The pool's link for one target: `https://makomarket.xyz/pools/<id>?utm_source=<target>&utm_campaign=pool-<id>`.
+/// `path` points it at a page of the pool instead, such as one bet's share card (pnl-card.ts cardPath).
 /// RefCapture keeps `utm_campaign` as the visitor's ref tag, so it must pass the ref rule (`^[a-z0-9-]{1,32}$`);
 /// an id too long for it (never a real pool) gets no campaign rather than a tag the rule would drop.
-export function poolInviteLink(id: bigint, target: ShareTarget): string {
+export function poolInviteLink(id: bigint, target: ShareTarget, path = `/pools/${id.toString()}`): string {
   const params = new URLSearchParams({ utm_source: target });
   const campaign = parseRefTag(`pool-${id.toString()}`);
   if (campaign) params.set('utm_campaign', campaign);
-  return `${SHARE_ORIGIN}/pools/${id.toString()}?${params.toString()}`;
+  return `${SHARE_ORIGIN}${path}?${params.toString()}`;
 }
 
 /// The link as the card prints it: no scheme, as the design writes "makomarket.xyz/r/0142?ref=…".
@@ -41,8 +41,8 @@ export function shareText(question: string): string {
 ///  - X: https://x.com/intent/tweet?text=…&url=… (docs.x.com, Post Web Intent)
 ///  - WhatsApp: https://wa.me/?text=… (Click to Chat; the link rides in the text, the only parameter)
 ///  - Telegram: https://t.me/share/url?url=…&text=… (core.telegram.org/widgets/share)
-export function intentUrl(target: Exclude<ShareTarget, 'link'>, id: bigint, question: string): string {
-  const link = poolInviteLink(id, target);
+export function intentUrl(target: Exclude<ShareTarget, 'link'>, id: bigint, question: string, path?: string): string {
+  const link = poolInviteLink(id, target, path);
   const text = shareText(question);
   const enc = encodeURIComponent;
   switch (target) {

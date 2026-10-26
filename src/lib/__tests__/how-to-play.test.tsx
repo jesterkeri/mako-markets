@@ -148,12 +148,11 @@ describe('moving through the tour', () => {
 describe('the copy is true today', () => {
   const all = TOUR_STEPS.flatMap((s) => [s.title, s.body, s.bodyMobile, ...(s.facts ?? []).flat()]);
 
-  it('rounds are not live, so their step and Home say coming soon', () => {
+  it('rounds are live (since 2026-10-12), so no step calls them coming soon', () => {
     const rounds = TOUR_STEPS[1];
-    expect(rounds.body).toMatch(/^Coming soon: rounds are not live yet\./);
-    expect(rounds.bodyMobile).toMatch(/^Coming soon/);
-    expect(rounds.facts).toContainEqual(['STATUS', 'COMING SOON']);
-    expect(TOUR_STEPS[0].body).toMatch(/rounds coming soon/);
+    expect(rounds.facts).toContainEqual(['STATUS', 'LIVE']);
+    for (const s of TOUR_STEPS.slice(0, 2)) for (const t of [s.body, s.bodyMobile]) expect(t).not.toMatch(/coming soon|not live/i);
+    expect(TOUR_STEPS[0].body).toMatch(/15-minute BTC rounds/);
   });
 
   it('pools: one-sided pools refund; no promise of a refund for every unsettled pool', () => {

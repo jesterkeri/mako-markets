@@ -65,20 +65,24 @@ jobs:
     timeout-minutes: 25
 
     env:
-      # Build-time placeholders. None are real values — they only need to
-      # satisfy the `process.env.X` reads in the client bundle so
-      # `next build` doesn't choke. Production env lives in Vercel.
+      # Build-time placeholders. They only need to satisfy the
+      # `process.env.X` reads in the client bundle so `next build` doesn't
+      # choke. Production env lives in Vercel.
+      #
+      # Except MAKO_ADDRESS and MAKO_DEPLOY_BLOCK: they MUST equal the V4
+      # entry of src/lib/mako-release-record.ts. contract.ts refuses to load
+      # for any address without a reviewed record (the root release guard),
+      # so with a placeholder every suite that loads it, and the build, stop.
       #
       # MAKO_ADDRESS and USDC_ADDRESS MUST be distinct: Phase 1D's
       # send-time validator (`assertSponsoredCallData`) dispatches by
-      # comparing wrapper.to against each in turn. If both placeholders
-      # are 0x0000…0000, the MAKO test cases route to the USDC smoke
-      # validator and fail with `bad_selector`. Use two arbitrary but
-      # distinct non-zero addresses, ALL LOWERCASE so viem's encoder
-      # skips EIP-55 checksum validation (mixed-case literals would
-      # need to match a real checksum).
-      NEXT_PUBLIC_MAKO_ADDRESS: '0x000000000000000000000000000000000000abcd'
-      NEXT_PUBLIC_MAKO_DEPLOY_BLOCK: '0'
+      # comparing wrapper.to against each in turn. If both are equal, the
+      # MAKO test cases route to the USDC smoke validator and fail with
+      # `bad_selector`. The USDC placeholder is an arbitrary non-zero
+      # address, ALL LOWERCASE so viem's encoder skips EIP-55 checksum
+      # validation (mixed-case literals would need to match a real checksum).
+      NEXT_PUBLIC_MAKO_ADDRESS: '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195'
+      NEXT_PUBLIC_MAKO_DEPLOY_BLOCK: '32603678'
       NEXT_PUBLIC_USDC_ADDRESS_MONAD_TESTNET: '0x000000000000000000000000000000000000dcba'
       NEXT_PUBLIC_PROJECT_ID: 'ci-placeholder'
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
@@ -131,8 +135,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      NEXT_PUBLIC_MAKO_ADDRESS: '0x000000000000000000000000000000000000abcd'
-      NEXT_PUBLIC_MAKO_DEPLOY_BLOCK: '0'
+      # The V4 record (src/lib/mako-release-record.ts), as in the ci job: contract.ts loads for no other value.
+      NEXT_PUBLIC_MAKO_ADDRESS: '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195'
+      NEXT_PUBLIC_MAKO_DEPLOY_BLOCK: '32603678'
       NEXT_PUBLIC_USDC_ADDRESS_MONAD_TESTNET: '0x000000000000000000000000000000000000dcba'
       NEXT_PUBLIC_PRIVY_APP_ID: 'cm00000000000000000000000'
       MAKO_STAGE: 'production'

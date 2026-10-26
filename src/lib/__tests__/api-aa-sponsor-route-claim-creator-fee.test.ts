@@ -66,7 +66,7 @@ import { POST } from '../../app/api/aa/sponsor/route';
 function mkReq(body: unknown): Request {
   return new Request('http://localhost/api/aa/sponsor', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+    headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': MAGIC_EOA },
     body: JSON.stringify(body),
   });
 }
@@ -255,5 +255,48 @@ describe('/api/aa/sponsor, claim_creator_fee', () => {
     const res = await POST(mkReq({ kind: 'claim', chainId: MONAD_TESTNET_ID, call: b.call }));
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: 'NOT_ALLOWED', reason: 'bad_claim_args' });
+  });
+});
+
+// Codex CLAIM_TILE R2 F1: the browser names the account it acts for (x-mako-eoa). A tab still holding account A after
+// B signed in on another tab must not spend B's daily allowance, read the chain for B, build B's op or hold B's
+// in-flight slot.
+describe('/api/aa/sponsor: the request must be for the session’s own account', () => {
+  const OTHER: Address = '0x4444444444444444444444444444444444444444';
+  const withEoa = (eoa: string | null) =>
+    new Request('http://localhost/api/aa/sponsor', {
+      method: 'POST',
+      headers: eoa ? { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': eoa } : { 'content-type': 'application/json', origin: 'http://localhost' },
+      body: JSON.stringify(body(42n)),
+    });
+  const nothingDone = () => {
+    expect(mocks.selectFromUserSafes).not.toHaveBeenCalled();
+    expect(mocks.loadInFlightForSafe).not.toHaveBeenCalled();
+    expect(mocks.readContract).not.toHaveBeenCalled();
+    expect(mocks.incrementOrReject).not.toHaveBeenCalled();
+    expect(mocks.buildSponsoredUserOp).not.toHaveBeenCalled();
+    expect(mocks.insertPending).not.toHaveBeenCalled();
+  };
+
+  it('a request for A under B’s session is refused (409 session_changed) before anything is counted, read, built or stored', async () => {
+    happy();
+    const res = await POST(withEoa(OTHER));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'session_changed' });
+    nothingDone();
+  });
+
+  it('a request that names no account is refused the same way', async () => {
+    happy();
+    const res = await POST(withEoa(null));
+    expect(res.status).toBe(409);
+    nothingDone();
+  });
+
+  it('the session’s own account in another letter case goes through', async () => {
+    happy();
+    const res = await POST(withEoa(MAGIC_EOA.toUpperCase().replace('0X', '0x')));
+    expect(res.status).toBe(200);
+    expect(mocks.insertPending).toHaveBeenCalledTimes(1);
   });
 });

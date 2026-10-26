@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => ({
   runSponsoredRequest: vi.fn(),
 }));
 
-vi.mock('../use-user', () => ({
+vi.mock('../use-user', async (orig) => ({
+  ...(await orig<typeof import('../use-user')>()),
   useUser: () => ({
     user: {
       authed: true,
@@ -94,7 +95,7 @@ describe('rule 7: the live step names the pool this create made', () => {
 
     const { result } = renderHook(() => usePoolTx());
     act(() => {
-      result.current.open({ kind: 'create', draft: { kind: 'crypto', symbol: 'BTC', direction: 'above', strike: 100000, durationSec: 3600 }, seed: 1_000_000n, seedYes: true });
+      result.current.open({ kind: 'create', draft: { kind: 'crypto', symbol: 'BTC', direction: 'above', strike: 100000, durationSec: 3600 }, nowSec: Math.floor(Date.now() / 1000), openedAtMs: performance.now(), seed: 1_000_000n, seedYes: true });
     });
     await act(async () => {
       await result.current.confirm();

@@ -7,9 +7,14 @@
 //     viem getAddress(), safe.ts:154; inserted as-is, auth/route.ts).
 //     A Magic user's on-chain BetPlaced.user IS this safe address.
 //   - users.wallet_address is LOWERCASE (user-upsert.ts:178 + DB CHECK).
-// The ledger's actor column is lowercase. So BOTH branches lower()
-// their DB side here — a naive equality join silently renders every
-// Magic user anonymous on their own leaderboard.
+// The ledger's actor column is lowercase. A naive equality join
+// silently renders every Magic user anonymous on their own leaderboard.
+// So the input is lowercased once, each branch compares its RAW column
+// with the forms that column stores (safe: lowercase and checksummed;
+// wallet: lowercase), and the selected address is lowercased in code.
+// Never lower() the column in a predicate: it defeats the column's
+// index and every share card render would scan the table (Codex
+// SHARE_CARDS R4 F1).
 //
 // Precedence when one address matches multiple rows (plan, Codex r1
 // MINOR-3 — deterministic, exactly one label per address):
@@ -28,7 +33,7 @@
 // user's own /avatars/<id>/ path), exactly as the public comments wire does; a legacy pasted URL is never served.
 // ----------------------------------------------------------------------------
 
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getAddress, isAddress } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
@@ -79,41 +84,45 @@ export async function resolveStoredIdentities(
   const lowered = [...new Set(addresses.map((a) => a.toLowerCase()))];
   if (lowered.length === 0) return new Map();
 
-  // Branch 1: Magic users via their Safe smart account. lower() BOTH
-  // sides — safe_address is stored checksummed.
-  const safeRows = await db
-    .select({
-      addr: sql<string>`lower(${userSafes.safeAddress})`,
-      displayName: users.displayName,
-      avatarUrl: users.avatarUrl,
-      userId: users.id,
-    })
-    .from(userSafes)
-    .innerJoin(users, eq(users.id, userSafes.userId))
-    .where(
-      and(
-        eq(userSafes.chainId, chainId),
-        inArray(sql`lower(${userSafes.safeAddress})`, lowered),
-      ),
-    );
+  // Raw-column predicates, as registeredAddresses, so both lookups use their indexes (Codex SHARE_CARDS R4 F1): a
+  // lower() on the column would scan the table on every share card render. Only well-formed addresses can match.
+  const valid = lowered.filter((a) => isAddress(a, { strict: false }));
+  if (valid.length === 0) return new Map();
 
-  // Branch 2: external-wallet users. wallet_address is already stored
-  // lowercase (user-upsert.ts:178 + CHECK), but lower() anyway — the
-  // join must not trust a column convention it doesn't own.
-  const walletRows = await db
-    .select({
-      addr: sql<string>`lower(${users.walletAddress})`,
-      displayName: users.displayName,
-      avatarUrl: users.avatarUrl,
-      userId: users.id,
-    })
-    .from(users)
-    .where(
-      and(
-        isNotNull(users.walletAddress),
-        inArray(sql`lower(${users.walletAddress})`, lowered),
-      ),
-    );
+  // Branch 1: Magic users via their Safe smart account. safe_address is
+  // stored checksummed (deriveSafeAddress); the lowercase form is matched
+  // too, for safety, and the result is lowercased here.
+  const safeRows = (
+    await db
+      .select({
+        addr: userSafes.safeAddress,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        userId: users.id,
+      })
+      .from(userSafes)
+      .innerJoin(users, eq(users.id, userSafes.userId))
+      .where(
+        and(
+          eq(userSafes.chainId, chainId),
+          inArray(userSafes.safeAddress, [...valid, ...valid.map((a) => getAddress(a))]),
+        ),
+      )
+  ).map((r) => ({ ...r, addr: r.addr.toLowerCase() }));
+
+  // Branch 2: external-wallet users. wallet_address is stored lowercase,
+  // enforced by the users_wallet_address_format_chk CHECK (0005).
+  const walletRows = (
+    await db
+      .select({
+        addr: users.walletAddress,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        userId: users.id,
+      })
+      .from(users)
+      .where(inArray(users.walletAddress, valid))
+  ).flatMap((r) => (r.addr ? [{ ...r, addr: r.addr }] : []));
 
   const candidates: CandidateRow[] = [
     ...safeRows.map((r) => ({ ...r, branch: 'safe' as const })),

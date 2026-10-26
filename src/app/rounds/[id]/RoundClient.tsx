@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation';
 import { useState } from 'react';
 
 import { MarketChart } from '@/components/MarketChart';
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { claimTile, ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { ListStateDesktop } from '@/components/ListState';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { useUsdcBalance } from '@/lib/hooks';
@@ -16,6 +16,7 @@ import {
   commentary,
   entryCloseOf,
   estimateEntry,
+  otherSideEmpty,
   feesOf,
   MIN_ENTRY,
   mmss,
@@ -211,9 +212,18 @@ function enterSpec(r: Round, side: RoundSide, amount: bigint, estimate: bigint |
       { label: 'Round', value: `#${r.id.toString()} · ${V1_ASSET.pair} · ${clock(r.startTime)} to ${clock(closeTimeOf(r))}` },
       { label: 'Side', value: sideName(side), tone: side === 'up' ? 'up' : 'no' },
       { label: 'Stake', value: `${amt} USDC` },
-      { label: `Est. payout if ${sideName(side)} wins`, value: estimate === null ? 'Unknown' : `${usdcFloor2(estimate)} USDC` },
+      {
+        label: `Est. payout if ${sideName(side)} wins`,
+        value: otherSideEmpty(side, r.upPool, r.downPool)
+          ? `Full refund while no one is on ${sideName(side === 'up' ? 'down' : 'up')}`
+          : estimate === null
+            ? 'Unknown'
+            : `${usdcFloor2(estimate)} USDC`,
+      },
     ],
-    note: `The payout is an estimate until predictions close at ${clock(entryCloseOf(r))}. One wallet can only be on one side of a round.`,
+    note: otherSideEmpty(side, r.upPool, r.downPool)
+      ? `No one is on ${sideName(side === 'up' ? 'down' : 'up')} yet. If that is still true when predictions close at ${clock(entryCloseOf(r))}, the round refunds every stake in full. One wallet can only be on one side of a round.`
+      : `The payout is an estimate until predictions close at ${clock(entryCloseOf(r))}. One wallet can only be on one side of a round.`,
     doneTitle: 'You are in',
     doneBody: `${amt} USDC on ${sideName(side)}. The result comes at ${clock(closeTimeOf(r))}.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
@@ -235,9 +245,11 @@ function claimSpec(r: Round, p: Position, creatorFee: bigint | null, total: bigi
     pendingTitle: refund ? 'Claiming your refund' : 'Claiming',
     rows,
     note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the round settled; the claim pays out the rest.',
-    doneTitle: refund ? 'Refund claimed' : 'Claimed',
+    doneTitle: refund ? 'Refund claimed' : p.kind === 'won' ? 'You won' : 'Claimed',
     doneBody: `${amt} USDC is in your balance.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
+    // A host-fee-only claim is creator earnings: it keeps the plain tile (adversary on 93cc619).
+    doneTile: p.kind === 'won' || refund ? claimTile(amt, refund) : undefined,
   };
 }
 
@@ -497,7 +509,9 @@ function PositionCard(v: View) {
       {p.kind === 'in' && (
         <div style={{ display: 'flex', justifyContent: 'space-between', ...mono, fontSize: 12, marginTop: 10 }}>
           <span style={{ color: 'var(--dim)' }}>Est. payout if {sideName(p.side)} wins</span>
-          <span style={{ fontWeight: 700 }}>{usdcFloor2(p.ifWins)} USDC</span>
+          <span style={{ fontWeight: 700 }}>
+            {otherSideEmpty(p.side, v.round.upPool, v.round.downPool) ? `Full refund while no one is on ${sideName(p.side === 'up' ? 'down' : 'up')}` : `${usdcFloor2(p.ifWins)} USDC`}
+          </span>
         </div>
       )}
       {p.kind === 'won' && <div style={{ ...mono, fontSize: 12, marginTop: 10 }}>You won {usdcExact(p.payout)} USDC{p.claimed ? ', claimed.' : '.'}</div>}
@@ -582,7 +596,11 @@ function EnterForm(v: View) {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', boxShadow: 'inset 0 -1px 0 var(--line)' }}>
           <span style={{ color: 'var(--dim)' }}>EST. PAYOUT IF {sideName(side)} WINS</span>
-          <span style={{ fontWeight: 700 }}>{estimate === null ? '0.00' : usdcFloor2(estimate)} USDC</span>
+          <span style={{ fontWeight: 700 }}>
+            {otherSideEmpty(side, v.round.upPool, v.round.downPool)
+              ? `Full refund while no one is on ${sideName(side === 'up' ? 'down' : 'up')}`
+              : `${estimate === null ? '0.00' : usdcFloor2(estimate)} USDC`}
+          </span>
         </div>
       </div>
       {!signedIn ? (

@@ -181,7 +181,7 @@ function ResolveRow({
           <div className="mako-label text-muted mb-1">
             ID {market.id.toString()} · POOL {poolUsdc} USDC
           </div>
-          <h2 className="mako-title text-lg leading-tight">{market.question}</h2>
+          <h2 className="mako-title text-lg leading-tight">{market.chainQuestion ?? market.question}</h2>
           <div className="mako-label text-muted mt-3 flex gap-6">
             <span>
               {outcomeLabelForMarket(market, labels, 1)}{' '}

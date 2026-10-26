@@ -37,6 +37,30 @@ describe('RefCapture', () => {
     expect(refCookie()).toBe('post4');
   });
 
+  const R1 = `r-${'a'.repeat(30)}`;
+  const R2 = `r-${'b'.repeat(30)}`;
+
+  it('keeps a referral tag when a campaign link follows it', () => {
+    nav.search = new URLSearchParams(`ref=${R1}`);
+    const { rerender } = render(<RefCapture />);
+    expect(refCookie()).toBe(R1);
+    nav.search = new URLSearchParams('utm_source=link&utm_campaign=pool-7');
+    rerender(<RefCapture />);
+    expect(refCookie()).toBe(R1);
+  });
+
+  it('lets a referral tag replace a campaign tag, and a newer referral replace an older one', () => {
+    nav.search = new URLSearchParams('utm_campaign=post3');
+    const { rerender } = render(<RefCapture />);
+    expect(refCookie()).toBe('post3');
+    nav.search = new URLSearchParams(`ref=${R1}`);
+    rerender(<RefCapture />);
+    expect(refCookie()).toBe(R1);
+    nav.search = new URLSearchParams(`ref=${R2}`);
+    rerender(<RefCapture />);
+    expect(refCookie()).toBe(R2);
+  });
+
   it('writes nothing without a tag', () => {
     nav.search = new URLSearchParams('utm_source=x');
     render(<RefCapture />);

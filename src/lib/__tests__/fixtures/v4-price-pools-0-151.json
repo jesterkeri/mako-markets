@@ -1,0 +1,975 @@
+{
+ "_source": {
+  "contract": "0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195",
+  "chainId": 10143,
+  "block": 73297879,
+  "blockTimestamp": 1792688672,
+  "nextMarketId": 152,
+  "rpc": "https://testnet-rpc.monad.xyz/",
+  "method": "eth_call getMarket(id) for ids 0..151 at that one block, read-only, no key",
+  "confirmedAgainst": "the adversary's dump at block 73261902 (.claude/design/bench/naming-r4-adversary/chain.json): id, mType, oracleRef, question, createdAt and closeTime identical for all 152 markets",
+  "kept": "the price pools only (mType 1 CRYPTO, 3 FOREX, 4 COMMODITIES, 5 STOCKS); `ref` is `oracleRef` decoded as UTF-8 with the NUL padding removed"
+ },
+ "pools": [
+  {
+   "id": 0,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032363800000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0268",
+   "question": "Will MON close above $0.0268 in 7 days?",
+   "closeTime": 1779819041
+  },
+  {
+   "id": 1,
+   "mType": 1,
+   "oracleRef": "0x444f47453a67743a302e31353200000000000000000000000000000000000000",
+   "ref": "DOGE:gt:0.152",
+   "question": "Will DOGE close above $0.152 in 3 days?",
+   "closeTime": 1779474056
+  },
+  {
+   "id": 6,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a312e3031000000000000000000000000000000000000000000",
+   "ref": "MON:gt:1.01",
+   "question": "Will MON close above $1.01 in 7 days?",
+   "closeTime": 1779902580
+  },
+  {
+   "id": 10,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a37373432330000000000000000000000000000000000000000",
+   "ref": "BTC:gt:77423",
+   "question": "Will BTC close above $77,423 in 5 minutes?",
+   "closeTime": 1779604781
+  },
+  {
+   "id": 11,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a323030000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:200",
+   "question": "Will AAPL close above 200 in 1 hour?",
+   "closeTime": 1779608491
+  },
+  {
+   "id": 12,
+   "mType": 3,
+   "oracleRef": "0x4555525553443a67743a312e3038000000000000000000000000000000000000",
+   "ref": "EURUSD:gt:1.08",
+   "question": "Will EURUSD trade above 1.08 in 7 days?",
+   "closeTime": 1780212916
+  },
+  {
+   "id": 13,
+   "mType": 3,
+   "oracleRef": "0x5553444348463a67743a312e3038000000000000000000000000000000000000",
+   "ref": "USDCHF:gt:1.08",
+   "question": "Will USDCHF trade above 1.08 in 3 days?",
+   "closeTime": 1779868337
+  },
+  {
+   "id": 14,
+   "mType": 3,
+   "oracleRef": "0x4555525553443a6c743a312e3038000000000000000000000000000000000000",
+   "ref": "EURUSD:lt:1.08",
+   "question": "Will EURUSD trade below 1.08 in 7 days?",
+   "closeTime": 1780214192
+  },
+  {
+   "id": 15,
+   "mType": 1,
+   "oracleRef": "0x4554483a67743a33303030000000000000000000000000000000000000000000",
+   "ref": "ETH:gt:3000",
+   "question": "Will ETH close above $3,000 in 24 hours?",
+   "closeTime": 1779700470
+  },
+  {
+   "id": 16,
+   "mType": 4,
+   "oracleRef": "0x5841475553443a67743a37382e31320000000000000000000000000000000000",
+   "ref": "XAGUSD:gt:78.12",
+   "question": "Will XAGUSD settle above 78.12 in 7 days?",
+   "closeTime": 1780220633
+  },
+  {
+   "id": 17,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a323030000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:200",
+   "question": "Will AAPL close above 200 in 7 days?",
+   "closeTime": 1780583503
+  },
+  {
+   "id": 18,
+   "mType": 5,
+   "oracleRef": "0x4e5644413a67743a323030000000000000000000000000000000000000000000",
+   "ref": "NVDA:gt:200",
+   "question": "Will NVDA close above 200 in 24 hours?",
+   "closeTime": 1780380763
+  },
+  {
+   "id": 19,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032323300000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0223",
+   "question": "Will MON close above $0.0223 in 5 minutes?",
+   "closeTime": 1780383236
+  },
+  {
+   "id": 20,
+   "mType": 3,
+   "oracleRef": "0x4555524a50593a67743a312e3038000000000000000000000000000000000000",
+   "ref": "EURJPY:gt:1.08",
+   "question": "Will EURJPY trade above 1.08 in 7 days?",
+   "closeTime": 1780987642
+  },
+  {
+   "id": 21,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a323030000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:200",
+   "question": "Will AAPL close above 200 in 7 days?",
+   "closeTime": 1780987658
+  },
+  {
+   "id": 22,
+   "mType": 4,
+   "oracleRef": "0x5850545553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XPTUSD:gt:2400",
+   "question": "Will XPTUSD settle above 2400 in 7 days?",
+   "closeTime": 1780987680
+  },
+  {
+   "id": 24,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a302e3836330000000000000000000000000000000000000000",
+   "ref": "SUI:gt:0.863",
+   "question": "Will SUI close above $0.863 in 7 days?",
+   "closeTime": 1780987790
+  },
+  {
+   "id": 25,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:gt:2400",
+   "question": "Will XAUUSD settle above 2400 in 24 hours?",
+   "closeTime": 1780469701
+  },
+  {
+   "id": 26,
+   "mType": 3,
+   "oracleRef": "0x5553444348463a67743a312e3038000000000000000000000000000000000000",
+   "ref": "USDCHF:gt:1.08",
+   "question": "Will USDCHF trade above 1.08 in 3 days?",
+   "closeTime": 1780642527
+  },
+  {
+   "id": 28,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a37322e38000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:72.8",
+   "question": "Will SOL close above $72.8 in 24 hours?",
+   "closeTime": 1780612948
+  },
+  {
+   "id": 29,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a37302e34000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:70.4",
+   "question": "Will SOL close above $70.4 in 5 minutes?",
+   "closeTime": 1780559830
+  },
+  {
+   "id": 30,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36313432380000000000000000000000000000000000000000",
+   "ref": "BTC:gt:61428",
+   "question": "Will BTC close above $61,428 in 24 hours?",
+   "closeTime": 1780755834
+  },
+  {
+   "id": 31,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36313033380000000000000000000000000000000000000000",
+   "ref": "BTC:gt:61038",
+   "question": "Will BTC close above $61,038 in 24 hours?",
+   "closeTime": 1780756192
+  },
+  {
+   "id": 32,
+   "mType": 5,
+   "oracleRef": "0x414d443a67743a35303000000000000000000000000000000000000000000000",
+   "ref": "AMD:gt:500",
+   "question": "Will AMD close above 500 in 24 hours?",
+   "closeTime": 1780941656
+  },
+  {
+   "id": 33,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a36380000000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:68",
+   "question": "Will SOL close above $68 in 5 minutes?",
+   "closeTime": 1780934475
+  },
+  {
+   "id": 34,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a323030000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:200",
+   "question": "Will AAPL close above 200 in 7 days?",
+   "closeTime": 1781596595
+  },
+  {
+   "id": 35,
+   "mType": 4,
+   "oracleRef": "0x5850545553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XPTUSD:gt:2400",
+   "question": "Will XPTUSD settle above 2400 in 3 days?",
+   "closeTime": 1781251169
+  },
+  {
+   "id": 36,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:gt:2400",
+   "question": "Will XAUUSD settle above 2400 in 3 days?",
+   "closeTime": 1781251206
+  },
+  {
+   "id": 37,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a302e3736320000000000000000000000000000000000000000",
+   "ref": "SUI:gt:0.762",
+   "question": "Will SUI close above $0.762 in 7 days?",
+   "closeTime": 1781596709
+  },
+  {
+   "id": 38,
+   "mType": 1,
+   "oracleRef": "0x444f47453a67743a302e30393134000000000000000000000000000000000000",
+   "ref": "DOGE:gt:0.0914",
+   "question": "Will DOGE close above $0.0914 in 7 days?",
+   "closeTime": 1782146022
+  },
+  {
+   "id": 39,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:gt:2400",
+   "question": "Will XAUUSD settle above 2400 in 1 hour?",
+   "closeTime": 1781544966
+  },
+  {
+   "id": 40,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:gt:2400",
+   "question": "Will XAUUSD settle above 2400 in 1 hour?",
+   "closeTime": 1781544991
+  },
+  {
+   "id": 41,
+   "mType": 3,
+   "oracleRef": "0x5553444341443a67743a312e3435000000000000000000000000000000000000",
+   "ref": "USDCAD:gt:1.45",
+   "question": "Will USDCAD trade above 1.45 in 3 days?",
+   "closeTime": 1781800640
+  },
+  {
+   "id": 42,
+   "mType": 5,
+   "oracleRef": "0x4e464c583a67743a313030000000000000000000000000000000000000000000",
+   "ref": "NFLX:gt:100",
+   "question": "Will NFLX close above 100 in 7 days?",
+   "closeTime": 1782146145
+  },
+  {
+   "id": 43,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032333400000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0234",
+   "question": "Will MON close above $0.0234 in 7 days?",
+   "closeTime": 1782146233
+  },
+  {
+   "id": 44,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36363535390000000000000000000000000000000000000000",
+   "ref": "BTC:gt:66559",
+   "question": "Will BTC close above $66,559 in 5 minutes?",
+   "closeTime": 1781633043
+  },
+  {
+   "id": 45,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a6c743a323030000000000000000000000000000000000000000000",
+   "ref": "AAPL:lt:200",
+   "question": "Will AAPL close below 200 in 24 hours?",
+   "closeTime": 1781719340
+  },
+  {
+   "id": 46,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36343736360000000000000000000000000000000000000000",
+   "ref": "BTC:gt:64766",
+   "question": "Will BTC close above $64,766 in 5 minutes?",
+   "closeTime": 1782055222
+  },
+  {
+   "id": 47,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:gt:2400",
+   "question": "Will XAUUSD settle above 2400 in 24 hours?",
+   "closeTime": 1782141359
+  },
+  {
+   "id": 48,
+   "mType": 1,
+   "oracleRef": "0x415641583a67743a362e33360000000000000000000000000000000000000000",
+   "ref": "AVAX:gt:6.36",
+   "question": "Will AVAX close above $6.36 in 7 days?",
+   "closeTime": 1782846452
+  },
+  {
+   "id": 49,
+   "mType": 1,
+   "oracleRef": "0x4e4541523a6c743a312e39360000000000000000000000000000000000000000",
+   "ref": "NEAR:lt:1.96",
+   "question": "Will NEAR close below $1.96 in 3 days?",
+   "closeTime": 1782501104
+  },
+  {
+   "id": 50,
+   "mType": 5,
+   "oracleRef": "0x54534c413a67743a323030000000000000000000000000000000000000000000",
+   "ref": "TSLA:gt:200",
+   "question": "Will TSLA close above 200 in 24 hours?",
+   "closeTime": 1782328377
+  },
+  {
+   "id": 51,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a67743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:gt:2400",
+   "question": "Will XAUUSD settle above 2400 in 3 days?",
+   "closeTime": 1782501212
+  },
+  {
+   "id": 52,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a302e3730340000000000000000000000000000000000000000",
+   "ref": "SUI:gt:0.704",
+   "question": "Will SUI close above $0.704 in 24 hours?",
+   "closeTime": 1782328440
+  },
+  {
+   "id": 53,
+   "mType": 1,
+   "oracleRef": "0x415641583a67743a362e34380000000000000000000000000000000000000000",
+   "ref": "AVAX:gt:6.48",
+   "question": "Will AVAX close above $6.48 in 7 days?",
+   "closeTime": 1783209811
+  },
+  {
+   "id": 54,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a67743a36300000000000000000000000000000000000000000",
+   "ref": "XAUUSD:gt:60",
+   "question": "Will XAUUSD settle above 60 in 7 days?",
+   "closeTime": 1783365176
+  },
+  {
+   "id": 55,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a333030000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:300",
+   "question": "Will AAPL close above 300 in 7 days?",
+   "closeTime": 1783443512
+  },
+  {
+   "id": 56,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36343037380000000000000000000000000000000000000000",
+   "ref": "BTC:gt:64078",
+   "question": "Will BTC close above $64,078 in 7 days?",
+   "closeTime": 1783960263
+  },
+  {
+   "id": 57,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a323530000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:250",
+   "question": "Will AAPL close above 250 in 7 days?",
+   "closeTime": 1783960645
+  },
+  {
+   "id": 58,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032333800000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0238",
+   "question": "Will MON close above $0.0238 in 7 days?",
+   "closeTime": 1783961183
+  },
+  {
+   "id": 59,
+   "mType": 3,
+   "oracleRef": "0x4555525553443a67743a312e3038000000000000000000000000000000000000",
+   "ref": "EURUSD:gt:1.08",
+   "question": "Will EURUSD trade above 1.08 in 7 days?",
+   "closeTime": 1784042293
+  },
+  {
+   "id": 60,
+   "mType": 1,
+   "oracleRef": "0x444f47453a67743a302e30373537000000000000000000000000000000000000",
+   "ref": "DOGE:gt:0.0757",
+   "question": "Will DOGE close above $0.0757 in 5 minutes?",
+   "closeTime": 1783438875
+  },
+  {
+   "id": 61,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36343530340000000000000000000000000000000000000000",
+   "ref": "BTC:gt:64504",
+   "question": "Will BTC close above $64,504 in 5 minutes?",
+   "closeTime": 1783440661
+  },
+  {
+   "id": 62,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032360000000000000000000000000000000000000000",
+   "ref": "MON:gt:0.026",
+   "question": "Will MON close above $0.026 in 7 days?",
+   "closeTime": 1784051191
+  },
+  {
+   "id": 63,
+   "mType": 5,
+   "oracleRef": "0x4e5644413a67743a323030000000000000000000000000000000000000000000",
+   "ref": "NVDA:gt:200",
+   "question": "Will NVDA close above 200 in 1 hour?",
+   "closeTime": 1783452341
+  },
+  {
+   "id": 64,
+   "mType": 1,
+   "oracleRef": "0x4554483a6c743a31373631000000000000000000000000000000000000000000",
+   "ref": "ETH:lt:1761",
+   "question": "Will ETH close below $1,761 in 3 days?",
+   "closeTime": 1784198783
+  },
+  {
+   "id": 65,
+   "mType": 3,
+   "oracleRef": "0x5553444a50593a67743a312e3038000000000000000000000000000000000000",
+   "ref": "USDJPY:gt:1.08",
+   "question": "Will USDJPY trade above 1.08 in 3 days?",
+   "closeTime": 1784198831
+  },
+  {
+   "id": 66,
+   "mType": 5,
+   "oracleRef": "0x4e5644413a6c743a323030000000000000000000000000000000000000000000",
+   "ref": "NVDA:lt:200",
+   "question": "Will NVDA close below 200 in 24 hours?",
+   "closeTime": 1784026088
+  },
+  {
+   "id": 67,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a6c743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:lt:2400",
+   "question": "Will XAUUSD settle below 2400 in 1 hour?",
+   "closeTime": 1783943313
+  },
+  {
+   "id": 68,
+   "mType": 3,
+   "oracleRef": "0x4555525553443a67743a312e3038000000000000000000000000000000000000",
+   "ref": "EURUSD:gt:1.08",
+   "question": "Will EURUSD trade above 1.08 in 1 hour?",
+   "closeTime": 1784660071
+  },
+  {
+   "id": 69,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36333937310000000000000000000000000000000000000000",
+   "ref": "BTC:gt:63971",
+   "question": "Will BTC close above $63,971 in 24 hours?",
+   "closeTime": 1785316137
+  },
+  {
+   "id": 70,
+   "mType": 5,
+   "oracleRef": "0x4e5644413a67743a323030000000000000000000000000000000000000000000",
+   "ref": "NVDA:gt:200",
+   "question": "Will NVDA close above 200 in 3 days?",
+   "closeTime": 1785489523
+  },
+  {
+   "id": 71,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a6c743a37322e36000000000000000000000000000000000000000000",
+   "ref": "SOL:lt:72.6",
+   "question": "Will SOL close below $72.6 in 3 days?",
+   "closeTime": 1785489552
+  },
+  {
+   "id": 72,
+   "mType": 3,
+   "oracleRef": "0x5553444a50593a67743a312e3038000000000000000000000000000000000000",
+   "ref": "USDJPY:gt:1.08",
+   "question": "Will USDJPY trade above 1.08 in 3 days?",
+   "closeTime": 1785489578
+  },
+  {
+   "id": 73,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a323030000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:200",
+   "question": "Will AAPL close above 200 in 3 days?",
+   "closeTime": 1785576514
+  },
+  {
+   "id": 74,
+   "mType": 1,
+   "oracleRef": "0x4554483a6c743a31383237000000000000000000000000000000000000000000",
+   "ref": "ETH:lt:1827",
+   "question": "Will ETH close below $1,827 in 3 days?",
+   "closeTime": 1786000193
+  },
+  {
+   "id": 75,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a36333231320000000000000000000000000000000000000000",
+   "ref": "BTC:gt:63212",
+   "question": "Will BTC close above $63,212 in 3 days?",
+   "closeTime": 1786000283
+  },
+  {
+   "id": 76,
+   "mType": 3,
+   "oracleRef": "0x5553444a50593a67743a312e3039000000000000000000000000000000000000",
+   "ref": "USDJPY:gt:1.09",
+   "question": "Will USDJPY trade above 1.09 in 24 hours?",
+   "closeTime": 1785827576
+  },
+  {
+   "id": 77,
+   "mType": 4,
+   "oracleRef": "0x5841555553443a6c743a32343030000000000000000000000000000000000000",
+   "ref": "XAUUSD:lt:2400",
+   "question": "Will XAUUSD settle below 2400 in 3 days?",
+   "closeTime": 1786000401
+  },
+  {
+   "id": 78,
+   "mType": 1,
+   "oracleRef": "0x4c494e4b3a67743a31312e390000000000000000000000000000000000000000",
+   "ref": "LINK:gt:11.9",
+   "question": "Will LINK close above $11.9 in 7 days?",
+   "closeTime": 1789199796
+  },
+  {
+   "id": 80,
+   "mType": 4,
+   "oracleRef": "0x5850545553443a6c743a32343030000000000000000000000000000000000000",
+   "ref": "XPTUSD:lt:2400",
+   "question": "Will XPTUSD settle below 2400 in 7 days?",
+   "closeTime": 1789199912
+  },
+  {
+   "id": 81,
+   "mType": 5,
+   "oracleRef": "0x4141504c3a67743a323030000000000000000000000000000000000000000000",
+   "ref": "AAPL:gt:200",
+   "question": "Will AAPL close above 200 in 7 days?",
+   "closeTime": 1789201167
+  },
+  {
+   "id": 82,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a37373232380000000000000000000000000000000000000000",
+   "ref": "BTC:gt:77228",
+   "question": "Will BTC close above $77,228 in 7 days?",
+   "closeTime": 1790284023
+  },
+  {
+   "id": 83,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032333300000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0233",
+   "question": "Will MON close above $0.0233 in 7 days?",
+   "closeTime": 1790284047
+  },
+  {
+   "id": 84,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a31303200000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:102",
+   "question": "Will SOL close above $102 in 5 minutes?",
+   "closeTime": 1789679681
+  },
+  {
+   "id": 85,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a31303200000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:102",
+   "question": "Will SOL close above $102 in 7 days?",
+   "closeTime": 1790284093
+  },
+  {
+   "id": 86,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38363831330000000000000000000000000000000000000000",
+   "ref": "BTC:gt:86813",
+   "question": "Will BTC close above $86,813 in 5 minutes?",
+   "closeTime": 1790017045
+  },
+  {
+   "id": 87,
+   "mType": 1,
+   "oracleRef": "0x4554483a67743a32363830000000000000000000000000000000000000000000",
+   "ref": "ETH:gt:2680",
+   "question": "Will ETH close above $2,680 in 5 minutes?",
+   "closeTime": 1790593100
+  },
+  {
+   "id": 88,
+   "mType": 5,
+   "oracleRef": "0x4e5644413a67743a323030000000000000000000000000000000000000000000",
+   "ref": "NVDA:gt:200",
+   "question": "Will NVDA close above 200 in 1 hour?",
+   "closeTime": 1790596444
+  },
+  {
+   "id": 89,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032373500000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0275",
+   "question": "Will MON close above $0.0275 in 5 minutes?",
+   "closeTime": 1790593166
+  },
+  {
+   "id": 90,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032373500000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0275",
+   "question": "Will MON close above $0.0275 in 7 days?",
+   "closeTime": 1791198099
+  },
+  {
+   "id": 91,
+   "mType": 1,
+   "oracleRef": "0x4c494e4b3a67743a31342e310000000000000000000000000000000000000000",
+   "ref": "LINK:gt:14.1",
+   "question": "Will LINK close above $14.1 in 7 days?",
+   "closeTime": 1791198128
+  },
+  {
+   "id": 92,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38343532330000000000000000000000000000000000000000",
+   "ref": "BTC:gt:84523",
+   "question": "Will BTC close above $84,523 in 5 minutes?",
+   "closeTime": 1790800396
+  },
+  {
+   "id": 93,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38343234350000000000000000000000000000000000000000",
+   "ref": "BTC:gt:84245",
+   "question": "Will BTC close above $84,245 in 7 days?",
+   "closeTime": 1792004350
+  },
+  {
+   "id": 94,
+   "mType": 1,
+   "oracleRef": "0x4c494e4b3a67743a31332e350000000000000000000000000000000000000000",
+   "ref": "LINK:gt:13.5",
+   "question": "Will LINK close above $13.5 in 3 days?",
+   "closeTime": 1791662166
+  },
+  {
+   "id": 95,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a312e3134000000000000000000000000000000000000000000",
+   "ref": "SUI:gt:1.14",
+   "question": "Will SUI close above $1.14 in 1 hour?",
+   "closeTime": 1791443833
+  },
+  {
+   "id": 98,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38333739380000000000000000000000000000000000000000",
+   "ref": "BTC:gt:83798",
+   "question": "Will BTC close above $83,798 in 5 minutes?",
+   "closeTime": 1791446793
+  },
+  {
+   "id": 100,
+   "mType": 1,
+   "oracleRef": "0x4554483a67743a32353931000000000000000000000000000000000000000000",
+   "ref": "ETH:gt:2591",
+   "question": "Will ETH close above $2,591 in 3 days?",
+   "closeTime": 1791712350
+  },
+  {
+   "id": 101,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032350000000000000000000000000000000000000000",
+   "ref": "MON:gt:0.025",
+   "question": "Will MON close above $0.025 in 7 days?",
+   "closeTime": 1792087793
+  },
+  {
+   "id": 102,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a6c743a302e3032343200000000000000000000000000000000000000",
+   "ref": "MON:lt:0.0242",
+   "question": "Will MON close below $0.0242 in 1 hour?",
+   "closeTime": 1791516384
+  },
+  {
+   "id": 103,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a312e3235000000000000000000000000000000000000000000",
+   "ref": "SUI:gt:1.25",
+   "question": "Will SUI close above $1.25 in 7 days?",
+   "closeTime": 1792142213
+  },
+  {
+   "id": 105,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a312e3200000000000000000000000000000000000000000000",
+   "ref": "SUI:gt:1.2",
+   "question": "Will SUI close above $1.2 in 10 minutes?",
+   "closeTime": 1791580929
+  },
+  {
+   "id": 107,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a6c743a302e3032343300000000000000000000000000000000000000",
+   "ref": "MON:lt:0.0243",
+   "question": "Will MON close below $0.0243 in 1 hour?",
+   "closeTime": 1791595961
+  },
+  {
+   "id": 109,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a31313100000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:111",
+   "question": "Will SOL close above $111 in 7 days?",
+   "closeTime": 1792268480
+  },
+  {
+   "id": 110,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a31313100000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:111",
+   "question": "Will SOL close above $111 in 1 hour?",
+   "closeTime": 1791670309
+  },
+  {
+   "id": 111,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032353600000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0256",
+   "question": "Will MON close above $0.0256 in 1 hour?",
+   "closeTime": 1791670653
+  },
+  {
+   "id": 112,
+   "mType": 1,
+   "oracleRef": "0x415641583a67743a31302e360000000000000000000000000000000000000000",
+   "ref": "AVAX:gt:10.6",
+   "question": "Will AVAX close above $10.6 in 1 hour?",
+   "closeTime": 1791671240
+  },
+  {
+   "id": 114,
+   "mType": 1,
+   "oracleRef": "0x4554483a67743a32363031000000000000000000000000000000000000000000",
+   "ref": "ETH:gt:2601",
+   "question": "Will ETH close above $2,601 in 7 days?",
+   "closeTime": 1792394122
+  },
+  {
+   "id": 118,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032360000000000000000000000000000000000000000",
+   "ref": "MON:gt:0.026",
+   "question": "Will MON close above $0.026 in 7 days?",
+   "closeTime": 1792421934
+  },
+  {
+   "id": 119,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38343336350000000000000000000000000000000000000000",
+   "ref": "BTC:gt:84365",
+   "question": "Will BTC close above $84,365 in 1 hour?",
+   "closeTime": 1791874115
+  },
+  {
+   "id": 120,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38343335320000000000000000000000000000000000000000",
+   "ref": "BTC:gt:84352",
+   "question": "Will BTC close above $84,352 in 5 minutes?",
+   "closeTime": 1791870925
+  },
+  {
+   "id": 121,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a6c743a31303700000000000000000000000000000000000000000000",
+   "ref": "SOL:lt:107",
+   "question": "Will SOL close below $107 in 1 hour?",
+   "closeTime": 1791884346
+  },
+  {
+   "id": 122,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032343800000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0248",
+   "question": "Will MON close above $0.0248 in 5 minutes?",
+   "closeTime": 1791902161
+  },
+  {
+   "id": 123,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38343230380000000000000000000000000000000000000000",
+   "ref": "BTC:gt:84208",
+   "question": "Will BTC close above $84,208 in 7 days?",
+   "closeTime": 1792514226
+  },
+  {
+   "id": 124,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a312e3036000000000000000000000000000000000000000000",
+   "ref": "SUI:gt:1.06",
+   "question": "Will SUI close above $1.06 in 7 days?",
+   "closeTime": 1792533096
+  },
+  {
+   "id": 126,
+   "mType": 1,
+   "oracleRef": "0x5355493a67743a312e3036000000000000000000000000000000000000000000",
+   "ref": "SUI:gt:1.06",
+   "question": "Will SUI close above $1.06 in 1 hour?",
+   "closeTime": 1791980894
+  },
+  {
+   "id": 127,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a6c743a31303600000000000000000000000000000000000000000000",
+   "ref": "SOL:lt:106",
+   "question": "Will SOL close below $106 in 1 hour?",
+   "closeTime": 1791981187
+  },
+  {
+   "id": 129,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032323900000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0229",
+   "question": "Will MON close above $0.0229 in 7 days?",
+   "closeTime": 1792652462
+  },
+  {
+   "id": 130,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38303030300000000000000000000000000000000000000000",
+   "ref": "BTC:gt:80000",
+   "question": "Will BTC close above $80,000 in 3 days?",
+   "closeTime": 1792310846
+  },
+  {
+   "id": 136,
+   "mType": 1,
+   "oracleRef": "0x4554483a67743a32333935000000000000000000000000000000000000000000",
+   "ref": "ETH:gt:2395",
+   "question": "Will ETH close above $2,395 in 6 hours?",
+   "closeTime": 1792077694
+  },
+  {
+   "id": 137,
+   "mType": 3,
+   "oracleRef": "0x4555525553443a67743a312e3100000000000000000000000000000000000000",
+   "ref": "EURUSD:gt:1.1",
+   "question": "Will EURUSD trade above 1.1 in 7 days?",
+   "closeTime": 1792672348
+  },
+  {
+   "id": 138,
+   "mType": 3,
+   "oracleRef": "0x4555525553443a67743a312e3100000000000000000000000000000000000000",
+   "ref": "EURUSD:gt:1.1",
+   "question": "Will EURUSD trade above 1.1 in 5 minutes?",
+   "closeTime": 1792135062
+  },
+  {
+   "id": 140,
+   "mType": 1,
+   "oracleRef": "0x444f47453a67743a302e30383133000000000000000000000000000000000000",
+   "ref": "DOGE:gt:0.0813",
+   "question": "Will DOGE close above $0.0813 in 1 hour?",
+   "closeTime": 1792222570
+  },
+  {
+   "id": 142,
+   "mType": 1,
+   "oracleRef": "0x534f4c3a67743a31303700000000000000000000000000000000000000000000",
+   "ref": "SOL:gt:107",
+   "question": "Will SOL close above $107 in 7 days?",
+   "closeTime": 1793006783
+  },
+  {
+   "id": 143,
+   "mType": 1,
+   "oracleRef": "0x4150543a67743a302e3739310000000000000000000000000000000000000000",
+   "ref": "APT:gt:0.791",
+   "question": "Will APT close above $0.791 in 7 days?",
+   "closeTime": 1793006810
+  },
+  {
+   "id": 145,
+   "mType": 1,
+   "oracleRef": "0x4554483a6c743a32343138000000000000000000000000000000000000000000",
+   "ref": "ETH:lt:2418",
+   "question": "Will ETH close below $2,418 in 1 hour?",
+   "closeTime": 1792407150
+  },
+  {
+   "id": 147,
+   "mType": 1,
+   "oracleRef": "0x4d4f4e3a67743a302e3032313900000000000000000000000000000000000000",
+   "ref": "MON:gt:0.0219",
+   "question": "Will MON close above $0.0219 in 1 hour?",
+   "closeTime": 1792530800
+  },
+  {
+   "id": 149,
+   "mType": 1,
+   "oracleRef": "0x4554483a6c743a32343134000000000000000000000000000000000000000000",
+   "ref": "ETH:lt:2414",
+   "question": "Will ETH close below $2,414 in 1 hour?",
+   "closeTime": 1792530895
+  },
+  {
+   "id": 150,
+   "mType": 1,
+   "oracleRef": "0x415641583a67743a392e37350000000000000000000000000000000000000000",
+   "ref": "AVAX:gt:9.75",
+   "question": "Will AVAX close above $9.75 in 7 days?",
+   "closeTime": 1793132018
+  },
+  {
+   "id": 151,
+   "mType": 1,
+   "oracleRef": "0x4254433a67743a38333336380000000000000000000000000000000000000000",
+   "ref": "BTC:gt:83368",
+   "question": "Will BTC close above $83,368 in 7 days?",
+   "closeTime": 1793132043
+  }
+ ]
+}

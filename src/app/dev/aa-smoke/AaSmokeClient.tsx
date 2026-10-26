@@ -166,6 +166,7 @@ export default function AaSmokeClient() {
       append('info', `disallowed mode: target=${NON_USDC_ADDRESS}, expect 403 NOT_ALLOWED`);
       const outcome = await runDisallowedOp({
         chainId: MONAD_TESTNET_ID,
+        magicEoa,
         to: NON_USDC_ADDRESS,
       });
       logOutcome(outcome, append);

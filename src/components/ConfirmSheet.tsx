@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
+import { Logo } from '@/components/Logo';
 import { explorerUrl } from '@/lib/chain';
 import { useResponsiveFocusTrap } from '@/lib/use-responsive-focus-trap';
 import { formatAddress } from '@/lib/user-display';
@@ -28,6 +29,10 @@ export type ConfirmSpec = {
   doneBody: string;
   /// The second button once done ("Share round", "View in Me").
   doneSecondary?: { label: string; href: string };
+  /// The black done tile with the Mako mark behind (Joshua 2026-10-24), `big` in display type under the title, `small`
+  /// under it: a placed bet's side and stake (black for every pool, since a side colour means nothing for team or price
+  /// pools), a claim's amount.
+  doneTile?: { big: string; small: string };
 };
 
 export type ConfirmAction = { label: string; href?: string; retry?: true };
@@ -59,6 +64,8 @@ type Props = {
   onCancel: () => void;
   onRetry: () => void;
   onClose: () => void;
+  /// Shown in the done tile under the transaction link (the bet confirmation's Share).
+  doneExtra?: React.ReactNode;
 };
 
 const WALLET_ICON = 'M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3M4 7.5v10A2.5 2.5 0 0 0 6.5 20H20v-4M4 7.5A2.5 2.5 0 0 0 6.5 10H20v3M16 13h4v3h-4a1.5 1.5 0 0 1 0-3z';
@@ -127,6 +134,13 @@ function ActionButton({ action, primary, onRetry, onClose }: { action: ConfirmAc
 
 export const tileTitle: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.02, letterSpacing: '-0.025em' };
 export const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, fontWeight: 600, opacity: 0.8, marginTop: 6, overflowWrap: 'anywhere' };
+/// The same black in every theme and sheet (the yellow phone sheet included); the edge keeps it apart from a black sheet.
+const blackTile: React.CSSProperties = { position: 'relative', isolation: 'isolate', overflow: 'hidden', borderRadius: 28, background: '#000', color: 'var(--mako-paper)', boxShadow: 'inset 0 0 0 1.5px rgba(235, 229, 217, 0.22)', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 };
+
+/// The Mako mark in brand yellow behind the text (Joshua 2026-10-24), cropped at the bottom right; z-index -1 inside
+/// the tile's own stacking context.
+const tileMark: React.CSSProperties = { position: 'absolute', right: -28, bottom: -40, zIndex: -1, color: '#FACC15', opacity: 0.4, pointerEvents: 'none', lineHeight: 0 };
+
 const chip: React.CSSProperties = { alignSelf: 'flex-start', height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', borderRadius: 9999, background: 'color-mix(in srgb, currentColor 14%, transparent)', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'inherit', textDecoration: 'none' };
 
 /// One step's content (review, pending, done, ...). Keyed on the step by the caller, so a new step mounts fresh and
@@ -149,7 +163,7 @@ function CheckIn({ size }: { size: number }) {
   );
 }
 
-function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, variant, confirmRef, stepEntering }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null>; stepEntering: boolean }) {
+function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, doneExtra, variant, confirmRef, stepEntering }: Props & { variant: 'desktop' | 'mobile'; confirmRef: React.RefObject<HTMLButtonElement | null>; stepEntering: boolean }) {
   const rows: ConfirmRow[] = [...spec.rows];
   const feeText = wallet.kind === 'mako' ? 'Free · gas covered' : 'Paid in MON by your wallet';
   const titleSize = variant === 'desktop' ? 32 : 30;
@@ -253,19 +267,40 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
 
         {phase.step === 'done' && (
           <>
-            <div className="wl-tile" style={{ borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--m3-inv-fg)', color: 'var(--m3-inv)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CheckIn size={26} />
-              </span>
-              <div role="status">
-                <div style={tileTitle}>{spec.doneTitle}</div>
-                <div style={tileBody}>{spec.doneBody}</div>
-              </div>
+            <div className="wl-tile" style={spec.doneTile ? blackTile : { borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {spec.doneTile && (
+                <span aria-hidden style={tileMark}>
+                  <Logo size={260} />
+                </span>
+              )}
+              {spec.doneTile ? (
+                <div role="status">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700 }}>
+                    <CheckIn size={18} />
+                    {spec.doneTitle}
+                  </div>
+                  {/* A house pool's side or a claimed amount can be long: past 4 characters (YES, NO fit) it is smaller and
+                      wraps instead of overflowing a phone, whatever its glyph widths. */}
+                  <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: spec.doneTile.big.length <= 4 ? 64 : 40, lineHeight: 0.95, letterSpacing: '-0.03em', marginTop: 14, overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' }}>{spec.doneTile.big}</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{spec.doneTile.small}</div>
+                </div>
+              ) : (
+                <>
+                  <span style={{ width: 52, height: 52, borderRadius: 9999, background: 'var(--m3-inv-fg)', color: 'var(--m3-inv)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <CheckIn size={26} />
+                  </span>
+                  <div role="status">
+                    <div style={tileTitle}>{spec.doneTitle}</div>
+                    <div style={tileBody}>{spec.doneBody}</div>
+                  </div>
+                </>
+              )}
               {phase.txHash && (
                 <a href={explorerUrl('tx', phase.txHash)} target="_blank" rel="noopener noreferrer" style={chip}>
                   Transaction · {formatAddress(phase.txHash)} ↗
                 </a>
               )}
+              {doneExtra}
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               {spec.doneSecondary && <ActionButton action={spec.doneSecondary} primary={false} onRetry={onRetry} onClose={onClose} />}
@@ -332,6 +367,25 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, vari
 }
 
 /// The confirm-in-wallet sheet. Render it while an action is open; the parent owns `phase`.
+/// A claim's black done tile (Joshua 2026-10-24, refunds too): the amount, and where it went.
+export const claimTile = (amt: string, refund: boolean) => ({ big: `${amt} USDC`, small: refund ? 'Your full stake is back in your balance.' : 'In your balance.' });
+
+/// The yellow Share on the black done tile. Brand yellow as a literal: the dark yellow phone sheet turns --mako-signal
+/// black, which would hide it there.
+export function TileShareButton({ disabled, onClick, children }: { disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="m3-press"
+      style={{ alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: 9999, background: '#FACC15', color: '#000', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, opacity: disabled ? 0.5 : 1 }}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function ConfirmSheet(props: Props) {
   const desktopConfirm = useRef<HTMLButtonElement>(null);
   const mobileConfirm = useRef<HTMLButtonElement>(null);

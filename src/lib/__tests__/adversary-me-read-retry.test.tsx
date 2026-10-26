@@ -265,8 +265,9 @@ describe('adversary: Me reads every pool, all or nothing (f7147fe)', () => {
       expect(result.current.all.markets.length).toBe(2);
       expect(result.current.legacy.markets.length).toBe(2);
     });
-    expect(result.current.all.markets.map((m) => m.question)).toEqual(['Question 0?', 'Question 1?']);
-    expect(result.current.legacy.markets.map((m) => m.question)).toEqual(['Question 0?', 'Question 1?']);
+    // The stored text (these crypto fixtures carry an unreadable reference, so their title is "Pool #N": naming plan r8 §5).
+    expect(result.current.all.markets.map((m) => m.chainQuestion)).toEqual(['Question 0?', 'Question 1?']);
+    expect(result.current.legacy.markets.map((m) => m.chainQuestion)).toEqual(['Question 0?', 'Question 1?']);
     expect(result.current.all.markets[0].totalYes).toBe(30n * USDC);
   });
 });
