@@ -13,9 +13,9 @@
 //   3. "Copy copies exactly the link it copied before, and its accessible names stay "Copy link" / "Copied" /
 //      "Copy failed"."
 //
-// The pages are the real PoolShareSheet (invite, with Save image) and the real BetCardSheet (bet card, CardPreview then
+// The pages are the real PoolShareSheet (its card is the pool's link preview since 2026-10-26) and the real BetCardSheet (bet card, CardPreview then
 // ShareLinks) under the app's compiled CSS (globals.css through Tailwind, then mako-shell.css) with the bundled fonts.
-// They are served from a routed http origin so the bet card's image request can be answered: it is answered with the
+// They are served from a routed http origin so each card's image request can be answered: it is answered with the
 // repo's own public/share/bet-placed.png. The market is a rendering fixture built with the repo's MarketWithId type.
 
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -72,7 +72,7 @@ const which = location.hash.slice(1);
 createRoot(document.getElementById('root')!).render(
   which === 'bet'
     ? <BetCardSheet poolId={148n} tx={'${TX}'} log={3} question={market.question} onClose={() => {}} />
-    : <PoolShareSheet market={market} now={now} labels={{ yes: 'YES', no: 'NO' }} by="kemi" onClose={() => {}} />,
+    : <PoolShareSheet market={market} onClose={() => {}} />,
 );`,
   );
   const pub = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('NEXT_PUBLIC_')));
@@ -111,7 +111,7 @@ async function open(sheet: Sheet, share: boolean, copy: Copy, width: number) {
     if (u.origin !== ORIGIN) return route.abort();
     if (u.pathname === '/index.html') return route.fulfill({ status: 200, contentType: 'text/html', body: html });
     if (u.pathname.startsWith('/__f/')) return route.fulfill({ status: 200, body: readFileSync(u.pathname.slice(4)) });
-    if (u.pathname.endsWith('/image.png')) return route.fulfill({ status: 200, contentType: 'image/png', body: readFileSync(join(ROOT, 'public/share/bet-placed.png')) });
+    if (u.pathname.endsWith('/image.png') || u.pathname.endsWith('/opengraph-image')) return route.fulfill({ status: 200, contentType: 'image/png', body: readFileSync(join(ROOT, 'public/share/bet-placed.png')) });
     return route.fulfill({ status: 404, body: '' });
   });
   await page.addInitScript(

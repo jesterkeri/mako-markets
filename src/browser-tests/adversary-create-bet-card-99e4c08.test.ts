@@ -4,7 +4,7 @@
 // Adversary on fix/create-pool-bet-card@99e4c08, in a real browser: the share row with Copy moved into it.
 //
 // Spec (owner, 2026-10-26, rule 4): "Copy is one more round icon in the same row as X / WhatsApp / Telegram / More
-// (and the invite sheet's "Save image · coming soon") ... The row must fit a 360px-wide phone (sheet side padding
+// (the invite sheet's Save image slot was removed 2026-10-26) ... The row must fit a 360px-wide phone (sheet side padding
 // 16px) without horizontal overflow."
 //
 // The page is the real pool invite sheet (PoolShareSheet, mobile variant) under the app's own compiled CSS
@@ -59,7 +59,7 @@ const market: MarketWithId = {
   creatorFeeClaimed: false, protocolFeeBpsSnapshot: 100, creatorFeeBpsSnapshot: 100,
 };
 createRoot(document.getElementById('root')!).render(
-  <PoolShareSheet market={market} now={now} labels={{ yes: 'YES', no: 'NO' }} by="kemi" onClose={() => {}} />,
+  <PoolShareSheet market={market} onClose={() => {}} />,
 );`,
   );
   const pub = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('NEXT_PUBLIC_')));
@@ -130,14 +130,14 @@ async function measure(share: boolean) {
 }
 
 describe('the share row on a 360px phone (spec rule 4)', () => {
-  it('the invite sheet row with More, Save image and Copy: no label runs outside its target or into the next one', async () => {
+  it('the invite sheet row with More and Copy: no label runs outside its target or into the next one', async () => {
     const m = await measure(true);
     const items = m.items as Box[];
     expect(m.errors).toEqual([]);
     expect(m.inter).toBe(true); // measured in the app's own bundled Inter, not a fallback face
     expect(m.sheet).toEqual([0, 360]);
     expect(m.rowBox).toEqual([16, 344]); // 16px sheet padding each side: the row has 328px
-    expect(items.map((i) => i.name)).toEqual(['Share on X', 'Share on WhatsApp', 'Share on Telegram', 'More ways to share', 'Save image', 'Copy link']);
+    expect(items.map((i) => i.name)).toEqual(['Share on X', 'Share on WhatsApp', 'Share on Telegram', 'More ways to share', 'Copy link']);
     // Each visible label stays inside its own target's box, so no two labels overlap and nothing pokes out of the row.
     const spill = items
       .filter((i) => i.label[0] < i.item[0] - 0.5 || i.label[1] > i.item[1] + 0.5)

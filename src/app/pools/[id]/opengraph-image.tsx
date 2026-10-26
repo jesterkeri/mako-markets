@@ -1,17 +1,23 @@
 import { ImageResponse } from 'next/og';
 
-import { marketTypeLabel } from '@/lib/contract';
-import { poolIdFrom, readPoolForShare, shareStatus } from '@/lib/pool-share';
+import { db } from '@/db/client';
+import { MarketType } from '@/lib/contract';
+import { getMakoLabels } from '@/lib/mako-labels-server';
+import { CARD_SIZE, renderPoolCard } from '@/lib/pnl-card-image';
+import { poolInviteCard } from '@/lib/pool-invite';
+import { poolQr } from '@/lib/pool-qr';
+import { poolIdFrom, readPoolForShare } from '@/lib/pool-share';
 
 /**
- * The share preview for /pools/[id]: 1200x630, generated per request from the pool on chain (question, category,
- * status), so an unfurl names the pool rather than showing a generic card. A pool that cannot be read shows the
+ * The share preview for /pools/[id]: the share card's black frame (Joshua 2026-10-26: pool links get the new card
+ * design) with the invite card's facts, read per request from the pool on chain, so an unfurl names the pool and its
+ * odds rather than showing a generic card. A pool that cannot be read shows the
  * brand. Moved from /market/[id], where `params` was read as a plain object; in Next 16 it is a Promise, so every
  * preview there fell back to the brand.
  */
 export const revalidate = 60;
 export const alt = 'Mako Market prediction pool';
-export const size = { width: 1200, height: 630 };
+export const size = CARD_SIZE;
 export const contentType = 'image/png';
 
 // Color tokens mirror globals.css so the OG image feels like the site.
@@ -26,10 +32,17 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const { id } = await params;
   const parsedId = poolIdFrom(id);
   const market = parsedId !== null ? await readPoolForShare(parsedId) : null;
+  if (market) {
+    // A house pool's own side names, as the pool page shows them; YES and NO when they cannot be read.
+    const labels = market.mType === MarketType.MAKO ? await getMakoLabels(db, market.id.toString()).catch(() => null) : null;
+    const card = poolInviteCard(market, Math.floor(Date.now() / 1000), labels ? { yes: labels.label1, no: labels.label2 } : { yes: 'YES', no: 'NO' });
+    return renderPoolCard(card, market.question, await poolQr(market.id));
+  }
 
-  const question = market?.question ?? 'Mako Market';
-  const tag = market ? marketTypeLabel(market.mType) : 'MAKO';
-  const closeLabel = market ? shareStatus(market, Math.floor(Date.now() / 1000)).toUpperCase() : 'PREDICTION POOLS ON MONAD';
+  // No pool read: the brand.
+  const question = 'Mako Market';
+  const tag = 'MAKO';
+  const closeLabel = 'PREDICTION POOLS ON MONAD';
 
   // Font size tapers with question length so long strings still fit on one
   // card. The 1200x630 canvas comfortably fits ~90 chars at 72px.
@@ -157,7 +170,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
               fontWeight: 900,
               letterSpacing: '0.18em',
               textTransform: 'uppercase',
-              color: market?.resolved ? COLORS.muted : COLORS.warning,
+              color: COLORS.warning,
             }}
           >
             {closeLabel}

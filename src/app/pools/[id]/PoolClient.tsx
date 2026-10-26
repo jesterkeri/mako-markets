@@ -216,7 +216,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
       <div className="mk-mob mk-m">
         <PoolMobile {...view} />
       </div>
-      {shareOpen && <PoolShareSheet market={market} now={now} labels={labels} by={by} onClose={closeShare} />}
+      {shareOpen && <PoolShareSheet market={market} onClose={closeShare} />}
       {myCard && account && myCardFor === account && userBet && (
         <PnlShareSheet
           poolId={id}
