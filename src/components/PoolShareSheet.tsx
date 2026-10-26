@@ -96,19 +96,21 @@ export function ShareLinks({ id, question, path, children }: { id: bigint; quest
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, padding: '0 6px', marginTop: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 2, marginTop: 16 }}>
         <Target href={intentUrl('x', id, question, path)} label="X" name="Share on X" bg="#000" fg="#fff" icon={<XIcon />} />
         <Target href={intentUrl('whatsapp', id, question, path)} label="WhatsApp" name="Share on WhatsApp" bg="#25D366" fg="#fff" icon={<WhatsAppIcon />} />
         <Target href={intentUrl('telegram', id, question, path)} label="Telegram" name="Share on Telegram" bg="#229ED9" fg="#fff" icon={<TelegramIcon />} />
         {canShare && <Target onClick={nativeShare} label="More" name="More ways to share" bg="var(--raise2)" fg="var(--mako-canvas-fg)" icon={<MoreIcon />} />}
         {children}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, padding: '6px 6px 6px 18px', borderRadius: 9999, background: '#000', color: '#EBE5D9', boxShadow: 'inset 0 0 0 1.5px var(--mako-signal)' }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{linkDisplay(link)}</span>
-        <button onClick={copyLink} className="m3-press" style={{ flex: 'none', height: 42, padding: '0 18px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>
-          {copy === 'copied' ? 'Copied' : copy === 'failed' ? 'Copy failed' : 'Copy link'}
-        </button>
+        {/* Copy sits in the row as one more icon (Joshua 2026-10-26): the link pill took a second row. */}
+        <Target
+          onClick={copyLink}
+          label={copy === 'copied' ? 'Copied' : copy === 'failed' ? 'Failed' : 'Copy'}
+          name={copy === 'copied' ? 'Copied' : copy === 'failed' ? 'Copy failed' : 'Copy link'}
+          bg="var(--mako-signal)"
+          fg="#000"
+          icon={<CopyIcon />}
+        />
       </div>
     </>
   );
@@ -170,11 +172,11 @@ type TargetProps = { label: string; bg: string; fg: string; icon: React.ReactNod
   | { comingSoon: true; href?: never; onClick?: never; name?: never }
 );
 
-/// One share target: a 54px round icon over its label, as the design draws them.
+/// One share target: a 48px round icon over its label.
 function Target({ label, bg, fg, icon, ...t }: TargetProps) {
-  const item: React.CSSProperties = { flex: '0 1 auto', minWidth: 54, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'inherit', textDecoration: 'none', textAlign: 'center' };
+  const item: React.CSSProperties = { flex: '0 1 auto', minWidth: 'min-content', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'inherit', textDecoration: 'none', textAlign: 'center' };
   const circle = (
-    <span aria-hidden="true" style={{ flex: 'none', width: 54, height: 54, borderRadius: 9999, background: bg, color: fg, boxShadow: 'var(--edge), inset 0 0 0 1px rgba(255,255,255,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <span aria-hidden="true" style={{ flex: 'none', width: 48, height: 48, borderRadius: 9999, background: bg, color: fg, boxShadow: 'var(--edge), inset 0 0 0 1px rgba(255,255,255,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       {icon}
     </span>
   );
@@ -233,6 +235,15 @@ function SaveIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="8.5" y="8.5" width="11" height="11" rx="2.5" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M15.5 5.5v-.5a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 5v8A1.5 1.5 0 0 0 6 14.5h.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
