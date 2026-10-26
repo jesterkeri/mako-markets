@@ -3,7 +3,7 @@ import 'server-only';
 import { and, eq } from 'drizzle-orm';
 import { unstable_cache } from 'next/cache';
 import { cache } from 'react';
-import { decodeEventLog, getAddress, TransactionReceiptNotFoundError, type Hex } from 'viem';
+import { decodeEventLog, getAddress, TransactionReceiptNotFoundError, type Hex, type PublicClient } from 'viem';
 
 import { db } from '@/db/client';
 import { makoMarketEvents } from '@/db/schema';
@@ -16,7 +16,7 @@ import { isRegistered } from '@/lib/leaderboard/profile';
 import { getMakoLabels } from '@/lib/mako-labels-server';
 import { CARD_STATES, placedCard, pnlCard, type CardState, type ShareCard } from '@/lib/pnl-card';
 import type { CardWho } from '@/lib/pnl-card-image';
-import { poolIdFrom, readPoolForShare, shareClient } from '@/lib/pool-share';
+import { poolIdFrom, publicShareClient, readPoolForShare, shareClient } from '@/lib/pool-share';
 import { formatAddress } from '@/lib/user-display';
 
 // One bet's share card (/pools/<id>/pnl/<tx>/<log>/<state>): public by URL, because Share to X can only post a link
@@ -60,9 +60,20 @@ export type LoadedCard =
 /// receipt says it is not; 'no_receipt' when the node has no receipt for `tx` (made up, or not seen by this node yet);
 /// 'unavailable' when the chain could not be asked.
 export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Promise<CardBettor | null | 'no_receipt' | 'unavailable'> {
+  const found = await betLogFrom(shareClient(), poolId, tx, logIndex);
+  if (typeof found === 'object' && found !== null) return found;
+  // The configured node found no bet there, or could not answer: ask the public node, where the browser found the
+  // log, with the same checks. Production's node missed bets sent through the gas-free bundler (Joshua, 2026-10-26).
+  const pub = publicShareClient();
+  if (!pub) return found;
+  const again = await betLogFrom(pub, poolId, tx, logIndex);
+  return again === 'unavailable' ? found : again;
+}
+
+async function betLogFrom(client: PublicClient, poolId: bigint, tx: Hex, logIndex: number): Promise<CardBettor | null | 'no_receipt' | 'unavailable'> {
   let receipt;
   try {
-    receipt = await shareClient().getTransactionReceipt({ hash: tx });
+    receipt = await client.getTransactionReceipt({ hash: tx });
   } catch (e) {
     return e instanceof TransactionReceiptNotFoundError ? 'no_receipt' : 'unavailable';
   }

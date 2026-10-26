@@ -9,7 +9,8 @@ import { poolTitle } from './pool-display';
 import { unsettleable } from './pool-rules';
 import { humanizeUntil } from './time';
 
-const RPC_URL = process.env.MONAD_RPC_URL ?? 'https://testnet-rpc.monad.xyz/';
+const PUBLIC_RPC_URL = 'https://testnet-rpc.monad.xyz/';
+const RPC_URL = process.env.MONAD_RPC_URL ?? PUBLIC_RPC_URL;
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://makomarket.xyz').replace(/\/+$/, '');
 
 const monadTestnet = {
@@ -26,6 +27,10 @@ export function poolIdFrom(segment: string): bigint | null {
 
 /// The server's read client for share previews (public chain reads only).
 export const shareClient = () => createPublicClient({ chain: monadTestnet, transport: http(RPC_URL) });
+
+/// The public Monad node, when the server is configured with another one: the browser finds a bet's log there, so a
+/// share link's log index is that node's (production's own node missed bets sent through the gas-free bundler).
+export const publicShareClient = () => (RPC_URL === PUBLIC_RPC_URL ? null : createPublicClient({ chain: monadTestnet, transport: http(PUBLIC_RPC_URL) }));
 
 /// `blockTag: 'finalized'` reads the pool as it stands in the last finalized block (a settled result's card).
 export async function readPoolForShare(id: bigint, blockTag: 'latest' | 'finalized' = 'latest'): Promise<MarketWithId | null> {

@@ -63,6 +63,7 @@ vi.mock('@/lib/pool-share', () => ({
     if (typeof pinned === 'bigint' && pinned >= 71474367n) return BASE;
     return tag === 'finalized' ? chain.finalized : chain.latest;
   },
+  publicShareClient: () => null,
   shareClient: () => ({
     getTransactionReceipt: async ({ hash }: { hash: string }) =>
       hash === YES_TX

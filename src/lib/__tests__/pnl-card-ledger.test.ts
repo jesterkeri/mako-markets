@@ -65,6 +65,7 @@ vi.mock('@/lib/pool-share', () => ({
     chain.pools++;
     return tag === 'finalized' ? chain.finalized : chain.latest;
   },
+  publicShareClient: () => null,
   shareClient: () => ({
     getTransactionReceipt: async () => {
       chain.receipts++;

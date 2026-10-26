@@ -38,7 +38,8 @@ export function shareText(question: string): string {
 }
 
 /// The official share-intent URL for a target, every value percent-encoded (spaces as %20, never "+").
-///  - X: https://x.com/intent/tweet?text=…&url=… (docs.x.com, Post Web Intent)
+///  - X: https://x.com/intent/post?text=…&url=… (X's current name for the Post Web Intent; intent/tweet left the post
+///    blank or without its preview for Joshua, 2026-10-26)
 ///  - WhatsApp: https://wa.me/?text=… (Click to Chat; the link rides in the text, the only parameter)
 ///  - Telegram: https://t.me/share/url?url=…&text=… (core.telegram.org/widgets/share)
 export function intentUrl(target: Exclude<ShareTarget, 'link'>, id: bigint, question: string, path?: string): string {
@@ -47,7 +48,7 @@ export function intentUrl(target: Exclude<ShareTarget, 'link'>, id: bigint, ques
   const enc = encodeURIComponent;
   switch (target) {
     case 'x':
-      return `https://x.com/intent/tweet?text=${enc(text)}&url=${enc(link)}`;
+      return `https://x.com/intent/post?text=${enc(text)}&url=${enc(link)}`;
     case 'whatsapp':
       return `https://wa.me/?text=${enc(`${text} ${link}`)}`;
     case 'telegram':

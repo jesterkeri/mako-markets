@@ -65,6 +65,7 @@ vi.mock('@/lib/pool-share', () => ({
     rpc.pools++;
     return POOL;
   },
+  publicShareClient: () => null,
   shareClient: () => {
     rpc.clients++;
     return {

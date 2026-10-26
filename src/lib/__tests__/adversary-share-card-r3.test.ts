@@ -64,6 +64,7 @@ const chain = vi.hoisted(() => ({ pool: null as unknown, receiptMisses: 0, recei
 vi.mock('@/lib/pool-share', () => ({
   poolIdFrom: (s: string) => (/^\d{1,18}$/.test(s) ? BigInt(s) : null),
   readPoolForShare: async () => chain.pool,
+  publicShareClient: () => null,
   shareClient: () => ({
     getTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => {
       chain.receipts++;
