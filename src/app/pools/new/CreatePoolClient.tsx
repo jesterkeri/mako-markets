@@ -5,13 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDiscover } from './use-discover';
 
 import { ConfirmSheet, TileShareButton, type ConfirmSpec } from '@/components/ConfirmSheet';
-import { PoolShareSheet } from '@/components/PoolShareSheet';
+import { BetCardSheet, useBetLog } from '@/components/PnlShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
 import { MarketType, type MarketWithId } from '@/lib/contract';
 import { PAUSED_CREATE_MTYPES, PAUSED_PRICE_FEED_SYMBOLS } from '@/lib/market-availability';
 import { CRYPTO_ASSETS, formatStrikeForDisplay, roundStrike } from '@/lib/crypto-assets';
-import { useCreatorCreatesToday, useMarket, useMarkets, useUsdcBalance } from '@/lib/hooks';
+import { useCreatorCreatesToday, useMarkets, useUsdcBalance } from '@/lib/hooks';
 import { MAX_DURATION_SEC, sportsTimestamps } from '@/lib/market-timing';
 import { toBytes32 } from '@/lib/oracle';
 import { MIN_BET, parseAmount } from '@/lib/pool-bet-rules';
@@ -113,15 +113,15 @@ export function CreatePoolClient() {
   const now = useLiveNowSec();
   const { user } = useUser();
   const account = user ? accountAddress(user) : null;
-  /// The new pool whose invite card is open: the market the Share button read from the chain when it was tapped, kept
-  /// as read, so no later poll can hide the card or bring it back. Another account signing in closes it for good.
-  const [shared, setShared] = useState<MarketWithId | null>(null);
+  /// The creator's first bet card that is open: the new pool's bet placed card (Joshua 2026-10-26), for the BetPlaced
+  /// log the create receipt holds for this account. Another account signing in closes it for good.
+  const [betCard, setBetCard] = useState<{ pool: bigint; tx: string; log: number; question: string } | null>(null);
   const [shareAccount, setShareAccount] = useState(account);
   if (shareAccount !== account) {
     setShareAccount(account);
-    setShared(null);
+    setBetCard(null);
   }
-  const closeShare = useCallback(() => setShared(null), []);
+  const closeShare = useCallback(() => setBetCard(null), []);
   const balanceQ = useUsdcBalance(account ?? undefined);
   const balance = typeof balanceQ.data === 'bigint' ? balanceQ.data : null;
   const createsQ = useCreatorCreatesToday(account ?? undefined);
@@ -149,6 +149,9 @@ export function CreatePoolClient() {
   const crypto = useDiscover<{ prices: Record<string, { usd: number }> }>(kind === 'crypto' ? '/api/discover/crypto' : null, 10_000);
 
   const tx = usePoolTx();
+  // createMarket emits BetPlaced for the creator's seed, so the create receipt names the first bet, as a bet's does.
+  const createTx = tx.tx?.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null ? tx.phase.txHash : undefined;
+  const betLog = useBetLog(createTx, tx.createdId ?? 0n, account);
   useEffect(() => {
     if (tx.phase.step === 'done') setStep(4);
   }, [tx.phase.step]);
@@ -185,7 +188,7 @@ export function CreatePoolClient() {
 
   const openCreate = () => {
     if (!pool || !draft || now === null || seed === null || seedProblem || tx.tx) return;
-    setShared(null); // a card from an earlier create never outlives the next one
+    setBetCard(null); // a card from an earlier create never outlives the next one
     const side = seedYes ? 'YES' : 'NO';
     setSheetSpec({
       glyph: '+',
@@ -283,35 +286,23 @@ export function CreatePoolClient() {
           onRetry={tx.retry}
           onClose={tx.close}
           doneExtra={
-            tx.tx.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null && account ? (
-              <ShareCreatedButton
-                id={tx.createdId}
-                onShare={(m) => {
-                  setShared(m);
+            createTx && tx.createdId !== null && betLog.status !== 'none' ? (
+              <TileShareButton
+                disabled={betLog.status !== 'found'}
+                onClick={() => {
+                  if (betLog.status !== 'found' || tx.createdId === null) return;
+                  setBetCard({ pool: tx.createdId, tx: createTx, log: betLog.log, question: sheetSpec.doneBody });
                   tx.close();
                 }}
-              />
+              >
+                {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
+              </TileShareButton>
             ) : undefined
           }
         />
       )}
-      {shared && account && now !== null && (
-        <PoolShareSheet market={shared} now={now} labels={{ yes: 'YES', no: 'NO' }} by={user?.displayName?.trim() || formatAddress(account)} onClose={closeShare} />
-      )}
+      {betCard && <BetCardSheet poolId={betCard.pool} tx={betCard.tx} log={betCard.log} question={betCard.question} onClose={closeShare} />}
     </>
-  );
-}
-
-/// "Share your pool" on the done tile: hands the invite card the new pool as read from the chain (never the draft's
-/// figures). Enabled once the chain answers it (a node that has not applied the create answers an all-zero market:
-/// getMarket is a plain mapping read; the pool page treats that as not found), so a tap always opens the card at once.
-function ShareCreatedButton({ id, onShare }: { id: bigint; onShare: (market: MarketWithId) => void }) {
-  const { market } = useMarket(id);
-  const ready = market !== undefined && market.closeTime !== 0n;
-  return (
-    <TileShareButton disabled={!ready} onClick={() => market && ready && onShare(market)}>
-      {ready ? 'Share your pool' : 'Finding your pool…'}
-    </TileShareButton>
   );
 }
 
