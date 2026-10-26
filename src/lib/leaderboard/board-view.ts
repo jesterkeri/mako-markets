@@ -77,12 +77,12 @@ export const DEFAULT_PERIOD: BoardPeriod = 'week';
 
 /// Only pools are in the ledger, and "All markets" is every market the ledger holds, so both show the same board.
 /// Rounds are not indexed yet: that scope is shown but cannot be picked. Competition shows the competition's ranked
-/// players instead of the board (Joshua 2026-10-26).
+/// players instead of the board (Joshua 2026-10-26: beside All markets, which also keeps it on a phone's screen).
 export const SCOPES: readonly { key: BoardScope; label: string; comingSoon?: true }[] = [
   { key: 'all', label: 'All markets' },
+  { key: 'competition', label: 'Competition' },
   { key: 'rounds', label: 'Rounds', comingSoon: true },
   { key: 'pools', label: 'Pools' },
-  { key: 'competition', label: 'Competition' },
 ];
 
 /// No win-rate sort: the ledger records bets and claims, not results, so a win rate cannot be computed.

@@ -206,10 +206,10 @@ describe('Leaderboard page', () => {
 });
 
 describe('Leaderboard: Competition tab (Joshua 2026-10-26)', () => {
-  it('sits in the Markets group; picking it shows the server-rendered standings instead of the board, without period or sort', async () => {
+  it('sits in the Markets group right after All markets; picking it shows the server-rendered standings instead of the board, without period or sort', async () => {
     mount({ desktop: <p>desk standings</p>, mobile: <p>phone standings</p> });
     await screen.findAllByText('kemi');
-    for (const g of screen.getAllByRole('group', { name: 'Markets' })) expect(g.textContent).toMatch(/Competition$/);
+    for (const g of screen.getAllByRole('group', { name: 'Markets' })) expect([...g.querySelectorAll('button')].map((b) => b.textContent).slice(0, 2)).toEqual(['All markets', 'Competition']);
     expect(screen.getAllByRole('group', { name: 'Period' })).toHaveLength(2);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Competition' })[0]);

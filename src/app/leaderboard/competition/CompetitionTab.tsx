@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { cache } from 'react';
 
 import { COMPETITION_COPY, competitionStatus, PRIZES } from '@/lib/competition/config';
 import { getCompetitionStandings, type CompetitionStandings } from '@/lib/competition/standings';
@@ -10,10 +11,13 @@ import { StandingRow } from './StandingRow';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 
+/// The page renders the tab twice (desktop and phone): one standings read per request, not two.
+const readStandings = cache(getCompetitionStandings);
+
 export async function CompetitionTab({ compact }: { compact: boolean }) {
   let standings: CompetitionStandings | null = null;
   try {
-    standings = await getCompetitionStandings();
+    standings = await readStandings();
   } catch (e) {
     console.error('[competition] standings failed:', e);
   }
