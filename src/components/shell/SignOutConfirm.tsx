@@ -57,6 +57,17 @@ export function SignOutConfirm({ who, onClose }: Props) {
   const confirm = async () => {
     if (await (leftover ? retry() : signOut())) onClose();
   };
+  // Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.5): for a shared computer, also forget this browser, so
+  // the next sign-in here needs a code from the email again.
+  const forget = async () => {
+    if (await signOut({ forget: true })) onClose();
+  };
+  const forgetLine =
+    who.authType === 'magic' && !leftover ? (
+      <button type="button" onClick={forget} disabled={busy} style={{ display: 'block', margin: '12px auto 0', fontSize: 13, fontWeight: 700, color: 'var(--dim)', textDecoration: 'underline' }}>
+        Sign out and forget this browser (shared computer)
+      </button>
+    ) : null;
   const unfinished = leftover
     ? `You're signed out of Mako Market, but ${
         leftover.privy && leftover.wallet ? 'the email sign-in and your wallet did' : leftover.privy ? 'the email sign-in did' : 'your wallet did'
@@ -120,6 +131,7 @@ export function SignOutConfirm({ who, onClose }: Props) {
             {busy ? 'Signing out…' : leftover ? 'Try again' : 'Sign out'}
           </button>
         </div>
+        {forgetLine}
       </div>
       {/* Mobile */}
       <div className="mk-mob mk-m" style={{ position: 'fixed', inset: 0, zIndex: 81, pointerEvents: 'none' }}>
@@ -170,6 +182,7 @@ export function SignOutConfirm({ who, onClose }: Props) {
               {busy ? 'Signing out…' : leftover ? 'Try again' : 'Sign out'}
             </button>
           </div>
+          {forgetLine}
         </div>
       </div>
     </>

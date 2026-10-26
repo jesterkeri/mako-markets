@@ -16,8 +16,9 @@ import { ROUNDS_ADDRESS } from '@/lib/contract';
 import { useMarkets } from '@/lib/hooks';
 import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { openPools } from '@/lib/pool-display';
-import { confirmWalletFree, continueGatedSignIn, startOver as requestStartOver } from '@/lib/privy-gated-signin';
-import { submitTotp, type SessionResult } from '@/lib/session-exchange';
+import { maskEmail } from '@/components/shell/SignOutConfirm';
+import { checkShortcut, confirmWalletFree, continueGatedSignIn, startOver as requestStartOver, type StepAResult } from '@/lib/privy-gated-signin';
+import { EMAIL_AGAIN, submitTotp, type SessionResult } from '@/lib/session-exchange';
 import { closeSignIn, useSignInOpen } from '@/lib/sign-in-store';
 import { accountAddress, USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
@@ -34,7 +35,10 @@ import { usePageScrollLock } from '@/lib/use-page-scroll-lock';
 
 type Step =
   | { kind: 'email'; error: string | null; sending: boolean }
-  | { kind: 'code'; error: string | null; verifying: boolean; retryToken: string | null; sentAt: number; startOver?: boolean }
+  /// Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.5): this browser already holds a Privy session.
+  | { kind: 'continue'; email: string; busy: boolean; error: string | null }
+  /// `note`: why a new code was sent (a line of explanation, not an error).
+  | { kind: 'code'; error: string | null; verifying: boolean; retryToken: string | null; sentAt: number; startOver?: boolean; note?: string | null }
   | { kind: 'totp'; state: TotpRequiredState }
   /// INBOX_GAP_PLAN r18: an authenticator first (secret null while Privy prepares it), then the wallet.
   | { kind: 'enroll'; secret: string | null; authUrl: string | null; code: string; submitting: boolean; error: string | null }
@@ -58,10 +62,20 @@ function SignInFlow() {
   const [code, setCode] = useState('');
   const [step, setStep] = useState<Step>({ kind: 'email', error: null, sending: false });
   const auth = useRef<EmailAuth | null>(null);
+  // When the dialog opens on a browser that still holds a Privy session: "Continue as <masked email>" or "Use a
+  // different email" (plan 2.5), offered once, and only before anything was typed or sent.
+  const offered = useRef(false);
   const register = useCallback((a: EmailAuth | null) => {
     auth.current = a;
+    const held = a?.current()?.email ?? null;
+    if (offered.current || !held) return;
+    offered.current = true;
+    setStep((s) => (s.kind === 'email' && !s.sending && !s.error ? { kind: 'continue', email: held, busy: false, error: null } : s));
   }, []);
+  // Step A's answer for the last code, so a later "email again" can say why.
+  const lastStepA = useRef<StepAResult | null>(null);
   const busy =
+    (step.kind === 'continue' && step.busy) ||
     (step.kind === 'email' && step.sending) ||
     (step.kind === 'code' && step.verifying) ||
     (step.kind === 'totp' && step.state.submitting) ||
@@ -90,6 +104,24 @@ function SignInFlow() {
     else closeSignIn();
   };
 
+  /// Remembered browsers (plan 2.2): the server needs a fresh email code for this browser. A new code goes to the same
+  /// address (sendCode ends the Privy session first and starts a new ceremony) with one line saying why.
+  const emailAgain = async (note: string | null, to: string = email) => {
+    const a = auth.current;
+    if (!a || !EMAIL.test(to.trim())) {
+      setStep({ kind: 'email', error: note, sending: false });
+      return;
+    }
+    setEmail(to);
+    try {
+      await a.sendCode(to.trim());
+      setCode('');
+      setStep({ kind: 'code', error: null, verifying: false, retryToken: null, sentAt: Date.now(), note });
+    } catch {
+      setStep({ kind: 'email', error: "The code couldn't be sent. Check the address and try again.", sending: false });
+    }
+  };
+
   const settle = (r: SessionResult, token: string) => {
     if (r.kind === 'signed_in') {
       // Email and wallet sessions are exclusive: an email sign-in drops a connected wallet.
@@ -101,7 +133,9 @@ function SignInFlow() {
       signedIn(r.user, r.firstSignIn);
     } else if (r.kind === 'totp') {
       setStep({ kind: 'totp', state: { kind: 'totp_required', challengeId: r.challengeId, mode: 'totp', submitting: false, error: null, lockedUntil: null, terminal: null } });
-    } else if (r.kind === 'retry') {
+    } else if (r.kind === 'email_required') {
+      void emailAgain(EMAIL_AGAIN[r.reason]);
+    } else if (r.kind === 'retry' || r.kind === 'proof_expired') {
       // The Privy session is kept: a retry runs the gate again (a fresh token and a fresh proof), not the spent code.
       setStep({ kind: 'code', error: r.message, verifying: false, retryToken: token || 'gate', sentAt: step.kind === 'code' ? step.sentAt : Date.now() });
     } else {
@@ -220,6 +254,29 @@ function SignInFlow() {
     }
   };
 
+  /// "Continue as": the server says whether this Privy session may go on without a new email code, BEFORE any
+  /// authenticator prompt, so nobody is asked for the authenticator, then the email, then the authenticator again.
+  const continueAs = async () => {
+    const a = auth.current;
+    if (step.kind !== 'continue' || step.busy || !a) return;
+    const prev = step;
+    setStep({ ...prev, busy: true, error: null });
+    const s = await checkShortcut(a.gate);
+    if (s === 'shortcut' || s === 'bind_possible' || s === 'rebind') {
+      setEmail(prev.email);
+      await runGate();
+      return;
+    }
+    await emailAgain(s === 'off' ? null : EMAIL_AGAIN.continue_needs_email, prev.email);
+  };
+
+  /// "Use a different email": ends this browser's Privy session, then the email step.
+  const useDifferentEmail = async () => {
+    await auth.current?.logout();
+    setEmail('');
+    setStep({ kind: 'email', error: null, sending: false });
+  };
+
   const verify = async () => {
     if (step.kind !== 'code' || step.verifying) return;
     const sentAt = step.sentAt;
@@ -233,13 +290,22 @@ function SignInFlow() {
     setStep({ ...step, verifying: true, error: null });
     let token: string | null;
     try {
-      token = await auth.current.verify(code);
+      const v = await auth.current.verify(code);
+      token = v.token;
+      lastStepA.current = v.stepA;
     } catch {
       setStep({ kind: 'code', error: 'That code didn’t match. Check the latest email and try again.', verifying: false, retryToken: null, sentAt });
       return;
     }
     if (!token) {
       setStep({ kind: 'code', error: 'Sign-in returned no token. Please try again.', verifying: false, retryToken: null, sentAt });
+      return;
+    }
+    // Before any authenticator prompt (enrollment included): if the server will not take this code, a new one now.
+    const s = await checkShortcut(auth.current.gate);
+    if (s === 'email_needed') {
+      const a = lastStepA.current;
+      await emailAgain(EMAIL_AGAIN[a && !a.ok ? a.reason : 'not_confirmed']);
       return;
     }
     await runGate();
@@ -258,6 +324,7 @@ function SignInFlow() {
     setStep({ kind: 'totp', state: submitting });
     const r = await submitTotp(submitting, trimmed);
     if (r.kind === 'state') setStep({ kind: 'totp', state: r.next });
+    else if (r.kind === 'email_required') await emailAgain(EMAIL_AGAIN[r.reason]);
     else settle({ kind: 'signed_in', user: r.user, firstSignIn: r.firstSignIn }, '');
   };
 
@@ -269,6 +336,8 @@ function SignInFlow() {
     code,
     setCode,
     sendCode,
+    continueAs,
+    useDifferentEmail,
     verify,
     submit2fa,
     finishEnroll,
@@ -298,6 +367,8 @@ type FlowProps = {
   code: string;
   setCode: (s: string) => void;
   sendCode: () => void;
+  continueAs: () => void;
+  useDifferentEmail: () => void;
   verify: () => void;
   submit2fa: (value: string) => void;
   finishEnroll: () => void;
@@ -417,6 +488,8 @@ function StepBody(p: FlowProps & { variant: 'desktop' | 'mobile' }) {
   switch (p.step.kind) {
     case 'email':
       return <EmailStep {...p} />;
+    case 'continue':
+      return <ContinueStep {...p} />;
     case 'code':
       return <CodeStep {...p} />;
     case 'totp':
@@ -516,6 +589,30 @@ function EmailStep({ step, email, setEmail, sendCode, setStep, variant }: FlowPr
         Use a wallet instead
       </button>
     </form>
+  );
+}
+
+/// Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.5): this browser still holds a Privy session. Continuing
+/// asks the server first (shortcut-check); on a browser it does not remember, a code goes to the email before any
+/// authenticator prompt. Copy: no em dashes, no "we/our/us".
+function ContinueStep({ step, continueAs, useDifferentEmail, variant }: FlowProps & { variant: 'desktop' | 'mobile' }) {
+  if (step.kind !== 'continue') return null;
+  return (
+    <div>
+      {title(variant, 'Welcome back')}
+      <div style={lead}>This browser is still signed in to your email sign-in. Continue, or use a different email.</div>
+      {step.error && (
+        <div role="alert" style={{ fontSize: 13, marginTop: 10, color: 'var(--mako-red)' }}>
+          {step.error}
+        </div>
+      )}
+      <button onClick={continueAs} disabled={step.busy} className="m3-press m3-scale96" style={bigButton(!step.busy)}>
+        {step.busy ? 'Checking…' : `Continue as ${maskEmail(step.email)}`}
+      </button>
+      <button type="button" onClick={useDifferentEmail} disabled={step.busy} style={{ display: 'block', margin: '14px auto 0', fontSize: 13, fontWeight: 700, color: 'var(--dim)', textDecoration: 'underline' }}>
+        Use a different email
+      </button>
+    </div>
   );
 }
 
@@ -640,6 +737,11 @@ function CodeStep({ step, email, code, setCode, verify, setStep, sendCode, start
   return (
     <div>
       {title(variant, 'Check your email')}
+      {step.note && (
+        <div role="status" style={{ fontSize: 14, lineHeight: 1.5, marginTop: 8, fontWeight: 700 }}>
+          {step.note}
+        </div>
+      )}
       <div style={lead}>
         A 6-digit code is on its way to <span style={{ color: 'var(--mako-canvas-fg)', fontWeight: 700 }}>{email.trim()}</span>.
       </div>

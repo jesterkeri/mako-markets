@@ -41,6 +41,45 @@ export type GateStep =
   | { kind: 'wallet_setup' }
   | { kind: 'session'; result: SessionResult };
 
+/// Why a fresh email code is needed (remembered browsers, SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.2).
+export type EmailReason = 'too_late' | 'other_device' | 'not_confirmed';
+
+/// Step A's answer, kept so the dialog can say why if the server later asks for the email again.
+export type StepAResult = { ok: true } | { ok: false; reason: EmailReason };
+
+const REASONS: ReadonlyArray<EmailReason> = ['too_late', 'other_device', 'not_confirmed'];
+export const emailReasonOf = (v: unknown): EmailReason => (REASONS.includes(v as EmailReason) ? (v as EmailReason) : 'not_confirmed');
+
+/// /api/user/auth/email-start, right before the code is sent: this browser's email ceremony (an httpOnly cookie). A
+/// failure is not fatal: the server's own check at sign-in decides, and it never admits anything weaker.
+export async function startEmailCeremony(): Promise<void> {
+  await postJson('/api/user/auth/email-start', {});
+}
+
+/// Step A: called right after loginWithCode with the FIRST token after it, retried with that same token when the
+/// answer was lost (a network error or a server error); a definite refusal is final.
+export async function recordEmailVerification(token: string, attempts = 3): Promise<StepAResult> {
+  for (let i = 0; i < attempts; i++) {
+    const r = await postJson('/api/user/auth/email-verified', { privyAccessToken: token });
+    if (r && r.status < 500 && r.json) {
+      if (r.json.ok === true) return { ok: true };
+      return { ok: false, reason: emailReasonOf(r.json.reason) };
+    }
+  }
+  return { ok: false, reason: 'not_confirmed' };
+}
+
+/// Before any authenticator prompt: may this Privy session go on without a new email code? `off`: the feature is off
+/// (an email code every time, as before). Anything unreadable counts as `email_needed`.
+export type ShortcutStatus = 'shortcut' | 'bind_possible' | 'rebind' | 'email_needed' | 'off';
+export async function checkShortcut(bridge: GateBridge): Promise<ShortcutStatus> {
+  const token = await bridge.token();
+  if (!token) return 'email_needed';
+  const r = await postJson('/api/user/auth/shortcut-check', { privyAccessToken: token });
+  const s = r?.json?.status;
+  return s === 'shortcut' || s === 'bind_possible' || s === 'rebind' || s === 'off' ? s : 'email_needed';
+}
+
 async function postJson(path: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> | null } | null> {
   try {
     const res = await fetch(path, {
@@ -61,8 +100,16 @@ async function postJson(path: string, body: unknown): Promise<{ status: number; 
   }
 }
 
-/// One pass of the gate: where this user stands, and, when the server issues a nonce, the proof and the session.
+/// One pass of the gate: where this user stands, and, when the server issues a nonce, the proof and the session. A
+/// proof that expired on the way (`proof_expired`) is retried once with a fresh nonce (SIGNIN_REMEMBERED_BROWSER_PLAN
+/// r29 2.2); a device clock too far ahead (`clock_skew`) is never retried.
 export async function continueGatedSignIn(bridge: GateBridge, site: string): Promise<GateStep> {
+  const first = await gatePass(bridge, site);
+  if (first.kind === 'session' && first.result.kind === 'proof_expired') return gatePass(bridge, site);
+  return first;
+}
+
+async function gatePass(bridge: GateBridge, site: string): Promise<GateStep> {
   const token = await bridge.token();
   if (!token) return { kind: 'session', result: { kind: 'error', message: 'Sign-in returned no token. Please try again.' } };
 
