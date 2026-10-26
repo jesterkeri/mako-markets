@@ -89,6 +89,20 @@ function ratio(num: bigint, den: bigint): number {
   return Number((num * 1_000_000_000_000n) / den) / 1e12;
 }
 
+type FeePool = Pick<MarketWithId, 'protocolFeeBpsSnapshot' | 'creatorFeeBpsSnapshot'>;
+
+/// A side's payout per unit as an exact fraction [num, den], with v4 forfeit-aware fees; null when either side is
+/// empty (the empty-side rule below).
+function payFraction(m: FeePool, yes: bigint, no: bigint, side: 'yes' | 'no'): [bigint, bigint] | null {
+  if (yes === 0n || no === 0n) return null;
+  const protocolBps = BigInt(m.protocolFeeBpsSnapshot);
+  const creatorBps = BigInt(m.creatorFeeBpsSnapshot);
+  const effectiveBps = isCreatorFeeForfeited(yes, no, creatorBps)
+    ? protocolBps
+    : protocolBps + creatorBps;
+  return [(yes + no) * (10000n - effectiveBps), (side === 'yes' ? yes : no) * 10000n];
+}
+
 /**
  * YES-side multiplier with v4 forfeit-aware fees. Accepts a prospective
  * bet (`extraYes`) for previews. Returns 0 in two cases:
@@ -101,16 +115,8 @@ export function yesMultiplier(
   m: Pick<MarketWithId, 'totalYes' | 'totalNo' | 'protocolFeeBpsSnapshot' | 'creatorFeeBpsSnapshot'>,
   extraYes = 0n,
 ): number {
-  const newYes = m.totalYes + extraYes;
-  const newNo = m.totalNo;
-  if (newYes === 0n || newNo === 0n) return 0;
-  const newTotal = newYes + newNo;
-  const protocolBps = BigInt(m.protocolFeeBpsSnapshot);
-  const creatorBps = BigInt(m.creatorFeeBpsSnapshot);
-  const effectiveBps = isCreatorFeeForfeited(newYes, newNo, creatorBps)
-    ? protocolBps
-    : protocolBps + creatorBps;
-  return ratio(newTotal * (10000n - effectiveBps), newYes * 10000n);
+  const f = payFraction(m, m.totalYes + extraYes, m.totalNo, 'yes');
+  return f ? ratio(...f) : 0;
 }
 
 /**
@@ -122,16 +128,18 @@ export function noMultiplier(
   m: Pick<MarketWithId, 'totalYes' | 'totalNo' | 'protocolFeeBpsSnapshot' | 'creatorFeeBpsSnapshot'>,
   extraNo = 0n,
 ): number {
-  const newYes = m.totalYes;
-  const newNo = m.totalNo + extraNo;
-  if (newYes === 0n || newNo === 0n) return 0;
-  const newTotal = newYes + newNo;
-  const protocolBps = BigInt(m.protocolFeeBpsSnapshot);
-  const creatorBps = BigInt(m.creatorFeeBpsSnapshot);
-  const effectiveBps = isCreatorFeeForfeited(newYes, newNo, creatorBps)
-    ? protocolBps
-    : protocolBps + creatorBps;
-  return ratio(newTotal * (10000n - effectiveBps), newNo * 10000n);
+  const f = payFraction(m, m.totalYes, m.totalNo + extraNo, 'no');
+  return f ? ratio(...f) : 0;
+}
+
+/// A side's multiplier rounded down to a whole number, exact at any size: past 2^53 the Number from ratio() is the
+/// nearest double, which can be above the real value (adversary on c3c5a0c). 0n under the empty-side rule.
+export function wholeMultiplier(
+  m: Pick<MarketWithId, 'totalYes' | 'totalNo' | 'protocolFeeBpsSnapshot' | 'creatorFeeBpsSnapshot'>,
+  side: 'yes' | 'no',
+): bigint {
+  const f = payFraction(m, m.totalYes, m.totalNo, side);
+  return f ? f[0] / f[1] : 0n;
 }
 
 /**

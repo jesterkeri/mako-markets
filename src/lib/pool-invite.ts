@@ -7,6 +7,7 @@
 // uint256 total fits the card.
 
 import type { MarketWithId } from './contract';
+import { wholeMultiplier } from './mocks';
 import { MIN_BET } from './pool-bet-rules';
 import { formatPays, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, type PoolCat, type PoolState } from './pool-list';
 import { poolClock, unsettleable } from './pool-rules';
@@ -103,10 +104,12 @@ export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: s
   const side = (s: 'yes' | 'no'): InviteSide => {
     const pays = s === 'yes' ? row.yesPays : row.noPays;
     const total = s === 'yes' ? m.totalYes : m.totalNo;
+    // Shortened pays come from the exact whole number, never the rounded Number (adversary on c3c5a0c).
+    const whole = wholeMultiplier(m, s);
     return {
       side: s,
       name: s === 'yes' ? labels.yes : labels.no,
-      pays: pays === null ? null : pays < 1_000_000 ? formatPays(pays) : `${cardFigure(BigInt(Math.floor(pays)))}x`,
+      pays: pays === null ? null : whole < 1_000_000n ? formatPays(pays) : `${cardFigure(whole)}x`,
       amount: total < 1_000_000n * 1_000_000n ? usdc2(total) : cardFigure(total / 1_000_000n),
       bettors: s === 'yes' ? m.yesBettorCount : m.noBettorCount,
     };
