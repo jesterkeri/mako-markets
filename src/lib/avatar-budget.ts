@@ -59,19 +59,19 @@ export function reserveAvatarVisitor(ip: string): Promise<boolean> {
 // Share card loads that reach the chain (pnl-card-server.ts, Codex SHARE_CARDS R1 F1 and R2 F1), two budgets, each
 // reserved just before the RPC calls it pays for, site-wide and across instances, in the same store and script. A load
 // that makes no RPC call (a result card whose final facts the server already holds) reserves neither.
-//  - Known bets (found in the leaderboard's bet ledger, mako_market_events, for this pool): 1 call, the pool read.
-//    Reserved only after the ledger lookup found the bet, so made-up links can never spend it.
-//  - Unknown bets (not in the ledger yet: placed in the last ~30 minutes, or made up): at most 3 calls on the server's
-//    node (receipt, pool, and the bet's block for a bet placed card), plus, when MONAD_RPC_URL names another node and
-//    that node finds no bet, 1 receipt from the public node (pnl-card-server.ts readBetLog). A flood of made-up links
-//    can only spend this one.
-// shareClient reads MONAD_RPC_URL, else the public Monad RPC (about 15 requests a second, shared with the rest of the
-// app). Windows of three seconds: one viewing of a bet placed link whose pool has settled is 3 loads within a second
-// (the page, its redirect to the result page, and the image). Known 12 x 1 + unknown 6 x 3 = 30 calls per 3 s = 10 a
-// second at most, two thirds of ~15, leaving 5 a second for the rest of the app; the public node's fallback receipts
-// add at most 6 per 3 s (2 a second). A 429 from the RPC is `unavailable`, a 503 with no-store.
+//  - Known bets (found in the leaderboard's bet ledger, mako_market_events, for this pool): 2 calls, the receipt and
+//    the pool read (the ledger gives the bet time). Reserved only after the ledger lookup found the bet, so made-up
+//    links can never spend it.
+//  - Unknown bets (not in the ledger yet: placed in the last ~30 minutes, or made up): at most 3 calls (receipt, pool,
+//    and the bet's block for a bet placed card). A flood of made-up links can only spend this one.
+// The receipt always comes from the public Monad node (pnl-card-server.ts readBetLog), the pool and block reads from
+// shareClient: MONAD_RPC_URL, else that same public node (about 15 requests a second, shared with the rest of the app).
+// Windows of three seconds: one viewing of a bet placed link whose pool has settled is 3 loads within a second (the
+// page, its redirect to the result page, and the image). Known 6 x 2 + unknown 6 x 3 = 30 calls per 3 s = 10 a second
+// at most on the public node, two thirds of ~15, leaving 5 a second for the rest of the app. A 429 from the RPC is
+// `unavailable`, a 503 with no-store.
 export const CARD_LOADS_PER_WINDOW = 6;
-export const KNOWN_CARD_LOADS_PER_WINDOW = 12;
+export const KNOWN_CARD_LOADS_PER_WINDOW = 6;
 export const CARD_LOAD_WINDOW_MS = 3_000;
 
 /// The bet ledger lookup every card load that is not a kept result makes first (Codex SHARE_CARDS R3 F1): one indexed
