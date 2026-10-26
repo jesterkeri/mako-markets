@@ -113,14 +113,15 @@ export function CreatePoolClient() {
   const now = useLiveNowSec();
   const { user } = useUser();
   const account = user ? accountAddress(user) : null;
-  /// The new pool whose invite card is open. Another account signing in closes it for good (render reset).
-  const [shareId, setShareId] = useState<bigint | null>(null);
+  /// The new pool whose invite card is open: the market the Share button read from the chain when it was tapped, kept
+  /// as read, so no later poll can hide the card or bring it back. Another account signing in closes it for good.
+  const [shared, setShared] = useState<MarketWithId | null>(null);
   const [shareAccount, setShareAccount] = useState(account);
   if (shareAccount !== account) {
     setShareAccount(account);
-    setShareId(null);
+    setShared(null);
   }
-  const closeShare = useCallback(() => setShareId(null), []);
+  const closeShare = useCallback(() => setShared(null), []);
   const balanceQ = useUsdcBalance(account ?? undefined);
   const balance = typeof balanceQ.data === 'bigint' ? balanceQ.data : null;
   const createsQ = useCreatorCreatesToday(account ?? undefined);
@@ -184,7 +185,7 @@ export function CreatePoolClient() {
 
   const openCreate = () => {
     if (!pool || !draft || now === null || seed === null || seedProblem || tx.tx) return;
-    setShareId(null); // a card from an earlier create never outlives the next one
+    setShared(null); // a card from an earlier create never outlives the next one
     const side = seedYes ? 'YES' : 'NO';
     setSheetSpec({
       glyph: '+',
@@ -285,8 +286,8 @@ export function CreatePoolClient() {
             tx.tx.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null && account ? (
               <ShareCreatedButton
                 id={tx.createdId}
-                onShare={(id) => {
-                  setShareId(id);
+                onShare={(m) => {
+                  setShared(m);
                   tx.close();
                 }}
               />
@@ -294,33 +295,24 @@ export function CreatePoolClient() {
           }
         />
       )}
-      {shareId !== null && account && <CreatedPoolShare id={shareId} by={user?.displayName?.trim() || formatAddress(account)} onClose={closeShare} />}
+      {shared && account && now !== null && (
+        <PoolShareSheet market={shared} now={now} labels={{ yes: 'YES', no: 'NO' }} by={user?.displayName?.trim() || formatAddress(account)} onClose={closeShare} />
+      )}
     </>
   );
 }
 
-/// "Share your pool" on the done tile. Enabled once the chain answers the new pool (a node that has not applied the
-/// create answers an all-zero market: getMarket is a plain mapping read), so a tap always opens the card at once and
-/// nothing waits behind a closed sheet. The pool page treats the same answer as not found.
-function ShareCreatedButton({ id, onShare }: { id: bigint; onShare: (id: bigint) => void }) {
+/// "Share your pool" on the done tile: hands the invite card the new pool as read from the chain (never the draft's
+/// figures). Enabled once the chain answers it (a node that has not applied the create answers an all-zero market:
+/// getMarket is a plain mapping read; the pool page treats that as not found), so a tap always opens the card at once.
+function ShareCreatedButton({ id, onShare }: { id: bigint; onShare: (market: MarketWithId) => void }) {
   const { market } = useMarket(id);
   const ready = market !== undefined && market.closeTime !== 0n;
   return (
-    <TileShareButton disabled={!ready} onClick={() => ready && onShare(id)}>
+    <TileShareButton disabled={!ready} onClick={() => market && ready && onShare(market)}>
       {ready ? 'Share your pool' : 'Finding your pool…'}
     </TileShareButton>
   );
-}
-
-/// The invite card for the pool just created, read from the chain like the pool page's (never the draft's figures).
-/// Mounted only while open, so the create page does not poll a market it is not showing. A node that has not applied
-/// the create yet answers an all-zero market (getMarket is a plain mapping read): wait for a real one, as the pool
-/// page does.
-function CreatedPoolShare({ id, by, onClose }: { id: bigint; by: string; onClose: () => void }) {
-  const { market } = useMarket(id);
-  const now = useLiveNowSec();
-  if (!market || market.closeTime === 0n || now === null) return null;
-  return <PoolShareSheet market={market} now={now} labels={{ yes: 'YES', no: 'NO' }} by={by} onClose={onClose} />;
 }
 
 type ViewProps = {
