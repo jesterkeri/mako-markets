@@ -35,7 +35,7 @@ afterEach(() => {
 
 function mountSide(name: string) {
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
-  const spec: ConfirmSpec = { ...BASE, doneSide: { name, amount: '10.00 USDC' } };
+  const spec: ConfirmSpec = { ...BASE, doneTile: { big: name, small: '10.00 USDC' } };
   render(<ConfirmSheet spec={spec} phase={{ step: 'done', txHash: TX }} wallet={WALLET} {...handlers()} doneExtra={<button type="button">Share your call</button>} />);
 }
 

@@ -29,9 +29,10 @@ export type ConfirmSpec = {
   doneBody: string;
   /// The second button once done ("Share round", "View in Me").
   doneSecondary?: { label: string; href: string };
-  /// A placed bet's done tile: black with the Mako mark behind, the side in big type, then the stake (Joshua 2026-10-24:
-  /// black for every pool, since a side colour means nothing for team or price pools).
-  doneSide?: { name: string; amount: string };
+  /// The black done tile with the Mako mark behind (Joshua 2026-10-24), `big` in display type under the title, `small`
+  /// under it: a placed bet's side and stake (black for every pool, since a side colour means nothing for team or price
+  /// pools), a claim's amount.
+  doneTile?: { big: string; small: string };
 };
 
 export type ConfirmAction = { label: string; href?: string; retry?: true };
@@ -134,7 +135,7 @@ function ActionButton({ action, primary, onRetry, onClose }: { action: ConfirmAc
 export const tileTitle: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.02, letterSpacing: '-0.025em' };
 export const tileBody: React.CSSProperties = { fontSize: 15, lineHeight: 1.45, fontWeight: 600, opacity: 0.8, marginTop: 6, overflowWrap: 'anywhere' };
 /// The same black in every theme and sheet (the yellow phone sheet included); the edge keeps it apart from a black sheet.
-const sideTile: React.CSSProperties = { position: 'relative', isolation: 'isolate', overflow: 'hidden', borderRadius: 28, background: '#000', color: 'var(--mako-paper)', boxShadow: 'inset 0 0 0 1.5px rgba(235, 229, 217, 0.22)', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 };
+const blackTile: React.CSSProperties = { position: 'relative', isolation: 'isolate', overflow: 'hidden', borderRadius: 28, background: '#000', color: 'var(--mako-paper)', boxShadow: 'inset 0 0 0 1.5px rgba(235, 229, 217, 0.22)', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 };
 
 /// The Mako mark in brand yellow behind the text (Joshua 2026-10-24), cropped at the bottom right; z-index -1 inside
 /// the tile's own stacking context.
@@ -266,22 +267,22 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, done
 
         {phase.step === 'done' && (
           <>
-            <div className="wl-tile" style={spec.doneSide ? sideTile : { borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {spec.doneSide && (
+            <div className="wl-tile" style={spec.doneTile ? blackTile : { borderRadius: 28, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {spec.doneTile && (
                 <span aria-hidden style={tileMark}>
                   <Logo size={260} />
                 </span>
               )}
-              {spec.doneSide ? (
+              {spec.doneTile ? (
                 <div role="status">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700 }}>
                     <CheckIn size={18} />
                     {spec.doneTitle}
                   </div>
-                  {/* A house pool's side can be a long name: past 4 characters (YES, NO fit) it is smaller and wraps instead of
-                      overflowing a phone, whatever its glyph widths. */}
-                  <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: spec.doneSide.name.length <= 4 ? 64 : 40, lineHeight: 0.95, letterSpacing: '-0.03em', marginTop: 14, overflowWrap: 'anywhere' }}>{spec.doneSide.name}</div>
-                  <div style={{ fontSize: 17, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{spec.doneSide.amount}</div>
+                  {/* A house pool's side or a claimed amount can be long: past 4 characters (YES, NO fit) it is smaller and
+                      wraps instead of overflowing a phone, whatever its glyph widths. */}
+                  <div style={{ fontFamily: 'var(--mako-font-display)', fontWeight: 800, fontSize: spec.doneTile.big.length <= 4 ? 64 : 40, lineHeight: 0.95, letterSpacing: '-0.03em', marginTop: 14, overflowWrap: 'anywhere', fontVariantNumeric: 'tabular-nums' }}>{spec.doneTile.big}</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{spec.doneTile.small}</div>
                 </div>
               ) : (
                 <>
@@ -366,6 +367,25 @@ function Body({ spec, phase, wallet, onConfirm, onCancel, onRetry, onClose, done
 }
 
 /// The confirm-in-wallet sheet. Render it while an action is open; the parent owns `phase`.
+/// A claim's black done tile (Joshua 2026-10-24, refunds too): the amount, and where it went.
+export const claimTile = (amt: string, refund: boolean) => ({ big: `${amt} USDC`, small: refund ? 'Your full stake is back in your balance.' : 'In your balance.' });
+
+/// The yellow Share on the black done tile. Brand yellow as a literal: the dark yellow phone sheet turns --mako-signal
+/// black, which would hide it there.
+export function TileShareButton({ disabled, onClick, children }: { disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="m3-press"
+      style={{ alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: 9999, background: '#FACC15', color: '#000', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, opacity: disabled ? 0.5 : 1 }}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function ConfirmSheet(props: Props) {
   const desktopConfirm = useRef<HTMLButtonElement>(null);
   const mobileConfirm = useRef<HTMLButtonElement>(null);

@@ -50,7 +50,7 @@ import { POST } from '../../app/api/aa/sponsor/route';
 import { wrapperCallDataFor } from '../user-op';
 
 const req = (body: unknown) =>
-  new Request('http://localhost/api/aa/sponsor', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' }, body: JSON.stringify(body) });
+  new Request('http://localhost/api/aa/sponsor', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': MAGIC_EOA }, body: JSON.stringify(body) });
 const betBody = (isYes: boolean, amount: bigint) => ({ kind: 'bet_single', chainId: 10143, call: { to: MAKO_ADDRESS, value: '0x0', data: placeBet(90n, isYes, amount) } });
 
 function storedOp(callData: Hex) {
@@ -112,6 +112,8 @@ describe('/api/aa/sponsor: a different concurrent request is never answered with
     const body = await res.json();
     expect(body.recovered).not.toBe(true);
     expect(body.userOp?.callData).not.toBe(fifty);
+    // It reached the race it guards (the reload after the conflict), not an earlier refusal.
+    expect(mocks.loadInFlightForSafe).toHaveBeenCalledTimes(2);
   });
 
   it('step 6 missed retire: a different pending op written by another request meanwhile is not handed back', async () => {
@@ -127,5 +129,7 @@ describe('/api/aa/sponsor: a different concurrent request is never answered with
     const body = await res.json();
     expect(body.recovered).not.toBe(true);
     expect(body.userOp?.callData).not.toBe(seven);
+    // It reached the retire it guards, not an earlier refusal.
+    expect(mocks.transitionPendingToExpired).toHaveBeenCalled();
   });
 });

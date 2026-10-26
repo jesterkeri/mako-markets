@@ -246,7 +246,7 @@ export async function runSponsoredOp(
     kind: 'smoke',
     chainId: args.chainId,
     call: args.call,
-  });
+  }, args.magicEoa);
   if (!sponsor.ok) {
     return {
       kind: 'sponsor_failed',
@@ -380,6 +380,8 @@ export async function runSponsoredOp(
 /// fired without a Pimlico round-trip.
 export async function runDisallowedOp(args: {
   chainId: number;
+  /// The signed-in account, which the sponsor route checks against its session.
+  magicEoa: Address;
   /// Address to put in `call.to`. Pass anything that's NOT the USDC
   /// contract — the route will 403 NOT_ALLOWED with reason 'bad_to'.
   to: Address;
@@ -397,7 +399,7 @@ export async function runDisallowedOp(args: {
       // to exercise the allowlist; multiple reasons all surface as 403.
       data: '0x',
     },
-  });
+  }, args.magicEoa);
   return {
     kind: 'sponsor_failed',
     status: sponsor.status,
@@ -529,7 +531,7 @@ export async function runPlaceBet(args: RunPlaceBetArgs): Promise<RunOutcome> {
   const body = buildBetBody(args);
 
   // 1. Sponsor.
-  const sponsor = await postJson('/api/aa/sponsor', body);
+  const sponsor = await postJson('/api/aa/sponsor', body, args.magicEoa);
   if (!sponsor.ok) {
     return {
       kind: 'sponsor_failed',
@@ -923,7 +925,7 @@ export async function runCreateMarket(
   const body = buildCreateBody(args);
 
   // 1. Sponsor.
-  const sponsor = await postJson('/api/aa/sponsor', body);
+  const sponsor = await postJson('/api/aa/sponsor', body, args.magicEoa);
   if (!sponsor.ok) {
     return {
       kind: 'sponsor_failed',
@@ -1121,7 +1123,7 @@ export async function runSponsoredRequest(
   // aborted fetch) so the helper always resolves a typed RunOutcome.
   let sponsor;
   try {
-    sponsor = await postJson('/api/aa/sponsor', body);
+    sponsor = await postJson('/api/aa/sponsor', body, magicEoa);
   } catch (err) {
     return {
       kind: 'sponsor_failed',
@@ -1367,14 +1369,18 @@ function readNumberField(
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
+/// `eoa`: the account the browser is acting for, sent to the sponsor route as `x-mako-eoa`. The route refuses when the
+/// session cookie now belongs to another account (signed in on another tab), before it spends that account's daily
+/// allowance or holds its in-flight slot (Codex CLAIM_TILE R2 F1).
 async function postJson(
   path: string,
   body: unknown,
+  eoa?: Address,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
   const res = await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
+    headers: eoa ? { 'content-type': 'application/json', 'x-mako-eoa': eoa } : { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   let parsed: unknown = null;
@@ -1563,7 +1569,7 @@ export async function runCreatePrivateMarket(
   };
   let sponsor;
   try {
-    sponsor = await postJson('/api/aa/sponsor', body);
+    sponsor = await postJson('/api/aa/sponsor', body, args.magicEoa);
   } catch (err) {
     return {
       kind: 'sponsor_failed',
@@ -1821,7 +1827,7 @@ async function runSponsoredCallOp(
   // 1. Sponsor.
   let sponsor;
   try {
-    sponsor = await postJson('/api/aa/sponsor', args.body);
+    sponsor = await postJson('/api/aa/sponsor', args.body, args.magicEoa);
   } catch (err) {
     return {
       kind: 'sponsor_failed',

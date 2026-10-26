@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReadContract, useReadContracts } from 'wagmi';
 
 import { PoolCommentsDesktop, PoolCommentsMobile } from '@/components/comments/PoolComments';
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { claimTile, ConfirmSheet, TileShareButton, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { CreatorEarningsCard, creatorFeeConfirmSpec } from '@/components/CreatorEarnings';
 import { BetCardSheet, PnlShareSheet, useBetLog } from '@/components/PnlShareSheet';
 import { PoolShareSheet } from '@/components/PoolShareSheet';
@@ -127,6 +127,8 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
+  /// The account a won claim was opened for: its done tile shares that account's win card, and no other's.
+  const [winFor, setWinFor] = useState<string | null>(null);
   /// The bet confirmation's Share: the bet a confirmed bet transaction placed, once its receipt names it.
   const betTx = tx.tx?.kind === 'bet' && tx.phase.step === 'done' ? tx.phase.txHash : undefined;
   const betLog = useBetLog(betTx, id, account);
@@ -159,6 +161,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const openClaim = () => {
     if (claimAmount === null || tx.tx) return;
     setSheetSpec(confirmSpec('claim', market, row, labels, amount, side, estimate, claimAmount));
+    setWinFor(myCard === 'result' ? account : null);
     tx.open({ kind: 'claim', marketId: id });
   };
   // Creator earnings: only the pool's creator sees them, from the pool's own on-chain state.
@@ -240,21 +243,26 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
           onClose={tx.close}
           doneExtra={
             betTx && betLog.status !== 'none' ? (
-              <button
-                type="button"
+              <TileShareButton
                 disabled={betLog.status !== 'found'}
                 onClick={() => {
                   if (betLog.status !== 'found') return;
                   setBetCard({ tx: betTx, log: betLog.log });
                   tx.close();
                 }}
-                // Brand yellow as a literal: it sits on the black done tile, and the dark yellow phone sheet turns
-                // --mako-signal black, which would hide it there.
-                className="m3-press"
-                style={{ alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: 9999, background: '#FACC15', color: '#000', fontFamily: 'var(--mako-font-mono)', fontSize: 12, fontWeight: 700, opacity: betLog.status === 'found' ? 1 : 0.5 }}
               >
                 {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
-              </button>
+              </TileShareButton>
+            ) : tx.tx?.kind === 'claim' && tx.phase.step === 'done' && myCard === 'result' && account && winFor === account ? (
+              // A won pool's claim shares the win card (Joshua 2026-10-24); a refund has no card.
+              <TileShareButton
+                onClick={() => {
+                  setMyCardFor(account);
+                  tx.close();
+                }}
+              >
+                Share your win
+              </TileShareButton>
             ) : undefined
           }
         />
@@ -306,9 +314,10 @@ function confirmSpec(
         { label: refund ? 'Refund' : 'Payout', value: `${amt} USDC` },
       ],
       note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the pool settled; the claim pays out the rest.',
-      doneTitle: refund ? 'Refund claimed' : 'Claimed',
+      doneTitle: refund ? 'Refund claimed' : 'You won',
       doneBody: `${amt} USDC is in your balance.`,
       doneSecondary: { label: 'View in Me', href: '/me' },
+      doneTile: claimTile(amt, refund),
     };
   }
   const isYes = side === 'yes';
@@ -331,7 +340,7 @@ function confirmSpec(
     doneTitle: 'Bet placed',
     doneBody: `${amt} USDC on ${name}.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
-    doneSide: { name, amount: `${amt} USDC` },
+    doneTile: { big: name, small: `${amt} USDC` },
   };
 }
 

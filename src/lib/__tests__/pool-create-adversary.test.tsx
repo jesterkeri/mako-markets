@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => ({
   runSponsoredRequest: vi.fn(),
 }));
 
-vi.mock('../use-user', () => ({
+vi.mock('../use-user', async (orig) => ({
+  ...(await orig<typeof import('../use-user')>()),
   useUser: () => ({
     user: {
       authed: true,

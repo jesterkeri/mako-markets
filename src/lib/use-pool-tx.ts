@@ -157,6 +157,16 @@ async function creatorFeeRefusal(client: Client, marketId: bigint, account: stri
   }
 }
 
+/// Another account signed in while this one's send was being prepared: stop before anything goes out.
+const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
+  step: 'failed',
+  title: w.failTitle,
+  body: 'Another account signed in, so nothing was sent.',
+  nothingMoved: true,
+  primary: { label: 'Close' },
+  secondary: { label: 'Close' },
+});
+
 export function usePoolTx(onLanded?: () => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
@@ -170,6 +180,18 @@ export function usePoolTx(onLanded?: () => void) {
 
   const [tx, setTx] = useState<PoolTx | null>(null);
   const [phase, setPhase] = useState<ConfirmPhase>({ step: 'review' });
+  /// The account the sheet was opened for. Another account signing in before it is sent closes it, and it never confirms
+  /// for anyone else (Codex CLAIM_TILE R1 F1): a sheet, and the done step after it, belong to one account.
+  const account = user ? accountAddress(user) : null;
+  const [owner, setOwner] = useState<string | null>(null);
+  /// The signed-in account as of the latest render, for the checks after an await, right before a send goes out
+  /// (adversary on 36dfef4: a switch during the creator-fee pre-check read still sent the claim, under the new session).
+  const accountNow = useRef(account);
+  accountNow.current = account;
+  if (tx && owner !== account && phase.step !== 'pending') {
+    setTx(null);
+    setPhase({ step: 'review' });
+  }
   /// The id of the pool a landed create made, read from its receipt (null until then, or if it could not be read).
   const [createdId, setCreatedId] = useState<bigint | null>(null);
   const inFlight = useRef(false);
@@ -178,12 +200,13 @@ export function usePoolTx(onLanded?: () => void) {
   const open = useCallback(
     (next: PoolTx) => {
       if (inFlight.current) return;
+      setOwner(account);
       setTx(next);
       // A drifted wallet session never reaches the review step's Confirm button.
       setPhase(user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : { step: 'review' });
       setCreatedId(null);
     },
-    [user, connected],
+    [user, connected, account],
   );
 
   /// Closes the sheet; never while a transaction is on its way.
@@ -208,7 +231,7 @@ export function usePoolTx(onLanded?: () => void) {
   );
 
   const run = useCallback(async () => {
-    if (!tx || !user || !publicClient || inFlight.current) return;
+    if (!tx || !user || !publicClient || inFlight.current || accountAddress(user) !== owner) return;
     inFlight.current = true;
     const words = WORDS[tx.kind];
     let next: ConfirmPhase;
@@ -272,6 +295,7 @@ export function usePoolTx(onLanded?: () => void) {
       } else {
         body = buildClaimCreatorFeeBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
       }
+      if (accountNow.current !== accountAddress(u)) return switchedAccount(w);
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
       if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
       // A creator-fee claim is held from the moment it is sent (src/lib/creator-claim-pending.ts): no Claim button and
@@ -313,6 +337,9 @@ export function usePoolTx(onLanded?: () => void) {
       /// Every wallet request goes through here: the browser wallet must still be the signed-in one at the moment of
       /// asking, and the request names that account, so wagmi refuses rather than sign from another.
       async function write(request: Parameters<typeof writeContractAsync>[0]): Promise<`0x${string}`> {
+        // Another account signed in on the tab since Confirm (adversary on a3ac5a7): the wallet may still be connected,
+        // but this sheet is no longer that account's to send.
+        if (accountNow.current !== accountAddress(u)) throw new WalletSwitched();
         if (!connectedNow.current || isWalletDrifted(u, connectedNow.current)) throw new WalletSwitched();
         return writeContractAsync({ ...request, account: account! } as Parameters<typeof writeContractAsync>[0]);
       }
@@ -412,7 +439,7 @@ export function usePoolTx(onLanded?: () => void) {
         }
       }
     }
-  }, [tx, user, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
+  }, [tx, user, owner, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
 
   return { tx, phase, createdId, open, close, confirm: run, retry: run };
 }

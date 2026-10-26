@@ -27,7 +27,7 @@ vi.mock('wagmi', () => ({
   useWriteContract: () => ({ writeContractAsync: m.writeContractAsync }),
 }));
 vi.mock('@/lib/hooks', () => ({ useEnsureMonadChain: () => async () => {} }));
-vi.mock('@/lib/use-user', () => ({ useUser: () => ({ user: m.user }) }));
+vi.mock('@/lib/use-user', async (orig) => ({ ...(await orig<typeof import('@/lib/use-user')>()), useUser: () => ({ user: m.user }) }));
 
 import { usePoolTx } from '@/lib/use-pool-tx';
 

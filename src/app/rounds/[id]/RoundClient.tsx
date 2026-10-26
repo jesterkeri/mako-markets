@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation';
 import { useState } from 'react';
 
 import { MarketChart } from '@/components/MarketChart';
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { claimTile, ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
 import { ListStateDesktop } from '@/components/ListState';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { useUsdcBalance } from '@/lib/hooks';
@@ -245,9 +245,11 @@ function claimSpec(r: Round, p: Position, creatorFee: bigint | null, total: bigi
     pendingTitle: refund ? 'Claiming your refund' : 'Claiming',
     rows,
     note: refund ? 'A refund returns your full stake, with no fee.' : 'Fees were taken when the round settled; the claim pays out the rest.',
-    doneTitle: refund ? 'Refund claimed' : 'Claimed',
+    doneTitle: refund ? 'Refund claimed' : p.kind === 'won' ? 'You won' : 'Claimed',
     doneBody: `${amt} USDC is in your balance.`,
     doneSecondary: { label: 'View in Me', href: '/me' },
+    // A host-fee-only claim is creator earnings: it keeps the plain tile (adversary on 93cc619).
+    doneTile: p.kind === 'won' || refund ? claimTile(amt, refund) : undefined,
   };
 }
 
