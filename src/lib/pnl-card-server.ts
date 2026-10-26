@@ -158,7 +158,8 @@ const BIG = new Set(['id', 'createdAt', 'closeTime', 'bettingCloseTime', 'totalY
 /// which 'use cache' needs) with no expiry, by contract and (pool, tx, log): a pool settled YES or NO in a finalized
 /// block, and the bet before it, cannot change. Every other answer is thrown, so it is never kept. Only chain facts
 /// are kept: name, photo and labels are read fresh on every render. The data cache stores JSON, so bigints travel as
-/// strings.
+/// strings. v2 (adversary on 87fc470): facts kept before the public node decided the bet were read from the ledger or
+/// the server's own node, so none of them is trusted; the old key's entries are never read again.
 const finalFacts = unstable_cache(
   async (pool: string, tx: string, logIndex: number): Promise<string> => {
     const f = await readFacts(BigInt(pool), tx as Hex, logIndex, 'result');
@@ -166,7 +167,7 @@ const finalFacts = unstable_cache(
     if (f.market.outcome !== Outcome.YES && f.market.outcome !== Outcome.NO) throw new NotFinal('not_found');
     return JSON.stringify(f, (_, v) => (typeof v === 'bigint' ? v.toString() : v));
   },
-  ['pnl-card-final-v1', String(MONAD_TESTNET_ID), MAKO_ADDRESS.toLowerCase()],
+  ['pnl-card-final-v2', String(MONAD_TESTNET_ID), MAKO_ADDRESS.toLowerCase()],
   { revalidate: false },
 );
 
