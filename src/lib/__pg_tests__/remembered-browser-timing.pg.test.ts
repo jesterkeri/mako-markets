@@ -334,7 +334,7 @@ describe.runIf(URL_)('[r28] the legacy challenge is judged on t at /api/user/aut
   async function shortChallenge(ceremonyId?: string): Promise<{ id: string; expiresMs: number }> {
     const [r] = await H.observer`INSERT INTO auth_challenges (user_id, magic_eoa, purpose, expires_at, rb_ceremony_id, rb_sid_hash, rb_factor_fingerprint)
       VALUES (${h.userId}, ${h.wallet}, 'totp_signin', clock_timestamp() + make_interval(secs => ${LIFETIME_MS / 1000}),
-              ${ceremonyId ?? null}, ${ceremonyId ? hex('a', 'x') : null}, ${ceremonyId ? h.fingerprint : null})
+              ${ceremonyId ?? null}, ${ceremonyId ? hex('a', 'e') : null}, ${ceremonyId ? h.fingerprint : null})
       RETURNING id, (extract(epoch from expires_at) * 1000)::float8 AS ms`;
     return { id: r.id as string, expiresMs: Number(r.ms) };
   }
