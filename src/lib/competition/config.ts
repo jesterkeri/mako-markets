@@ -43,6 +43,10 @@ export const COMPETITION_COPY = {
   noneEntered: 'No one has entered yet.',
   error: "Can't load the standings right now.",
   boardLink: 'Trading competition: $100 prize. See the standings',
+  /// The leaderboard's Competition tab (Joshua 2026-10-26): only the ranked players.
+  tab: 'Competition',
+  tabNote: 'Only players with 2 friends who placed a bet and 5 settled pools are shown.',
+  tabRules: 'Rules, and everyone entered',
   card: {
     title: 'Invite friends',
     body: 'Share your link. When 2 friends create a Mako Market account with it and place a bet, you enter the $100 trading competition.',
@@ -66,6 +70,13 @@ export const COMPETITION_COPY = {
     unavailable: 'Something went wrong. Try again',
   },
 } as const;
+
+/// The status line, read per request: the pages that show it are force-dynamic, so the clock is the request's.
+export function competitionStatus(): string {
+  const nowMs = Date.now();
+  if (nowMs < COMPETITION_START.getTime()) return COMPETITION_COPY.upcoming;
+  return nowMs < COMPETITION_END.getTime() ? COMPETITION_COPY.live : COMPETITION_COPY.final;
+}
 
 export type ReferrerError = keyof typeof COMPETITION_COPY.referrerErrors;
 
