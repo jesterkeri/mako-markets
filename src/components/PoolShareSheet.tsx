@@ -174,7 +174,7 @@ type TargetProps = { label: string; bg: string; fg: string; icon: React.ReactNod
 
 /// One share target: a 48px round icon over its label.
 function Target({ label, bg, fg, icon, ...t }: TargetProps) {
-  const item: React.CSSProperties = { flex: '0 1 auto', minWidth: 48, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'inherit', textDecoration: 'none', textAlign: 'center' };
+  const item: React.CSSProperties = { flex: '0 1 auto', minWidth: 'min-content', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'inherit', textDecoration: 'none', textAlign: 'center' };
   const circle = (
     <span aria-hidden="true" style={{ flex: 'none', width: 48, height: 48, borderRadius: 9999, background: bg, color: fg, boxShadow: 'var(--edge), inset 0 0 0 1px rgba(255,255,255,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       {icon}
