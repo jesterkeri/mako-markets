@@ -3,7 +3,8 @@
 // tested without a browser or a chain.
 //
 // Every figure on the card comes from the pool page's own helpers (poolRow, poolClock, usdc2), so the card and the
-// page can never disagree about the same pool.
+// page can never disagree about the same pool. Only figures of a million and up are shortened (cardFigure), so any
+// uint256 total fits the card.
 
 import type { MarketWithId } from './contract';
 import { MIN_BET } from './pool-bet-rules';
@@ -55,12 +56,24 @@ export function intentUrl(target: Exclude<ShareTarget, 'link'>, id: bigint, ques
   }
 }
 
+/// A whole number for the card: grouped below a million, then three digits rounded down and a suffix ("1.23M",
+/// "45.6B", "789T"), and past a thousand trillion "1.23e18". Rounded down so the card never shows more than there is.
+export function cardFigure(whole: bigint): string {
+  if (whole < 1_000_000n) return whole.toLocaleString('en-US');
+  const d = whole.toString();
+  const exp = d.length - 1;
+  if (exp >= 15) return `${d[0]}.${d.slice(1, 3)}e${exp}`;
+  const k = (exp % 3) + 1;
+  const head = d.slice(0, 3);
+  return `${head.slice(0, k)}${k < 3 ? `.${head.slice(k)}` : ''}${['M', 'B', 'T'][Math.floor(exp / 3) - 2]}`;
+}
+
 export type InviteSide = {
   side: 'yes' | 'no';
   name: string;
   /// Pays per 1 USDC ("1.29x"), or null when the side has no stake to quote from (the page says "No stake yet").
   pays: string | null;
-  /// USDC on the side, as the page prints it ("30.00").
+  /// USDC on the side, as the page prints it ("30.00"), shortened from a million ("1.23M").
   amount: string;
   bettors: number;
 };
@@ -89,11 +102,12 @@ export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: s
   const manual = unsettleable(m);
   const side = (s: 'yes' | 'no'): InviteSide => {
     const pays = s === 'yes' ? row.yesPays : row.noPays;
+    const total = s === 'yes' ? m.totalYes : m.totalNo;
     return {
       side: s,
       name: s === 'yes' ? labels.yes : labels.no,
-      pays: pays === null ? null : formatPays(pays),
-      amount: usdc2(s === 'yes' ? m.totalYes : m.totalNo),
+      pays: pays === null ? null : pays < 1_000_000 ? formatPays(pays) : `${cardFigure(BigInt(Math.floor(pays)))}x`,
+      amount: total < 1_000_000n * 1_000_000n ? usdc2(total) : cardFigure(total / 1_000_000n),
       bettors: s === 'yes' ? m.yesBettorCount : m.noBettorCount,
     };
   };

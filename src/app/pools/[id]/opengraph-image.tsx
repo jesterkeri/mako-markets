@@ -32,15 +32,20 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const { id } = await params;
   const parsedId = poolIdFrom(id);
   const market = parsedId !== null ? await readPoolForShare(parsedId) : null;
-  if (market) {
-    // A house pool's own side names, as the pool page shows them; YES and NO when they cannot be read. Times in UTC:
-    // one picture is seen everywhere.
-    const labels = market.mType === MarketType.MAKO ? await getMakoLabels(db, market.id.toString()).catch(() => null) : null;
-    const card = poolInviteCard(market, Math.floor(Date.now() / 1000), labels ? { yes: labels.label1, no: labels.label2 } : { yes: 'YES', no: 'NO' }, 'UTC');
+  // A house pool's own side names, as the pool page shows them, and YES and NO when it has none. A lookup that fails
+  // draws the brand (Codex R1 F1): YES and NO would be a guess. Times in UTC: one picture is seen everywhere.
+  const YN = { yes: 'YES', no: 'NO' };
+  const labels = !market
+    ? null
+    : market.mType !== MarketType.MAKO
+      ? YN
+      : await getMakoLabels(db, market.id.toString()).then((l) => (l ? { yes: l.label1, no: l.label2 } : YN), () => null);
+  if (market && labels) {
+    const card = poolInviteCard(market, Math.floor(Date.now() / 1000), labels, 'UTC');
     return renderPoolCard(card, market.question, await poolQr(market.id));
   }
 
-  // No pool read: the brand.
+  // No pool read, or its side names could not be read: the brand.
   const question = 'Mako Market';
   const tag = 'MAKO';
   const closeLabel = 'PREDICTION POOLS ON MONAD';

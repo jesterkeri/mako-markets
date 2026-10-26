@@ -35,7 +35,13 @@ vi.mock('@/lib/pool-share', () => ({
   readPoolForShare: async () => chain.market,
 }));
 vi.mock('@/db/client', () => ({ db: {} }));
-vi.mock('@/lib/mako-labels-server', () => ({ getMakoLabels: async () => ({ label1: 'Rain', label2: 'Dry' }) }));
+const labelRead = vi.hoisted(() => ({ result: { label1: 'Rain', label2: 'Dry' } as { label1: string; label2: string } | null | Error }));
+vi.mock('@/lib/mako-labels-server', () => ({
+  getMakoLabels: async () => {
+    if (labelRead.result instanceof Error) throw labelRead.result;
+    return labelRead.result;
+  },
+}));
 vi.mock('@/lib/pool-qr', () => ({ poolQr: async () => 'data:image/svg+xml;base64,' }));
 vi.mock('@/lib/pnl-card-image', () => ({
   CARD_SIZE: { width: 1600, height: 900 },
@@ -50,6 +56,7 @@ const draw = (id: string) => Image({ params: Promise.resolve({ id }) });
 
 beforeEach(() => {
   drawn.calls = [];
+  labelRead.result = { label1: 'Rain', label2: 'Dry' };
 });
 
 describe('the pool link preview', () => {
@@ -68,6 +75,21 @@ describe('the pool link preview', () => {
     chain.market = { ...POOL, mType: MarketType.MAKO };
     await draw('158');
     expect(drawn.calls[0].card.sides.map((s) => s.name)).toEqual(['Rain', 'Dry']);
+  });
+
+  it('a house pool with no side names of its own says YES and NO', async () => {
+    chain.market = { ...POOL, mType: MarketType.MAKO };
+    labelRead.result = null;
+    await draw('158');
+    expect(drawn.calls[0].card.sides.map((s) => s.name)).toEqual(['YES', 'NO']);
+  });
+
+  it('a house pool whose side names cannot be read gets the brand, never YES and NO in their place (Codex R1 F1)', async () => {
+    chain.market = { ...POOL, mType: MarketType.MAKO };
+    labelRead.result = new Error('Neon timed out');
+    const res = await draw('158');
+    expect(drawn.calls).toHaveLength(0);
+    expect(res.headers.get('content-type')).toBe('image/png');
   });
 
   it('a pool that cannot be read gets the brand, not a made-up card', async () => {

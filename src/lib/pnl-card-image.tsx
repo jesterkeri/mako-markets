@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { ImageResponse } from 'next/og';
 
 import { questionPx, type PlacedCard, type ShareCard } from './pnl-card';
-import type { InviteCard } from './pool-invite';
+import { cardFigure, type InviteCard } from './pool-invite';
 import { catTitle } from './pool-list';
 
 export const CARD_SIZE = { width: 1600, height: 900 };
@@ -361,7 +361,7 @@ export function PoolCardView({ card, question, art, qr }: { card: InviteCard; qu
       <div style={{ position: 'absolute', left: 76, top: 594, display: 'flex', alignItems: 'center', padding: '22px 52px 24px', borderRadius: 999, background: YELLOW }}>
         {card.sides.map((x, i) => (
           <div key={x.side} style={{ display: 'flex', flexDirection: 'column', paddingLeft: i === 0 ? 0 : 34, paddingRight: i === 0 ? 34 : 0, borderLeft: i === 0 ? 'none' : '2px solid rgba(10,10,10,.28)' }}>
-            <span style={{ ...mono(15, 0.12), color: INK, opacity: 0.78 }}>{`${x.name} · ${x.bettors} in`}</span>
+            <span style={{ ...mono(15, 0.12), color: INK, opacity: 0.78 }}>{`${x.name} · ${cardFigure(BigInt(x.bettors))} in`}</span>
             <div style={{ marginTop: 10, display: 'flex', alignItems: 'baseline', ...bric(36, -0.02), lineHeight: 1, color: x.side === 'yes' ? THEME.win.sided : THEME.loss.sided }}>
               {x.pays ? `${x.pays}` : 'No stake yet'}
               <span style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 18, letterSpacing: 0, color: INK, opacity: 0.72, marginLeft: 8 }}>{`${x.amount} USDC`}</span>
