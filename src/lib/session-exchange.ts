@@ -67,6 +67,15 @@ function emailReason(v: unknown): 'too_late' | 'other_device' | 'not_confirmed' 
 }
 
 /// Any answer from POST /api/user/auth (or a refusal from /api/user/auth/proof) as the dialog's next step.
+/// The lockout refusal names when sign-in opens again (owner 2026-10-26: keep the stricter rule, say when), in the
+/// device's own time like every other deadline; the plain message when the server sent no readable time.
+export function lockedMessage(retryAt: unknown): string {
+  const at = typeof retryAt === 'string' ? Date.parse(retryAt) : NaN;
+  if (!Number.isFinite(at)) return GATE_MESSAGES.totp_locked;
+  const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `Too many wrong codes. Sign-in is paused for this account until ${time}; try again then.`;
+}
+
 export function mapSessionResponse(status: number, body: Record<string, unknown> | null): SessionResult {
   if (status >= 500) return { kind: 'retry', message: body?.error === 'privy_unavailable' ? GATE_MESSAGES.unavailable : 'Server error. Your code is still good; try again.' };
   if (!body) return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
@@ -80,7 +89,7 @@ export function mapSessionResponse(status: number, body: Record<string, unknown>
   if (body.status === 'mfa_proof_required') return { kind: 'retry', message: GATE_MESSAGES.mfa_proof_required };
   if (body.status === 'proof_expired') return { kind: 'proof_expired', message: GATE_MESSAGES.proof_expired };
   if (body.status === 'clock_skew') return { kind: 'error', message: GATE_MESSAGES.clock_skew };
-  if (status === 429 && body.error === 'totp_locked') return { kind: 'error', message: GATE_MESSAGES.totp_locked };
+  if (status === 429 && body.error === 'totp_locked') return { kind: 'error', message: lockedMessage(body.retryAt) };
   const error = typeof body.error === 'string' ? body.error : undefined;
   if (status >= 400) return { kind: 'error', message: (error && ERRORS[error]) ?? 'Sign-in failed. Please try again.' };
   return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };

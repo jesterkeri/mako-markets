@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TotpRequiredState } from '@/components/signup/TotpStep';
 import { confirmWalletFree, continueGatedSignIn, GATE_MESSAGES, START_OVER_MESSAGE, startOver, type GateBridge } from '../privy-gated-signin';
-import { submitTotp } from '../session-exchange';
+import { mapSessionResponse, submitTotp } from '../session-exchange';
 
 const USER = {
   authed: true,
@@ -217,5 +217,19 @@ describe('submitTotp', () => {
     expect(await submitTotp(state, '000000')).toMatchObject({ kind: 'state', next: { lockedUntil: Date.parse('2026-09-30T23:00:00.000Z') } });
     respond(401, { error: 'challenge_invalid' });
     expect(await submitTotp(state, '000000')).toMatchObject({ kind: 'state', next: { terminal: 'challenge_invalid' } });
+  });
+});
+
+describe('the sign-in lockout refusal (owner 2026-10-26: keep the stricter rule, say when to try again)', () => {
+  it('names the time sign-in opens again, in the device time; the plain message without a readable time', () => {
+    const at = '2026-10-26T21:34:00.000Z';
+    const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    expect(mapSessionResponse(429, { error: 'totp_locked', retryAt: at })).toEqual({
+      kind: 'error',
+      message: `Too many wrong codes. Sign-in is paused for this account until ${time}; try again then.`,
+    });
+    for (const retryAt of [undefined, 'soon', 42]) {
+      expect(mapSessionResponse(429, { error: 'totp_locked', retryAt })).toEqual({ kind: 'error', message: GATE_MESSAGES.totp_locked });
+    }
   });
 });
