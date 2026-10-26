@@ -27,6 +27,8 @@ export interface GateUser {
     delegated?: boolean;
     verified_at?: number;
     first_verified_at?: number | null;
+    /// The account's most recent verification (Unix seconds): for the email account, the last email code entered.
+    latest_verified_at?: number | null;
   }>;
 }
 

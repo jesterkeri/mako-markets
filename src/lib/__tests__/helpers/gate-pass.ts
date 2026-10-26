@@ -60,6 +60,26 @@ export const accountLocksPassing = () => ({
   lockSessions: async () => {},
 });
 
+/// Remembered browsers off (REMEMBERED_BROWSER_ENABLED unset), for route tests on a fake database: today's sign-in, and
+/// the mark every mint raises is a no-op here. The feature itself runs on PGlite in remembered-browser-*.test.ts.
+export const rememberedBrowserOff = () => ({
+  rememberedBrowserEnabled: () => false,
+  accountFor: async () => null,
+  ceremonyIdBySecret: async () => null,
+  raiseSeen: async () => {},
+  claimVerification: async () => true,
+  spendCeremony: async () => true,
+  insertBinding: async () => {},
+  markRowUsed: async () => true,
+  reissueRow: async () => {},
+  newBrowserSecret: () => 's'.repeat(43),
+  revokeAfterRefusal: async () => {},
+  readShortcutState: async () => ({ row: null, ceremony: null, nowMs: Date.now() }),
+  setBrowserCookie: () => {},
+  browserIsBound: async () => false,
+  forgetBrowser: async () => {},
+});
+
 /// For route tests that stand in upsertEmbeddedUser itself: the route's two halves (prepareEmbeddedUser at lock level
 /// (2), finishEmbeddedUser after `t`) call that one stand-in with the arguments it always received.
 export function upsertStandIn(upsert: (...args: unknown[]) => unknown) {

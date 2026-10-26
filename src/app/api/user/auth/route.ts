@@ -1,9 +1,40 @@
 import { cookies } from 'next/headers';
 import { type Address } from 'viem';
-import { db } from '@/db/client';
+import { db, type DbOrTx } from '@/db/client';
 import { userSafes } from '@/db/schema';
 import { isAllowedForCurrentStage } from '@/lib/allowlist';
-import { createSigninChallenge, TOTP_SIGNIN_MOVE_PURPOSE } from '@/lib/auth-challenges';
+import { createSigninChallenge, TOTP_SIGNIN_MOVE_PURPOSE, type ChallengeBinding } from '@/lib/auth-challenges';
+import {
+  accountFor,
+  ceremonyIdBySecret,
+  claimVerification,
+  insertBinding,
+  markRowUsed,
+  newBrowserSecret,
+  raiseSeen,
+  readShortcutState,
+  reissueRow,
+  rememberedBrowserEnabled,
+  revokeAfterRefusal,
+  setBrowserCookie,
+  spendCeremony,
+} from '@/lib/remembered-browser';
+import {
+  ceremonyMsLeft,
+  CHALLENGE_MARGIN_MS,
+  cookieSecret,
+  decideStepB,
+  EMAIL_CEREMONY_COOKIE,
+  emailLatestVerifiedAt,
+  factorFingerprint,
+  hashSecret,
+  hashSid,
+  REMEMBERED_BROWSER_COOKIE,
+  rowActive,
+  type EmailReason,
+  type StepBDecision,
+} from '@/lib/remembered-browser-rules';
+import { activeIds, pendingCeremonyIds, type RevokeReason } from '@/lib/remembered-browser-store';
 import { checkSameOrigin } from '@/lib/csrf';
 import { checkpointHashFrom } from '@/lib/enrollment-checkpoint';
 import { SAFE_TRACKED_CHAIN_IDS } from '@/lib/chain';
@@ -30,7 +61,7 @@ import {
   USER_SESSION_MAX_AGE_SEC,
 } from '@/lib/user-session';
 import { refFromCookieHeader } from '@/lib/ref-tag';
-import { lockSafeRows, lockSessions } from '@/lib/account-locks';
+import { lockCeremonies, lockRememberedRows, lockSafeRows, lockSessions } from '@/lib/account-locks';
 import { finishEmbeddedUser, IdentityConflictError, prepareEmbeddedUser } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
@@ -113,19 +144,108 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 // only from Privy's API.
 // ----------------------------------------------------------------------------
 
-/// Gate states that ask the dialog for its next step: no cookie, no account data.
-const FLOW_STATUS = new Set(['mfa_enrollment_required', 'wallet_required', 'proof_required']);
+/// Gate states that ask the dialog for its next step: no cookie, no account data. `email_required` (remembered
+/// browsers): this Privy session needs a fresh email code first; `reason` says why, for the dialog's one line.
+const FLOW_STATUS = new Set(['mfa_enrollment_required', 'wallet_required', 'proof_required', 'email_required']);
 
-function refusal(status: string, httpStatus?: number) {
-  return Response.json({ ok: false, status }, { status: httpStatus ?? (FLOW_STATUS.has(status) ? 200 : 403) });
+function refusal(status: string, httpStatus?: number, reason?: EmailReason) {
+  return Response.json(reason ? { ok: false, status, reason } : { ok: false, status }, { status: httpStatus ?? (FLOW_STATUS.has(status) ? 200 : 403) });
 }
 
 /// A refusal decided inside the sign-in transaction: thrown to roll the whole transaction back.
 class GateRefused extends Error {
-  constructor(public readonly status: string) {
+  constructor(
+    public readonly status: string,
+    public readonly reason?: EmailReason,
+  ) {
     super(`GATE_REFUSED: ${status}`);
     this.name = 'GateRefused';
   }
+}
+
+/// A refusal whose 2.3 trigger revokes (an authenticator change, a wrong mako_rb, a failed proof on a shortcut): the
+/// sign-in rolls back, then the revoke runs in its own transaction, so nothing of the sign-in is kept but the revoke is.
+class RevokeThenRefuse extends Error {
+  constructor(
+    public readonly revoke: RevokeReason,
+    public readonly status: string,
+    public readonly rowId?: string,
+  ) {
+    super(`REVOKE_THEN_REFUSE: ${revoke}`);
+    this.name = 'RevokeThenRefuse';
+  }
+}
+
+/// Mako's own TOTP is locked out (the users row held): no challenge is issued.
+class LockedOut extends Error {
+  constructor(public readonly until: Date) {
+    super('totp_locked');
+    this.name = 'LockedOut';
+  }
+}
+
+type RememberedInputs = {
+  enabled: boolean;
+  sidHash: string | null;
+  ecHash: string | null;
+  rbHash: string | null;
+  ceremonyId: string | null;
+  /// The current Privy authenticator's fingerprint (its verified_at).
+  fingerprint: number | null;
+  /// The email account's latest_verified_at in this read: what every mint raises the mark to.
+  value: number | null;
+};
+
+/// What this request carries for step B: the verified token's session id, this browser's two cookies, and the Privy
+/// values the rules compare. The ceremony's id is read without a lock; the transaction locks it by id at level (3).
+async function rememberedInputs(req: Request, read: PrivyAccountRead): Promise<RememberedInputs> {
+  const enabled = rememberedBrowserEnabled();
+  const ec = cookieSecret(req, EMAIL_CEREMONY_COOKIE);
+  const rbSecret = cookieSecret(req, REMEMBERED_BROWSER_COOKIE);
+  const ecHash = ec ? hashSecret(ec) : null;
+  return {
+    enabled,
+    sidHash: read.token ? hashSid(read.token.sessionId) : null,
+    ecHash,
+    rbHash: rbSecret ? hashSecret(rbSecret) : null,
+    ceremonyId: enabled ? await ceremonyIdBySecret(ecHash) : null,
+    fingerprint: factorFingerprint(read.user),
+    value: emailLatestVerifiedAt(read),
+  };
+}
+
+/// 2.3: a shortcut request (an active row for this session and this browser's mako_rb) whose proof carries a bad
+/// signature has that row revoked.
+async function revokeShortcutOnBadProof(read: PrivyAccountRead, rb: RememberedInputs): Promise<void> {
+  if (!rb.enabled || !rb.sidHash || !rb.rbHash) return;
+  const account = await accountFor(read.privyUserId, read.email);
+  if (!account) return;
+  const { row, nowMs } = await readShortcutState({ userId: account.id, sidHash: rb.sidHash, ecHash: null });
+  if (row && rowActive(row, nowMs) && row.deviceSecretHash === rb.rbHash) {
+    await revokeAfterRefusal({ userId: account.id, privyUserId: account.privyUserId, reason: 'proof_failed', rowId: row.id });
+  }
+}
+
+/// What the legacy challenge carries to /api/user/auth/totp, issued only while the ceremony or the row has more than
+/// five minutes left (the challenge's own lifetime), so nobody is refused after typing both codes.
+function challengeBinding(step: StepBDecision, rb: RememberedInputs, nowMs: number): ChallengeBinding | null {
+  if (step.kind === 'off' || rb.sidHash === null || rb.fingerprint === null) return null;
+  if (step.kind === 'bind') {
+    if (ceremonyMsLeft(step.ceremony, nowMs) <= CHALLENGE_MARGIN_MS) throw new GateRefused('email_required', 'too_late');
+    return { ceremonyId: step.ceremony.id, sidHash: rb.sidHash, factorFingerprint: rb.fingerprint };
+  }
+  if (step.kind === 'shortcut' || step.kind === 'reissue') {
+    if (step.row.expiresAt.getTime() - nowMs <= CHALLENGE_MARGIN_MS) throw new GateRefused('email_required', 'too_late');
+    return { rowId: step.row.id, sidHash: rb.sidHash, factorFingerprint: rb.fingerprint };
+  }
+  return null;
+}
+
+/// The lost-reply re-issue: a new secret for the row; its hash stored, the secret for the reply's cookie.
+async function reissue(tx: DbOrTx, rowId: string): Promise<string> {
+  const secret = newBrowserSecret();
+  await reissueRow(tx, rowId, hashSecret(secret));
+  return secret;
 }
 
 export async function POST(req: Request) {
@@ -191,7 +311,16 @@ export async function POST(req: Request) {
   // The signed message's own date (its 5 minutes and the 60 s future bound) is judged on this instance's clock before
   // any transaction opens, so no lock wait comes between this read and its decision [r27, exempt].
   const signed = await checkProofSignature({ ...proof, wallet: verdict.wallet, site, nowMs: Date.now() });
-  if (!signed.ok || !signed.nonce) return refusal(proofRefusal(signed.ok ? null : signed.reason));
+
+  // Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.2, step B): what this request carries. With the feature
+  // off every value below is unused and the sign-in is today's.
+  const rb = await rememberedInputs(req, read);
+  if (!signed.ok || !signed.nonce) {
+    // 2.3: a shortcut request that fails the proof with a bad signature revokes its row (an expired, future-dated or
+    // unknown proof does not, r13).
+    if (!signed.ok && (signed.reason === 'bad_signature' || signed.reason === 'wrong_signer')) await revokeShortcutOnBadProof(read, rb);
+    return refusal(proofRefusal(signed.ok ? null : signed.reason));
+  }
 
   if (!(await isAllowedForCurrentStage(email))) {
     return Response.json({ error: 'not_allowlisted' }, { status: 403 });
@@ -217,10 +346,12 @@ export async function POST(req: Request) {
     nextEmailChangeAvailableAt: string | null;
     keyExportedAt: string | null;
     keyExportChanged: boolean;
+    /// A new mako_rb secret to set: a bind, or the lost-reply re-issue.
+    rbSecret: string | null;
   };
   type Outcome =
     | SessionOutcome
-    | { kind: 'totp_required'; challengeId: string };
+    | { kind: 'totp_required'; challengeId: string; rbSecret: string | null };
 
   let outcome: Outcome;
   try {
@@ -241,18 +372,48 @@ export async function POST(req: Request) {
       });
       // (2a) Its Safe rows: a reuse inserts missing chains, a move rewrites them.
       await lockSafeRows(tx, prepared.user.id);
+      // (3) The account's ceremony rows: the one this browser's mako_ec names, and this Privy user's pending ones (a
+      // move or an authenticator change voids them). (4) Every remembered row of the account.
+      const ceremonies = rb.enabled ? await lockCeremonies(tx, { privyUserIds: [read.privyUserId], ids: rb.ceremonyId ? [rb.ceremonyId] : [] }) : [];
+      const rows = rb.enabled ? await lockRememberedRows(tx, prepared.user.id) : [];
       // (5) A direct move (a Magic-era account without Mako's own TOTP) deletes every session of the account.
       if (prepared.directMove) await lockSessions(tx, { userId: prepared.user.id });
 
       const t = await databaseNowMs(tx);
 
+      const row = rows.find((r) => r.privySidHash === rb.sidHash) ?? null;
       // Single use, bound to this Privy user and this wallet, unexpired at `t` [r27]. Consumed inside the transaction,
       // so a replay finds it gone, and a sign-in that fails later, or a nonce that expired while this route waited,
       // rolls everything back: nothing moved, nothing deleted, no session.
       const fresh = await consumeProofNonce(tx, { nonce: signed.nonce as string, privyUserId: read.privyUserId, wallet: verdict.wallet, nowMs: t });
-      if (fresh !== 'ok') throw new GateRefused(fresh === 'expired' ? 'proof_expired' : 'mfa_proof_required');
+      if (fresh !== 'ok') {
+        // 2.3: a reused nonce on a shortcut request revokes its row.
+        if (fresh === 'reused' && row && rowActive(row, t) && rb.rbHash === row.deviceSecretHash) {
+          throw new RevokeThenRefuse('proof_failed', 'mfa_proof_required', row.id);
+        }
+        throw new GateRefused(fresh === 'expired' ? 'proof_expired' : 'mfa_proof_required');
+      }
 
-      const { user, moved, pendingMoveTo, created } = await finishEmbeddedUser(tx, prepared);
+      // Step B (plan 2.2): an unbound session mints only with a usable ceremony; a bound one only from its own browser.
+      const ceremony = ceremonies.find((c) => c.id === rb.ceremonyId) ?? null;
+      const step = decideStepB({ ...rb, privyUserId: read.privyUserId, row, ceremony, nowMs: t });
+      if (step.kind === 'email_required') throw new GateRefused('email_required', step.reason);
+      if (step.kind === 'factor_changed') throw new RevokeThenRefuse('factor_changed', 'email_required');
+      if (step.kind === 'device_mismatch') throw new RevokeThenRefuse('device_mismatch', 'email_required', step.row.id);
+      // Owner question (plan section 5), decided for the build as the stricter option: while Mako's own TOTP is locked
+      // out, no challenge is issued that names a ceremony or a row, so a lockout can never miss one written after it.
+      if (step.kind !== 'off' && prepared.user.totpSecret && prepared.user.totpLockedUntil && prepared.user.totpLockedUntil.getTime() > t) {
+        throw new LockedOut(prepared.user.totpLockedUntil);
+      }
+
+      // A move revokes the account's rows and voids its pending ceremonies, except the one this sign-in spends; the
+      // bind below is written after it (r19).
+      const keep = step.kind === 'bind' ? step.ceremony.id : null;
+      const { user, moved, pendingMoveTo, created } = await finishEmbeddedUser(tx, prepared, {
+        rowIds: activeIds(rows),
+        ceremonyIds: pendingCeremonyIds(ceremonies.filter((c) => c.verifiedPrivyUserId === read.privyUserId && c.id !== keep)),
+        nowMs: t,
+      });
       if (!user.email || !user.magicEoa) {
         throw new Error('[user-auth] embedded row missing email/magic_eoa post-upsert');
       }
@@ -269,8 +430,9 @@ export async function POST(req: Request) {
           purpose: TOTP_SIGNIN_MOVE_PURPOSE,
           privyUserId: read.privyUserId,
           nowMs: t,
+          binding: challengeBinding(step, rb, t),
         });
-        return { kind: 'totp_required', challengeId };
+        return { kind: 'totp_required', challengeId, rbSecret: null };
       }
       // Re-judge against the row this transaction holds: the order rule runs only at first admission ([G1]). Written
       // only for an account bound to this Privy wallet; a pending move is admitted by /api/user/auth/totp after it moves.
@@ -301,16 +463,43 @@ export async function POST(req: Request) {
         }
       }
 
-      // Phase 1G: Mako's own TOTP, when on, gates the cookie behind /api/user/auth/totp.
+      // Phase 1G: Mako's own TOTP, when on, gates the cookie behind /api/user/auth/totp. The challenge carries the
+      // ceremony to spend or the row to use; /api/user/auth/totp binds or uses it in the transaction that mints. A lost
+      // reply's re-issue happens here: the new mako_rb rides on this answer.
       if (user.totpSecret) {
+        const rbSecret = step.kind === 'reissue' ? await reissue(tx, step.row.id) : null;
         const challengeId = await createSigninChallenge({
           tx,
           userId: user.id,
           magicEoa: eoa,
           nowMs: t,
+          binding: challengeBinding(step, rb, t),
         });
-        return { kind: 'totp_required', challengeId };
+        return { kind: 'totp_required', challengeId, rbSecret };
       }
+
+      // Step B's writes, in the minting transaction: all of it commits or rolls back together.
+      let rbSecret: string | null = null;
+      if (step.kind === 'bind') {
+        if (!(await spendCeremony(tx, step.ceremony.id, t))) throw new GateRefused('email_required', 'not_confirmed');
+        // Case (5): another sign-in recorded this verification meanwhile.
+        if (!(await claimVerification(tx, user.id, step.ceremony.verifiedValue as number))) throw new GateRefused('email_required', 'other_device');
+        rbSecret = newBrowserSecret();
+        await insertBinding(tx, {
+          userId: user.id,
+          sidHash: rb.sidHash as string,
+          deviceSecretHash: hashSecret(rbSecret),
+          ceremonyId: step.ceremony.id,
+          fingerprint: rb.fingerprint as number,
+          nowMs: t,
+        });
+      } else if (step.kind === 'shortcut') {
+        if (!(await markRowUsed(tx, step.row.id, t))) throw new GateRefused('email_required', 'not_confirmed');
+      } else if (step.kind === 'reissue') {
+        rbSecret = await reissue(tx, step.row.id);
+      }
+      // Every mint for an email account raises the recorded verification mark, never lowers it.
+      await raiseSeen(tx, user.id, rb.value);
 
       // Read prior-session row BEFORE createSession (see header comment on lastSignInAt ordering).
       const lastSignInAt = await readLastSignIn(user.id, null, { tx });
@@ -344,10 +533,18 @@ export async function POST(req: Request) {
         nextEmailChangeAvailableAt,
         keyExportedAt: keyExportedAt ? keyExportedAt.toISOString() : null,
         keyExportChanged: keyExportChanged && keyExportedAt !== null,
+        rbSecret,
       };
     });
   } catch (err) {
-    if (err instanceof GateRefused) return refusal(err.status);
+    if (err instanceof GateRefused) return refusal(err.status, undefined, err.reason);
+    if (err instanceof LockedOut) return Response.json({ error: 'totp_locked', retryAt: err.until.toISOString() }, { status: 429 });
+    if (err instanceof RevokeThenRefuse) {
+      // The sign-in rolled back; the trigger's revoke is kept in its own transaction, in the lock order.
+      const account = await accountFor(read.privyUserId, email);
+      if (account) await revokeAfterRefusal({ userId: account.id, privyUserId: account.privyUserId, reason: err.revoke, rowId: err.rowId });
+      return refusal(err.status, undefined, err.status === 'email_required' ? 'not_confirmed' : undefined);
+    }
     if (err instanceof IdentityConflictError) {
       if (err.reason === 'eoa_with_different_email' || err.reason === 'privy_identity_mismatch') {
         // [J2] C4: the Privy login email moved away from the admitted one (or the admitted email now belongs to a
@@ -362,6 +559,11 @@ export async function POST(req: Request) {
     console.error('[user/auth] transaction failed', summarizeError(err));
     return Response.json({ error: 'internal' }, { status: 500 });
   }
+
+  const store = await cookies();
+  // The binding's cookie is delivered even when the post-commit Privy read below fails (r12): the binding committed,
+  // and using it still needs the authenticator.
+  if (outcome.rbSecret) setBrowserCookie(store, outcome.rbSecret);
 
   if (outcome.kind === 'totp_required') {
     // No userId / email / display name in this response: challengeId is the bearer credential.
@@ -388,7 +590,6 @@ export async function POST(req: Request) {
     return refusal(after.status);
   }
 
-  const store = await cookies();
   store.set(USER_SESSION_COOKIE, outcome.token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',

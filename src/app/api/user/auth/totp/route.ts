@@ -11,7 +11,30 @@ import {
   validateSigninChallenge,
   TOTP_SIGNIN_MOVE_PURPOSE,
 } from '@/lib/auth-challenges';
-import { lockChallenges, lockSafeRows, lockSessions, lockUserRow } from '@/lib/account-locks';
+import { lockCeremonies, lockChallenges, lockRememberedRows, lockSafeRows, lockSessions, lockUserRow } from '@/lib/account-locks';
+import {
+  claimVerification,
+  insertBinding,
+  markRowUsed,
+  newBrowserSecret,
+  raiseSeen,
+  rememberedBrowserEnabled,
+  revokeAfterRefusal,
+  setBrowserCookie,
+  spendCeremony,
+} from '@/lib/remembered-browser';
+import {
+  ceremonyReason,
+  cookieSecret,
+  EMAIL_CEREMONY_COOKIE,
+  emailLatestVerifiedAt,
+  factorFingerprint,
+  hashSecret,
+  rowActive,
+  usableCeremony,
+  type EmailReason,
+} from '@/lib/remembered-browser-rules';
+import { activeIds, pendingCeremonyIds } from '@/lib/remembered-browser-store';
 import { checkSameOrigin } from '@/lib/csrf';
 import { checkpointHashFrom } from '@/lib/enrollment-checkpoint';
 import { consumeRecoveryCodeMatch, findRecoveryCodeMatch } from '@/lib/recovery-codes';
@@ -104,6 +127,14 @@ class ChallengeInvalid extends Error {
   constructor() {
     super('challenge_invalid');
     this.name = 'ChallengeInvalid';
+  }
+}
+
+/// The remembered-browser re-check failed in the minting transaction: the email is needed again, nothing is kept.
+class EmailRequired extends Error {
+  constructor(public readonly reason: EmailReason) {
+    super('email_required');
+    this.name = 'EmailRequired';
   }
 }
 
@@ -267,12 +298,16 @@ export async function POST(req: Request) {
       ? { wallet: user.magicEoa.toLowerCase(), totpVerifiedAt: user.privyTotpAdmittedAt }
       : null;
   let gate: Extract<GateVerdict, { ok: true }>;
+  // Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.2, "Two requests"): this read's authenticator fingerprint
+  // and email verification value, compared and written in the minting transaction below.
+  let current: { fingerprint: number | null; value: number | null } = { fingerprint: null, value: null };
   try {
     const read = await readPrivyAccountById(privyId);
     if (read.email === null || read.email !== normalizeEmail(user.email)) {
       await recordPrivyMismatch(user.id, read.email);
       return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
     }
+    current = { fingerprint: factorFingerprint(read.user), value: emailLatestVerifiedAt(read) };
     // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014). Read again inside the
     // transaction, after the Start over lock, since it can expire in between.
     const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId, checkpointHashFrom(req), await databaseNowMs(db)));
@@ -287,6 +322,21 @@ export async function POST(req: Request) {
     return Response.json({ error: 'privy_unavailable' }, { status: 503 });
   }
 
+  // With the feature on, every session this route mints is a bind or a shortcut /api/user/auth already decided: a
+  // challenge without either was issued while the feature was off, and starts over. An authenticator replaced between
+  // the two requests revokes every row and voids every pending ceremony before anything is minted (2.3).
+  const rbOn = rememberedBrowserEnabled();
+  if (rbOn) {
+    if (!challenge.rbSidHash || (!challenge.rbCeremonyId && !challenge.rbRowId)) {
+      return Response.json({ error: 'challenge_invalid' }, { status: 401 });
+    }
+    if (current.fingerprint === null || current.fingerprint !== challenge.rbFactorFingerprint) {
+      await revokeAfterRefusal({ userId: user.id, privyUserId: privyId, reason: 'factor_changed' });
+      return Response.json({ ok: false, status: 'email_required', reason: 'not_confirmed' });
+    }
+  }
+  const ec = cookieSecret(req, EMAIL_CEREMONY_COOKIE);
+
   // Step 4: factor-specific verification + atomic success transaction.
   // The transaction also reads the prior-session row BEFORE
   // createSession (see "lastSignInAt ordering" in /api/user/auth's
@@ -297,6 +347,8 @@ export async function POST(req: Request) {
     token: string;
     lastSignInAt: string | null;
     nextEmailChangeAvailableAt: string | null;
+    /// A bind's new mako_rb secret.
+    rbSecret: string | null;
   };
   let success: SuccessPayload | null = null;
   let factorFailed = false;
@@ -318,8 +370,11 @@ export async function POST(req: Request) {
       // acted on only after the challenge is judged; and on a move, the Safe rows the move rewrites.
       const recoveryMatch = recoveryStr !== null ? await findRecoveryCodeMatch({ tx, userId: user.id, code: recoveryStr }) : null;
       if (moveTo !== null) await lockSafeRows(tx, user.id);
-      // (4) The exact challenge row.
+      // (3) The ceremony the challenge names, and this Privy user's pending ones (a move voids them).
+      const ceremonies = rbOn ? await lockCeremonies(tx, { privyUserIds: [privyId], ids: challenge.rbCeremonyId ? [challenge.rbCeremonyId] : [] }) : [];
+      // (4) The exact challenge row, then every remembered row of the account.
       const [lockedChallenge] = await lockChallenges(tx, { ids: [challengeId] });
+      const rows = rbOn ? await lockRememberedRows(tx, user.id) : [];
       // (5) On a move, the session rows it deletes.
       if (moveTo !== null) await lockSessions(tx, { userId: user.id });
 
@@ -414,6 +469,19 @@ export async function POST(req: Request) {
       });
       if (!consumed) throw new ChallengeInvalid();
 
+      // Step 5b (remembered browsers, "Two requests"): the ceremony is still usable, or the row still active with an
+      // unchanged authenticator, re-checked in this transaction on `t`; any failure rolls everything back together.
+      const ceremony = challenge.rbCeremonyId ? (ceremonies.find((c) => c.id === challenge.rbCeremonyId) ?? null) : null;
+      const usedRow = challenge.rbRowId ? (rows.find((r) => r.id === challenge.rbRowId) ?? null) : null;
+      if (rbOn && ceremony !== null) {
+        const ok = usableCeremony(ceremony, { secretHash: ec ? hashSecret(ec) : null, sidHash: challenge.rbSidHash ?? null, privyUserId: privyId, nowMs: t });
+        if (!ok) throw new EmailRequired(ceremonyReason(ceremony, t));
+      } else if (rbOn) {
+        if (!usedRow || !rowActive(usedRow, t) || usedRow.privySidHash !== challenge.rbSidHash || usedRow.factorFingerprint !== current.fingerprint) {
+          throw new EmailRequired('not_confirmed');
+        }
+      }
+
       // Step 6: read the prior-session row BEFORE createSession (read-
       // before-create ordering, see /api/user/auth header). The user
       // may have zero or more prior sessions; the latest is the
@@ -443,14 +511,40 @@ export async function POST(req: Request) {
       // above), the Safe, and every existing session. If either changed since, nothing moves and the whole
       // sign-in rolls back.
       if (moveTo !== null) {
-        const moved = await applyEmbeddedMove(tx, {
-          userId: user.id,
-          from: user.magicEoa!,
-          to: moveTo,
-          privyUserId: challenge.privyUserId!,
-        });
+        // The move revokes the account's rows and voids its pending ceremonies, except the one this sign-in spends.
+        const keep = ceremony?.id ?? null;
+        const moved = await applyEmbeddedMove(
+          tx,
+          {
+            userId: user.id,
+            from: user.magicEoa!,
+            to: moveTo,
+            privyUserId: challenge.privyUserId!,
+          },
+          rbOn ? { rowIds: activeIds(rows), ceremonyIds: pendingCeremonyIds(ceremonies.filter((c) => c.verifiedPrivyUserId === privyId && c.id !== keep)), nowMs: t } : undefined,
+        );
         if (!moved) throw new ChallengeInvalid();
       }
+
+      // Step 6b': the bind or the shortcut, written after any move so the move cannot revoke it (r19).
+      let rbSecret: string | null = null;
+      if (rbOn && ceremony !== null) {
+        if (!(await spendCeremony(tx, ceremony.id, t))) throw new EmailRequired('not_confirmed');
+        if (!(await claimVerification(tx, user.id, ceremony.verifiedValue as number))) throw new EmailRequired('other_device');
+        rbSecret = newBrowserSecret();
+        await insertBinding(tx, {
+          userId: user.id,
+          sidHash: challenge.rbSidHash as string,
+          deviceSecretHash: hashSecret(rbSecret),
+          ceremonyId: ceremony.id,
+          fingerprint: current.fingerprint as number,
+          nowMs: t,
+        });
+      } else if (rbOn && usedRow !== null) {
+        if (!(await markRowUsed(tx, usedRow.id, t))) throw new EmailRequired('not_confirmed');
+      }
+      // Every mint for an email account raises the recorded verification mark, never lowers it.
+      await raiseSeen(tx, user.id, current.value);
 
       // Step 6c ([G1]): the account is now bound to this Privy wallet; record its admission the first time.
       const keyExportedAt = gate.exportedAtMs === null ? null : new Date(gate.exportedAtMs);
@@ -464,11 +558,13 @@ export async function POST(req: Request) {
       // same transaction so a ROLLBACK from any earlier step also drops
       // the would-be-issued session row.
       const token = await createSession(user.id, { tx });
-      return { token, lastSignInAt, nextEmailChangeAvailableAt };
+      return { token, lastSignInAt, nextEmailChangeAvailableAt, rbSecret };
     });
   } catch (err) {
     if (err instanceof FactorFailure) {
       factorFailed = true;
+    } else if (err instanceof EmailRequired) {
+      return Response.json({ ok: false, status: 'email_required', reason: err.reason });
     } else if (err instanceof LockedOut) {
       // A lockout committed while this request waited for the row: refused before any write, no strike (r26).
       return Response.json({ error: 'totp_locked', retryAt: err.until.toISOString() }, { status: 429 });
@@ -505,6 +601,10 @@ export async function POST(req: Request) {
     return Response.json({ error: 'internal' }, { status: 500 });
   }
 
+  const store = await cookies();
+  // A bind's cookie is delivered even when the post-commit Privy read below fails (r12).
+  if (success.rbSecret) setBrowserCookie(store, success.rbSecret);
+
   // [K4] Privy and this database share no transaction: read Privy once more, BEFORE any cookie or address leaves. A
   // mismatch deletes the session just made (with every other session of the account).
   try {
@@ -523,7 +623,6 @@ export async function POST(req: Request) {
     return Response.json({ error: 'privy_unavailable' }, { status: 503 });
   }
 
-  const store = await cookies();
   store.set(USER_SESSION_COOKIE, success.token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
