@@ -67,7 +67,10 @@ export async function readBetLog(poolId: bigint, tx: Hex, logIndex: number): Pro
   const pub = publicShareClient();
   if (!pub) return found;
   const again = await betLogFrom(pub, poolId, tx, logIndex);
-  return again === 'unavailable' ? found : again;
+  // The public node could not answer: the own node's "no bet there" is not final, since only the public node may
+  // have it (adversary on 15271be: a 429 here cached a real card as a 404 for a minute).
+  if (again === 'unavailable') return found === null ? 'unavailable' : found;
+  return again;
 }
 
 async function betLogFrom(client: PublicClient, poolId: bigint, tx: Hex, logIndex: number): Promise<CardBettor | null | 'no_receipt' | 'unavailable'> {
