@@ -81,9 +81,10 @@ export type InviteCard = {
 };
 
 /// What the card says about a pool at `nowSec`.
-export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: string; no: string }): InviteCard {
+/// `timeZone`: the zone the card's times are written in (the link preview pins UTC; omitted, the device's own).
+export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: string; no: string }, timeZone?: string): InviteCard {
   const row = poolRow(m, nowSec);
-  const clock = poolClock(m, row.state, nowSec);
+  const clock = poolClock(m, row.state, nowSec, timeZone);
   const open = row.state === 'open';
   const manual = unsettleable(m);
   const side = (s: 'yes' | 'no'): InviteSide => {

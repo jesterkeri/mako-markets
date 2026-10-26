@@ -33,9 +33,10 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const parsedId = poolIdFrom(id);
   const market = parsedId !== null ? await readPoolForShare(parsedId) : null;
   if (market) {
-    // A house pool's own side names, as the pool page shows them; YES and NO when they cannot be read.
+    // A house pool's own side names, as the pool page shows them; YES and NO when they cannot be read. Times in UTC:
+    // one picture is seen everywhere.
     const labels = market.mType === MarketType.MAKO ? await getMakoLabels(db, market.id.toString()).catch(() => null) : null;
-    const card = poolInviteCard(market, Math.floor(Date.now() / 1000), labels ? { yes: labels.label1, no: labels.label2 } : { yes: 'YES', no: 'NO' });
+    const card = poolInviteCard(market, Math.floor(Date.now() / 1000), labels ? { yes: labels.label1, no: labels.label2 } : { yes: 'YES', no: 'NO' }, 'UTC');
     return renderPoolCard(card, market.question, await poolQr(market.id));
   }
 

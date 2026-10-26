@@ -307,6 +307,13 @@ const literal = (c: string) => PILL_VARS[c] ?? c;
 /// A pool link's preview (Joshua 2026-10-26: pool links get the new card design): the bet card's frame, art and footer,
 /// with the invite card's facts (status, time left, each side's pays and pot). No account name or photo, so the preview
 /// can be cached like any pool page.
+/// The pool card's question size: the bet card's sizes up to 80 characters, then smaller steps so a 200-byte question
+/// wraps to at most four lines in the 900px column.
+export function poolQuestionPx(q: string): number {
+  const n = [...q].length;
+  return n <= 80 ? questionPx(q) : n <= 120 ? 40 : n <= 160 ? 34 : 30;
+}
+
 export function PoolCardView({ card, question, art, qr }: { card: InviteCard; question: string; art: string; qr: string }) {
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', position: 'relative', background: '#000', color: CREAM, fontFamily: 'JetBrains' }}>
@@ -329,13 +336,13 @@ export function PoolCardView({ card, question, art, qr }: { card: InviteCard; qu
         <span style={{ ...mono(18, 0.14), background: literal(card.pill.colour), color: literal(card.pill.fg), borderRadius: 999, padding: '10px 20px' }}>{card.pill.label}</span>
       </div>
 
+      {/* One column, so a long question pushes the clock down rather than being cut (adversary on ada7c9b: two pools
+          that differ only at the end of a long question unfurled as the same picture). Every question the create flow
+          accepts (200 bytes) fits above the side pill at poolQuestionPx; text stays in the 900px column, clear of the art. */}
       <div style={{ position: 'absolute', left: 76, top: 150, width: 900, display: 'flex', flexDirection: 'column' }}>
         <span style={{ ...mono(15, 0.12), color: MUTED }}>{`${catTitle(card.cat)} pool`}</span>
-        <div style={{ marginTop: 12, ...bric(questionPx(question), -0.04, 'Bricolage60'), lineHeight: 1, color: '#F4EFE4', display: 'block', lineClamp: 2 }}>{question}</div>
-      </div>
-
-      <div style={{ position: 'absolute', left: 76, top: 330, display: 'flex', flexDirection: 'column' }}>
-        <span style={{ ...mono(15, 0.12), color: MUTED }}>{card.clock.label}</span>
+        <div style={{ marginTop: 12, ...bric(poolQuestionPx(question), -0.04, 'Bricolage60'), lineHeight: 1, color: '#F4EFE4', display: 'block', wordBreak: 'break-word' }}>{question}</div>
+        <span style={{ marginTop: 28, ...mono(15, 0.12), color: MUTED }}>{card.clock.label}</span>
         <div style={{ marginTop: 10, ...bric(120, -0.04, 'Bricolage96'), lineHeight: 0.95, color: CREAM }}>{card.clock.value}</div>
         <span style={{ marginTop: 18, ...inter24 }}>{card.sub}</span>
       </div>
