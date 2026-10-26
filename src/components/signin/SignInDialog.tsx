@@ -63,14 +63,18 @@ function SignInFlow() {
   const [step, setStep] = useState<Step>({ kind: 'email', error: null, sending: false });
   const auth = useRef<EmailAuth | null>(null);
   // When the dialog opens on a browser that still holds a Privy session: "Continue as <masked email>" or "Use a
-  // different email" (plan 2.5), offered once, and only before anything was typed or sent.
+  // different email" (plan 2.5), offered once, only before anything was typed or sent, and only when the server has
+  // the feature on (shortcut-check answers `off` otherwise, and the dialog is today's: an email code every time).
   const offered = useRef(false);
   const register = useCallback((a: EmailAuth | null) => {
     auth.current = a;
     const held = a?.current()?.email ?? null;
-    if (offered.current || !held) return;
+    if (offered.current || !a || !held) return;
     offered.current = true;
-    setStep((s) => (s.kind === 'email' && !s.sending && !s.error ? { kind: 'continue', email: held, busy: false, error: null } : s));
+    void checkShortcut(a.gate).then((s) => {
+      if (s === 'off' || auth.current !== a) return;
+      setStep((cur) => (cur.kind === 'email' && !cur.sending && !cur.error ? { kind: 'continue', email: held, busy: false, error: null } : cur));
+    });
   }, []);
   // Step A's answer for the last code, so a later "email again" can say why.
   const lastStepA = useRef<StepAResult | null>(null);

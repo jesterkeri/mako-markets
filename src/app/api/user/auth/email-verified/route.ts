@@ -17,12 +17,13 @@
 // that was lost answers success and changes nothing (r16).
 //
 // Answers 200 { ok: true } or 200 { ok: false, reason } with reason too_late | other_device | not_confirmed, for the
-// dialog's one line. 401 for a token that does not verify; 503 when Privy or the database cannot be read.
+// dialog's one line; { ok: true, status: 'off' } with the feature off. 401 for a token that does not verify; 503 when
+// Privy or the database cannot be read.
 // ----------------------------------------------------------------------------
 
 import { checkSameOrigin } from '@/lib/csrf';
 import { PrivyConfigError, readPrivyAccount, type PrivyAccountRead } from '@/lib/privy-server';
-import { accountFor, runStepA } from '@/lib/remembered-browser';
+import { accountFor, rememberedBrowserEnabled, runStepA } from '@/lib/remembered-browser';
 import { cookieSecret, EMAIL_CEREMONY_COOKIE, emailLatestVerifiedAt, hashSecret, hashSid } from '@/lib/remembered-browser-rules';
 
 export const runtime = 'nodejs';
@@ -38,6 +39,8 @@ export async function POST(req: Request) {
   if (typeof body.privyAccessToken !== 'string' || body.privyAccessToken.length === 0) {
     return Response.json({ error: 'bad_body' }, { status: 400 });
   }
+  // The feature off: today's sign-in, nothing recorded.
+  if (!rememberedBrowserEnabled()) return Response.json({ ok: true, status: 'off' });
   const secret = cookieSecret(req, EMAIL_CEREMONY_COOKIE);
   if (!secret) return Response.json({ ok: false, reason: 'not_confirmed' });
 

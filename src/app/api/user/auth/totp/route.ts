@@ -299,7 +299,8 @@ export async function POST(req: Request) {
       : null;
   let gate: Extract<GateVerdict, { ok: true }>;
   // Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.2, "Two requests"): this read's authenticator fingerprint
-  // and email verification value, compared and written in the minting transaction below.
+  // and email verification value, compared and written in the minting transaction below. Off: neither is read.
+  const rbOn = rememberedBrowserEnabled();
   let current: { fingerprint: number | null; value: number | null } = { fingerprint: null, value: null };
   try {
     const read = await readPrivyAccountById(privyId);
@@ -307,7 +308,7 @@ export async function POST(req: Request) {
       await recordPrivyMismatch(user.id, read.email);
       return Response.json({ ok: false, status: 'email_changed' }, { status: 403 });
     }
-    current = { fingerprint: factorFingerprint(read.user), value: emailLatestVerifiedAt(read) };
+    if (rbOn) current = { fingerprint: factorFingerprint(read.user), value: emailLatestVerifiedAt(read) };
     // A first admission needs the enrollment checkpoint held by THIS browser (migration 0014). Read again inside the
     // transaction, after the Start over lock, since it can expire in between.
     const v = judgeAccount(read, admission, admission ? null : await readCheckpoint(db, privyId, checkpointHashFrom(req), await databaseNowMs(db)));
@@ -325,7 +326,6 @@ export async function POST(req: Request) {
   // With the feature on, every session this route mints is a bind or a shortcut /api/user/auth already decided: a
   // challenge without either was issued while the feature was off, and starts over. An authenticator replaced between
   // the two requests revokes every row and voids every pending ceremony before anything is minted (2.3).
-  const rbOn = rememberedBrowserEnabled();
   if (rbOn) {
     if (!challenge.rbSidHash || (!challenge.rbCeremonyId && !challenge.rbRowId)) {
       return Response.json({ error: 'challenge_invalid' }, { status: 401 });

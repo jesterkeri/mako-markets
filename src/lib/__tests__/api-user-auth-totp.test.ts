@@ -798,12 +798,17 @@ describe('POST /api/user/auth/totp', () => {
       const { POST } = await import('../../app/api/user/auth/totp/route');
       const res = await POST(makeRequest({ challengeId: CHALLENGE_ID, code: '123456' }));
       expect(res.status).toBe(200);
-      expect(mocks.applyEmbeddedMove).toHaveBeenCalledWith(expect.anything(), {
-        userId: USER_ID,
-        from: MAGIC_EOA,
-        to: PRIVY_EOA,
-        privyUserId: 'did:privy:u1',
-      });
+      // Remembered browsers off: no rows to revoke or ceremonies to void are handed to the move.
+      expect(mocks.applyEmbeddedMove).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          userId: USER_ID,
+          from: MAGIC_EOA,
+          to: PRIVY_EOA,
+          privyUserId: 'did:privy:u1',
+        },
+        undefined,
+      );
       expect(mocks.consumeSigninChallengeInTx).toHaveBeenCalledWith(
         expect.objectContaining({ purpose: 'totp_signin_move' }),
       );

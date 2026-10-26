@@ -5,7 +5,7 @@
 // the email code. It issues an email ceremony that names no account and sets its secret in the httpOnly `mako_ec`
 // cookie (SameSite=Strict, path /api/user/auth, 90 minutes); the row keeps only its SHA-256. Step A
 // (/api/user/auth/email-verified) records on it the code entered next; only a ceremony recorded that way can ever bind
-// this browser. Body: none. Answer: { ok: true }, the same for everyone.
+// this browser. Body: none. Answer: { ok: true }, the same for everyone. With the feature off it does nothing.
 //
 // Same-origin, and limited per visitor (by a hash of the client IP): each call inserts one row. The limit's store
 // being unreachable lets the call through: a refusal here would stop every new-browser sign-in, and the cost of an
@@ -18,7 +18,7 @@ import { cookies } from 'next/headers';
 import { visitorIp } from '@/lib/avatar-budget';
 import { checkSameOrigin } from '@/lib/csrf';
 import { upstashCommand } from '@/lib/envio-budget';
-import { issueCeremony, setCeremonyCookie } from '@/lib/remembered-browser';
+import { issueCeremony, rememberedBrowserEnabled, setCeremonyCookie } from '@/lib/remembered-browser';
 
 export const runtime = 'nodejs';
 
@@ -43,6 +43,8 @@ async function withinLimit(ip: string): Promise<boolean> {
 
 export async function POST(req: Request) {
   if (!checkSameOrigin(req).ok) return Response.json({ error: 'cross_origin' }, { status: 403 });
+  // The feature off (REMEMBERED_BROWSER_ENABLED unset): today's sign-in, no ceremony.
+  if (!rememberedBrowserEnabled()) return Response.json({ ok: true });
   if (!(await withinLimit(visitorIp(req)))) return Response.json({ error: 'rate_limited' }, { status: 429 });
   let secret: string;
   try {

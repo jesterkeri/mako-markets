@@ -200,6 +200,8 @@ type RememberedInputs = {
 /// values the rules compare. The ceremony's id is read without a lock; the transaction locks it by id at level (3).
 async function rememberedInputs(req: Request, read: PrivyAccountRead): Promise<RememberedInputs> {
   const enabled = rememberedBrowserEnabled();
+  // Off: nothing is read or written for remembered browsers, so the sign-in is exactly today's.
+  if (!enabled) return { enabled, sidHash: null, ecHash: null, rbHash: null, ceremonyId: null, fingerprint: null, value: null };
   const ec = cookieSecret(req, EMAIL_CEREMONY_COOKIE);
   const rbSecret = cookieSecret(req, REMEMBERED_BROWSER_COOKIE);
   const ecHash = ec ? hashSecret(ec) : null;
@@ -208,7 +210,7 @@ async function rememberedInputs(req: Request, read: PrivyAccountRead): Promise<R
     sidHash: read.token ? hashSid(read.token.sessionId) : null,
     ecHash,
     rbHash: rbSecret ? hashSecret(rbSecret) : null,
-    ceremonyId: enabled ? await ceremonyIdBySecret(ecHash) : null,
+    ceremonyId: await ceremonyIdBySecret(ecHash),
     fingerprint: factorFingerprint(read.user),
     value: emailLatestVerifiedAt(read),
   };
@@ -498,7 +500,7 @@ export async function POST(req: Request) {
       } else if (step.kind === 'reissue') {
         rbSecret = await reissue(tx, step.row.id);
       }
-      // Every mint for an email account raises the recorded verification mark, never lowers it.
+      // Every mint for an email account raises the recorded verification mark, never lowers it (null when off).
       await raiseSeen(tx, user.id, rb.value);
 
       // Read prior-session row BEFORE createSession (see header comment on lastSignInAt ordering).
