@@ -68,8 +68,8 @@ export function reserveAvatarVisitor(ip: string): Promise<boolean> {
 // shareClient: MONAD_RPC_URL, else that same public node (about 15 requests a second, shared with the rest of the app).
 // Windows of three seconds: one viewing of a bet placed link whose pool has settled is 3 loads within a second (the
 // page, its redirect to the result page, and the image). Known 6 x 2 + unknown 6 x 3 = 30 calls per 3 s = 10 a second
-// at most on the public node, two thirds of ~15, leaving 5 a second for the rest of the app. A 429 from the RPC is
-// `unavailable`, a 503 with no-store.
+// at most on the public node, two thirds of ~15, leaving 5 a second for the rest of the app. Each call is one HTTP
+// request: the share clients never retry (pool-share.ts NO_RETRY). A 429 from the RPC is `unavailable`, a 503 with no-store.
 export const CARD_LOADS_PER_WINDOW = 6;
 export const KNOWN_CARD_LOADS_PER_WINDOW = 6;
 export const CARD_LOAD_WINDOW_MS = 3_000;
