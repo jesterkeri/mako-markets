@@ -87,7 +87,7 @@ function Row({ p }: { p: PlayerView }) {
   );
 }
 
-export function BoardDesktop({ view, state, scope, setScope, period, setPeriod, sort, setSort, syncing, retry }: BoardProps) {
+export function BoardDesktop({ view, state, scope, setScope, period, setPeriod, sort, setSort, syncing, retry, competition }: BoardProps) {
   const metric = SORTS.find((s) => s.key === sort)!.metric;
   const me = view?.me ?? null;
   return (
@@ -110,12 +110,18 @@ export function BoardDesktop({ view, state, scope, setScope, period, setPeriod, 
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 4px 18px', flexWrap: 'wrap' }}>
         <Pills label="Markets" options={SCOPES} value={scope} onPick={setScope} />
-        <Pills label="Period" options={PERIODS} value={period} onPick={setPeriod} />
-        <span style={{ marginLeft: 'auto', ...mono, fontSize: 11, color: 'var(--dim)' }}>{BOARD_COPY.sortLabel}</span>
-        <Pills label="Sort" options={SORTS} value={sort} onPick={setSort} />
+        {scope !== 'competition' && (
+          <>
+            <Pills label="Period" options={PERIODS} value={period} onPick={setPeriod} />
+            <span style={{ marginLeft: 'auto', ...mono, fontSize: 11, color: 'var(--dim)' }}>{BOARD_COPY.sortLabel}</span>
+            <Pills label="Sort" options={SORTS} value={sort} onPick={setSort} />
+          </>
+        )}
       </div>
 
-      {state === 'ready' && view ? (
+      {scope === 'competition' ? (
+        competition
+      ) : state === 'ready' && view ? (
         <>
           <div style={{ padding: '0 4px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.15fr 1fr', gap: 14, alignItems: 'end', marginTop: 6 }}>

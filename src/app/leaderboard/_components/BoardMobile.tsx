@@ -48,7 +48,7 @@ function Chips<K extends string>({ label, options, value, onPick, padding }: { l
 
 const ARROW_UP_RIGHT = 'M7.5 16.5l9-9M9.5 7.5h7v7';
 
-export function BoardMobile({ view, state, scope, setScope, period, setPeriod, sort, setSort, syncing, retry }: BoardProps) {
+export function BoardMobile({ view, state, scope, setScope, period, setPeriod, sort, setSort, syncing, retry, competition }: BoardProps) {
   const sortLabel = SORTS.find((s) => s.key === sort)!.label;
   const me = view?.me ?? null;
   return (
@@ -67,9 +67,11 @@ export function BoardMobile({ view, state, scope, setScope, period, setPeriod, s
         )}
       </div>
       <Chips label="Markets" options={SCOPES} value={scope} onPick={setScope} padding="14px 16px 0" />
-      <Chips label="Period" options={PERIODS} value={period} onPick={setPeriod} padding="8px 16px 0" />
+      {scope !== 'competition' && <Chips label="Period" options={PERIODS} value={period} onPick={setPeriod} padding="8px 16px 0" />}
 
-      {state === 'ready' && view ? (
+      {scope === 'competition' ? (
+        competition
+      ) : state === 'ready' && view ? (
         <>
           <div style={{ height: 18 }} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, alignItems: 'end', height: 250, padding: '0 16px' }}>
