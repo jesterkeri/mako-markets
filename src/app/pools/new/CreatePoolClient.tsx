@@ -184,6 +184,7 @@ export function CreatePoolClient() {
 
   const openCreate = () => {
     if (!pool || !draft || now === null || seed === null || seedProblem || tx.tx) return;
+    setShareId(null); // a card from an earlier create never outlives the next one
     const side = seedYes ? 'YES' : 'NO';
     setSheetSpec({
       glyph: '+',
@@ -282,20 +283,32 @@ export function CreatePoolClient() {
           onClose={tx.close}
           doneExtra={
             tx.tx.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null && account ? (
-              <TileShareButton
-                onClick={() => {
-                  setShareId(tx.createdId);
+              <ShareCreatedButton
+                id={tx.createdId}
+                onShare={(id) => {
+                  setShareId(id);
                   tx.close();
                 }}
-              >
-                Share your pool
-              </TileShareButton>
+              />
             ) : undefined
           }
         />
       )}
       {shareId !== null && account && <CreatedPoolShare id={shareId} by={user?.displayName?.trim() || formatAddress(account)} onClose={closeShare} />}
     </>
+  );
+}
+
+/// "Share your pool" on the done tile. Enabled once the chain answers the new pool (a node that has not applied the
+/// create answers an all-zero market: getMarket is a plain mapping read), so a tap always opens the card at once and
+/// nothing waits behind a closed sheet. The pool page treats the same answer as not found.
+function ShareCreatedButton({ id, onShare }: { id: bigint; onShare: (id: bigint) => void }) {
+  const { market } = useMarket(id);
+  const ready = market !== undefined && market.closeTime !== 0n;
+  return (
+    <TileShareButton disabled={!ready} onClick={() => ready && onShare(id)}>
+      {ready ? 'Share your pool' : 'Finding your pool…'}
+    </TileShareButton>
   );
 }
 

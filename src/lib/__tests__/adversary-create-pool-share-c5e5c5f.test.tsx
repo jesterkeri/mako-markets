@@ -115,7 +115,10 @@ describe('adversary c5e5c5f: Share your pool while the new pool is not yet reada
     render(<CreatePoolClient />);
     createPool();
     const done = screen.getAllByRole('dialog').find((d) => d.textContent?.includes('Your pool is live'))!;
-    fireEvent.click(within(done).getByRole('button', { name: 'Share your pool' }));
+    // Since 23e8c17's follow-up the button waits for a readable pool; a tap on it while waiting does nothing.
+    const share = within(done).getByRole('button', { name: /Share your pool|Finding your pool/ });
+    expect(share.textContent).toBe('Finding your pool…');
+    fireEvent.click(share);
     // The pool holds the creator's 2.50 USDC on NO. A card that says "HOSTED BY kemi" with no stake on either side
     // is not this pool's figures: the pool page would 404 on the same read.
     const cards = screen.queryAllByRole('dialog', { name: 'Share' }).filter((d) => d.textContent?.includes('HOSTED BY'));

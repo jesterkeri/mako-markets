@@ -1,6 +1,6 @@
 // Pool creation's done step (Joshua 2026-10-26): the black tile a placed bet gets (the first bet's side, its amount),
 // and a yellow "Share your pool" that closes the sheet and opens the new pool's invite card, read from the chain for
-// the id the receipt gave. No id, no button. Another account signing in closes the card for good.
+// the id the receipt gave (the button waits for that read: see the adversary tests). No id, no button. Another account signing in closes the card for good.
 // Drives the real page and the real confirm sheet; the tx hook is a stand-in stuck at "done" with a created id.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -90,7 +90,8 @@ describe('pool creation: the done tile', () => {
     const sheet = doneSheet();
     const status = within(sheet).getByRole('status');
     expect(status.textContent).toBe('Your pool is liveNO2.50 USDC, your first bet');
-    expect(mocks.marketReads).toEqual([]); // nothing polled until the card opens
+    expect(new Set(mocks.marketReads)).toEqual(new Set([7n])); // the Share button reads the created pool, nothing else
+    expect(within(sheet).getByRole('button', { name: 'Share your pool' })).toBeTruthy();
   });
 
   it('Share your pool closes the sheet and opens the invite card for the created pool, read from the chain', () => {
