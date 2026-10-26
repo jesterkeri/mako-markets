@@ -300,11 +300,13 @@ export function CreatePoolClient() {
 }
 
 /// The invite card for the pool just created, read from the chain like the pool page's (never the draft's figures).
-/// Mounted only while open, so the create page does not poll a market it is not showing.
+/// Mounted only while open, so the create page does not poll a market it is not showing. A node that has not applied
+/// the create yet answers an all-zero market (getMarket is a plain mapping read): wait for a real one, as the pool
+/// page does.
 function CreatedPoolShare({ id, by, onClose }: { id: bigint; by: string; onClose: () => void }) {
   const { market } = useMarket(id);
   const now = useLiveNowSec();
-  if (!market || now === null) return null;
+  if (!market || market.closeTime === 0n || now === null) return null;
   return <PoolShareSheet market={market} now={now} labels={{ yes: 'YES', no: 'NO' }} by={by} onClose={onClose} />;
 }
 
