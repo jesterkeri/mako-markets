@@ -158,7 +158,8 @@ async function readOutcomes(markets: readonly string[]): Promise<Map<string, Poo
     contracts: markets.map((id) => ({ address: MAKO_ADDRESS, abi: makoAbi, functionName: 'getMarket' as const, args: [BigInt(id)] as const })),
     allowFailure: true,
   });
-  if (results.some((r) => r.status !== 'success')) throw new Error('competition: a pool outcome could not be read');
+  // viem sizes the list from the node's answer, so a short answer would leave pools out (adversary 2d788bb).
+  if (results.length !== markets.length || results.some((r) => r.status !== 'success')) throw new Error('competition: a pool outcome could not be read');
   return new Map(
     results.map((r, i) => {
       const m = r.result as { resolved: boolean; outcome: number };
