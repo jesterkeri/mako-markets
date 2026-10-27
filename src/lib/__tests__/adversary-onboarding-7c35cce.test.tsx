@@ -30,7 +30,7 @@ vi.mock('@/components/signin/PrivyEmailBridge', async () => {
   return {
     PrivyEmailBridge: ({ register }: { register: (a: unknown) => void }) => {
       R.useEffect(() => {
-        register({ sendCode: async () => {}, verify: async () => 'privy-token', gate: {} });
+        register({ sendCode: async () => {}, verify: async () => ({ token: 'privy-token', stepA: { ok: true } }), current: () => null, logout: async () => {}, gate: {} });
       }, [register]);
       return null;
     },
@@ -49,6 +49,8 @@ const MAGIC_USER = {
 const gate = vi.hoisted(() => ({ next: null as unknown }));
 vi.mock('@/lib/privy-gated-signin', () => ({
   continueGatedSignIn: vi.fn(async () => gate.next),
+  // Remembered browsers off: today's dialog.
+  checkShortcut: vi.fn(async () => ({ status: 'off' })),
   confirmWalletFree: vi.fn(),
   startOver: vi.fn(),
 }));

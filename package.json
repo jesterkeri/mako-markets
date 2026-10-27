@@ -24,6 +24,7 @@
     "probe:pimlico": "tsx scripts/probe-pimlico.mts",
     "verify:safe-init": "tsx scripts/verify-init-code-parity.mts",
     "test:aa": "vitest run src/lib/__tests__",
+    "test:pg": "vitest run --config vitest.pg.config.ts",
     "test:aa:watch": "vitest src/lib/__tests__",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test:pm": "vitest run src/lib/private-markets",

@@ -11,6 +11,7 @@ import { TotpDisableModal } from '@/components/profile/TotpDisableModal';
 import { TotpEnrollmentModal } from '@/components/profile/TotpEnrollmentModal';
 import { maskEmail } from '@/components/shell/SignOutConfirm';
 import { openSignOut } from '@/lib/sign-out-store';
+import { useSignOut } from '@/lib/use-sign-out';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { tourHref } from '@/lib/tour';
 import { formatAddress } from '@/lib/user-display';
@@ -60,6 +61,9 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
   const { exportKey } = useEmbeddedActions();
   const [modal, setModal] = useState<'enroll' | 'disable' | 'regenerate' | null>(null);
   const [exportError, setExportError] = useState('');
+  // "Sign out everywhere" (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.3): asks once more before it runs.
+  const everywhere = useSignOut();
+  const [everywhereArmed, setEverywhereArmed] = useState(false);
 
   const email = user.authType === 'magic';
   const account = accountAddress(user);
@@ -172,6 +176,28 @@ function SettingsSignedIn({ user }: { user: AuthedUser }) {
                 {exportError && (
                   <span role="alert" style={{ ...note, color: 'var(--mako-red)', flexBasis: '100%' }}>
                     {exportError}
+                  </span>
+                )}
+              </>
+            ),
+          },
+          {
+            k: 'Sign out everywhere',
+            v: (
+              <>
+                <button
+                  type="button"
+                  onClick={() => (everywhereArmed ? void everywhere.signOutEverywhere() : setEverywhereArmed(true))}
+                  disabled={everywhere.busy}
+                  className="mk-press96"
+                  style={{ ...pill, color: 'var(--mako-red)' }}
+                >
+                  {everywhere.busy ? 'Signing out…' : everywhereArmed ? 'Confirm: sign out everywhere' : 'Sign out everywhere'}
+                </button>
+                <span style={note}>Ends every session and forgets every browser. The next sign-in anywhere needs a code from your email.</span>
+                {everywhere.error && (
+                  <span role="alert" style={{ ...note, color: 'var(--mako-red)', flexBasis: '100%' }}>
+                    {everywhere.error}
                   </span>
                 )}
               </>

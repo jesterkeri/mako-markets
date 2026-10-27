@@ -60,13 +60,18 @@ vi.mock('@/lib/csrf', () => ({
 vi.mock('@/lib/user-upsert', () => ({ applyEmbeddedMove: mocks.applyEmbeddedMove }));
 vi.mock('@/lib/auth-challenges', () => ({
   TOTP_SIGNIN_MOVE_PURPOSE: 'totp_signin_move',
+  challengeLiveAt: () => true,
   validateSigninChallenge: mocks.validateSigninChallenge,
   consumeSigninChallengeInTx: mocks.consumeSigninChallengeInTx,
 }));
 
 vi.mock('@/lib/recovery-codes', () => ({
-  verifyAndConsumeRecoveryCode: mocks.verifyAndConsumeRecoveryCode,
+  findRecoveryCodeMatch: async (args: unknown) => ((await mocks.verifyAndConsumeRecoveryCode(args))?.ok ? 'rc' : null),
+  consumeRecoveryCodeMatch: async () => ({ ok: true, consumedId: 'rc' }),
 }));
+// The lock order (src/lib/account-locks.ts) and the live time `t` stand in: no lockout, the locked challenge live.
+vi.mock('@/lib/account-locks', async () => (await import('./helpers/gate-pass')).accountLocksPassing());
+vi.mock('@/lib/db-clock', () => ({ databaseNowMs: async () => Date.now() }));
 
 vi.mock('@/lib/totp', () => ({
   verifyTotpCode: mocks.verifyTotpCode,

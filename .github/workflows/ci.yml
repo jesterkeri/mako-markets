@@ -50,6 +50,8 @@ on:
       - 'feat/rounds-watch'
       - 'feat/rounds-scheduler'
       - 'feat/watchdog-*'
+      # Remembered-browser sign-in (#213), pushed here for CI before any review or merge.
+      - 'feat/remembered-browser-signin'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
@@ -126,6 +128,57 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # SIGNIN_REMEMBERED_BROWSER_PLAN r29 section 4 ([r27] to [r29]): the lock-wait timing proofs need a real PostgreSQL
+  # with separate connections (PGlite runs one transaction at a time). A throwaway PostgreSQL 16 service container,
+  # never Neon: the harness refuses any PG_TEST_URL that is not local, and PG_TEST_REQUIRED fails the job if the
+  # database is missing rather than letting every case skip.
+  pg-timing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      PG_TEST_URL: 'postgres://postgres:test@127.0.0.1:5432/postgres'
+      PG_TEST_REQUIRED: '1'
+      # The V4 record (src/lib/mako-release-record.ts), as in the ci job: contract.ts loads for no other value.
+      NEXT_PUBLIC_MAKO_ADDRESS: '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195'
+      NEXT_PUBLIC_MAKO_DEPLOY_BLOCK: '32603678'
+      NEXT_PUBLIC_USDC_ADDRESS_MONAD_TESTNET: '0x000000000000000000000000000000000000dcba'
+      NEXT_PUBLIC_PROJECT_ID: 'ci-placeholder'
+      NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+      NEXT_PUBLIC_PRIVY_APP_ID: 'cm00000000000000000000000'
+      MAKO_STAGE: 'production'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Timing proofs on PostgreSQL 16
+        run: pnpm test:pg
 
   # The Envio indexer (indexer/) is its own package with its own lockfile, so it installs alone.
   # Codex T1.4 r2: the app's four sponsored Rounds selectors, the contracts repository's surface gate and the compiled

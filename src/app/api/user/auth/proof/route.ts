@@ -112,6 +112,6 @@ export async function POST(req: Request) {
     });
     return Response.json({ ok: false, status: verdict.status, ...(offer.eligible ? { startOver: true } : {}) }, { status: 403 });
   }
-  const nonce = await issueProofNonce(db, read.privyUserId, verdict.wallet, Date.now());
+  const nonce = await issueProofNonce(db, read.privyUserId, verdict.wallet);
   return Response.json({ ok: true, status: 'proof_required', nonce });
 }

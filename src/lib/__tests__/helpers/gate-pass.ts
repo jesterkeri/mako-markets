@@ -25,7 +25,7 @@ export function privyServerPassing(resolveIdentity: (token: string) => Promise<T
 
 export const privyProofPassing = () => ({
   checkProofSignature: async () => ({ ok: true, nonce: 'n'.repeat(43) }),
-  consumeProofNonce: async () => true,
+  consumeProofNonce: async () => 'ok',
 });
 
 export const privyAdmissionNone = () => ({
@@ -42,3 +42,49 @@ export const privyAdmissionNone = () => ({
 });
 
 export const PROOF_BODY = { message: 'm', signature: 's' };
+
+/// The account lock order's helpers (src/lib/account-locks.ts), for route tests on a fake database: every lock is a
+/// no-op, the users row holds no lockout, and an embedded sign-in's candidate rows come from the fake's own plain
+/// select (`select().from(users).where().limit()`). The real locks run on PGlite and PostgreSQL elsewhere.
+type PlainSelect = { select: () => { from: (t: unknown) => { where: (w?: unknown) => { limit: (n: number) => Promise<unknown[]> } } } };
+export const accountLocksPassing = () => ({
+  lockUserRow: async () => ({ privyUserId: null, totpFailedAttempts: 0, totpLockedUntil: null, lockedNow: false, privyEmailVerifiedSeen: null }),
+  lockEmbeddedCandidates: async (tx: PlainSelect) => {
+    const { users } = await import('@/db/schema');
+    return tx.select().from(users).where().limit(3);
+  },
+  lockSafeRows: async () => {},
+  lockCeremonies: async () => [],
+  lockChallenges: async () => [],
+  lockRememberedRows: async () => [],
+  lockSessions: async () => {},
+});
+
+/// Remembered browsers off (REMEMBERED_BROWSER_ENABLED unset), for route tests on a fake database: today's sign-in, and
+/// the mark every mint raises is a no-op here. The feature itself runs on PGlite in remembered-browser-*.test.ts.
+export const rememberedBrowserOff = () => ({
+  rememberedBrowserEnabled: () => false,
+  accountFor: async () => null,
+  ceremonyIdBySecret: async () => null,
+  raiseSeen: async () => {},
+  claimVerification: async () => true,
+  spendCeremony: async () => true,
+  insertBinding: async () => {},
+  markRowUsed: async () => true,
+  reissueRow: async () => {},
+  newBrowserSecret: () => 's'.repeat(43),
+  revokeAfterRefusal: async () => {},
+  readShortcutState: async () => ({ row: null, ceremony: null, nowMs: Date.now() }),
+  setBrowserCookie: () => {},
+  browserIsBound: async () => false,
+  forgetBrowser: async () => {},
+});
+
+/// For route tests that stand in upsertEmbeddedUser itself: the route's two halves (prepareEmbeddedUser at lock level
+/// (2), finishEmbeddedUser after `t`) call that one stand-in with the arguments it always received.
+export function upsertStandIn(upsert: (...args: unknown[]) => unknown) {
+  return {
+    prepareEmbeddedUser: async (...args: unknown[]) => ({ action: 'reuse', user: { id: 'stand-in' }, directMove: false, args }),
+    finishEmbeddedUser: async (_tx: unknown, p: { args: unknown[] }) => upsert(...p.args),
+  };
+}
