@@ -13,8 +13,9 @@ export const REFERRALS_OPEN = new Date('2026-10-24T00:00:00Z');
 
 /// Qualifying referrals (a friend's new account through the link, plus one bet) needed to enter.
 export const REQUIRED_REFERRALS = 2;
-/// Settled pools (YES or NO, refunds excluded) needed to be ranked.
-export const MIN_SETTLED = 5;
+/// Pools needed to be ranked (owner 2026-10-27): counted pools bet on, open or settled, refunds excluded. Was 5
+/// settled pools; profit only moves when a pool settles, and a prize needs a profit above 0, so open pools can count.
+export const MIN_POOLS = 5;
 /// USDC for places 1, 2 and 3.
 export const PRIZES = [50, 30, 20] as const;
 
@@ -30,8 +31,8 @@ export const COMPETITION_COPY = {
     `To enter, invite 2 friends with your link or code from the Me page. A friend counts once they create a Mako Market account through your link, or add your code on their Me page, and place a bet. Accounts created from ${fmtUtc(REFERRALS_OPEN)} UTC count, and a friend's bet must come before this competition ends. Referrals stay counted for later competitions. Link and code are the same invite.`,
     'Ranked by profit during the competition: winnings and refunds claimed minus stakes placed, both between the dates above. Only pools you first bet on after the start count.',
     'Claim your winnings before the end. Unclaimed winnings do not count.',
-    'You need at least 5 settled pools to be ranked. Ties go to the higher win rate: settled pools won out of settled pools played. Refunded pools do not count.',
-    'The top 3 share $100: $50, $30 and $20, paid after the competition ends. Mako Market reviews the winners first and may disqualify duplicate or fake accounts.',
+    'You need at least 5 pools to be ranked: pools you bet on during the competition, open or settled. Refunded pools do not count. Ties go to the higher win rate: settled pools won out of settled pools played.',
+    'The top 3 share $100: $50, $30 and $20, paid after the competition ends. A prize needs a profit above 0. Mako Market reviews the winners first and may disqualify duplicate or fake accounts.',
     'Updates about every 30 minutes.',
   ],
   upcoming: `Starts ${fmtUtc(COMPETITION_START)} UTC.`,
@@ -39,14 +40,14 @@ export const COMPETITION_COPY = {
   final: 'Final standings, under review.',
   ranked: 'Ranked',
   unranked: 'Entered, not ranked yet',
-  noneRanked: 'No one has 5 settled pools yet.',
+  noneRanked: 'No one has 5 pools yet.',
   noneEntered: 'No one has entered yet.',
   error: "Can't load the standings right now.",
   boardLink: 'Trading competition: $100 prize. See the standings',
-  /// The leaderboard's Competition tab (Joshua 2026-10-26): only the ranked players.
+  /// The leaderboard's Competition tab (Joshua 2026-10-27): everyone in the competition, as the page lists them.
   tab: 'Competition',
-  tabNote: 'Only players with 2 friends who placed a bet and 5 settled pools are shown.',
-  tabRules: 'Rules, and everyone entered',
+  tabNote: 'Everyone with 2 friends who placed a bet is in. 5 pools to be ranked.',
+  tabRules: 'Competition rules',
   card: {
     title: 'Invite friends',
     body: 'Share your link. When 2 friends create a Mako Market account with it and place a bet, you enter the $100 trading competition.',

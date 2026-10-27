@@ -1,34 +1,26 @@
 'use client';
 
-import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useState } from 'react';
 
 import { SheetFrame, Svg } from '@/components/ConfirmSheet';
-import { Logo } from '@/components/Logo';
+import { CardPreview } from '@/components/PnlShareSheet';
 import type { MarketWithId } from '@/lib/contract';
-import { intentUrl, linkDisplay, poolInviteCard, poolInviteLink, shareText, type InviteCard } from '@/lib/pool-invite';
+import { intentUrl, poolInviteLink, shareText } from '@/lib/pool-invite';
 
-// Share (15a): the invite card for a pool, with its link, a QR of it, and the share targets. A dialog on desktop and
-// a bottom sheet on mobile, over one scrim (SheetFrame), in both themes. The card itself is the design's dark card in
-// both themes, as drawn. It shows the pool page's own figures, never a number it could not read from the chain.
+// Share (15a): a pool's invite. The card is the pool's link preview itself (opengraph-image.tsx, the share card's
+// black frame; Joshua 2026-10-26: pool links get the new card design, in the sheet too), so what the sheet shows is
+// what a pasted link shows, with Download and Copy image, then the share targets. A dialog on desktop and a bottom
+// sheet on mobile, over one scrim (SheetFrame), in both themes.
 
 type Props = {
   market: MarketWithId;
-  now: number;
-  /// The side names the pool page shows (a house pool can name its own).
-  labels: { yes: string; no: string };
-  /// The creator label the pool page shows ("Hosted by …").
-  by: string;
   onClose: () => void;
 };
 
 const display: React.CSSProperties = { fontFamily: 'var(--mako-font-display)', fontWeight: 800 };
 const CLOSE = 'M7 7l10 10M17 7L7 17';
 
-export function PoolShareSheet({ market, now, labels, by, onClose }: Props) {
-  const card = poolInviteCard(market, now, labels);
-  const link = poolInviteLink(market.id, 'link');
-
+export function PoolShareSheet({ market, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -37,8 +29,9 @@ export function PoolShareSheet({ market, now, labels, by, onClose }: Props) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const id = market.id.toString();
   return (
-    <SheetFrame label="Share" onScrim={onClose} width={500} yellowOnDark={false}>
+    <SheetFrame label="Share" onScrim={onClose} width={640} yellowOnDark={false}>
       {(variant) => (
         // Scrolls when the screen is shorter than the sheet. The 2px padding keeps the card's ring inside the scroll
         // box; on mobile the sheet's 16px gap under the handle is pulled up to the design's 12px.
@@ -57,13 +50,7 @@ export function PoolShareSheet({ market, now, labels, by, onClose }: Props) {
               <Svg d={CLOSE} size={16} />
             </button>
           </div>
-
-          <InviteCardView card={card} question={market.question} by={by} link={link} variant={variant} />
-
-          <ShareLinks id={market.id} question={market.question}>
-            {/* Rendering the card to an image needs a new dependency, which waits for approval: the slot stays, off. */}
-            <Target comingSoon label="Save image" bg="var(--mako-paper)" fg="#000" icon={<SaveIcon />} />
-          </ShareLinks>
+          <CardPreview poolId={market.id} image={`/pools/${id}/opengraph-image`} question={market.question} fileName={`mako-market-pool-${id}.png`} alt={`Share card for ${market.question}`} />
         </div>
       )}
     </SheetFrame>
@@ -71,8 +58,8 @@ export function PoolShareSheet({ market, now, labels, by, onClose }: Props) {
 }
 
 /// The share targets (X, WhatsApp, Telegram, the device's own share) and the Copy link box, for a pool's invite or,
-/// with `path`, one page of the pool such as a bet's share card. `children` add targets at the end of the row.
-export function ShareLinks({ id, question, path, children }: { id: bigint; question: string; path?: string; children?: React.ReactNode }) {
+/// with `path`, one page of the pool such as a bet's share card.
+export function ShareLinks({ id, question, path }: { id: bigint; question: string; path?: string }) {
   const link = poolInviteLink(id, 'link', path);
   const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
   // The sheet only exists after a tap, so reading the browser here never meets server rendering.
@@ -101,7 +88,6 @@ export function ShareLinks({ id, question, path, children }: { id: bigint; quest
         <Target href={intentUrl('whatsapp', id, question, path)} label="WhatsApp" name="Share on WhatsApp" bg="#25D366" fg="#fff" icon={<WhatsAppIcon />} />
         <Target href={intentUrl('telegram', id, question, path)} label="Telegram" name="Share on Telegram" bg="#229ED9" fg="#fff" icon={<TelegramIcon />} />
         {canShare && <Target onClick={nativeShare} label="More" name="More ways to share" bg="var(--raise2)" fg="var(--mako-canvas-fg)" icon={<MoreIcon />} />}
-        {children}
         {/* Copy sits in the row as one more icon (Joshua 2026-10-26): the link pill took a second row. */}
         <Target
           onClick={copyLink}
@@ -116,60 +102,9 @@ export function ShareLinks({ id, question, path, children }: { id: bigint; quest
   );
 }
 
-function InviteCardView({ card, question, by, link, variant }: { card: InviteCard; question: string; by: string; link: string; variant: 'desktop' | 'mobile' }) {
-  const desk = variant === 'desktop';
-  return (
-    <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 30, background: '#0b0b0b', color: '#EBE5D9', boxShadow: 'var(--edge), 0 0 0 1.5px #262626' }}>
-      <div style={{ padding: '20px 22px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ display: 'flex', color: '#EBE5D9' }}>
-            <Logo size={24} />
-          </span>
-          <span style={{ ...display, fontSize: 15 }}>Mako Market</span>
-          <span style={{ marginLeft: 'auto', height: 26, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderRadius: 9999, background: card.pill.colour, color: card.pill.fg, fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>
-            {card.open && <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: '#000' }} />}
-            {card.pill.label}
-          </span>
-        </div>
-        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.08em', opacity: 0.6, marginTop: 18, overflowWrap: 'break-word' }}>
-          {card.cat} · HOSTED BY {by}
-        </div>
-        <div style={{ ...display, fontSize: desk ? 44 : 41, lineHeight: 0.98, letterSpacing: '-0.035em', marginTop: 6, overflowWrap: 'break-word' }}>{question}</div>
-        <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.65, marginTop: 8 }}>{card.sub}</div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginTop: 16 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, opacity: 0.65 }}>{card.clock.label}</span>
-          <span style={{ ...display, fontSize: desk ? 40 : 36, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{card.clock.value}</span>
-        </div>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '14px 14px 0' }}>
-        {card.sides.map((s) => (
-          <div key={s.side} style={{ minWidth: 0, borderRadius: 22, background: s.side === 'yes' ? 'var(--mako-yes)' : 'var(--mako-no)', color: 'var(--mako-on-side)', padding: 14 }}>
-            <div style={{ ...display, fontSize: 20, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
-            <div style={{ ...display, fontSize: s.pays ? 26 : 18, lineHeight: s.pays ? undefined : '31px', marginTop: 8, fontVariantNumeric: 'tabular-nums' }}>{s.pays ?? 'No stake yet'}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-              {s.amount} · {s.bettors} in
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 22px 20px' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>{card.scanTitle}</div>
-          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{linkDisplay(link)}</div>
-          {card.minLine && <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>{card.minLine}</div>}
-        </div>
-        <div style={{ flex: 'none', padding: 5, background: '#fff', borderRadius: 12 }}>
-          <QRCodeSVG value={link} size={72} level="M" bgColor="#ffffff" fgColor="#000000" role="img" aria-label={`QR code for ${linkDisplay(link)}`} style={{ display: 'block' }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-type TargetProps = { label: string; bg: string; fg: string; icon: React.ReactNode } & (
-  | { href: string; name: string; onClick?: never; comingSoon?: never }
-  | { onClick: () => void; name: string; href?: never; comingSoon?: never }
-  | { comingSoon: true; href?: never; onClick?: never; name?: never }
+type TargetProps = { label: string; bg: string; fg: string; icon: React.ReactNode; name: string } & (
+  | { href: string; onClick?: never }
+  | { onClick: () => void; href?: never }
 );
 
 /// One share target: a 48px round icon over its label.
@@ -180,15 +115,6 @@ function Target({ label, bg, fg, icon, ...t }: TargetProps) {
       {icon}
     </span>
   );
-  if (t.comingSoon) {
-    // The app's coming-soon pattern (ListActionButton): disabled, dimmed, "· coming soon" after the label.
-    return (
-      <button disabled aria-disabled="true" className="m3-press" style={{ ...item, opacity: 0.55, cursor: 'not-allowed' }}>
-        {circle}
-        <span style={{ maxWidth: 80 }}>{label} · coming soon</span>
-      </button>
-    );
-  }
   if (t.href) {
     return (
       <a href={t.href} target="_blank" rel="noopener noreferrer" aria-label={t.name} className="m3-press" style={item}>
@@ -227,14 +153,6 @@ function TelegramIcon() {
     <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M20.5 4.5L3.5 11l5.5 2 2 6 3-4 4.5 3.5z" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
       <path d="M9 13l9-6.5" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function SaveIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

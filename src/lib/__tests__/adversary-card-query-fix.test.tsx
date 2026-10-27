@@ -40,6 +40,7 @@ const chain = vi.hoisted(() => ({ latest: null as unknown as MarketWithId }));
 vi.mock('@/lib/pool-share', () => ({
   poolIdFrom: (s: string) => (/^\d{1,18}$/.test(s) ? BigInt(s) : null),
   readPoolForShare: async () => chain.latest,
+  publicShareClient: () => null,
   shareClient: () => ({
     getTransactionReceipt: async () => ({
       status: 'success',
