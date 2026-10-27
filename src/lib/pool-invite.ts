@@ -3,9 +3,11 @@
 // tested without a browser or a chain.
 //
 // Every figure on the card comes from the pool page's own helpers (poolRow, poolClock, usdc2), so the card and the
-// page can never disagree about the same pool.
+// page can never disagree about the same pool. Only figures of a million and up are shortened (cardFigure), so any
+// uint256 total fits the card.
 
 import type { MarketWithId } from './contract';
+import { wholeMultiplier } from './mocks';
 import { MIN_BET } from './pool-bet-rules';
 import { formatPays, poolRow, STATE_COLOUR, STATE_FG, stateLabel, usdc2, type PoolCat, type PoolState } from './pool-list';
 import { poolClock, unsettleable } from './pool-rules';
@@ -56,12 +58,24 @@ export function intentUrl(target: Exclude<ShareTarget, 'link'>, id: bigint, ques
   }
 }
 
+/// A whole number for the card: grouped below a million, then three digits rounded down and a suffix ("1.23M",
+/// "45.6B", "789T"), and past a thousand trillion "1.23e18". Rounded down so the card never shows more than there is.
+export function cardFigure(whole: bigint): string {
+  if (whole < 1_000_000n) return whole.toLocaleString('en-US');
+  const d = whole.toString();
+  const exp = d.length - 1;
+  if (exp >= 15) return `${d[0]}.${d.slice(1, 3)}e${exp}`;
+  const k = (exp % 3) + 1;
+  const head = d.slice(0, 3);
+  return `${head.slice(0, k)}${k < 3 ? `.${head.slice(k)}` : ''}${['M', 'B', 'T'][Math.floor(exp / 3) - 2]}`;
+}
+
 export type InviteSide = {
   side: 'yes' | 'no';
   name: string;
   /// Pays per 1 USDC ("1.29x"), or null when the side has no stake to quote from (the page says "No stake yet").
   pays: string | null;
-  /// USDC on the side, as the page prints it ("30.00").
+  /// USDC on the side, as the page prints it ("30.00"), shortened from a million ("1.23M").
   amount: string;
   bettors: number;
 };
@@ -82,18 +96,22 @@ export type InviteCard = {
 };
 
 /// What the card says about a pool at `nowSec`.
-export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: string; no: string }): InviteCard {
+/// `timeZone`: the zone the card's times are written in (the link preview pins UTC; omitted, the device's own).
+export function poolInviteCard(m: MarketWithId, nowSec: number, labels: { yes: string; no: string }, timeZone?: string): InviteCard {
   const row = poolRow(m, nowSec);
-  const clock = poolClock(m, row.state, nowSec);
+  const clock = poolClock(m, row.state, nowSec, timeZone);
   const open = row.state === 'open';
   const manual = unsettleable(m);
   const side = (s: 'yes' | 'no'): InviteSide => {
     const pays = s === 'yes' ? row.yesPays : row.noPays;
+    const total = s === 'yes' ? m.totalYes : m.totalNo;
+    // Shortened pays come from the exact whole number, never the rounded Number (adversary on c3c5a0c).
+    const whole = wholeMultiplier(m, s);
     return {
       side: s,
       name: s === 'yes' ? labels.yes : labels.no,
-      pays: pays === null ? null : formatPays(pays),
-      amount: usdc2(s === 'yes' ? m.totalYes : m.totalNo),
+      pays: pays === null ? null : whole < 1_000_000n ? formatPays(pays) : `${cardFigure(whole)}x`,
+      amount: total < 1_000_000n * 1_000_000n ? usdc2(total) : cardFigure(total / 1_000_000n),
       bettors: s === 'yes' ? m.yesBettorCount : m.noBettorCount,
     };
   };

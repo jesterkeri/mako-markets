@@ -200,11 +200,12 @@ function SheetShell({ title, onClose, children }: { title: string; onClose: () =
   );
 }
 
-/// One card's preview with Download and Copy image, then the share targets and Copy link for the card's page.
-function CardPreview({ poolId, page, question, fileName }: { poolId: bigint; page: string; question: string; fileName: string }) {
+/// One card's preview with Download and Copy image, then the share targets and Copy link for the card's page. Without
+/// `page`, the pool's own invite: `image` is the pool's link preview and the links are the pool's.
+export function CardPreview({ poolId, page, image: src, question, fileName, alt }: { poolId: bigint; page?: string; image?: string; question: string; fileName: string; alt?: string }) {
   const [done, setDone] = useState<string | null>(null);
   const [broken, setBroken] = useState(false);
-  const image = cardImage(page);
+  const image = src ?? cardImage(page!);
 
   const pngBlob = async () => {
     const r = await fetch(image);
@@ -237,11 +238,19 @@ function CardPreview({ poolId, page, question, fileName }: { poolId: bigint; pag
 
   const action: React.CSSProperties = { flex: 1, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9999, ...mono, fontSize: 13, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' };
 
-  if (broken) return <Note>This card can’t be drawn just now. Close this and try again in a minute.</Note>;
+  // The link still works without its picture, so the share targets stay.
+  if (broken) {
+    return (
+      <>
+        <Note>This card can’t be drawn just now. Close this and try again in a minute.</Note>
+        <ShareLinks id={poolId} question={question} path={page} />
+      </>
+    );
+  }
   return (
     <>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={image} width={1600} height={900} alt={`Your share card for ${question}`} onError={() => setBroken(true)} style={{ display: 'block', width: '100%', height: 'auto', aspectRatio: '16 / 9', borderRadius: 14, background: '#000' }} />
+      <img src={image} width={1600} height={900} alt={alt ?? `Your share card for ${question}`} onError={() => setBroken(true)} style={{ display: 'block', width: '100%', height: 'auto', aspectRatio: '16 / 9', borderRadius: 14, background: '#000' }} />
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
         <button type="button" onClick={download} className="m3-press" style={{ ...action, background: 'var(--raise)', color: 'var(--mako-canvas-fg)' }}>
           Download

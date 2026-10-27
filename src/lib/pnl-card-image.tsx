@@ -16,7 +16,9 @@ import { join } from 'node:path';
 
 import { ImageResponse } from 'next/og';
 
-import type { PlacedCard, ShareCard } from './pnl-card';
+import { questionPx, type PlacedCard, type ShareCard } from './pnl-card';
+import { cardFigure, type InviteCard } from './pool-invite';
+import { catTitle } from './pool-list';
 
 export const CARD_SIZE = { width: 1600, height: 900 };
 
@@ -287,4 +289,105 @@ export function PnlCardView({ card, who, art, qr }: { card: ShareCard; who: Card
 export async function renderShareCard(card: ShareCard, who: CardWho, qr: string | null, headers?: Record<string, string>): Promise<ImageResponse> {
   const a = await cardAssets();
   return new ImageResponse(<PnlCardView card={card} who={who} art={a[card.variant]} qr={qr ?? a.qr} />, { ...CARD_SIZE, fonts: a.fonts, headers });
+}
+
+// The status pill colours are the site's CSS variables (pool-list.ts); Satori cannot read them, so their light-theme
+// values from mako-brand.css and mako-shell.css.
+const PILL_VARS: Record<string, string> = {
+  'var(--mako-signal)': '#FACC15',
+  'var(--mako-gold)': '#F59E0B',
+  'var(--mako-violet)': '#8B5CF6',
+  'var(--mako-yes)': '#16A34A',
+  'var(--mako-no)': '#E53935',
+  'var(--mako-cyan)': '#06B6D4',
+  'var(--mako-on-side)': '#000000',
+};
+const literal = (c: string) => PILL_VARS[c] ?? c;
+
+/// A pool link's preview (Joshua 2026-10-26: pool links get the new card design): the bet card's frame, art and footer,
+/// with the invite card's facts (status, time left, each side's pays and pot). No account name or photo, so the preview
+/// can be cached like any pool page.
+/// A string's width in ems, over-estimated on purpose (Satori cannot measure, so the card can only shrink text early):
+/// emoji 1.25, full-width scripts (CJK, kana, Hangul) and the widest Latin capitals 1, everything else 0.55
+/// (Bricolage and Inter average about 0.5 on real questions).
+const FULL = /[\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef\u{20000}-\u{3fffd}WM@%]/u;
+const ems = (s: string) => [...s].reduce((w, c) => w + (/\p{Extended_Pictographic}/u.test(c) ? 1.25 : FULL.test(c) ? 1 : 0.55), 0);
+/// Lines a string takes at `px` in the 900px column; 90% of it, since words wrap whole and leave each line short.
+const lines = (s: string, px: number) => Math.max(1, Math.ceil((ems(s) * px) / 810));
+
+/// The pool card's question size: the bet card's sizes up to 80 characters, then smaller steps until the question and
+/// the sub line fit above the side pill (top 594). The column's other rows (category, clock label, clock, gaps) take
+/// 222px of the 444 from its top (150) to the pill, 8 kept clear; the sub line is Inter 24, about 30px a line.
+export function poolQuestionPx(q: string, sub: string): number {
+  const n = [...q].length;
+  const room = 444 - 8 - 222 - lines(sub, 24) * 30;
+  const start = n <= 80 ? questionPx(q) : 40;
+  return [start, 40, 34, 30, 26, 22, 18].find((px) => px <= start && lines(q, px) * px <= room) ?? 18;
+}
+
+export function PoolCardView({ card, question, art, qr }: { card: InviteCard; question: string; art: string; qr: string }) {
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', position: 'relative', background: '#000', color: CREAM, fontFamily: 'JetBrains' }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={art} width={1440} height={812.24} style={{ position: 'absolute', left: 180, top: 77.76 }} alt="" />
+      <div style={{ position: 'absolute', left: 0, top: 0, width: 1600, height: 900, backgroundImage: 'linear-gradient(90deg, rgba(0,0,0,.85) 0%, rgba(0,0,0,.4) 50%, rgba(0,0,0,0) 66%)' }} />
+      <Bracket at="tl" />
+      <Bracket at="tr" />
+      <Bracket at="bl" />
+      <Bracket at="br" />
+
+      <div style={{ position: 'absolute', left: 76, right: 76, top: 66, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', ...bric(32, -0.03) }}>
+          <svg width={46} height={36} viewBox="-3 -3 406 316" fill={CREAM}>
+            <path d={LOGO} />
+          </svg>
+          <span style={{ marginLeft: 12 }}>Mako Market</span>
+          <span style={{ ...mono(13, 0.14), background: YELLOW, color: '#000', borderRadius: 7, padding: '5px 9px', marginLeft: 22 }}>BETA</span>
+        </div>
+        <span style={{ ...mono(18, 0.14), background: literal(card.pill.colour), color: literal(card.pill.fg), borderRadius: 999, padding: '10px 20px' }}>{card.pill.label}</span>
+      </div>
+
+      {/* One column, so a long question pushes the clock down rather than being cut (adversary on ada7c9b: two pools
+          that differ only at the end of a long question unfurled as the same picture). Every question the create flow
+          accepts (200 bytes) fits above the side pill at poolQuestionPx, sized with the sub line; text stays in the 900px column, clear of the art. */}
+      <div style={{ position: 'absolute', left: 76, top: 150, width: 900, display: 'flex', flexDirection: 'column' }}>
+        <span style={{ ...mono(15, 0.12), color: MUTED }}>{`${catTitle(card.cat)} pool`}</span>
+        <div style={{ marginTop: 12, ...bric(poolQuestionPx(question, card.sub), -0.04, 'Bricolage60'), lineHeight: 1, color: '#F4EFE4', display: 'block', wordBreak: 'break-word' }}>{question}</div>
+        <span style={{ marginTop: 28, ...mono(15, 0.12), color: MUTED }}>{card.clock.label}</span>
+        <div style={{ marginTop: 10, ...bric(120, -0.04, 'Bricolage96'), lineHeight: 0.95, color: CREAM }}>{card.clock.value}</div>
+        <span style={{ marginTop: 18, ...inter24 }}>{card.sub}</span>
+      </div>
+
+      <div style={{ position: 'absolute', left: 76, top: 594, display: 'flex', alignItems: 'center', padding: '22px 52px 24px', borderRadius: 999, background: YELLOW }}>
+        {card.sides.map((x, i) => (
+          <div key={x.side} style={{ display: 'flex', flexDirection: 'column', paddingLeft: i === 0 ? 0 : 34, paddingRight: i === 0 ? 34 : 0, borderLeft: i === 0 ? 'none' : '2px solid rgba(10,10,10,.28)' }}>
+            <span style={{ ...mono(15, 0.12), color: INK, opacity: 0.78 }}>{`${x.name} · ${cardFigure(BigInt(x.bettors))} in`}</span>
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'baseline', ...bric(36, -0.02), lineHeight: 1, color: x.side === 'yes' ? THEME.win.sided : THEME.loss.sided }}>
+              {x.pays ? `${x.pays}` : 'No stake yet'}
+              <span style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 18, letterSpacing: 0, color: INK, opacity: 0.72, marginLeft: 8 }}>{`${x.amount} USDC`}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ position: 'absolute', left: 76, right: 76, bottom: 58, height: 84, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={{ ...bric(28, -0.02), lineHeight: 1, color: CREAM }}>{card.scanTitle}</span>
+          {card.minLine && <span style={{ marginTop: 10, ...mono(14, 0.12), color: MUTED }}>{card.minLine}</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <div style={{ width: 84, height: 84, background: CREAM, borderRadius: 14, padding: 9, display: 'flex' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={qr} width={66} height={66} alt="" />
+          </div>
+          <span style={{ marginLeft: 14, color: '#000', background: YELLOW, borderRadius: 999, padding: '16px 30px', ...bric(28, -0.01) }}>makomarket.xyz</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export async function renderPoolCard(card: InviteCard, question: string, qr: string, headers?: Record<string, string>): Promise<ImageResponse> {
+  const a = await cardAssets();
+  return new ImageResponse(<PoolCardView card={card} question={question} art={a.placed} qr={qr} />, { ...CARD_SIZE, fonts: a.fonts, headers });
 }

@@ -1,18 +1,15 @@
-// Share (15a) for a pool: the invite card, its targets, Copy link, the Save image slot, and closing.
+// Share (15a) for a pool: the card (its link preview), its targets, Copy link, and closing.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { QRCodeSVG } from 'qrcode.react';
 import * as React from 'react';
 
 import { PoolShareSheet } from '@/components/PoolShareSheet';
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
 import { intentUrl, poolInviteLink } from '@/lib/pool-invite';
-import { formatPays, poolRow } from '@/lib/pool-list';
 
 const USDC = 1_000_000n;
 const NOW = 1_800_000_000;
-const LABELS = { yes: 'YES', no: 'NO' };
 
 const OPEN: MarketWithId = {
   id: 88n,
@@ -37,7 +34,7 @@ const SETTLED: MarketWithId = { ...OPEN, bettingCloseTime: BigInt(NOW - 7_200), 
 
 function mount(market: MarketWithId = OPEN) {
   const onClose = vi.fn();
-  render(<PoolShareSheet market={market} now={NOW} labels={LABELS} by="0xC8BF…90F1" onClose={onClose} />);
+  render(<PoolShareSheet market={market} onClose={onClose} />);
   return onClose;
 }
 
@@ -58,54 +55,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('the invite card', () => {
-  it('quotes the same multipliers as the pool page helper, with the amount and bettors per side', () => {
+describe('the card', () => {
+  it('is the pool\'s link preview itself (the new card design, Joshua 2026-10-26), so the sheet shows what a pasted link shows', () => {
     mount();
-    const row = poolRow(OPEN, NOW);
-    // Both layouts render (CSS shows one), so each figure appears once per layout.
-    expect(screen.getAllByText(formatPays(row.yesPays))).toHaveLength(2);
-    expect(screen.getAllByText(formatPays(row.noPays))).toHaveLength(2);
-    expect(screen.getAllByText('1.29x')).toHaveLength(2);
-    expect(screen.getAllByText('3.88x')).toHaveLength(2);
-    expect(screen.getAllByText('30.00 · 2 in')).toHaveLength(2);
-    expect(screen.getAllByText('10.00 · 1 in')).toHaveLength(2);
+    // Both layouts render (CSS shows one).
+    const imgs = screen.getAllByRole('img', { name: `Share card for ${OPEN.question}` });
+    expect(imgs).toHaveLength(2);
+    for (const i of imgs) expect(i.getAttribute('src')).toBe('/pools/88/opengraph-image');
   });
 
-  it('names the category and the creator label it is given, and the question', () => {
+  it('offers Download for the card image (the old Save image slot, now working)', () => {
     mount();
-    expect(screen.getAllByText('CRYPTO · HOSTED BY 0xC8BF…90F1')).toHaveLength(2);
-    expect(screen.getAllByText('Will BTC close above $80,000 in 1 day?')).toHaveLength(2);
-  });
-
-  it('while open, asks for a bet and says Scan to join', () => {
-    mount(OPEN);
-    expect(screen.getAllByText('OPEN')).toHaveLength(2);
-    expect(screen.getAllByText('Scan to join')).toHaveLength(2);
-    expect(screen.getAllByText('Bet YES or NO · settled by Mako Market')).toHaveLength(2);
-    expect(screen.getAllByText('Min 0.10 USDC · gas-free with email')).toHaveLength(2);
-  });
-
-  it('once the pool is settled, shows its state instead of a call to bet', () => {
-    mount(SETTLED);
-    expect(screen.getAllByText('YES WON')).toHaveLength(2);
-    expect(screen.getAllByText('Scan to view')).toHaveLength(2);
-    expect(screen.queryByText('Scan to join')).toBeNull();
-    expect(screen.queryByText(/Bet YES or NO/)).toBeNull();
-    expect(screen.queryByText(/Min 0\.10 USDC/)).toBeNull();
-    expect(screen.queryByText('OPEN')).toBeNull();
-  });
-
-  it('draws a QR of the link', () => {
-    mount();
-    const qrs = screen.getAllByRole('img', { name: 'QR code for makomarket.xyz/pools/88?utm_source=link&utm_campaign=pool-88' });
-    expect(qrs).toHaveLength(2);
-    expect(qrs[0].tagName.toLowerCase()).toBe('svg');
-    // Same modules as a reference QR of the link: the code encodes the link, not just its label.
-    const ref = render(<QRCodeSVG value={poolInviteLink(88n, 'link')} size={72} level="M" />);
-    const modules = (svg: Element) => [...svg.querySelectorAll('path')].map((p) => p.getAttribute('d')).join('|');
-    const refModules = modules(ref.container.querySelector('svg')!);
-    expect(refModules.length).toBeGreaterThan(100);
-    for (const q of qrs) expect(modules(q)).toBe(refModules);
+    expect(screen.getAllByRole('button', { name: 'Download' })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Save image/ })).toBeNull();
   });
 });
 
@@ -147,16 +109,6 @@ describe('share targets', () => {
     });
     expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Copy failed' }).length).toBeGreaterThan(0);
-  });
-
-  it('Save image is the design slot, disabled, marked coming soon', () => {
-    mount();
-    const buttons = screen.getAllByRole('button', { name: 'Save image · coming soon' });
-    expect(buttons).toHaveLength(2);
-    for (const b of buttons) {
-      expect((b as HTMLButtonElement).disabled).toBe(true);
-      expect(b.getAttribute('aria-disabled')).toBe('true');
-    }
   });
 
   it('offers the device share where it exists, with the link tagged "link"', async () => {
