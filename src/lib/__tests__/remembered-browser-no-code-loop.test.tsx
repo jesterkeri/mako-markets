@@ -48,7 +48,7 @@ const gate = vi.hoisted(() => ({ calls: 0 }));
 vi.mock('@/lib/privy-gated-signin', () => ({
   continueGatedSignIn: vi.fn(async () => {
     gate.calls += 1;
-    return { kind: 'error', message: 'gate ran' };
+    return { kind: 'session', result: { kind: 'error', message: 'gate ran' } };
   }),
   checkShortcut: vi.fn(async () => h.answers.shift() ?? { status: 'unavailable' }),
   confirmWalletFree: vi.fn(),
