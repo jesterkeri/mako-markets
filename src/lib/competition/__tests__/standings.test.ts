@@ -206,20 +206,21 @@ describe('foldPositions', () => {
       ],
       outcomes,
     ).get('p');
-    expect(s).toEqual({ actor: 'p', net: 4n * U - 15n * U, won: 2, settled: 4 });
+    // Pools: every staked pool but the refund (3) and the failed read (5).
+    expect(s).toEqual({ actor: 'p', net: 4n * U - 15n * U, won: 2, settled: 4, pools: 5 });
   });
 
   it('gives an entrant with nothing counted a zero score', () => {
-    expect(foldPositions([row(null, 0n, 0n, 0n)], new Map()).get('p')).toEqual({ actor: 'p', net: 0n, won: 0, settled: 0 });
+    expect(foldPositions([row(null, 0n, 0n, 0n)], new Map()).get('p')).toEqual({ actor: 'p', net: 0n, won: 0, settled: 0, pools: 0 });
   });
 });
 
 describe('rankEntrants', () => {
-  const s = (actor: string, net: bigint, won: number, settled: number): EntrantScore => ({ actor, net, won, settled });
+  const s = (actor: string, net: bigint, won: number, settled: number, pools = settled): EntrantScore => ({ actor, net, won, settled, pools });
 
-  it('ranks only from the minimum, by net, and lists the rest by settled pools', () => {
-    const { ranked, unranked } = rankEntrants([s('a', 5n, 1, 5), s('b', 9n, 0, 5), s('c', 99n, 4, 4), s('d', 0n, 0, 0), s('e', 1n, 1, 2)], 5);
-    expect(ranked.map((x) => x.actor)).toEqual(['b', 'a']);
+  it('ranks from the pool minimum (open pools count, owner 2026-10-27), by net, and lists the rest by pools', () => {
+    const { ranked, unranked } = rankEntrants([s('a', 5n, 1, 5), s('b', 9n, 0, 5), s('c', 99n, 4, 4), s('d', 0n, 0, 0), s('e', 1n, 1, 2), s('f', -2n, 0, 0, 6)], 5);
+    expect(ranked.map((x) => x.actor)).toEqual(['b', 'a', 'f']);
     expect(unranked.map((x) => x.actor)).toEqual(['c', 'e', 'd']);
   });
 
@@ -241,10 +242,28 @@ describe('readCompetitionStandings', () => {
     }
     await event(t, { actor: REF, market: 10, kind: 'claim', amount: 2n * U, when: at(5) });
     const out = await readCompetitionStandings(t.db as never);
-    expect(out.ranked).toEqual([{ actor: REF, displayName: 'shark', avatarUrl: null, net: String(-3n * U), won: 4, settled: 5 }]);
+    expect(out.ranked).toEqual([{ actor: REF, displayName: 'shark', avatarUrl: null, net: String(-3n * U), won: 4, settled: 5, pools: 5 }]);
     expect(out.unranked).toEqual([]);
     const wire = JSON.stringify(out);
     expect(wire).not.toContain('secret');
     expect(wire).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+  });
+});
+
+describe('the 5-pool minimum (owner 2026-10-27)', () => {
+  it('open pools count and a refunded pool does not: 5 open + 1 refund is ranked, 4 open + 1 refund is not', async () => {
+    t = await competitionDb();
+    await referrerWith(t, REF, 2);
+    const other = addr('a2');
+    await referrerWith(t, other, 2, 'g');
+    for (let m = 20; m < 26; m += 1) {
+      await event(t, { actor: REF, market: m, kind: 'bet', amount: U, when: at(1) });
+      if (m < 25) await event(t, { actor: other, market: m + 10, kind: 'bet', amount: U, when: at(1) });
+      chain.outcomes.set(String(m), { resolved: m === 25, outcome: m === 25 ? Outcome.REFUND : Outcome.UNRESOLVED });
+      chain.outcomes.set(String(m + 10), { resolved: m === 20, outcome: m === 20 ? Outcome.REFUND : Outcome.UNRESOLVED });
+    }
+    const out = await readCompetitionStandings(t.db as never);
+    expect(out.ranked.map((r) => [r.actor, r.pools, r.settled])).toEqual([[REF, 5, 0]]);
+    expect(out.unranked.map((r) => [r.actor, r.pools, r.settled])).toEqual([[other, 4, 0]]);
   });
 });

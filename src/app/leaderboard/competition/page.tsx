@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { COMPETITION_COPY, competitionStatus, PRIZES } from '@/lib/competition/config';
+import { COMPETITION_COPY, competitionStatus } from '@/lib/competition/config';
 import { getCompetitionStandings, type CompetitionStandings } from '@/lib/competition/standings';
 
-import { StandingRow as Row } from './StandingRow';
+import { Standings } from './Standings';
 
 export const metadata: Metadata = { title: 'Competition · Mako Market Beta' };
 
@@ -49,28 +49,7 @@ function Competition({ standings, compact }: { standings: CompetitionStandings |
           {COMPETITION_COPY.error}
         </p>
       ) : (
-        <>
-          <h2 style={{ ...display, fontSize: compact ? 20 : 24, margin: '28px 0 10px' }}>{COMPETITION_COPY.ranked}</h2>
-          {standings.ranked.length === 0 ? (
-            <p style={{ fontSize: 14, color: 'var(--dim)' }}>{COMPETITION_COPY.noneRanked}</p>
-          ) : (
-            <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-              {standings.ranked.map((r, i) => (
-                <Row key={r.actor} r={r} place={`#${i + 1}`} prize={PRIZES[i]} compact={compact} />
-              ))}
-            </ol>
-          )}
-          <h2 style={{ ...display, fontSize: compact ? 20 : 24, margin: '28px 0 10px' }}>{COMPETITION_COPY.unranked}</h2>
-          {standings.unranked.length === 0 ? (
-            <p style={{ fontSize: 14, color: 'var(--dim)' }}>{COMPETITION_COPY.noneEntered}</p>
-          ) : (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-              {standings.unranked.map((r) => (
-                <Row key={r.actor} r={r} place="" compact={compact} />
-              ))}
-            </ul>
-          )}
-        </>
+        <Standings standings={standings} compact={compact} />
       )}
     </section>
   );
