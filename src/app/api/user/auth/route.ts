@@ -399,14 +399,16 @@ export async function POST(req: Request) {
       // Step B (plan 2.2): an unbound session mints only with a usable ceremony; a bound one only from its own browser.
       const ceremony = ceremonies.find((c) => c.id === rb.ceremonyId) ?? null;
       const step = decideStepB({ ...rb, privyUserId: read.privyUserId, row, ceremony, nowMs: t });
-      if (step.kind === 'email_required') throw new GateRefused('email_required', step.reason);
       if (step.kind === 'factor_changed') throw new RevokeThenRefuse('factor_changed', 'email_required');
       if (step.kind === 'device_mismatch') throw new RevokeThenRefuse('device_mismatch', 'email_required', step.row.id);
       // Owner question (plan section 5), decided for the build as the stricter option: while Mako's own TOTP is locked
       // out, no challenge is issued that names a ceremony or a row, so a lockout can never miss one written after it.
+      // Judged before an email refusal, so a retry during the lockout hears when it ends, not "a new code" (plan 2.2
+      // case 7; adversary d017e9a).
       if (step.kind !== 'off' && prepared.user.totpSecret && prepared.user.totpLockedUntil && prepared.user.totpLockedUntil.getTime() > t) {
         throw new LockedOut(prepared.user.totpLockedUntil);
       }
+      if (step.kind === 'email_required') throw new GateRefused('email_required', step.reason);
 
       // A move revokes the account's rows and voids its pending ceremonies, except the one this sign-in spends; the
       // bind below is written after it (r19).

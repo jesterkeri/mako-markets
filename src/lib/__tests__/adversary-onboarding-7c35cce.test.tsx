@@ -50,7 +50,7 @@ const gate = vi.hoisted(() => ({ next: null as unknown }));
 vi.mock('@/lib/privy-gated-signin', () => ({
   continueGatedSignIn: vi.fn(async () => gate.next),
   // Remembered browsers off: today's dialog.
-  checkShortcut: vi.fn(async () => 'off'),
+  checkShortcut: vi.fn(async () => ({ status: 'off' })),
   confirmWalletFree: vi.fn(),
   startOver: vi.fn(),
 }));

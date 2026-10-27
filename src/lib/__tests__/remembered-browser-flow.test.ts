@@ -375,6 +375,14 @@ describe('two requests (legacy Mako TOTP)', () => {
     expect(out.status).toBe(429);
     expect(await q(`SELECT id FROM auth_challenges`)).toEqual([]);
   });
+
+  it('shortcut-check answers locked with the end time during a lockout, so the dialog sends no code (plan 2.2 case 7)', async () => {
+    await pg.query(`UPDATE users SET totp_failed_attempts = 5, totp_locked_until = clock_timestamp() + interval '10 minutes' WHERE id = $1`, [h.userId]);
+    const [u] = await q<{ until: Date }>(`SELECT totp_locked_until AS until FROM users WHERE id = $1`, [h.userId]);
+    const { POST: check } = await import('@/app/api/user/auth/shortcut-check/route');
+    const out = await json(await check(req('/api/user/auth/shortcut-check', { privyAccessToken: 't' })));
+    expect(out.body).toEqual({ ok: true, status: 'locked', retryAt: new Date(u.until).toISOString() });
+  });
 });
 
 describe('sign-out, forget, Sign out everywhere, C4', () => {

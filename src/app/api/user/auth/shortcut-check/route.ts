@@ -9,6 +9,8 @@
 //                  mako_rb, and an unchanged authenticator;
 //   bind_possible  a usable ceremony with more than 10 of its 60 minutes left;
 //   rebind         the lost-reply case (a row never used, inside its ceremony's 60 minutes, with that ceremony's mako_ec);
+//   locked         Mako's own TOTP is locked out: `retryAt` says when it ends, and no code is sent meanwhile (plan 2.2
+//                  case 7, the owner's stricter rule; it overrides every answer below, as /api/user/auth does);
 //   email_needed   everything else: one answer for "no row" and "bad cookie", so it reveals nothing;
 //   off            the feature is off (REMEMBERED_BROWSER_ENABLED unset): today's sign-in, an email code every time.
 // ----------------------------------------------------------------------------
@@ -57,6 +59,9 @@ export async function POST(req: Request) {
     const account = await accountFor(read.privyUserId, read.email);
     const ecHash = ec ? hashSecret(ec) : null;
     const state = await readShortcutState({ userId: account?.id ?? null, sidHash, ecHash });
+    if (account?.hasTotp && account.totpLockedUntil && account.totpLockedUntil.getTime() > state.nowMs) {
+      return Response.json({ ok: true, status: 'locked', retryAt: account.totpLockedUntil.toISOString() });
+    }
     const status = decideShortcutCheck({
       sidHash,
       privyUserId: read.privyUserId,

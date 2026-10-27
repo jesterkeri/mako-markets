@@ -71,13 +71,17 @@ export async function recordEmailVerification(token: string, attempts = 3): Prom
 
 /// Before any authenticator prompt: may this Privy session go on without a new email code? `off`: the feature is off
 /// (an email code every time, as before). Anything unreadable counts as `email_needed`.
-export type ShortcutStatus = 'shortcut' | 'bind_possible' | 'rebind' | 'email_needed' | 'off';
-export async function checkShortcut(bridge: GateBridge): Promise<ShortcutStatus> {
+export type ShortcutStatus = 'shortcut' | 'bind_possible' | 'rebind' | 'email_needed' | 'off' | 'locked' | 'unavailable';
+/// `unavailable`: no readable answer (network, a 5xx, or a server without the route, as after a rollback). The dialog
+/// then says so and sends no code: a fresh code would meet the same server, and a loop of codes helps nobody.
+export async function checkShortcut(bridge: GateBridge): Promise<{ status: ShortcutStatus; retryAt?: unknown }> {
   const token = await bridge.token();
-  if (!token) return 'email_needed';
+  if (!token) return { status: 'email_needed' };
   const r = await postJson('/api/user/auth/shortcut-check', { privyAccessToken: token });
-  const s = r?.json?.status;
-  return s === 'shortcut' || s === 'bind_possible' || s === 'rebind' || s === 'off' ? s : 'email_needed';
+  if (r?.status === 401) return { status: 'email_needed' };
+  const s = r?.status === 200 ? r.json?.status : undefined;
+  if (s === 'locked') return { status: 'locked', retryAt: r?.json?.retryAt };
+  return s === 'shortcut' || s === 'bind_possible' || s === 'rebind' || s === 'off' || s === 'email_needed' ? { status: s } : { status: 'unavailable' };
 }
 
 async function postJson(path: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> | null } | null> {

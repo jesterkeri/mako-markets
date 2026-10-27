@@ -18,7 +18,7 @@ import { CIRCLE_FAUCET_URL, FAUCET_NETWORK } from '@/lib/list-states';
 import { openPools } from '@/lib/pool-display';
 import { maskEmail } from '@/components/shell/SignOutConfirm';
 import { checkShortcut, confirmWalletFree, continueGatedSignIn, startOver as requestStartOver, type StepAResult } from '@/lib/privy-gated-signin';
-import { EMAIL_AGAIN, submitTotp, type SessionResult } from '@/lib/session-exchange';
+import { EMAIL_AGAIN, GATE_MESSAGES, lockedMessage, submitTotp, type SessionResult } from '@/lib/session-exchange';
 import { closeSignIn, useSignInOpen } from '@/lib/sign-in-store';
 import { accountAddress, USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
@@ -72,7 +72,7 @@ function SignInFlow() {
     if (offered.current || !a || !held) return;
     offered.current = true;
     void checkShortcut(a.gate).then((s) => {
-      if (s === 'off' || auth.current !== a) return;
+      if (s.status === 'off' || s.status === 'unavailable' || auth.current !== a) return;
       setStep((cur) => (cur.kind === 'email' && !cur.sending && !cur.error ? { kind: 'continue', email: held, busy: false, error: null } : cur));
     });
   }, []);
@@ -266,12 +266,15 @@ function SignInFlow() {
     const prev = step;
     setStep({ ...prev, busy: true, error: null });
     const s = await checkShortcut(a.gate);
-    if (s === 'shortcut' || s === 'bind_possible' || s === 'rebind') {
+    if (s.status === 'shortcut' || s.status === 'bind_possible' || s.status === 'rebind') {
       setEmail(prev.email);
       await runGate();
       return;
     }
-    await emailAgain(s === 'off' ? null : EMAIL_AGAIN.continue_needs_email, prev.email);
+    // Locked out: say until when, send nothing. No answer: say so, send nothing (no loop of codes).
+    if (s.status === 'locked') return setStep({ ...prev, busy: false, error: lockedMessage(s.retryAt) });
+    if (s.status === 'unavailable') return setStep({ ...prev, busy: false, error: GATE_MESSAGES.unavailable });
+    await emailAgain(s.status === 'off' ? null : EMAIL_AGAIN.continue_needs_email, prev.email);
   };
 
   /// "Use a different email": ends this browser's Privy session, then the email step.
@@ -287,7 +290,7 @@ function SignInFlow() {
     // A retry after a network or server error reuses the proven token rather than the spent code.
     if (step.retryToken) {
       setStep({ ...step, verifying: true, error: null });
-      await runGate();
+      await afterCode(sentAt, step.retryToken);
       return;
     }
     if (!/^\d{6}$/.test(code) || !auth.current) return;
@@ -305,9 +308,23 @@ function SignInFlow() {
       setStep({ kind: 'code', error: 'Sign-in returned no token. Please try again.', verifying: false, retryToken: null, sentAt });
       return;
     }
-    // Before any authenticator prompt (enrollment included): if the server will not take this code, a new one now.
+    await afterCode(sentAt, token);
+  };
+
+  /// Before any authenticator prompt (enrollment included): if the server will not take this code, a new one now;
+  /// during a lockout, when it ends; with no answer, an error and the code kept for a retry, never a new code.
+  const afterCode = async (sentAt: number, token: string) => {
+    if (!auth.current) return;
     const s = await checkShortcut(auth.current.gate);
-    if (s === 'email_needed') {
+    if (s.status === 'locked') {
+      setStep({ kind: 'code', error: lockedMessage(s.retryAt), verifying: false, retryToken: null, sentAt });
+      return;
+    }
+    if (s.status === 'unavailable') {
+      setStep({ kind: 'code', error: GATE_MESSAGES.unavailable, verifying: false, retryToken: token, sentAt });
+      return;
+    }
+    if (s.status === 'email_needed') {
       const a = lastStepA.current;
       await emailAgain(EMAIL_AGAIN[a && !a.ok ? a.reason : 'not_confirmed']);
       return;

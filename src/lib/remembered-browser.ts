@@ -84,8 +84,17 @@ export async function ceremonyIdBySecret(secretHash: string | null): Promise<str
 
 /// The account this Privy sign-in is about: the one bound to the Privy user, else (Magic era, not bound yet) the one
 /// with this email. Read without a lock.
-export async function accountFor(privyUserId: string, email: string | null): Promise<{ id: string; seen: number | null; privyUserId: string | null } | null> {
-  const cols = { id: users.id, seen: users.privyEmailVerifiedSeen, privyUserId: users.privyUserId };
+export async function accountFor(
+  privyUserId: string,
+  email: string | null,
+): Promise<{ id: string; seen: number | null; privyUserId: string | null; hasTotp: boolean; totpLockedUntil: Date | null } | null> {
+  const cols = {
+    id: users.id,
+    seen: users.privyEmailVerifiedSeen,
+    privyUserId: users.privyUserId,
+    hasTotp: sql<boolean>`${users.totpSecret} IS NOT NULL`,
+    totpLockedUntil: users.totpLockedUntil,
+  };
   const bound = await db.select(cols).from(users).where(eq(users.privyUserId, privyUserId)).limit(1);
   if (bound[0]) return bound[0];
   if (!email) return null;
