@@ -43,7 +43,7 @@ export const COMPETITION_COPY = {
   noneEntered: 'No one has entered yet.',
   error: "Can't load the standings right now.",
   boardLink: 'Trading competition: $100 prize. See the standings',
-  /// The leaderboard's Competition tab (Joshua 2026-10-26): only the ranked players.
+  /// The leaderboard's Competition tab (Joshua 2026-10-27): everyone in the competition, as the page lists them.
   tab: 'Competition',
   tabNote: 'Everyone with 2 friends who placed a bet is in. 5 settled pools to be ranked.',
   tabRules: 'Competition rules',

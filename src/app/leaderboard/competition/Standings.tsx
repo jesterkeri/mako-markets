@@ -22,15 +22,20 @@ export function Standings({ standings, compact }: { standings: CompetitionStandi
           ))}
         </ol>
       )}
-      <h2 style={h2}>{COMPETITION_COPY.unranked}</h2>
-      {standings.unranked.length === 0 ? (
-        <p style={{ fontSize: 14, color: 'var(--dim)' }}>{COMPETITION_COPY.noneEntered}</p>
-      ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-          {standings.unranked.map((r) => (
-            <Row key={r.actor} r={r} place="" compact={compact} />
-          ))}
-        </ul>
+      {/* Everyone entered is ranked: no second section, since "No one has entered yet" would be false. */}
+      {(standings.ranked.length === 0 || standings.unranked.length > 0) && (
+        <>
+          <h2 style={h2}>{COMPETITION_COPY.unranked}</h2>
+          {standings.unranked.length === 0 ? (
+            <p style={{ fontSize: 14, color: 'var(--dim)' }}>{COMPETITION_COPY.noneEntered}</p>
+          ) : (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {standings.unranked.map((r) => (
+                <Row key={r.actor} r={r} place="" compact={compact} />
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </>
   );
