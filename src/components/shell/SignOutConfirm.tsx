@@ -65,7 +65,7 @@ export function SignOutConfirm({ who, onClose }: Props) {
   const forgetLine =
     who.authType === 'magic' && !leftover ? (
       <button type="button" onClick={forget} disabled={busy} style={{ display: 'block', margin: '12px auto 0', fontSize: 13, fontWeight: 700, color: 'var(--dim)', textDecoration: 'underline' }}>
-        Sign out and forget this browser (shared computer)
+        Sign out and forget
       </button>
     ) : null;
   const unfinished = leftover
