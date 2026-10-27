@@ -30,13 +30,14 @@ const { LeaderboardClient } = await import('@/app/leaderboard/_components/Leader
 const { COMPETITION_COPY } = await import('@/lib/competition/config');
 
 const U = 1_000_000;
-const srow = (n: number, name: string | null, net: number, won: number, settled: number): StandingRow => ({
+const srow = (n: number, name: string | null, net: number, won: number, settled: number, pools = settled): StandingRow => ({
   actor: `0x${n.toString(16).padStart(40, '0')}`,
   displayName: name,
   avatarUrl: null,
   net: String(net * U),
   won,
   settled,
+  pools,
 });
 
 const STANDINGS: CompetitionStandings = {

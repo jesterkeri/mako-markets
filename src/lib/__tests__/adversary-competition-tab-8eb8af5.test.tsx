@@ -19,13 +19,14 @@ vi.mock('@/lib/competition/standings', () => ({ getCompetitionStandings: () => r
 
 const { CompetitionTab } = await import('@/app/leaderboard/competition/CompetitionTab');
 
-const row = (n: number, name: string, net: number, won: number, settled: number): StandingRow => ({
+const row = (n: number, name: string, net: number, won: number, settled: number, pools = settled): StandingRow => ({
   actor: `0x${n.toString(16).padStart(40, '0')}`,
   displayName: name,
   avatarUrl: null,
   net: String(net * 1_000_000),
   won,
   settled,
+  pools,
 });
 
 afterEach(() => {

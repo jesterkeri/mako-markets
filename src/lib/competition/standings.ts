@@ -21,7 +21,7 @@ import { MONAD_TESTNET_ID } from '@/lib/chain';
 import { MAKO_ADDRESS, makoAbi, Outcome } from '@/lib/contract';
 import { resolveLabels } from '@/lib/leaderboard/identity';
 
-import { COMPETITION_END, COMPETITION_START, MIN_SETTLED, REQUIRED_REFERRALS } from './config';
+import { COMPETITION_END, COMPETITION_START, MIN_POOLS, REQUIRED_REFERRALS } from './config';
 import { ACCOUNTS_CTE, CONTRACT_LOWER, qualifiedCte, unwrapRows } from './referrals';
 
 /// One entrant's position on one counted pool; market is null for an entrant with no counted pool yet.
@@ -41,6 +41,8 @@ export interface EntrantScore {
   net: bigint;
   won: number;
   settled: number;
+  /// Counted pools bet on, open or settled, refunds and failed reads excluded: the ranking minimum counts these.
+  pools: number;
 }
 
 export interface StandingRow {
@@ -51,6 +53,7 @@ export interface StandingRow {
   net: string;
   won: number;
   settled: number;
+  pools: number;
 }
 
 export interface CompetitionStandings {
@@ -108,15 +111,17 @@ export async function readPositions(dbx: DbOrTx): Promise<PositionRow[]> {
 }
 
 /// Per entrant: net = claims minus stakes over counted pools; a pool is settled when resolved YES or NO (REFUND,
-/// unresolved and failed reads are not), and won when the stake on the winning side beats the losing side.
+/// unresolved and failed reads are not), and won when the stake on the winning side beats the losing side. Every
+/// counted pool with a stake is one of `pools` unless it was refunded or its read failed.
 export function foldPositions(rows: readonly PositionRow[], outcomes: ReadonlyMap<string, PoolOutcome>): Map<string, EntrantScore> {
   const out = new Map<string, EntrantScore>();
   for (const r of rows) {
-    const s = out.get(r.actor) ?? { actor: r.actor, net: 0n, won: 0, settled: 0 };
+    const s = out.get(r.actor) ?? { actor: r.actor, net: 0n, won: 0, settled: 0, pools: 0 };
     out.set(r.actor, s);
     if (r.market === null) continue;
     s.net += r.claimed - r.yes - r.no;
     const o = outcomes.get(r.market);
+    if (o && !(o.resolved && o.outcome === Outcome.REFUND) && r.yes + r.no > 0n) s.pools += 1;
     if (!o?.resolved || (o.outcome !== Outcome.YES && o.outcome !== Outcome.NO)) continue;
     s.settled += 1;
     const [win, lose] = o.outcome === Outcome.YES ? [r.yes, r.no] : [r.no, r.yes];
@@ -125,13 +130,13 @@ export function foldPositions(rows: readonly PositionRow[], outcomes: ReadonlyMa
   return out;
 }
 
-/// Ranked: settled >= minSettled, by net DESC, then win rate DESC (exact cross-multiplication), then settled DESC,
-/// then actor ASC. The rest are listed unranked, most settled first.
-export function rankEntrants(scores: Iterable<EntrantScore>, minSettled: number): { ranked: EntrantScore[]; unranked: EntrantScore[] } {
+/// Ranked: pools >= minPools, by net DESC, then win rate DESC (exact cross-multiplication), then settled DESC, then
+/// actor ASC. The rest are listed unranked, most pools first.
+export function rankEntrants(scores: Iterable<EntrantScore>, minPools: number): { ranked: EntrantScore[]; unranked: EntrantScore[] } {
   const all = [...scores];
   const byActor = (a: EntrantScore, b: EntrantScore) => (a.actor < b.actor ? -1 : a.actor > b.actor ? 1 : 0);
   const ranked = all
-    .filter((s) => s.settled >= minSettled)
+    .filter((s) => s.pools >= minPools)
     .sort((a, b) => {
       if (a.net !== b.net) return a.net > b.net ? -1 : 1;
       const rate = b.won * a.settled - a.won * b.settled;
@@ -139,14 +144,14 @@ export function rankEntrants(scores: Iterable<EntrantScore>, minSettled: number)
       if (a.settled !== b.settled) return b.settled - a.settled;
       return byActor(a, b);
     });
-  const unranked = all.filter((s) => s.settled < minSettled).sort((a, b) => b.settled - a.settled || byActor(a, b));
+  const unranked = all.filter((s) => s.pools < minPools).sort((a, b) => b.pools - a.pools || byActor(a, b));
   return { ranked, unranked };
 }
 
 /// Step 2. Throws when ANY pool's read fails, so the page shows its error line and nothing is cached. viem's multicall
 /// with allowFailure turns a failed request (RPC down, rate limited, timed out) into per-call failures instead of
 /// throwing, which would otherwise show an outage as a real board where nobody is ranked, or quietly push a real
-/// player under the settled-pool minimum (adversary pass on 1ba67fe).
+/// player under the pool minimum (adversary pass on 1ba67fe).
 async function readOutcomes(markets: readonly string[]): Promise<Map<string, PoolOutcome>> {
   if (markets.length === 0) return new Map();
   const results = await getAaPublicClient(MONAD_TESTNET_ID).multicall({
@@ -166,7 +171,7 @@ export async function readCompetitionStandings(dbx: DbOrTx): Promise<Competition
   const rows = await readPositions(dbx);
   const markets = [...new Set(rows.flatMap((r) => (r.market === null ? [] : [r.market])))];
   const outcomes = await readOutcomes(markets);
-  const { ranked, unranked } = rankEntrants(foldPositions(rows, outcomes).values(), MIN_SETTLED);
+  const { ranked, unranked } = rankEntrants(foldPositions(rows, outcomes).values(), MIN_POOLS);
   const labels = await resolveLabels(dbx, [...ranked, ...unranked].map((s) => s.actor), MONAD_TESTNET_ID);
   const view = (s: EntrantScore): StandingRow => ({
     actor: s.actor as `0x${string}`,
@@ -175,6 +180,7 @@ export async function readCompetitionStandings(dbx: DbOrTx): Promise<Competition
     net: s.net.toString(),
     won: s.won,
     settled: s.settled,
+    pools: s.pools,
   });
   return { ranked: ranked.map(view), unranked: unranked.map(view), generatedAt: new Date().toISOString() };
 }
