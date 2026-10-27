@@ -7,11 +7,11 @@ import { createPublicClient, http } from 'viem';
 import { MAKO_ADDRESS, MAKO_RELEASE, makoAbi, marketTypeLabel, type MarketWithId } from './contract';
 import { poolTitle } from './pool-display';
 import { unsettleable } from './pool-rules';
+import { SHARE_ORIGIN } from './ref-tag';
 import { humanizeUntil } from './time';
 
 const PUBLIC_RPC_URL = 'https://testnet-rpc.monad.xyz/';
 const RPC_URL = process.env.MONAD_RPC_URL ?? PUBLIC_RPC_URL;
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://makomarket.xyz').replace(/\/+$/, '');
 
 const monadTestnet = {
   id: 10143,
@@ -58,7 +58,9 @@ export function shareStatus(m: MarketWithId, nowSec: number): string {
   return unsettleable(m) ? 'Not settled automatically' : 'Waiting for the result';
 }
 
-export const poolUrl = (id: bigint | string) => `${APP_URL}/pools/${id.toString()}`;
+/// The pool's public link, on makomarket.xyz like the share cards: production's NEXT_PUBLIC_APP_URL is the vercel.app
+/// host, which an unfurl (og:url, the preview image) and the card's QR should never name.
+export const poolUrl = (id: bigint | string) => `${SHARE_ORIGIN}/pools/${id.toString()}`;
 
 export type PoolShare = { title: string; description: string; url: string; image: string; alt: string };
 
