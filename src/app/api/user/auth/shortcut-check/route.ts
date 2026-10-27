@@ -10,7 +10,10 @@
 //   bind_possible  a usable ceremony with more than 10 of its 60 minutes left;
 //   rebind         the lost-reply case (a row never used, inside its ceremony's 60 minutes, with that ceremony's mako_ec);
 //   locked         Mako's own TOTP is locked out: `retryAt` says when it ends, and no code is sent meanwhile (plan 2.2
-//                  case 7, the owner's stricter rule; it overrides every answer below, as /api/user/auth does);
+//                  case 7, the owner's stricter rule). Only to a browser that proved itself: one of the three answers
+//                  above, or its own ceremony for this session that the lockout voided. A copied Privy session with
+//                  neither hears email_needed, so it learns nothing of the account (Codex R1 F2); /api/user/auth
+//                  enforces the lockout on its own either way;
 //   email_needed   everything else: one answer for "no row" and "bad cookie", so it reveals nothing;
 //   off            the feature is off (REMEMBERED_BROWSER_ENABLED unset): today's sign-in, an email code every time.
 // ----------------------------------------------------------------------------
@@ -25,6 +28,7 @@ import {
   factorFingerprint,
   hashSecret,
   hashSid,
+  lockoutVoidedCeremony,
   REMEMBERED_BROWSER_COOKIE,
 } from '@/lib/remembered-browser-rules';
 
@@ -59,9 +63,6 @@ export async function POST(req: Request) {
     const account = await accountFor(read.privyUserId, read.email);
     const ecHash = ec ? hashSecret(ec) : null;
     const state = await readShortcutState({ userId: account?.id ?? null, sidHash, ecHash });
-    if (account?.hasTotp && account.totpLockedUntil && account.totpLockedUntil.getTime() > state.nowMs) {
-      return Response.json({ ok: true, status: 'locked', retryAt: account.totpLockedUntil.toISOString() });
-    }
     const status = decideShortcutCheck({
       sidHash,
       privyUserId: read.privyUserId,
@@ -72,6 +73,12 @@ export async function POST(req: Request) {
       fingerprint: factorFingerprint(read.user),
       nowMs: state.nowMs,
     });
+    const proven =
+      status !== 'email_needed' ||
+      lockoutVoidedCeremony(state.ceremony, { secretHash: ecHash, sidHash, privyUserId: read.privyUserId, nowMs: state.nowMs });
+    if (proven && account?.hasTotp && account.totpLockedUntil && account.totpLockedUntil.getTime() > state.nowMs) {
+      return Response.json({ ok: true, status: 'locked', retryAt: account.totpLockedUntil.toISOString() });
+    }
     return Response.json({ ok: true, status });
   } catch (err) {
     console.error('[user/auth/shortcut-check] failed', err instanceof Error ? err.name : 'unknown');

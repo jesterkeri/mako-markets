@@ -131,6 +131,13 @@ export function usableCeremony(
   );
 }
 
+/// This browser's ceremony, verified by this Privy session, usable but for its void: a lockout voids the ceremony in
+/// progress (plan 2.2 case 7), and the browser that caused it may hear when the lockout ends instead of being sent a
+/// new code (Codex R1 F2).
+export function lockoutVoidedCeremony(c: Ceremony | null, args: Parameters<typeof usableCeremony>[1]): boolean {
+  return !!c && c.voidedAt !== null && usableCeremony({ ...c, voidedAt: null }, args);
+}
+
 /// What is left of a verified ceremony's 60 minutes at `nowMs`.
 export function ceremonyMsLeft(c: Ceremony, nowMs: number): number {
   return c.verifiedAt ? c.verifiedAt.getTime() + CEREMONY_SPEND_WINDOW_MS - nowMs : -1;

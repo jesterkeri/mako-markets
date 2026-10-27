@@ -376,12 +376,57 @@ describe('two requests (legacy Mako TOTP)', () => {
     expect(await q(`SELECT id FROM auth_challenges`)).toEqual([]);
   });
 
-  it('shortcut-check answers locked with the end time during a lockout, so the dialog sends no code (plan 2.2 case 7)', async () => {
-    await pg.query(`UPDATE users SET totp_failed_attempts = 5, totp_locked_until = clock_timestamp() + interval '10 minutes' WHERE id = $1`, [h.userId]);
-    const [u] = await q<{ until: Date }>(`SELECT totp_locked_until AS until FROM users WHERE id = $1`, [h.userId]);
-    const { POST: check } = await import('@/app/api/user/auth/shortcut-check/route');
-    const out = await json(await check(req('/api/user/auth/shortcut-check', { privyAccessToken: 't' })));
-    expect(out.body).toEqual({ ok: true, status: 'locked', retryAt: new Date(u.until).toISOString() });
+  describe('shortcut-check during a lockout (plan 2.2 case 7; Codex R1 F2)', () => {
+    const lockFor10 = () =>
+      pg.query(`UPDATE users SET totp_failed_attempts = 5, totp_locked_until = clock_timestamp() + interval '10 minutes' WHERE id = $1`, [h.userId]);
+    const until = async () => new Date((await q<{ until: Date }>(`SELECT totp_locked_until AS until FROM users WHERE id = $1`, [h.userId]))[0].until).toISOString();
+    const check = async (cookies: Record<string, string | null> = {}) => {
+      const { POST } = await import('@/app/api/user/auth/shortcut-check/route');
+      return (await json(await POST(req('/api/user/auth/shortcut-check', { privyAccessToken: 't' }, cookies)))).body;
+    };
+
+    it('a copied Privy session with neither cookie learns nothing: email_needed, as for any other account', async () => {
+      await lockFor10();
+      expect(await check()).toEqual({ ok: true, status: 'email_needed' });
+      // Nor with another browser's ceremony: verified by a different Privy session.
+      const ec = await emailStart();
+      h.sid = 'sid-other';
+      await stepA(ec);
+      h.sid = 'sid-1';
+      expect(await check({ mako_ec: ec })).toEqual({ ok: true, status: 'email_needed' });
+    });
+
+    it('this browser after a fresh email code hears when the lockout ends, so the dialog sends no code', async () => {
+      await lockFor10();
+      const ec = await emailStart();
+      await stepA(ec);
+      expect(await check({ mako_ec: ec })).toEqual({ ok: true, status: 'locked', retryAt: await until() });
+    });
+
+    it('a remembered browser hears when the lockout ends', async () => {
+      const ec = await emailStart();
+      await stepA(ec);
+      const first = await signIn({ ec });
+      const { rb } = await totp(first.body.challengeId as string, ec);
+      expect(rb).toBeTruthy();
+      await lockFor10();
+      expect(await check({ mako_rb: rb })).toEqual({ ok: true, status: 'locked', retryAt: await until() });
+    });
+
+    it('the browser whose wrong codes started the lockout hears when it ends, not a new code, though its ceremony is void', async () => {
+      const ec = await emailStart();
+      await stepA(ec);
+      const first = await signIn({ ec });
+      h.codeOk = false;
+      let last = { status: 0, body: {} as Record<string, unknown> };
+      for (let i = 0; i < 5; i++) last = await totp(first.body.challengeId as string, ec);
+      expect(last.body).toMatchObject({ error: 'totp_locked' });
+      expect((await q<{ v: Date | null }>(`SELECT voided_at AS v FROM email_ceremonies`))[0].v).not.toBeNull();
+      expect(await check({ mako_ec: ec })).toEqual({ ok: true, status: 'locked', retryAt: await until() });
+      // The same voided ceremony under another Privy session proves nothing.
+      h.sid = 'sid-other';
+      expect(await check({ mako_ec: ec })).toEqual({ ok: true, status: 'email_needed' });
+    });
   });
 });
 
