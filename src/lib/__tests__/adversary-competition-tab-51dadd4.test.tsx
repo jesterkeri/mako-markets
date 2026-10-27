@@ -1,5 +1,5 @@
 // Adversary pass on 51dadd4 (leaderboard Competition tab, spec owner 2026-10-26). Attacks: the tab and the
-// /leaderboard/competition page disagree on who is ranked or in what order; an unranked entrant leaks into the tab;
+// /leaderboard/competition page disagree on who is ranked or in what order (owner 2026-10-27: both list every entrant);
 // the page lost its rules, sections or error line; the board's states (loading, error, period, sort) break when the
 // tab is picked or left; a slow standings read holds up the board.
 
@@ -96,21 +96,21 @@ afterEach(() => {
 });
 
 describe('adversary 51dadd4: tab and competition page agree', () => {
-  it('the tab lists exactly the page ranked list, same order, same prizes, and no unranked entrant', async () => {
+  // Owner 2026-10-27: the tab now shows everyone in the competition, as the page does (was ranked only).
+  it('the tab lists exactly the page standings, ranked and not ranked yet, same order, same prizes', async () => {
     read = async () => STANDINGS;
     const page = render(await CompetitionPage());
     const pageSections = page.container.querySelectorAll('section');
     expect(pageSections).toHaveLength(2);
-    const pageRanked = names(pageSections[0].querySelector('ol')!);
-    const pageRankedPhone = names(pageSections[1].querySelector('ol')!);
+    const lists = (root: Element) => [...root.querySelectorAll('ol, ul')].filter((l) => l.querySelector('a')).map(names);
+    const pageLists = [lists(pageSections[0]), lists(pageSections[1])];
     cleanup();
 
     for (const compact of [false, true]) {
       const tab = render(await CompetitionTab({ compact }));
-      const ol = tab.container.querySelector('ol')!;
-      expect(names(ol)).toEqual(compact ? pageRankedPhone : pageRanked);
-      expect(tab.container.querySelectorAll('li')).toHaveLength(STANDINGS.ranked.length);
-      expect(tab.container.textContent).not.toMatch(/almost|joined/);
+      expect(lists(tab.container)).toEqual(pageLists[compact ? 1 : 0]);
+      expect(tab.container.querySelectorAll('li')).toHaveLength(STANDINGS.ranked.length + STANDINGS.unranked.length);
+      expect(screen.getByRole('heading', { name: COMPETITION_COPY.unranked })).toBeTruthy();
       cleanup();
     }
   });

@@ -1,5 +1,5 @@
-// The leaderboard's Competition tab (Joshua 2026-10-26): ranked players only (2 qualifying referrals and 5 settled
-// pools), in rank order with the prize places; entrants not yet ranked are not shown; a failed read says so.
+// The leaderboard's Competition tab (Joshua 2026-10-26, 2026-10-27): everyone in the competition, the ranked players in
+// rank order with the prize places, then the entrants not ranked yet with their settled count; a failed read says so.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 describe('Competition tab', () => {
-  it('lists only the ranked players, in order, with $50 / $30 / $20 on the first three', async () => {
+  it('lists the ranked players in order with $50 / $30 / $20 on the first three, then the entrants not ranked yet', async () => {
     read = async () => ({
       ranked: [row(0xa1, 'kemi', 12, 4, 5), row(0xb2, 'dayo', 3, 3, 6), row(0xc3, null, -1, 2, 5), row(0xd4, 'tobi', -4, 1, 7)],
       unranked: [row(0xe5, 'not-yet', 99, 2, 2)],
@@ -49,16 +49,27 @@ describe('Competition tab', () => {
     expect(items[2]).toMatch(/^#30x0000…00c3\$20/);
     expect(items[3]).toMatch(/^#4tobi/);
     expect(items[3]).not.toMatch(/\$\d/);
-    expect(container.textContent).not.toMatch(/not-yet/);
-    expect(screen.getByText('Only players with 2 friends who placed a bet and 5 settled pools are shown.')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Rules, and everyone entered' }).getAttribute('href')).toBe('/leaderboard/competition');
+    const waiting = [...container.querySelectorAll('ul > li')].map((li) => li.textContent ?? '');
+    expect(waiting).toEqual([expect.stringMatching(/^not-yet/)]);
+    expect(screen.getByRole('heading', { name: 'Entered, not ranked yet' })).toBeTruthy();
+    expect(screen.getByText('Everyone with 2 friends who placed a bet is in. 5 settled pools to be ranked.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Competition rules' }).getAttribute('href')).toBe('/leaderboard/competition');
   });
 
-  it('nobody ranked yet says so, even when people have entered', async () => {
-    read = async () => ({ ranked: [], unranked: [row(0xe5, 'not-yet', 1, 1, 1)], generatedAt: '2026-10-26T00:00:00Z' });
+  it('nobody ranked yet says so and still shows who has entered, with their settled count (Joshua 2026-10-27)', async () => {
+    read = async () => ({ ranked: [], unranked: [row(0xe5, 'joker', -5, 0, 0)], generatedAt: '2026-10-26T00:00:00Z' });
     const { container } = await show(true);
     expect(screen.getByText('No one has 5 settled pools yet.')).toBeTruthy();
-    expect(container.textContent).not.toMatch(/not-yet/);
+    const waiting = container.querySelector('ul > li')?.textContent ?? '';
+    expect(waiting).toMatch(/joker/);
+    expect(waiting).toMatch(/0 settled/);
+    expect(waiting).toMatch(/−5\.00/);
+  });
+
+  it('nobody entered says so', async () => {
+    read = async () => ({ ranked: [], unranked: [], generatedAt: '2026-10-26T00:00:00Z' });
+    await show();
+    expect(screen.getByText('No one has entered yet.')).toBeTruthy();
   });
 
   it('a failed read shows the error, never an empty board', async () => {

@@ -45,8 +45,8 @@ export const COMPETITION_COPY = {
   boardLink: 'Trading competition: $100 prize. See the standings',
   /// The leaderboard's Competition tab (Joshua 2026-10-26): only the ranked players.
   tab: 'Competition',
-  tabNote: 'Only players with 2 friends who placed a bet and 5 settled pools are shown.',
-  tabRules: 'Rules, and everyone entered',
+  tabNote: 'Everyone with 2 friends who placed a bet is in. 5 settled pools to be ranked.',
+  tabRules: 'Competition rules',
   card: {
     title: 'Invite friends',
     body: 'Share your link. When 2 friends create a Mako Market account with it and place a bet, you enter the $100 trading competition.',

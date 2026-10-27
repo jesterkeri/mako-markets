@@ -1,13 +1,13 @@
 import Link from 'next/link';
 import { cache } from 'react';
 
-import { COMPETITION_COPY, competitionStatus, PRIZES } from '@/lib/competition/config';
+import { COMPETITION_COPY, competitionStatus } from '@/lib/competition/config';
 import { getCompetitionStandings, type CompetitionStandings } from '@/lib/competition/standings';
 
-import { StandingRow } from './StandingRow';
+import { Standings } from './Standings';
 
-// The leaderboard's Competition tab (Joshua 2026-10-26): the competition page's ranked players only, those with
-// 2 qualifying referrals and 5 settled pools. Entrants not yet ranked stay on the competition page.
+// The leaderboard's Competition tab (Joshua 2026-10-26): the competition page's standings, everyone in it (Joshua
+// 2026-10-27: the ranked players, then the entrants not ranked yet), so nobody has to open the page to find themselves.
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mako-font-mono)' };
 
@@ -31,14 +31,8 @@ export async function CompetitionTab({ compact }: { compact: boolean }) {
         <p role="alert" style={{ marginTop: 18, fontSize: 15 }}>
           {COMPETITION_COPY.error}
         </p>
-      ) : standings.ranked.length === 0 ? (
-        <p style={{ marginTop: 18, fontSize: 14, color: 'var(--dim)' }}>{COMPETITION_COPY.noneRanked}</p>
       ) : (
-        <ol style={{ listStyle: 'none', margin: '14px 0 0', padding: 0 }}>
-          {standings.ranked.map((r, i) => (
-            <StandingRow key={r.actor} r={r} place={`#${i + 1}`} prize={PRIZES[i]} compact={compact} />
-          ))}
-        </ol>
+        <Standings standings={standings} compact={compact} />
       )}
       <Link href="/leaderboard/competition" style={{ display: 'inline-block', marginTop: 16, fontSize: compact ? 14 : 15, fontWeight: 700, color: 'inherit', textDecoration: 'underline' }}>
         {COMPETITION_COPY.tabRules}
