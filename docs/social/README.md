@@ -40,6 +40,13 @@ Rules:
 `pool-post-card/` renders the approved pool card (black grid, cream question card, yellow YES and red
 NO cards), 2400x1350 for X. See `pool-post-card/example.png`.
 
+Colours are the live app's (computed CSS on the makomarket.xyz pool list and pool page), since 30 Oct 2026:
+YES green #16A34A, NO red #E53935, signal yellow #FACC15 (OPEN, BETA, progress), paper #EBE5D9,
+sunken #D6CFBE, ink #000, muted text #5E5C57, Mako avatar coral #FB7185. The /designsystem page is outdated on YES/NO.
+
+On Windows without Playwright: `powershell -File render-windows.ps1 -CardDir <this folder> -OutDir <out> -ProfileDir <temp>`
+(headless Chrome; edit the pools list in the script first).
+
 ```
 cd docs/social/pool-post-card
 npm pack @fontsource-variable/bricolage-grotesque @fontsource-variable/inter @fontsource/jetbrains-mono
