@@ -1,0 +1,73 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Bric;src:url(fonts/bricolage-grotesque-latin-wght-normal.woff2) format("woff2");font-weight:200 800}
+@font-face{font-family:Inter;src:url(fonts/inter-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Mono;src:url(fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2");font-weight:500}
+@font-face{font-family:Mono;src:url(fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2");font-weight:700}
+:root{--paper:#E8E4D8;--ink:#0A0A0A;--y:#EDCF4E;--red:#C8553F;--cream:#EDE6D6;--grey:#6E6A60}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1600px;height:900px;background:#000;overflow:hidden}
+body{position:relative;font-family:Inter,sans-serif;color:var(--ink)}
+.grid{position:absolute;inset:0;
+  background-image:linear-gradient(to right,rgba(255,255,255,.07) 1px,transparent 1px),linear-gradient(to bottom,rgba(255,255,255,.07) 1px,transparent 1px);
+  background-size:200.6px 150px;background-position:16px 12px}
+.frame{position:absolute;inset:12px 16px;border:1px solid rgba(255,255,255,.09);border-radius:14px}
+.top{position:absolute;left:61px;right:61px;top:34px;height:40px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:12px;font-family:Bric;font-weight:800;font-size:29px;letter-spacing:-.03em;color:var(--cream)}
+.brand svg{width:38px;height:30px;margin-right:4px}
+.beta{font-family:Mono;font-weight:700;font-size:13px;letter-spacing:.16em;background:var(--y);color:#000;padding:5px 8px;border-radius:6px}
+.mono{font-family:Mono;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:rgba(237,230,214,.62)}
+.kicker{font-size:15px}
+.left{position:absolute;left:61px;top:111px;width:933px;height:718px;background:var(--paper);border-radius:52px;padding:54px 56px 56px;display:flex;flex-direction:column}
+.pills{display:flex;align-items:center;gap:14px}
+.pill{height:52px;border-radius:999px;display:flex;align-items:center;font-size:21px}
+.open{background:var(--y);padding:0 26px;font-family:Inter;font-weight:700;letter-spacing:.06em}
+.host{background:#D9D4C6;padding:0 20px 0 7px;gap:10px;font-weight:600;font-size:22px}
+.av{width:38px;height:38px;border-radius:50%;background:#E07A8A;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#3a0f16}
+.cat{background:var(--ink);color:var(--cream);padding:0 22px;height:44px;font-family:Mono;font-weight:700;font-size:15px;letter-spacing:.16em}
+.qbox{flex:1;min-height:0;margin-top:34px;display:flex;flex-direction:column}
+.q{font-family:Bric;font-weight:800;letter-spacing:-.045em;line-height:1.1}
+.sub{margin-top:22px;font-size:22px;font-weight:600;color:var(--grey)}
+.bottom{display:flex;align-items:flex-end;justify-content:space-between}
+.pc .k{font-size:21px;font-weight:600;color:var(--grey)}
+.pc .v{font-family:Bric;font-weight:800;font-size:64px;letter-spacing:-.05em;line-height:1;margin-top:10px}
+.bars{display:flex;gap:10px;margin-bottom:14px}
+.bars i{display:block;width:75px;height:12px;border-radius:99px;background:#D6D1C3}
+.bars i:first-child{background:var(--y)}
+.side{position:absolute;left:1030px;width:506px;height:341px;border-radius:48px;padding:40px 42px 36px;display:flex;flex-direction:column}
+.yes{top:111px;background:var(--y)}.no{top:488px;background:var(--red)}
+.side .big{font-family:Bric;font-weight:800;font-size:66px;letter-spacing:-.05em;line-height:1}
+.side .line{margin-top:24px;font-size:26px;font-weight:600;line-height:1.25}
+.side .row{margin-top:auto;display:flex;align-items:center;justify-content:space-between}
+.side .back{font-family:Inter;font-weight:700;font-size:26px}
+.bet{background:#1B1611;color:var(--cream);height:54px;padding:0 26px;border-radius:999px;display:flex;align-items:center;font-weight:700;font-size:22px}
+.foot{position:absolute;left:61px;right:61px;bottom:28px;display:flex;justify-content:space-between;font-size:14px}
+</style></head>
+<body>
+<div class="grid"></div><div class="frame"></div>
+<div class="top">
+  <div class="brand"><svg viewBox="-3 -3 406 316"><path fill="#EDE6D6" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg>Mako Market<span class="beta">BETA</span></div>
+  <div class="mono kicker" id="kicker"></div>
+</div>
+<div class="left">
+  <div class="pills"><span class="pill open">OPEN</span><span class="pill host"><span class="av">MK</span>Mako</span><span class="pill cat" id="cat"></span></div>
+  <div class="qbox"><div class="q" id="q"></div><div class="sub" id="sub"></div></div>
+  <div class="bottom">
+    <div class="pc"><div class="k">Pool closes</div><div class="v" id="pc"></div></div>
+    <div class="bars"><i></i><i></i><i></i><i></i></div>
+  </div>
+</div>
+<div class="side yes"><div class="big">YES</div><div class="line" id="yes"></div><div class="row"><span class="back">Back YES</span><span class="bet">Bet now</span></div></div>
+<div class="side no"><div class="big">NO</div><div class="line" id="no"></div><div class="row"><span class="back">Back NO</span><span class="bet">Bet now</span></div></div>
+<div class="foot mono"><span>makomarket.xyz</span><span>From 0.10 USDC · Gas is paid for you · Monad testnet</span></div>
+<script>
+const p=new URLSearchParams(location.search), $=id=>document.getElementById(id);
+$('q').textContent=p.get('q').replace(/(\d+) (October|November)/g,'$1 $2');
+for(const k of ['kicker','cat','sub','pc','yes','no'])$(k).textContent=p.get(k);
+window.fit=()=>{const q=$('q'),b=document.querySelector('.qbox'),s=$('sub');
+  let f=58;q.style.fontSize=f+'px';
+  while(q.offsetHeight+s.offsetHeight+22>b.clientHeight&&f>34){f-=1;q.style.fontSize=f+'px'}
+  return f};
+</script>
+</body></html>
