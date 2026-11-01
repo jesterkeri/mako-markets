@@ -274,8 +274,12 @@ export default {
         clockMs: () => Date.now(),
       });
     } catch (err) {
-      // Reported by kind only: an error's text could carry the RPC URL.
-      result = { ok: false, error: (err as Error)?.name ?? 'error' };
+      // Kind plus viem's short reason and root cause, with every URL cut out: an error's text could carry the RPC URL,
+      // and a private RPC URL holds its key. The name alone hid why every run failed from Oct 30 (house wallets dry
+      // and a ContractFunctionExecutionError that only happens on Cloudflare).
+      const e = err as { name?: string; shortMessage?: string; details?: string } | null;
+      const why = [e?.shortMessage, e?.details].filter(Boolean).join(' | ').replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<url>').slice(0, 300);
+      result = { ok: false, error: why ? `${e?.name ?? 'error'}: ${why}` : (e?.name ?? 'error') };
     }
     console.log(JSON.stringify({ scheduler: result, dryRun: isDryRun(env), cron: event.scheduledTime }));
   },
