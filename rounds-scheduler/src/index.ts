@@ -3,7 +3,7 @@
 // call `schedule`. It holds the two house creator keys and nothing else; it never enters, settles, refunds or moves
 // USDC. Every rule it applies the contract enforces again, so a mistake here can at worst waste gas on a refusal.
 
-import { createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, type Hex } from 'viem';
+import { BaseError, createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { MAX_SCAN_PAGES, READ_TIMEOUT_MS, ROUNDS_ABI, SEND_TIMEOUT_MS } from './constants';
@@ -257,26 +257,21 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   return { ok: true, scheduled, skips };
 }
 
-/// Why a run failed, for its log line: each error in the cause chain, root first, by kind, viem's fixed short message
-/// (first line), HTTP status and RPC error code. Never `details` or any provider text: those can echo the RPC URL, and a
-/// private RPC URL holds its key (adversary on 73849b1); any long piece of the RPC URL still present is cut out as well.
-/// Every piece is cut short before it is joined, and nothing here can throw.
-export function describeError(err: unknown, rpcUrl: unknown): string {
+/// Why a run failed, for its log line: viem's error classes down the cause chain, root first, with each one's HTTP
+/// status and RPC error code. That tells an RPC refusal (HttpRequestError status 429, RpcRequestError code -32005), a
+/// timeout (TimeoutError) and a revert (ExecutionRevertedError) apart. No message text at all: messages, reasons and
+/// the provider's own error object can carry the RPC URL, its key, or a mistyped secret (adversary on 73849b1 and
+/// c379580). Anything not a viem error is logged by a built-in error name or as "error". Never throws.
+const BUILTIN_ERRORS = ['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError'];
+export function describeError(err: unknown): string {
   try {
     const parts: string[] = [];
-    let e = err;
-    for (let depth = 0; depth < 5 && e !== null && typeof e === 'object'; depth++) {
-      const o = e as Record<string, unknown>;
-      const bits = [typeof o.name === 'string' ? o.name.slice(0, 60) : 'error'];
-      if (typeof o.shortMessage === 'string') bits.push(o.shortMessage.slice(0, 120).split('\n')[0]);
-      if (typeof o.status === 'number') bits.push(`status ${o.status}`);
-      if (typeof o.code === 'number') bits.push(`code ${o.code}`);
-      parts.push(bits.join(' '));
-      e = o.cause;
+    for (let e = err, depth = 0; e instanceof BaseError && depth < 6; e = e.cause, depth++) {
+      const { status, code } = e as BaseError & { status?: unknown; code?: unknown };
+      parts.push([e.name, typeof status === 'number' ? `status ${status}` : '', typeof code === 'number' ? `code ${code}` : ''].filter(Boolean).join(' '));
     }
-    let out = parts.reverse().join(' | ').slice(0, 300) || 'error';
-    for (const piece of String(rpcUrl ?? '').split(/[/?&=:@.#%]/)) if (piece.length >= 8) out = out.split(piece).join('<cut>');
-    return out;
+    if (parts.length) return parts.reverse().join(' | ').slice(0, 300);
+    return err instanceof Error && BUILTIN_ERRORS.includes(err.name) ? err.name : 'error';
   } catch {
     return 'error';
   }
@@ -299,7 +294,7 @@ export default {
         clockMs: () => Date.now(),
       });
     } catch (err) {
-      result = { ok: false, error: describeError(err, env.RPC_URL) };
+      result = { ok: false, error: describeError(err) };
     }
     console.log(JSON.stringify({ scheduler: result, dryRun: isDryRun(env), cron: event.scheduledTime }));
   },
