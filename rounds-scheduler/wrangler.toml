@@ -19,7 +19,8 @@ subrequests = 30
 enabled = true
 
 [vars]
-RPC_URL = "https://testnet-rpc.monad.xyz/"
+# RPC_URL is a secret (`wrangler secret put RPC_URL`): a keyed private Monad testnet endpoint. The public RPC answers
+# this Worker HTTP 429 (2026-11-01); keep it out of [vars], which would also clash with the secret.
 # MakoRoundsV1, deployed 2026-10-06 (mako-contracts 1d787f6 receipt), and the two house creators (house-keys.sh).
 ROUNDS_ADDRESS = "0x9dC0e0b9E8F1905740D8B98E90fe07288dcC2921"
 HOUSE_1_ADDRESS = "0xe490aB83c7f247BEC7d5E04Ce04bc48D6609b550"

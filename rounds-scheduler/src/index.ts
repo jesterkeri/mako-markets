@@ -81,6 +81,10 @@ export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promi
 }
 
 async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): Promise<RunResult> {
+  // RPC_URL is a secret (a keyed private endpoint; the public RPC answers this Worker 429, 2026-11-01). Unset or empty
+  // would make viem fall back to the chain's public RPC without a word, so it is refused instead.
+  const rpcUrl = env.RPC_URL?.trim();
+  if (!rpcUrl) return { ok: false, error: 'RPC_URL not set' };
   const rounds = getAddress(env.ROUNDS_ADDRESS.trim());
   const houses = [getAddress(env.HOUSE_1_ADDRESS.trim()), getAddress(env.HOUSE_2_ADDRESS.trim())] as const;
   const intervalS = Number(env.INTERVAL_S);
@@ -90,7 +94,7 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   // subrequest, which WORST_CASE_SUBREQUESTS does not count. A failed read ends this run; the next cron tries again.
   const client = createPublicClient({
     chain: monad,
-    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0, fetchFn: statusOnly }),
+    transport: http(rpcUrl, { timeout: READ_TIMEOUT_MS, retryCount: 0, fetchFn: statusOnly }),
     batch: { multicall: true },
     // No CCIP-read (EIP-3668): viem's default lets an RPC's OffchainLookup revert make an eth_call fetch gateway URLs of
     // the RPC's choosing, recursively, outside the subrequest budget. Nothing here needs it (Codex errlog R4 follow-up).
@@ -99,7 +103,7 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
   const sender = createPublicClient({
     chain: monad,
-    transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0, fetchFn: statusOnly }),
+    transport: http(rpcUrl, { timeout: SEND_TIMEOUT_MS, retryCount: 0, fetchFn: statusOnly }),
     ccipRead: false,
   });
   const skips: string[] = [];
