@@ -73,14 +73,20 @@ export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promi
   const startMs = deps.clockMs();
   const lease = await deps.lease.acquire(startMs);
   if (!lease.ok) return { ok: true, scheduled: [], skips: ['another run holds the lease; nothing done'] };
+  // The last HTTP status the RPC refused with: viem drops it when a 401/403/5xx carries a JSON-RPC error body, which
+  // then reads like an ordinary RPC error (adversary on 902c930, a real Alchemy 401 for a bad key).
+  const refused = { status: 0 };
   try {
-    return await runLocked(env, nowS, deps, lease.token);
+    return await runLocked(env, nowS, deps, lease.token, (r) => void (r.ok || (refused.status = r.status)));
+  } catch (err) {
+    if (refused.status && err !== null && typeof err === 'object') Object.assign(err, { refusedHttpStatus: refused.status });
+    throw err;
   } finally {
     await deps.lease.release(lease.token);
   }
 }
 
-async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): Promise<RunResult> {
+async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number, onFetchResponse: (r: Response) => void): Promise<RunResult> {
   const rounds = getAddress(env.ROUNDS_ADDRESS.trim());
   const houses = [getAddress(env.HOUSE_1_ADDRESS.trim()), getAddress(env.HOUSE_2_ADDRESS.trim())] as const;
   const intervalS = Number(env.INTERVAL_S);
@@ -90,11 +96,11 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   // subrequest, which WORST_CASE_SUBREQUESTS does not count. A failed read ends this run; the next cron tries again.
   const client = createPublicClient({
     chain: monad,
-    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0 }),
+    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0, onFetchResponse }),
     batch: { multicall: true },
   });
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
-  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0 }) });
+  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0, onFetchResponse }) });
   const skips: string[] = [];
 
   // An earlier run's recorded send comes first (Codex Rounds r3). Until the chain shows its nonce used, nothing new
@@ -270,6 +276,8 @@ export function describeError(err: unknown): string {
       const { status, code } = e as BaseError & { status?: unknown; code?: unknown };
       parts.push([e.name, typeof status === 'number' ? `status ${status}` : '', typeof code === 'number' ? `code ${code}` : ''].filter(Boolean).join(' '));
     }
+    const refused = (err as { refusedHttpStatus?: unknown } | null)?.refusedHttpStatus;
+    if (typeof refused === 'number') parts.push(`refused with HTTP ${refused}`);
     if (parts.length) return parts.reverse().join(' | ').slice(0, 300);
     return err instanceof Error && BUILTIN_ERRORS.includes(err.name) ? err.name : 'error';
   } catch {
