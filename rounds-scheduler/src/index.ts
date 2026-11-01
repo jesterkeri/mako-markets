@@ -3,7 +3,7 @@
 // call `schedule`. It holds the two house creator keys and nothing else; it never enters, settles, refunds or moves
 // USDC. Every rule it applies the contract enforces again, so a mistake here can at worst waste gas on a refusal.
 
-import { BaseError, createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, type Hex } from 'viem';
+import { BaseError, createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, TransactionReceiptNotFoundError, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { MAX_SCAN_PAGES, READ_TIMEOUT_MS, ROUNDS_ABI, SEND_TIMEOUT_MS } from './constants';
@@ -123,7 +123,8 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     }
     let receiptErr = '';
     const receipt = await client.getTransactionReceipt({ hash: i.hash }).catch((err) => {
-      receiptErr = describeError(err);
+      // Not found is an answer, not a failure: the nonce went to another transaction (adversary on 64c6f91).
+      if (!(err instanceof TransactionReceiptNotFoundError)) receiptErr = describeError(err);
       return null;
     });
     const how = receipt
