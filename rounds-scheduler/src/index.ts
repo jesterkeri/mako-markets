@@ -257,6 +257,31 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   return { ok: true, scheduled, skips };
 }
 
+/// Why a run failed, for its log line: each error in the cause chain, root first, by kind, viem's fixed short message
+/// (first line), HTTP status and RPC error code. Never `details` or any provider text: those can echo the RPC URL, and a
+/// private RPC URL holds its key (adversary on 73849b1); any long piece of the RPC URL still present is cut out as well.
+/// Every piece is cut short before it is joined, and nothing here can throw.
+export function describeError(err: unknown, rpcUrl: unknown): string {
+  try {
+    const parts: string[] = [];
+    let e = err;
+    for (let depth = 0; depth < 5 && e !== null && typeof e === 'object'; depth++) {
+      const o = e as Record<string, unknown>;
+      const bits = [typeof o.name === 'string' ? o.name.slice(0, 60) : 'error'];
+      if (typeof o.shortMessage === 'string') bits.push(o.shortMessage.slice(0, 120).split('\n')[0]);
+      if (typeof o.status === 'number') bits.push(`status ${o.status}`);
+      if (typeof o.code === 'number') bits.push(`code ${o.code}`);
+      parts.push(bits.join(' '));
+      e = o.cause;
+    }
+    let out = parts.reverse().join(' | ').slice(0, 300) || 'error';
+    for (const piece of String(rpcUrl ?? '').split(/[/?&=:@.#%]/)) if (piece.length >= 8) out = out.split(piece).join('<cut>');
+    return out;
+  } catch {
+    return 'error';
+  }
+}
+
 export default {
   async scheduled(event: ScheduledController, env: Env): Promise<void> {
     let result: RunResult;
@@ -274,12 +299,7 @@ export default {
         clockMs: () => Date.now(),
       });
     } catch (err) {
-      // Kind plus viem's short reason and root cause, with every URL cut out: an error's text could carry the RPC URL,
-      // and a private RPC URL holds its key. The name alone hid why every run failed from Oct 30 (house wallets dry
-      // and a ContractFunctionExecutionError that only happens on Cloudflare).
-      const e = err as { name?: string; shortMessage?: string; details?: string } | null;
-      const why = [e?.shortMessage, e?.details].filter(Boolean).join(' | ').replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<url>').slice(0, 300);
-      result = { ok: false, error: why ? `${e?.name ?? 'error'}: ${why}` : (e?.name ?? 'error') };
+      result = { ok: false, error: describeError(err, env.RPC_URL) };
     }
     console.log(JSON.stringify({ scheduler: result, dryRun: isDryRun(env), cron: event.scheduledTime }));
   },
