@@ -84,7 +84,8 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   // RPC_URL is a secret (a keyed private endpoint; the public RPC answers this Worker 429, 2026-11-01). Unset or empty
   // would make viem fall back to the chain's public RPC without a word, so it is refused instead.
   const rpcUrl = env.RPC_URL?.trim();
-  if (!rpcUrl) return { ok: false, error: 'RPC_URL not set' };
+  // \p{White_Space}, not trim() alone: trim() keeps U+0085 (adversary on 13b47a9).
+  if (!rpcUrl || /^\p{White_Space}*$/u.test(rpcUrl)) return { ok: false, error: 'RPC_URL not set' };
   const rounds = getAddress(env.ROUNDS_ADDRESS.trim());
   const houses = [getAddress(env.HOUSE_1_ADDRESS.trim()), getAddress(env.HOUSE_2_ADDRESS.trim())] as const;
   const intervalS = Number(env.INTERVAL_S);
