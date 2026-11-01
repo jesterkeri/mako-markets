@@ -1,7 +1,7 @@
 // Codex R2 F1 on cce0595: the two parallel request pairs (the nonce reads; the gas and fee estimates) must each be
 // logged with their own HTTP status or RPC code, never one request's status next to the other request's code.
 // Offline: a fake JSON-RPC server with no rounds yet, so a live run goes straight to the simulation and then the pair.
-import { decodeFunctionData, encodeFunctionResult, multicall3Abi, type Hex } from 'viem';
+import { decodeFunctionData, encodeErrorResult, encodeFunctionResult, getAddress, multicall3Abi, type Hex } from 'viem';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { ROUNDS_ABI } from '../src/constants';
@@ -120,3 +120,35 @@ it('a refused simulation logs no provider text in its skip', async () => {
   expect(scheduler.skips.some((s: string) => s.includes('refused:'))).toBe(true);
   for (const piece of [KEY.slice(0, 10), 'SENTINEL', 'rpc.test', 'execution reverted:']) expect(logs[0]).not.toContain(piece);
 });
+
+// Codex errlog R4 follow-up: an RPC's OffchainLookup (EIP-3668) revert must not make the scheduler fetch the gateway
+// URLs it names. Both the simulation's eth_call (to Rounds) and the state read's eth_call (to Multicall3) are tried.
+for (const target of ['rounds', 'multicall3'] as const) {
+  it(`an OffchainLookup revert on the ${target} call fetches no gateway`, async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000);
+    fakeRpc({});
+    const inner = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    const hosts: string[] = [];
+    vi.mocked(globalThis.fetch).mockImplementation(async (url, init) => {
+      hosts.push(new URL(String(url instanceof Request ? url.url : url)).host);
+      if (!String(url).startsWith(env.RPC_URL)) return Response.json({ data: '0x' });
+      const { id, method, params } = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+      const to = method === 'eth_call' ? (params[0] as { to: string }).to.toLowerCase() : '';
+      if (to && (to === MULTICALL3) === (target === 'multicall3')) {
+        const data = encodeErrorResult({
+          abi: [{ type: 'error', name: 'OffchainLookup', inputs: [{ type: 'address', name: 'sender' }, { type: 'string[]', name: 'urls' }, { type: 'bytes', name: 'callData' }, { type: 'bytes4', name: 'callbackFunction' }, { type: 'bytes', name: 'extraData' }] }],
+          errorName: 'OffchainLookup',
+          args: [getAddress(to), ['https://gateway.evil/{sender}/{data}'], '0x', '0x12345678', '0x'],
+        });
+        return Response.json({ jsonrpc: '2.0', id, error: { code: 3, message: 'execution reverted', data } });
+      }
+      return inner(url, init);
+    });
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s: string) => void logs.push(s));
+    await worker.scheduled({ scheduledTime: NOW * 1000, cron: '*/5 * * * *', noRetry() {} } as ScheduledController, { ...env, SCHEDULER_STATE: memNamespace(memLease()) } as Env);
+    expect(logs).toHaveLength(1);
+    expect(hosts).not.toContain('gateway.evil');
+    expect(new Set(hosts)).toEqual(new Set(['rpc.test']));
+  });
+}

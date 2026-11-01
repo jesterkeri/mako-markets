@@ -92,9 +92,16 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     chain: monad,
     transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0, fetchFn: statusOnly }),
     batch: { multicall: true },
+    // No CCIP-read (EIP-3668): viem's default lets an RPC's OffchainLookup revert make an eth_call fetch gateway URLs of
+    // the RPC's choosing, recursively, outside the subrequest budget. Nothing here needs it (Codex errlog R4 follow-up).
+    ccipRead: false,
   });
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
-  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0, fetchFn: statusOnly }) });
+  const sender = createPublicClient({
+    chain: monad,
+    transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0, fetchFn: statusOnly }),
+    ccipRead: false,
+  });
   const skips: string[] = [];
 
   // An earlier run's recorded send comes first (Codex Rounds r3). Until the chain shows its nonce used, nothing new
