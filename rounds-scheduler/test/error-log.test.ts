@@ -25,7 +25,7 @@ it('logs the RPC refusal reason without the RPC URL', async () => {
   expect(logs).toHaveLength(1);
   const { scheduler } = JSON.parse(logs[0]);
   expect(scheduler.ok).toBe(false);
-  expect(scheduler.error).toMatch(/^refused with HTTP 429 \| HttpRequestError status 429 \| .*ContractFunctionExecutionError$/);
+  expect(scheduler.error).toMatch(/^HttpRequestError status 429 \| .*ContractFunctionExecutionError$/);
   expect(logs[0]).not.toContain('SECRETKEY123');
   expect(logs[0]).not.toContain('example');
 });

@@ -3,7 +3,7 @@
 // call `schedule`. It holds the two house creator keys and nothing else; it never enters, settles, refunds or moves
 // USDC. Every rule it applies the contract enforces again, so a mistake here can at worst waste gas on a refusal.
 
-import { BaseError, createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, type Hex } from 'viem';
+import { BaseError, RpcRequestError, createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { MAX_SCAN_PAGES, READ_TIMEOUT_MS, ROUNDS_ABI, SEND_TIMEOUT_MS } from './constants';
@@ -73,20 +73,23 @@ export async function runScheduler(env: Env, nowS: number, deps: RunDeps): Promi
   const startMs = deps.clockMs();
   const lease = await deps.lease.acquire(startMs);
   if (!lease.ok) return { ok: true, scheduled: [], skips: ['another run holds the lease; nothing done'] };
-  // The last HTTP status the RPC refused with: viem drops it when a 401/403/5xx carries a JSON-RPC error body, which
-  // then reads like an ordinary RPC error (adversary on 902c930, a real Alchemy 401 for a bad key).
+  // The HTTP status of the latest RPC response when it was not OK: viem drops it when a 401/403/5xx carries a JSON-RPC
+  // error body, which then reads like an ordinary RPC error (adversary on 902c930, a real Alchemy 401 for a bad key).
+  // Cleared as each request starts, and attached only when the escaping error is that parsed body (RpcRequestError),
+  // so a refusal the run handled is never blamed for a later, unrelated failure (Codex R1 F1 on d4aa979).
   const refused = { status: 0 };
+  const hooks = { onFetchRequest: () => void (refused.status = 0), onFetchResponse: (r: Response) => void (r.ok || (refused.status = r.status)) };
   try {
-    return await runLocked(env, nowS, deps, lease.token, (r) => void (r.ok || (refused.status = r.status)));
+    return await runLocked(env, nowS, deps, lease.token, hooks);
   } catch (err) {
-    if (refused.status && err !== null && typeof err === 'object') Object.assign(err, { refusedHttpStatus: refused.status });
+    if (refused.status && fromRpcErrorBody(err)) Object.assign(err as object, { refusedHttpStatus: refused.status });
     throw err;
   } finally {
     await deps.lease.release(lease.token);
   }
 }
 
-async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number, onFetchResponse: (r: Response) => void): Promise<RunResult> {
+async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number, hooks: { onFetchRequest: () => void; onFetchResponse: (r: Response) => void }): Promise<RunResult> {
   const rounds = getAddress(env.ROUNDS_ADDRESS.trim());
   const houses = [getAddress(env.HOUSE_1_ADDRESS.trim()), getAddress(env.HOUSE_2_ADDRESS.trim())] as const;
   const intervalS = Number(env.INTERVAL_S);
@@ -96,11 +99,11 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number, o
   // subrequest, which WORST_CASE_SUBREQUESTS does not count. A failed read ends this run; the next cron tries again.
   const client = createPublicClient({
     chain: monad,
-    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0, onFetchResponse }),
+    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0, ...hooks }),
     batch: { multicall: true },
   });
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
-  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0, onFetchResponse }) });
+  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0, ...hooks }) });
   const skips: string[] = [];
 
   // An earlier run's recorded send comes first (Codex Rounds r3). Until the chain shows its nonce used, nothing new
@@ -261,6 +264,12 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number, o
     scheduled.push({ house: a.house + 1, startTime: a.startTime, tx });
   }
   return { ok: true, scheduled, skips };
+}
+
+/// True when a viem error's cause chain holds an RpcRequestError: the error came from a JSON-RPC error body the RPC sent.
+function fromRpcErrorBody(err: unknown): boolean {
+  for (let e = err, depth = 0; e instanceof BaseError && depth < 6; e = e.cause, depth++) if (e instanceof RpcRequestError) return true;
+  return false;
 }
 
 /// Why a run failed, for its log line: viem's error classes down the cause chain, root first, with each one's HTTP
