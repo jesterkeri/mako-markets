@@ -270,9 +270,11 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
 /// that request's own status. viem otherwise parses a JSON-RPC error body from a 401/403/429/5xx and loses the status
 /// (adversary on 902c930, a real Alchemy 401 for a bad key), and a status kept for the whole run mislabelled a
 /// handled refusal and parallel requests (Codex R1 F1, R2 F1). Such an answer's JSON-RPC code is not logged; an HTTP 200
-/// JSON-RPC error still logs its code. Reads and sends are otherwise unchanged (no retries either way).
+/// JSON-RPC error still logs its code. Reads and sends are otherwise unchanged (no retries either way). Redirects are not
+/// followed: a 3xx is a non-OK answer like any other, so an RPC cannot send the Worker to another host or add subrequests
+/// (adversary on 1a9ccf0).
 async function statusOnly(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-  const res = await fetch(input, init);
+  const res = await fetch(input, { ...init, redirect: 'manual' });
   if (res.ok) return res;
   void res.body?.cancel().catch(() => undefined);
   return new Response(null, { status: res.status });
