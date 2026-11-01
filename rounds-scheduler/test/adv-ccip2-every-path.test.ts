@@ -150,7 +150,10 @@ describe('a 307 to another host on each plan-and-send request', () => {
       expect(gatewayHits, JSON.stringify(log)).toBe(0);
       expect(rpcHits).toBeLessThanOrEqual(WORST_CASE_SUBREQUESTS);
       if (logged) expect(log.scheduler.error).toMatch(/^HttpRequestError status 307( \||$)/);
-      else expect(log.scheduler.ok).toBe(true);
+      // Swallowed by design (simulation refused, send unknown outcome): the status is in the skip (Codex HARDEN R1 F1).
+      // The priority fee is viem's own fallback to eth_gasPrice inside estimateFeesPerGas: the run succeeds without it.
+      else if (label.startsWith('priority fee')) expect(log.scheduler.ok).toBe(true);
+      else expect(log.scheduler.skips?.join('\n')).toMatch(/HttpRequestError status 307/);
     });
   }
 
@@ -195,6 +198,52 @@ describe('the open-intent path', () => {
     await run(rpc, await leaseWithIntent());
     expect(gatewayHits).toBe(0);
   });
+});
+
+// Codex SCHEDULER_HARDEN R1 F1: the three requests the scheduler deliberately swallows (the send, the open intent's
+// rebroadcast, its receipt) keep their run ok and their behaviour, and name the request's own class and status in the
+// skip, for a redirect and for refusals.
+describe('swallowed requests keep their status in the line', () => {
+  async function leaseWithIntent(): Promise<Lease> {
+    const lease = memLease();
+    const a = await lease.acquire(0);
+    if (!a.ok) throw new Error('no lease');
+    await lease.recordIntent(a.token, 0, { house: baseEnv.HOUSE_1_ADDRESS as Hex, nonce: 5, startTime: NOW + 7200, hash: keccak256('0x01'), raw: '0x02' as Hex, recordedAt: 0 });
+    await lease.release(a.token);
+    return lease;
+  }
+  const refuse = (res: ServerResponse, status: number, gw: string, id: number) =>
+    status === 307 ? redirect(res, gw) : void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32001, message: 'refused' } }));
+
+  for (const status of [307, 401, 503]) {
+    it(`send ${status}`, async () => {
+      const { rpc } = await setup((r, gw, res) => (r.method === 'eth_sendRawTransaction' ? (refuse(res, status, gw, r.id), true) : false));
+      const log = await run(rpc);
+      expect(gatewayHits).toBe(0);
+      expect(log.scheduler.ok).toBe(true);
+      expect(log.scheduler.skips?.join('\n')).toMatch(new RegExp(`not acknowledged \\(HttpRequestError status ${status}\\); recorded, the next run rebroadcasts it`));
+    });
+
+    it(`rebroadcast ${status}`, async () => {
+      const { rpc } = await setup((r, gw, res) => (r.method === 'eth_sendRawTransaction' ? (refuse(res, status, gw, r.id), true) : false));
+      const log = await run(rpc, await leaseWithIntent());
+      expect(gatewayHits).toBe(0);
+      expect(log.scheduler.ok).toBe(true);
+      expect(log.scheduler.skips?.join('\n')).toMatch(new RegExp(`rebroadcast it, not acknowledged \\(HttpRequestError status ${status}\\), nothing new sent`));
+    });
+
+    it(`receipt ${status}`, async () => {
+      const { rpc } = await setup((r, gw, res) => {
+        if (r.method === 'eth_getTransactionCount') return json(res, answer(r, '0x9')), true;
+        if (r.method === 'eth_getTransactionReceipt') return refuse(res, status, gw, r.id), true;
+        return false;
+      });
+      const log = await run(rpc, await leaseWithIntent());
+      expect(gatewayHits).toBe(0);
+      expect(log.scheduler.ok).toBe(true);
+      expect(log.scheduler.skips?.join('\n')).toMatch(new RegExp(`receipt read failed: HttpRequestError status ${status}\\); cleared, the next run plans`));
+    });
+  }
 });
 
 describe('an OffchainLookup revert', () => {

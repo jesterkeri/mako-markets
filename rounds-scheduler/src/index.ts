@@ -113,12 +113,22 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     const i = open.intent;
     const used = await client.getTransactionCount({ address: i.house, blockTag: 'latest' });
     if (used <= i.nonce) {
-      if (!dryRun) await sender.sendRawTransaction({ serializedTransaction: i.raw }).catch(() => null);
+      // A refused rebroadcast changes nothing (the next run tries again); its class and status go in the skip (Codex
+      // SCHEDULER_HARDEN R1 F1).
+      const sent = dryRun
+        ? 'dry run, not rebroadcast'
+        : await sender.sendRawTransaction({ serializedTransaction: i.raw }).then(() => 'rebroadcast it', (err) => `rebroadcast it, not acknowledged (${describeError(err)})`);
       const at = new Date(i.startTime * 1000).toISOString();
-      return { ok: true, scheduled: [], skips: [`${at} earlier send ${i.hash} (nonce ${i.nonce}) not mined yet; ${dryRun ? 'dry run, not rebroadcast' : 'rebroadcast it'}, nothing new sent`] };
+      return { ok: true, scheduled: [], skips: [`${at} earlier send ${i.hash} (nonce ${i.nonce}) not mined yet; ${sent}, nothing new sent`] };
     }
-    const receipt = await client.getTransactionReceipt({ hash: i.hash }).catch(() => null);
-    const how = receipt ? (receipt.status === 'success' ? 'landed' : 'reverted') : 'its nonce was used by another transaction';
+    let receiptErr = '';
+    const receipt = await client.getTransactionReceipt({ hash: i.hash }).catch((err) => {
+      receiptErr = describeError(err);
+      return null;
+    });
+    const how = receipt
+      ? (receipt.status === 'success' ? 'landed' : 'reverted')
+      : `its nonce was used by another transaction${receiptErr ? ` (receipt read failed: ${receiptErr})` : ''}`;
     const cleared = await deps.lease.clearIntent(token, deps.clockMs(), i.hash);
     if (!cleared.ok) return { ok: true, scheduled: [], skips: ['lease lost while clearing the earlier send; nothing done'] };
     // Clearing is this run's one job: the next run books. Each house holds at most one unfinished round, so waiting one
@@ -254,9 +264,9 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     await deps.afterRecord?.();
     try {
       await sender.sendRawTransaction({ serializedTransaction: raw });
-    } catch {
+    } catch (err) {
       // Unknown outcome: the node may hold it. The recorded intent makes the next run rebroadcast this same transaction.
-      skips.push(`${new Date(a.startTime * 1000).toISOString()} send of ${tx} (nonce ${latestN}) not acknowledged; recorded, the next run rebroadcasts it`);
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} send of ${tx} (nonce ${latestN}) not acknowledged (${describeError(err)}); recorded, the next run rebroadcasts it`);
       continue;
     }
     // No receipt wait: polling for it made the run's subrequest count unbounded (adversary on 3f08d05). The intent
