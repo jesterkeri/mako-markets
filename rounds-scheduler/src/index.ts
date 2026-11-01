@@ -192,7 +192,9 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
     try {
       await client.simulateContract({ ...c, functionName: 'schedule', args: [BigInt(a.startTime)], account });
     } catch (err) {
-      skips.push(`${new Date(a.startTime * 1000).toISOString()} refused: ${(err as { shortMessage?: string }).shortMessage ?? 'simulation failed'}`);
+      // Classes and numbers only (describeError): viem's short message carries the RPC's revert text, which can echo
+      // the RPC URL and its key into the log (Codex R3 F1 on 267fac6).
+      skips.push(`${new Date(a.startTime * 1000).toISOString()} refused: ${describeError(err)}`);
       continue;
     }
     if (dryRun) {

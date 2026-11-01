@@ -96,3 +96,27 @@ it('the gas and fee pair: each refusal is logged with its own status or code', a
   fakeRpc({ eth_estimateGas: { status: 401, code: -32001 }, eth_getBlockByNumber: { status: 403, code: -32002 } });
   namesOneRequest(await runOnce(), ['401', '-32001'], ['403', '-32002']);
 });
+
+// Codex R3 F1 on 267fac6: a refused simulation's skip is part of the same log line, so the RPC's revert text (which can
+// echo the RPC URL and its key) must not reach it.
+it('a refused simulation logs no provider text in its skip', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000);
+  const KEY = 'SENTINELKEY9f3aSENTINELKEY9f3a';
+  fakeRpc({});
+  const inner = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  vi.mocked(globalThis.fetch).mockImplementation(async (url, init) => {
+    const { id, method, params } = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+    if (method === 'eth_call' && (params[0] as { to: string }).to.toLowerCase() !== MULTICALL3) {
+      return Response.json({ jsonrpc: '2.0', id, error: { code: 3, message: `execution reverted: key ${KEY} ${env.RPC_URL}`, data: '0x' } });
+    }
+    return inner(url, init);
+  });
+  const logs: string[] = [];
+  vi.spyOn(console, 'log').mockImplementation((s: string) => void logs.push(s));
+  await worker.scheduled({ scheduledTime: NOW * 1000, cron: '*/5 * * * *', noRetry() {} } as ScheduledController, { ...env, SCHEDULER_STATE: memNamespace(memLease()) } as Env);
+  expect(logs).toHaveLength(1);
+  const { scheduler } = JSON.parse(logs[0]);
+  expect(scheduler.ok).toBe(true);
+  expect(scheduler.skips.some((s: string) => s.includes('refused:'))).toBe(true);
+  for (const piece of [KEY.slice(0, 10), 'SENTINEL', 'rpc.test', 'execution reverted:']) expect(logs[0]).not.toContain(piece);
+});
