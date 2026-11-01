@@ -47,6 +47,27 @@ sunken #D6CFBE, ink #000, muted text #5E5C57, Mako avatar coral #FB7185. The /de
 On Windows without Playwright: `powershell -File render-windows.ps1 -CardDir <this folder> -OutDir <out> -ProfileDir <temp>`
 (headless Chrome; edit the pools list in the script first).
 
+## News headline card (draft, 1 Nov 2026, awaiting pick)
+
+## News headline cards (approved 1 Nov 2026)
+
+Three templates, one file each in `news-card/`. News cards carry the headline only: no pool, no YES/NO,
+no mascot.
+1. `lead.html` Dark lead: Market intel lead story on the black grid, plus an "Earlier" row.
+2. `phone.html` In the app: yellow frame, headline left, a phone showing the story in Market intel.
+3. `photo-inset.html` Photo inset: light theme, rounded photo panel with the category pill, headline below.
+
+Rules: headlines verbatim from makomarket.xyz/news with the source named; dates, not "6H ago". Photos are
+free-licence stock only (Unsplash/Pexels), natural colour, no gradient overlays, credited on the card, saved
+in `news-card/photos/`; ask before downloading. Fonts load from `../pool-post-card/fonts/`. Render with
+`news-card/render-windows.ps1` (same arguments as above; edit its cards list per story).
+
+Rejected along the way (do not re-propose): one layout recoloured three ways, big number, wire table,
+timeline, quote, link card, broadcast chyron, flap board, magazine cover, full-bleed photo, split photo. Headlines come verbatim from
+makomarket.xyz/news with the source named; use dates, not "6H ago". Fonts load from
+`../pool-post-card/fonts/`. Render with `news-card/render-windows.ps1` (same arguments as above; edit its
+cards list).
+
 ```
 cd docs/social/pool-post-card
 npm pack @fontsource-variable/bricolage-grotesque @fontsource-variable/inter @fontsource/jetbrains-mono

@@ -1,0 +1,64 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Bric;src:url(../pool-post-card/fonts/bricolage-grotesque-latin-wght-normal.woff2) format("woff2");font-weight:200 800}
+@font-face{font-family:Inter;src:url(../pool-post-card/fonts/inter-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Mono;src:url(../pool-post-card/fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2");font-weight:500}
+@font-face{font-family:Mono;src:url(../pool-post-card/fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2");font-weight:700}
+/* DARK LEAD (approved 1 Nov 2026): the Market intel lead story on the black grid, with an Earlier row under it.
+   Dark theme colours from the live app. */
+:root{--y:#FACC15;--fg:#EBE5D9;--dim:rgba(235,229,217,.62);--line:rgba(235,229,217,.16)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1600px;height:900px;overflow:hidden;background:#000}
+body{position:relative;color:var(--fg);font-family:Inter,sans-serif}
+.grid{position:absolute;inset:0;
+  background-image:linear-gradient(to right,rgba(255,255,255,.07) 1px,transparent 1px),linear-gradient(to bottom,rgba(255,255,255,.07) 1px,transparent 1px);
+  background-size:200.6px 150px;background-position:16px 12px}
+.frame{position:absolute;inset:12px 16px;border:1px solid var(--line);border-radius:14px}
+.top{position:absolute;left:61px;right:61px;top:34px;height:40px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:12px;font-family:Bric;font-weight:800;font-size:29px;letter-spacing:-.03em}
+.brand svg{width:38px;height:30px;margin-right:4px}
+.beta{font-family:Mono;font-weight:700;font-size:13px;letter-spacing:.16em;background:var(--y);color:#000;padding:5px 8px;border-radius:6px}
+.mono{font-family:Mono;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+.kicker{font-size:15px}
+.lead{position:absolute;left:61px;right:61px;top:136px;bottom:268px;display:flex;flex-direction:column}
+.meta{display:flex;align-items:center;gap:18px}
+.cat{height:40px;padding:0 18px;border-radius:999px;background:var(--y);color:#000;display:flex;align-items:center;font-family:Mono;font-weight:700;font-size:15px;letter-spacing:.16em}
+.src{font-size:15px;font-weight:500;letter-spacing:.12em;text-transform:none}
+.hbox{flex:1;min-height:0;margin-top:34px}
+.h{font-family:Bric;font-weight:800;letter-spacing:-.04em;line-height:1.02;text-wrap:balance}
+.earlier{position:absolute;left:61px;right:61px;bottom:112px;height:128px;border-top:1px solid var(--line);padding-top:22px}
+.earlier .lbl{font-size:13px}
+.row{margin-top:16px;display:grid;grid-template-columns:150px 1fr;gap:24px;align-items:start}
+.row .when{font-family:Mono;font-weight:700;font-size:14px;letter-spacing:.14em;line-height:1.5}
+.row .when i{display:block;font-style:normal;font-weight:500;color:var(--dim)}
+.row .t{font-family:Bric;font-weight:800;font-size:31px;letter-spacing:-.02em;line-height:1.12}
+.foot{position:absolute;left:61px;right:61px;bottom:28px;display:flex;justify-content:space-between;font-size:14px}
+</style></head>
+<body>
+<div class="grid"></div><div class="frame"></div>
+<div class="top">
+  <div class="brand"><svg viewBox="-3 -3 406 316"><path fill="currentColor" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg>Mako Market<span class="beta">BETA</span></div>
+  <div class="mono kicker" id="kicker"></div>
+</div>
+<div class="lead">
+  <div class="meta"><span class="cat" id="cat"></span><span class="mono src" id="src"></span></div>
+  <div class="hbox"><div class="h" id="h"></div></div>
+</div>
+<div class="earlier">
+  <div class="mono lbl">Earlier</div>
+  <div class="row"><div class="when" id="e-when"></div><div class="t" id="e-h"></div></div>
+</div>
+<div class="foot mono"><span>makomarket.xyz/news</span><span>Market intel</span></div>
+<script>
+const p=new URLSearchParams(location.search), $=id=>document.getElementById(id);
+const nb=s=>s.replace(/(\d+) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/g,'$1 $2');
+for(const k of ['kicker','cat','src'])$(k).textContent=p.get(k)||'';
+$('h').textContent=nb(p.get('h')||'');
+$('e-h').textContent=nb(p.get('eh')||'');$('e-when').append(p.get('ewhen')||'');
+const i=document.createElement('i');i.textContent=p.get('ecat')||'';$('e-when').append(i);
+const fit=(el,box,max,min)=>{let f=max;el.style.fontSize=f+'px';while(el.offsetHeight>box.clientHeight&&f>min){f--;el.style.fontSize=f+'px'}return f};
+window.fit=()=>fit($('h'),document.querySelector('.hbox'),112,40);
+document.fonts.ready.then(()=>window.fit());
+</script>
+</body></html>

@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Bric;src:url(../pool-post-card/fonts/bricolage-grotesque-latin-wght-normal.woff2) format("woff2");font-weight:200 800}
+@font-face{font-family:Inter;src:url(../pool-post-card/fonts/inter-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Mono;src:url(../pool-post-card/fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2");font-weight:500}
+@font-face{font-family:Mono;src:url(../pool-post-card/fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2");font-weight:700}
+/* PHOTO, INSET (light): the app's cream theme, a rounded photo panel, the headline under it like a news app.
+   Photos are free-licence (Unsplash) and credited. Light theme colours from the live app. */
+:root{--paper:#EBE5D9;--ink:#000;--y:#FACC15;--dim:#5E5C57}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1600px;height:900px;overflow:hidden;background:var(--paper)}
+body{position:relative;color:var(--ink);font-family:Inter,sans-serif}
+.top{position:absolute;left:61px;right:61px;top:30px;height:40px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:12px;font-family:Bric;font-weight:800;font-size:29px;letter-spacing:-.03em}
+.brand svg{width:38px;height:30px;margin-right:4px}
+.beta{font-family:Mono;font-weight:700;font-size:13px;letter-spacing:.16em;background:var(--y);color:#000;padding:5px 8px;border-radius:6px}
+.mono{font-family:Mono;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+.kicker{font-size:14px}
+.ph{position:absolute;left:61px;right:61px;top:96px;height:520px;border-radius:36px;overflow:hidden;background-size:cover;background-repeat:no-repeat}
+.ph .cat{position:absolute;left:26px;top:26px;height:38px;padding:0 16px;border-radius:999px;background:var(--y);color:#000;display:flex;align-items:center;font-family:Mono;font-weight:700;font-size:14px;letter-spacing:.16em}
+.ph .credit{position:absolute;right:22px;bottom:20px;padding:6px 10px;border-radius:6px;background:rgba(0,0,0,.6);font-family:Mono;font-weight:500;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:rgba(235,229,217,.85)}
+.hbox{position:absolute;left:61px;right:61px;top:650px;bottom:80px}
+.h{font-family:Bric;font-weight:800;letter-spacing:-.035em;line-height:1.04;text-wrap:balance}
+.foot{position:absolute;left:61px;right:61px;bottom:30px;display:flex;justify-content:space-between;font-size:13px}
+</style></head>
+<body>
+<div class="top">
+  <div class="brand"><svg viewBox="-3 -3 406 316"><path fill="currentColor" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg>Mako Market<span class="beta">BETA</span></div>
+  <div class="mono kicker" id="kicker"></div>
+</div>
+<div class="ph" id="ph"><span class="cat" id="cat"></span><span class="credit" id="credit"></span></div>
+<div class="hbox"><div class="h" id="h"></div></div>
+<div class="foot mono"><span id="src"></span><span>makomarket.xyz/news</span></div>
+<script>
+const p=new URLSearchParams(location.search), $=id=>document.getElementById(id);
+const nb=s=>s.replace(/(\d+) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/g,'$1 $2');
+for(const k of ['kicker','cat','src','credit'])$(k).textContent=p.get(k)||'';
+$('h').textContent=nb(p.get('h')||'');
+$('ph').style.backgroundImage='url("'+(p.get('img')||'')+'")';$('ph').style.backgroundPosition=p.get('pos')||'center';
+window.fit=()=>{const h=$('h'),box=document.querySelector('.hbox');let f=64;h.style.fontSize=f+'px';
+  while(h.offsetHeight>box.clientHeight&&f>32){f--;h.style.fontSize=f+'px'}return f};
+document.fonts.ready.then(()=>window.fit());
+</script>
+</body></html>

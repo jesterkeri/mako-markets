@@ -1,0 +1,81 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Bric;src:url(../pool-post-card/fonts/bricolage-grotesque-latin-wght-normal.woff2) format("woff2");font-weight:200 800}
+@font-face{font-family:Inter;src:url(../pool-post-card/fonts/inter-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:Mono;src:url(../pool-post-card/fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2");font-weight:500}
+@font-face{font-family:Mono;src:url(../pool-post-card/fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2");font-weight:700}
+/* IN THE APP: the headline on the left, a phone on the right showing the story in Market intel (light theme,
+   rebuilt and simplified from the live /news page), rising in from the bottom edge. Yellow frame, as in the film. */
+:root{--ink:#000;--y:#FACC15;--paper:#EBE5D9;--raised:#E1DBCB;--sunk:#D6CFBE;--cream:#EBE5D9;--dim:rgba(0,0,0,.62)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1600px;height:900px;overflow:hidden;background:var(--y)}
+body{position:relative;color:var(--ink);font-family:Inter,sans-serif}
+.grid{position:absolute;inset:0;
+  background-image:linear-gradient(to right,rgba(0,0,0,.07) 1px,transparent 1px),linear-gradient(to bottom,rgba(0,0,0,.07) 1px,transparent 1px);
+  background-size:200.6px 150px;background-position:16px 12px}
+.top{position:absolute;left:61px;top:34px;height:40px;display:flex;align-items:center}
+.brand{display:flex;align-items:center;gap:12px;font-family:Bric;font-weight:800;font-size:29px;letter-spacing:-.03em}
+.brand svg{width:38px;height:30px;margin-right:4px}
+.beta{font-family:Mono;font-weight:700;font-size:13px;letter-spacing:.16em;background:#000;color:var(--y);padding:5px 8px;border-radius:6px}
+.mono{font-family:Mono;font-weight:700;letter-spacing:.2em;text-transform:uppercase}
+.copy{position:absolute;left:61px;top:150px;width:800px;bottom:110px;display:flex;flex-direction:column}
+.label{font-size:15px;display:flex;align-items:center;gap:14px}
+.label i{display:inline-block;width:10px;height:10px;border-radius:50%;background:#000}
+.hbox{flex:1;min-height:0;margin-top:30px}
+.h{font-family:Bric;font-weight:800;letter-spacing:-.04em;line-height:1.02;text-wrap:balance}
+.src{margin-top:28px;font-size:15px;font-weight:500;letter-spacing:.12em;text-transform:none;color:var(--dim)}
+.foot{position:absolute;left:61px;bottom:30px;font-size:14px;color:var(--dim)}
+/* phone */
+.phone{position:absolute;left:1000px;top:96px;width:452px;height:930px;background:#000;border-radius:66px;padding:14px}
+.screen{width:100%;height:100%;background:var(--raised);border-radius:53px;overflow:hidden;padding:56px 22px 0}
+.app-h{font-family:Bric;font-weight:800;font-size:38px;letter-spacing:-.04em;line-height:1}
+.app-sub{margin-top:8px;font-family:Mono;font-weight:500;font-size:11px;letter-spacing:.1em;color:#5E5C57}
+.pills{margin-top:16px;display:flex;gap:7px}
+.pills span{height:30px;padding:0 13px;border-radius:999px;background:var(--sunk);display:flex;align-items:center;font-family:Mono;font-weight:700;font-size:10px;letter-spacing:.08em}
+.pills .on{background:#000;color:var(--cream)}
+.card{margin-top:18px;background:#000;color:var(--cream);border-radius:24px;padding:20px 20px 22px}
+.card .m{display:flex;align-items:center;gap:10px}
+.card .c{height:24px;padding:0 10px;border-radius:999px;background:var(--y);color:#000;display:flex;align-items:center;font-family:Mono;font-weight:700;font-size:10px;letter-spacing:.1em}
+.card .a{font-family:Mono;font-weight:500;font-size:10px;letter-spacing:.08em;color:rgba(235,229,217,.6)}
+.card .t{margin-top:14px;font-family:Bric;font-weight:800;font-size:27px;letter-spacing:-.03em;line-height:1.06}
+.list-h{margin:22px 2px 4px;font-family:Mono;font-weight:700;font-size:10px;letter-spacing:.14em;color:#5E5C57}
+.li{display:grid;grid-template-columns:52px 1fr;gap:10px;padding:13px 2px;border-bottom:1px solid rgba(0,0,0,.12)}
+.li .d{font-family:Mono;font-weight:700;font-size:10px;letter-spacing:.08em;line-height:1.5}
+.li .d i{display:block;font-style:normal;font-weight:500;color:#5E5C57}
+.li .t{font-family:Bric;font-weight:800;font-size:17px;letter-spacing:-.01em;line-height:1.15}
+</style></head>
+<body>
+<div class="grid"></div>
+<div class="top">
+  <div class="brand"><svg viewBox="-3 -3 406 316"><path fill="currentColor" d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg>Mako Market<span class="beta">BETA</span></div>
+</div>
+<div class="copy">
+  <div class="mono label"><i></i><span id="label"></span></div>
+  <div class="hbox"><div class="h" id="h"></div></div>
+  <div class="mono src" id="src"></div>
+</div>
+<div class="foot mono">makomarket.xyz/news</div>
+<div class="phone"><div class="screen">
+  <div class="app-h">Market intel</div>
+  <div class="app-sub" id="count"></div>
+  <div class="pills"><span>ALL</span><span class="on">CRYPTO</span><span>FOOTBALL</span><span>NBA</span></div>
+  <div class="card"><div class="m"><span class="c" id="pcat"></span><span class="a" id="pmeta"></span></div><div class="t" id="pt"></div></div>
+  <div class="list-h">EARLIER TODAY</div>
+  <div id="list"></div>
+</div></div>
+<script>
+const p=new URLSearchParams(location.search), $=id=>document.getElementById(id);
+const nb=s=>s.replace(/(\d+) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/g,'$1 $2');
+for(const k of ['label','src','count','pcat','pmeta'])$(k).textContent=p.get(k)||'';
+$('h').textContent=nb(p.get('h')||'');$('pt').textContent=nb(p.get('h')||'');
+// list: "date~~cat~~headline" joined by "||"
+(p.get('list')||'').split('||').filter(Boolean).forEach(r=>{const [d,c,t]=r.split('~~');
+  const li=document.createElement('div');li.className='li';
+  const dd=document.createElement('div');dd.className='d';dd.append(d||'');const i=document.createElement('i');i.textContent=c||'';dd.append(i);
+  const tt=document.createElement('div');tt.className='t';tt.textContent=nb(t||'');li.append(dd,tt);$('list').append(li)});
+window.fit=()=>{const h=$('h'),box=document.querySelector('.hbox');let f=96;h.style.fontSize=f+'px';
+  while(h.offsetHeight>box.clientHeight&&f>40){f--;h.style.fontSize=f+'px'}return f};
+document.fonts.ready.then(()=>window.fit());
+</script>
+</body></html>
