@@ -340,6 +340,8 @@ function DeleteControl({ d, mobile }: { d: ReturnType<typeof useRowDelete>; mobi
   }, [asking]);
   const ask = (next: boolean) => {
     moved.current = true;
+    // The Delete button unmounts while asking, so its mouseleave never fires: drop the hover tint here.
+    setHover(false);
     setAsking(next);
   };
   const label = (t: string) => (mobile ? t : t.toUpperCase());

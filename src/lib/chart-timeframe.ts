@@ -43,6 +43,8 @@ function subscribe(l: () => void): () => void {
   listeners.add(l);
   const onStorage = (e: StorageEvent) => {
     if (e.key !== KEY && e.key !== null) return;
+    // Another tab saved one: take it from the event, since this tab's own read may be what fails.
+    if (e.key === KEY) memory = ALL.includes(e.newValue as Timeframe) ? (e.newValue as Timeframe) : null;
     unsaved = false;
     l();
   };
