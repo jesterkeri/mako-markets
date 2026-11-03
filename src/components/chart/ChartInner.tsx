@@ -29,6 +29,7 @@ import {
 } from 'lightweight-charts';
 
 import { DEFAULT_CHART_COLORS, type ChartColors } from '@/lib/chart-colors';
+import { toChartTime } from '@/lib/chart-time';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
 import type { Candle, Timeframe } from '@/types/chart';
 
@@ -122,9 +123,11 @@ function derivePrecision(
   return { precision: 5, minMove: 0.00001 };
 }
 
+// Every time given to the chart goes through toChartTime, so the UTC labels lightweight-charts draws read as the
+// viewer's local time. These run only inside effects, so the offset is never read during a server render.
 function toChartData(candles: Candle[]): CandlestickData<Time>[] {
   return candles.map((c) => ({
-    time: (c.timestamp / 1000) as Time,
+    time: toChartTime(c.timestamp),
     open: c.open,
     high: c.high,
     low: c.low,
@@ -139,7 +142,7 @@ export function candleOptions(c: ChartColors) {
 
 function toVolumeData(candles: Candle[], upColor: string, downColor: string): HistogramData<Time>[] {
   return candles.map((c) => ({
-    time: (c.timestamp / 1000) as Time,
+    time: toChartTime(c.timestamp),
     value: c.volume,
     color: c.close >= c.open ? upColor : downColor,
   }));
@@ -156,7 +159,7 @@ function computeMA(candles: Candle[], period: number): LineData<Time>[] {
     if (i >= period) sum -= candles[i - period].close;
     if (i >= period - 1) {
       out.push({
-        time: (candles[i].timestamp / 1000) as Time,
+        time: toChartTime(candles[i].timestamp),
         value: sum / period,
       });
     }
@@ -178,7 +181,7 @@ function computeEMA(candles: Candle[], period: number): LineData<Time>[] {
       if (i === period - 1) {
         ema = sum / period;
         out.push({
-          time: (candles[i].timestamp / 1000) as Time,
+          time: toChartTime(candles[i].timestamp),
           value: ema,
         });
       }
@@ -186,7 +189,7 @@ function computeEMA(candles: Candle[], period: number): LineData<Time>[] {
     }
     ema = candles[i].close * k + ema * (1 - k);
     out.push({
-      time: (candles[i].timestamp / 1000) as Time,
+      time: toChartTime(candles[i].timestamp),
       value: ema,
     });
   }
