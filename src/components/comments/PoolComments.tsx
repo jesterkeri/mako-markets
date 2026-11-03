@@ -119,7 +119,7 @@ function useRowDelete(c: CommentWire, ctx: Ctx, onDeleted?: (id: string) => void
   const del = useDeleteComment(ctx.target);
   return {
     canDelete: !c.deleted && (c.isOwn || ctx.canModerate),
-    remove: () => del.mutate(c.id, { onSuccess: () => onDeleted?.(c.id) }),
+    remove: (onSettled?: () => void) => del.mutate(c.id, { onSuccess: () => onDeleted?.(c.id), onSettled }),
     pending: del.isPending,
     failed: del.isError,
   };
@@ -344,15 +344,11 @@ function DeleteControl({ d, mobile }: { d: ReturnType<typeof useRowDelete>; mobi
   };
   const label = (t: string) => (mobile ? t : t.toUpperCase());
   const base: React.CSSProperties = mobile ? { fontWeight: 700 } : actionButtonDesktop;
+  // Busy from the Yes click (the mutation's own pending flag lands a tick later) until the delete settles.
+  const [sending, setSending] = useState(false);
+  const busy = sending || d.pending;
 
-  if (d.pending) {
-    return (
-      <button type="button" disabled style={{ ...base, color: 'var(--dim)', opacity: 0.5 }}>
-        {label('Deleting…')}
-      </button>
-    );
-  }
-  if (asking) {
+  if (asking && !busy) {
     return (
       <span
         role="group"
@@ -366,9 +362,9 @@ function DeleteControl({ d, mobile }: { d: ReturnType<typeof useRowDelete>; mobi
         <button
           type="button"
           onClick={() => {
-            moved.current = false;
-            setAsking(false);
-            d.remove();
+            setSending(true);
+            ask(false);
+            d.remove(() => setSending(false));
           }}
           style={{ ...base, color: RED }}
         >
@@ -380,16 +376,20 @@ function DeleteControl({ d, mobile }: { d: ReturnType<typeof useRowDelete>; mobi
       </span>
     );
   }
+  // One button for Delete and Deleting…, so focus stays on it while the delete runs and after one that failed.
   return (
     <button
       ref={deleteRef}
       type="button"
-      onClick={() => ask(true)}
+      aria-disabled={busy || undefined}
+      onClick={() => {
+        if (!busy) ask(true);
+      }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ ...base, color: hover && !mobile ? RED : 'var(--dim)' }}
+      style={{ ...base, color: hover && !mobile && !busy ? RED : 'var(--dim)', opacity: busy ? 0.5 : 1 }}
     >
-      {label('Delete')}
+      {label(busy ? 'Deleting…' : 'Delete')}
     </button>
   );
 }

@@ -112,6 +112,7 @@ const LAYOUTS = [
     reply: 'REPLY',
     del: 'DELETE',
     yes: 'YES',
+    deleting: 'DELETING…',
     no: 'NO',
     more: 'LOAD MORE',
     moreReplies: 'VIEW MORE REPLIES',
@@ -126,6 +127,7 @@ const LAYOUTS = [
     reply: 'Reply',
     del: 'Delete',
     yes: 'Yes',
+    deleting: 'Deleting…',
     no: 'No',
     more: 'Show more',
     moreReplies: 'View more replies',
@@ -202,6 +204,25 @@ describe.each(LAYOUTS)('PoolComments ($name)', (L) => {
     expect(screen.queryByRole('group', { name: 'Delete this comment?' })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole('button', { name: L.del }));
     expect(h.deleteMutate).not.toHaveBeenCalled();
+  });
+
+  it('after Yes, focus stays on the one button through Deleting… and after a failed delete; it cannot reopen meanwhile', () => {
+    h.user = USER;
+    h.comments = [comment({ id: 'mine', isOwn: true, authorLabel: 'dayo' })];
+    renderIt();
+    fireEvent.click(screen.getByRole('button', { name: L.del }));
+    fireEvent.click(screen.getByRole('button', { name: L.yes }));
+    const busy = screen.getByRole('button', { name: L.deleting });
+    expect(document.activeElement).toBe(busy);
+    expect(busy.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(busy);
+    expect(screen.queryByRole('group', { name: 'Delete this comment?' })).toBeNull();
+    expect(h.deleteMutate).toHaveBeenCalledTimes(1);
+    // The delete settles without success (it failed): the same button, still focused, offers Delete again.
+    const opts = h.deleteMutate.mock.calls[0][1] as { onSettled: () => void };
+    act(() => opts.onSettled());
+    expect(screen.getByRole('button', { name: L.del })).toBe(busy);
+    expect(document.activeElement).toBe(busy);
   });
 
   it('asking on one comment leaves the others alone', () => {

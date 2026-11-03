@@ -11,9 +11,13 @@ const KEY = 'mako:chart:timeframe';
 const ALL: readonly Timeframe[] = ['1m', '15m', '1h', '2h', '4h', '1d'];
 
 let memory: Timeframe | null = null;
+/// A pick storage refused (full, or a private mode that reads but will not write) wins in this tab over what storage
+/// still holds (adversary on a4d7c11), until another tab saves one.
+let unsaved = false;
 const listeners = new Set<() => void>();
 
 function read(): Timeframe | null {
+  if (unsaved) return memory;
   try {
     const v = window.localStorage.getItem(KEY);
     // Storage is editable by anyone with the browser: only a known timeframe is used.
@@ -28,8 +32,9 @@ export function saveTimeframe(tf: Timeframe): void {
   memory = tf;
   try {
     window.localStorage.setItem(KEY, tf);
+    unsaved = false;
   } catch {
-    // Memory only.
+    unsaved = true;
   }
   for (const l of listeners) l();
 }
@@ -37,7 +42,9 @@ export function saveTimeframe(tf: Timeframe): void {
 function subscribe(l: () => void): () => void {
   listeners.add(l);
   const onStorage = (e: StorageEvent) => {
-    if (e.key === KEY || e.key === null) l();
+    if (e.key !== KEY && e.key !== null) return;
+    unsaved = false;
+    l();
   };
   window.addEventListener('storage', onStorage);
   return () => {

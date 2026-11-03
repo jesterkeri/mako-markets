@@ -86,15 +86,22 @@ describe('saved chart timeframe', () => {
     }
   });
 
-  it('with storage blocked, the pick still applies in this tab', async () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    show(pool);
-    fireEvent.click(await tab('2H'));
-    await waitFor(() => expect(lastTf()).toBe('2h'));
+  it('with storage blocked (reads and writes throw), the pick still applies in this tab', async () => {
+    // Replaced on window: happy-dom's localStorage does not go through Storage.prototype, so a prototype spy is a no-op.
+    const real = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    let touched = 0;
+    const blocked = () => {
+      touched += 1;
+      throw new DOMException('blocked', 'SecurityError');
+    };
+    Object.defineProperty(window, 'localStorage', { configurable: true, get: () => ({ getItem: blocked, setItem: blocked }) });
+    try {
+      show(pool);
+      fireEvent.click(await tab('2H'));
+      await waitFor(() => expect(lastTf()).toBe('2h'));
+      expect(touched).toBeGreaterThan(1);
+    } finally {
+      if (real) Object.defineProperty(window, 'localStorage', real);
+    }
   });
 });
