@@ -99,7 +99,8 @@ vi.mock('@/lib/recovery-codes', () => ({
 vi.mock('@/lib/account-locks', () => ({
   lockUserRow: async () => mocks.lockedRow(),
   lockChallenges: async () => [{}],
-  lockSafeRows: async () => {},
+  lockSafeRows: async () => [],
+  lockAddressVersion: async () => {},
   lockSessions: async () => {},
 }));
 

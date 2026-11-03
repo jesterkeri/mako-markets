@@ -61,7 +61,7 @@ import {
   USER_SESSION_MAX_AGE_SEC,
 } from '@/lib/user-session';
 import { refFromCookieHeader } from '@/lib/ref-tag';
-import { lockCeremonies, lockRememberedRows, lockSafeRows, lockSessions } from '@/lib/account-locks';
+import { lockAddressVersion, lockCeremonies, lockRememberedRows, lockSafeRows, lockSessions } from '@/lib/account-locks';
 import { finishEmbeddedUser, IdentityConflictError, prepareEmbeddedUser } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
@@ -373,13 +373,16 @@ export async function POST(req: Request) {
         ref: refFromCookieHeader(req.headers.get('cookie')),
       });
       // (2a) Its Safe rows: a reuse inserts missing chains, a move rewrites them.
-      await lockSafeRows(tx, prepared.user.id);
+      const safeChains = await lockSafeRows(tx, prepared.user.id);
       // (3) The account's ceremony rows: the one this browser's mako_ec names, and this Privy user's pending ones (a
       // move or an authenticator change voids them). (4) Every remembered row of the account.
       const ceremonies = rb.enabled ? await lockCeremonies(tx, { privyUserIds: [read.privyUserId], ids: rb.ceremonyId ? [rb.ceremonyId] : [] }) : [];
       const rows = rb.enabled ? await lockRememberedRows(tx, prepared.user.id) : [];
       // (5) A direct move (a Magic-era account without Mako's own TOTP) deletes every session of the account.
       if (prepared.directMove) await lockSessions(tx, { userId: prepared.user.id });
+      // (6) A sign-in that will add a Safe row (a missing chain) or move the Safe after `t` takes the shared address
+      // version row now, so its trigger cannot wait on a notification batch after `t` (Codex NOTIFICATIONS_S1 R6 F1).
+      if (prepared.directMove || SAFE_TRACKED_CHAIN_IDS.some((c) => !safeChains.includes(c))) await lockAddressVersion(tx);
 
       const t = await databaseNowMs(tx);
 

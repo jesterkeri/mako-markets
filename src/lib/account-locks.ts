@@ -5,7 +5,8 @@ import 'server-only';
 // The account's row locks, in the one order every sign-in transaction takes them (SIGNIN_REMEMBERED_BROWSER_PLAN r29,
 // "Lock order" [r27]): (1) the account's advisory lock, lockPrivyUser (privy-admission.ts); (2) the users row;
 // (2a) its recovery_codes rows (recovery-codes.ts) and its user_safes rows; (3) its email ceremony rows, in id order;
-// (4) its auth_challenges rows, then its remembered_browsers rows, in id order; (5) its sessions rows. A transaction
+// (4) its auth_challenges rows, then its remembered_browsers rows, in id order; (5) its sessions rows; (6) when it
+// will add or move a Safe address after `t`, the one shared account_address_version row (lockAddressVersion). A transaction
 // takes the subset it needs in this order, never goes back to an earlier level, and only then reads its live database
 // time `t` (databaseNowMs, db-clock.ts). After `t` it takes no new lock, so nothing it does after `t` waits on another
 // transaction, and an expiry it judges on `t` cannot go stale in a lock wait (Codex R13 F1, R14 F1, R15 F1).
@@ -64,9 +65,19 @@ export async function lockEmbeddedCandidates(tx: DbOrTx, email: string, wallets:
     .for('update');
 }
 
-/// (2a) The account's Safe rows.
-export async function lockSafeRows(tx: DbOrTx, userId: string): Promise<void> {
-  await tx.select({ chainId: userSafes.chainId }).from(userSafes).where(eq(userSafes.userId, userId)).orderBy(asc(userSafes.chainId)).for('update');
+/// (2a) The account's Safe rows. Returns the chains it has a row on, so a caller knows before `t` whether it will add one.
+export async function lockSafeRows(tx: DbOrTx, userId: string): Promise<number[]> {
+  const rows = await tx.select({ chainId: userSafes.chainId }).from(userSafes).where(eq(userSafes.userId, userId)).orderBy(asc(userSafes.chainId)).for('update');
+  return rows.map((r) => r.chainId);
+}
+
+/// (6) The single account_address_version row (migration 0020), for a sign-in that will add or move a Safe after `t`.
+/// Every Safe address write fires a trigger that updates this row, and a notification batch holds it FOR SHARE until it
+/// commits, so taken here, last and before `t`, any wait on that batch or on another address write happens before `t`
+/// and the trigger later finds the row already held by this transaction (Codex NOTIFICATIONS_S1 R6 F1). FOR NO KEY
+/// UPDATE: the strength the trigger's own UPDATE takes. Sign-ins that write no address skip it and never queue here.
+export async function lockAddressVersion(tx: DbOrTx): Promise<void> {
+  await tx.execute(sql`SELECT version FROM account_address_version WHERE id FOR NO KEY UPDATE`);
 }
 
 /// (3) Email ceremonies, in id order: the verified, unspent, unvoided ones of these Privy users, and these ids (whatever

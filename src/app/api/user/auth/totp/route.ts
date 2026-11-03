@@ -11,7 +11,7 @@ import {
   validateSigninChallenge,
   TOTP_SIGNIN_MOVE_PURPOSE,
 } from '@/lib/auth-challenges';
-import { lockCeremonies, lockChallenges, lockRememberedRows, lockSafeRows, lockSessions, lockUserRow } from '@/lib/account-locks';
+import { lockAddressVersion, lockCeremonies, lockChallenges, lockRememberedRows, lockSafeRows, lockSessions, lockUserRow } from '@/lib/account-locks';
 import {
   claimVerification,
   insertBinding,
@@ -377,6 +377,8 @@ export async function POST(req: Request) {
       const rows = rbOn ? await lockRememberedRows(tx, user.id) : [];
       // (5) On a move, the session rows it deletes.
       if (moveTo !== null) await lockSessions(tx, { userId: user.id });
+      // (6) A move rewrites the Safe after `t`: the shared address version row now (Codex NOTIFICATIONS_S1 R6 F1).
+      if (moveTo !== null) await lockAddressVersion(tx);
 
       const t = await databaseNowMs(tx);
 
