@@ -111,10 +111,10 @@ export type RpcCall = (to: string, data: Hex, block: bigint) => Promise<{ ok: tr
 
 /// One eth_call over HTTP JSON-RPC, never throwing: a JSON-RPC error that is a revert (code 3, or "execution
 /// reverted") is told apart from an unavailable provider.
-export function httpEthCall(url: string): RpcCall {
+export function httpEthCall(url: string, fetchImpl: typeof fetch = (i, x) => fetch(i, x)): RpcCall {
   return async (to, data, block) => {
     try {
-      const res = await fetch(url, {
+      const res = await fetchImpl(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, `0x${block.toString(16)}`] }),

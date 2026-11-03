@@ -582,10 +582,10 @@ function shortErrorMessage(e: unknown): string {
 const MAKO_USER_AGENT =
   'mako-auto-resolver/1.0 (+https://github.com/jesterkeri/mako-markets)';
 
-async function fetchPrices(): Promise<PriceMap> {
+async function fetchPrices(fetchFn: typeof fetch): Promise<PriceMap> {
   try {
     const ids = CRYPTO_SYMBOLS.map((s) => COINGECKO_ID_BY_SYMBOL[s]).join(',');
-    const res = await fetch(
+    const res = await fetchFn(
       `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`,
       { headers: { Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT } },
     );
@@ -640,7 +640,7 @@ type PythHermesResponse = {
   }>;
 };
 
-async function fetchPythPrices(): Promise<PythPriceMap> {
+async function fetchPythPrices(fetchFn: typeof fetch): Promise<PythPriceMap> {
   const out: PythPriceMap = new Map();
   try {
     const ids = getPythPriceIds();
@@ -649,7 +649,7 @@ async function fetchPythPrices(): Promise<PythPriceMap> {
     // return the wrong response shape (an empty parsed[]). Build
     // the query string explicitly.
     const qs = ids.map((id) => `ids%5B%5D=${id}`).join('&');
-    const res = await fetch(`${PYTH_HERMES_BASE}?${qs}`, {
+    const res = await fetchFn(`${PYTH_HERMES_BASE}?${qs}`, {
       headers: { Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT },
     });
     if (!res.ok) {
@@ -741,6 +741,7 @@ function derivePriceFeedOutcome(
 }
 
 async function fetchFootballResult(
+  fetchFn: typeof fetch,
   matchId: string,
   cache: Map<string, FootballFetchResult>,
   apiKey: string | undefined,
@@ -752,7 +753,7 @@ async function fetchFootballResult(
   if (cached) return cached;
 
   try {
-    const res = await fetch(`https://api.football-data.org/v4/matches/${matchId}`, {
+    const res = await fetchFn(`https://api.football-data.org/v4/matches/${matchId}`, {
       headers: { 'X-Auth-Token': apiKey, Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT },
     });
 
@@ -786,6 +787,7 @@ async function fetchFootballResult(
 }
 
 async function fetchFootballMatchesAroundDate(
+  fetchFn: typeof fetch,
   centerDate: string,
   cache: Map<string, FootballSearchMatch[]>,
   apiKey: string | undefined,
@@ -798,7 +800,7 @@ async function fetchFootballMatchesAroundDate(
   if (cache.has(cacheKey)) return cache.get(cacheKey) ?? [];
 
   try {
-    const res = await fetch(
+    const res = await fetchFn(
       `https://api.football-data.org/v4/competitions/PL/matches?status=FINISHED&dateFrom=${dateFrom}&dateTo=${dateTo}`,
       { headers: { 'X-Auth-Token': apiKey, Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT } },
     );
@@ -847,6 +849,7 @@ async function fetchFootballMatchesAroundDate(
 }
 
 async function findFootballResultByQuestionFallback(
+  fetchFn: typeof fetch,
   market: Market,
   parsed: FootballOracleRef,
   cache: Map<string, FootballSearchMatch[]>,
@@ -856,7 +859,7 @@ async function findFootballResultByQuestionFallback(
   if (!teams) return null;
 
   const centerDate = formatUtcDate(market.closeTime);
-  const candidates = await fetchFootballMatchesAroundDate(centerDate, cache, apiKey);
+  const candidates = await fetchFootballMatchesAroundDate(fetchFn, centerDate, cache, apiKey);
   if (candidates.length === 0) return null;
 
   const matches = candidates.filter(
@@ -883,6 +886,7 @@ async function findFootballResultByQuestionFallback(
 }
 
 async function fetchNbaGameCache(
+  fetchFn: typeof fetch,
   cache: Map<number, BasketballGameResult>,
   state: NbaFetchState,
   apiKey: string | undefined,
@@ -903,7 +907,7 @@ async function fetchNbaGameCache(
 
   try {
     const url = `https://api.balldontlie.io/v1/games?start_date=${startStr}&end_date=${endStr}&per_page=100`;
-    const res = await fetch(url, {
+    const res = await fetchFn(url, {
       headers: { Authorization: apiKey, Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT },
     });
     if (!res.ok) {
@@ -938,6 +942,7 @@ async function fetchNbaGameCache(
 /// eligible); every other failure is treated as transient so a stale
 /// market keeps waiting instead of being wrongly refunded.
 async function fetchNbaGameById(
+  fetchFn: typeof fetch,
   cache: Map<number, BasketballGameResult>,
   state: NbaFetchState,
   apiKey: string,
@@ -948,7 +953,7 @@ async function fetchNbaGameById(
   state.byIdAttempted.add(gameId);
   state.byIdBudget--;
   try {
-    const res = await fetch(`https://api.balldontlie.io/v1/games/${gameId}`, {
+    const res = await fetchFn(`https://api.balldontlie.io/v1/games/${gameId}`, {
       headers: { Authorization: apiKey, Accept: 'application/json', 'User-Agent': MAKO_USER_AGENT },
     });
     if (res.status === 404) {
@@ -1032,6 +1037,15 @@ function validateEnv(env: Env): {
 
 export async function runResolver(env: Env, startedAt: number = Date.now()): Promise<void> {
   const deadline = startedAt + TICK_BUDGET_MS;
+  // Every request this tick makes ends by the deadline: the budget only gates new work, and provider fetches had no
+  // timeout while viem's retries held a send about 40 s past it (adversary on 04f52bc). Past the deadline a request
+  // fails at once, so viem's retries cost only their backoff. Every caller treats a failed request as transient.
+  const tickFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const left = deadline - Date.now();
+    if (left <= 0) return Promise.reject(new Error('tick deadline passed'));
+    const cap = AbortSignal.timeout(left);
+    return fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, cap]) : cap });
+  }) as typeof fetch;
   const cfg = validateEnv(env);
   // Crypto price source (src/crypto-datastreams.ts). Data Streams credentials are read here and never logged.
   const crypto = readCryptoPriceSource(env.CRYPTO_PRICE_SOURCE);
@@ -1043,11 +1057,11 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   const dsDeps: DsDeps | null =
     dsWanted && dsKey && dsSecret && pair
       ? {
-          fetchImpl: (i, x) => fetch(i, x),
+          fetchImpl: tickFetch,
           base: env.DATASTREAMS_URL?.trim() || DEFAULT_DATASTREAMS_URL,
           creds: { apiKey: dsKey, secret: dsSecret },
-          providers: [httpEthCall(pair[0]), httpEthCall(pair[1])],
-          finalized: () => agreedFinalized((i, x) => fetch(i, x), pair, Date.now()),
+          providers: [httpEthCall(pair[0], tickFetch), httpEthCall(pair[1], tickFetch)],
+          finalized: () => agreedFinalized(tickFetch, pair, Date.now()),
           verifiedBy: pair.map((u) => new URL(u).hostname),
           now: () => Date.now(),
         }
@@ -1079,11 +1093,11 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   const walletClient = createWalletClient({
     account,
     chain: monadTestnet,
-    transport: http(cfg.rpcUrl),
+    transport: http(cfg.rpcUrl, { fetchFn: tickFetch }),
   });
   const publicClient = createPublicClient({
     chain: monadTestnet,
-    transport: http(cfg.rpcUrl),
+    transport: http(cfg.rpcUrl, { fetchFn: tickFetch }),
   });
 
   const ts = new Date().toISOString().slice(11, 19);
@@ -1303,8 +1317,8 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   // called.
   const canStillSend = canSend(keeperTick.gate) && !walletOutOfFunds;
   const [prices, pythPrices] = await Promise.all([
-    needsCoinGecko && canStillSend ? fetchPrices() : Promise.resolve<PriceMap>({}),
-    needsPyth && canStillSend ? fetchPythPrices() : Promise.resolve<PythPriceMap>(new Map()),
+    needsCoinGecko && canStillSend ? fetchPrices(tickFetch) : Promise.resolve<PriceMap>({}),
+    needsPyth && canStillSend ? fetchPythPrices(tickFetch) : Promise.resolve<PythPriceMap>(new Map()),
   ]);
   // Banner-shape skip log mirroring `football:skip(no-key)` / `nba:skip(no-key)`
   // at tick start. Pyth has no API key, so the only condition that warrants
@@ -1436,11 +1450,12 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
         continue;
       }
 
-      const primary = await fetchFootballResult(parsed.matchId, footballCache, cfg.footballKey);
+      const primary = await fetchFootballResult(tickFetch, parsed.matchId, footballCache, cfg.footballKey);
       let resolvedResult: FootballMatchResult | null =
         primary.kind === 'ok' ? primary.result : null;
       if (!resolvedResult) {
         resolvedResult = await findFootballResultByQuestionFallback(
+          tickFetch,
           market,
           parsed,
           footballSearchCache,
@@ -1493,13 +1508,13 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
         continue;
       }
 
-      await fetchNbaGameCache(nbaGameCache, nbaFetchState, cfg.balldontlieKey);
+      await fetchNbaGameCache(tickFetch, nbaGameCache, nbaFetchState, cfg.balldontlieKey);
       // The window fetch only sees the last 2 days; a market that
       // stalled longer (key outage, worker downtime) references a game
       // the window can never see again. Fall back to a budgeted
       // per-game lookup so stale games RESOLVE with real scores.
       if (!nbaGameCache.has(parsed.gameId)) {
-        await fetchNbaGameById(nbaGameCache, nbaFetchState, cfg.balldontlieKey, parsed.gameId);
+        await fetchNbaGameById(tickFetch, nbaGameCache, nbaFetchState, cfg.balldontlieKey, parsed.gameId);
       }
       const result = nbaGameCache.get(parsed.gameId);
       if (!result) {
