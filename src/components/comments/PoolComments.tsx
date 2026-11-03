@@ -9,7 +9,7 @@
 // The API returns no total count, so the design's count beside "Comments" is left out rather than guessed.
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { CommentPosition, CommentWire } from '@/lib/comments/types';
 import { profileHref } from '@/lib/leaderboard/board-view';
@@ -326,18 +326,70 @@ function MetaDesktop({ c, nowMs }: { c: CommentWire; nowMs: number }) {
 const actionsDesktop: React.CSSProperties = { display: 'flex', gap: 14, marginTop: 6, ...MONO, fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: 'var(--dim)' };
 const actionButtonDesktop: React.CSSProperties = { fontWeight: 700, letterSpacing: '0.12em' };
 
-function DeleteDesktop({ pending, onClick }: { pending: boolean; onClick: () => void }) {
+/// Delete asks first (CryptoTester OBS-009, Joshua 2026-11-03: inline Yes / No, no pop-up). Focus moves to No, the
+/// safe answer, and back to Delete if the person says no or presses Escape, so a keyboard user never loses their place.
+function DeleteControl({ d, mobile }: { d: ReturnType<typeof useRowDelete>; mobile: boolean }) {
+  const [asking, setAsking] = useState(false);
   const [hover, setHover] = useState(false);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const noRef = useRef<HTMLButtonElement>(null);
+  const moved = useRef(false);
+  useEffect(() => {
+    if (!moved.current) return;
+    (asking ? noRef : deleteRef).current?.focus();
+  }, [asking]);
+  const ask = (next: boolean) => {
+    moved.current = true;
+    setAsking(next);
+  };
+  const label = (t: string) => (mobile ? t : t.toUpperCase());
+  const base: React.CSSProperties = mobile ? { fontWeight: 700 } : actionButtonDesktop;
+
+  if (d.pending) {
+    return (
+      <button type="button" disabled style={{ ...base, color: 'var(--dim)', opacity: 0.5 }}>
+        {label('Deleting…')}
+      </button>
+    );
+  }
+  if (asking) {
+    return (
+      <span
+        role="group"
+        aria-label="Delete this comment?"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') ask(false);
+        }}
+        style={{ display: 'inline-flex', gap: mobile ? 12 : 10, alignItems: 'baseline' }}
+      >
+        <span style={{ color: 'var(--mako-canvas-fg)' }}>{label('Delete?')}</span>
+        <button
+          type="button"
+          onClick={() => {
+            moved.current = false;
+            setAsking(false);
+            d.remove();
+          }}
+          style={{ ...base, color: RED }}
+        >
+          {label('Yes')}
+        </button>
+        <button ref={noRef} type="button" onClick={() => ask(false)} style={{ ...base, color: 'var(--dim)' }}>
+          {label('No')}
+        </button>
+      </span>
+    );
+  }
   return (
     <button
+      ref={deleteRef}
       type="button"
-      onClick={onClick}
-      disabled={pending}
+      onClick={() => ask(true)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ ...actionButtonDesktop, color: hover && !pending ? RED : 'var(--dim)', opacity: pending ? 0.5 : 1 }}
+      style={{ ...base, color: hover && !mobile ? RED : 'var(--dim)' }}
     >
-      {pending ? 'DELETING…' : 'DELETE'}
+      {label('Delete')}
     </button>
   );
 }
@@ -369,7 +421,7 @@ function ThreadDesktop({ c, ctx }: { c: CommentWire; ctx: Ctx }) {
                 REPLY
               </button>
             )}
-            {d.canDelete && <DeleteDesktop pending={d.pending} onClick={d.remove} />}
+            {d.canDelete && <DeleteControl d={d} mobile={false} />}
           </div>
         )}
         {d.failed && deleteFailed(false)}
@@ -424,7 +476,7 @@ function ReplyDesktop({ r, ctx, onDeleted }: { r: CommentWire; ctx: Ctx; onDelet
         <Body c={r} style={{ fontSize: 14, lineHeight: 1.5, marginTop: 4, textWrap: 'pretty' }} />
         {d.canDelete && (
           <div style={actionsDesktop}>
-            <DeleteDesktop pending={d.pending} onClick={d.remove} />
+            <DeleteControl d={d} mobile={false} />
           </div>
         )}
         {d.failed && deleteFailed(false)}
@@ -637,9 +689,7 @@ function ThreadMobile({ c, ctx }: { c: CommentWire; ctx: Ctx }) {
                 </button>
               )}
               {d.canDelete && (
-                <button type="button" onClick={d.remove} disabled={d.pending} style={{ color: 'var(--dim)', fontWeight: 700, opacity: d.pending ? 0.5 : 1 }}>
-                  {d.pending ? 'Deleting…' : 'Delete'}
-                </button>
+                <DeleteControl d={d} mobile />
               )}
             </div>
           )}
@@ -691,9 +741,7 @@ function ReplyMobile({ r, ctx, onDeleted }: { r: CommentWire; ctx: Ctx; onDelete
         <Body c={r} style={{ fontSize: 14, lineHeight: 1.45, marginTop: 3 }} />
         {d.canDelete && (
           <div style={actionsMobile}>
-            <button type="button" onClick={d.remove} disabled={d.pending} style={{ color: 'var(--dim)', fontWeight: 700, opacity: d.pending ? 0.5 : 1 }}>
-              {d.pending ? 'Deleting…' : 'Delete'}
-            </button>
+            <DeleteControl d={d} mobile />
           </div>
         )}
         {d.failed && deleteFailed(true)}

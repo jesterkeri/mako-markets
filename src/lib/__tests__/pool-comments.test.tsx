@@ -111,6 +111,8 @@ const LAYOUTS = [
     post: 'POST',
     reply: 'REPLY',
     del: 'DELETE',
+    yes: 'YES',
+    no: 'NO',
     more: 'LOAD MORE',
     moreReplies: 'VIEW MORE REPLIES',
     retry: 'TRY AGAIN',
@@ -123,6 +125,8 @@ const LAYOUTS = [
     post: 'Post',
     reply: 'Reply',
     del: 'Delete',
+    yes: 'Yes',
+    no: 'No',
     more: 'Show more',
     moreReplies: 'View more replies',
     retry: 'Try again',
@@ -176,7 +180,39 @@ describe.each(LAYOUTS)('PoolComments ($name)', (L) => {
     const del = screen.getAllByRole('button', { name: L.del });
     expect(del).toHaveLength(1);
     fireEvent.click(del[0]);
+    // Asks first (OBS-009): nothing is deleted until Yes.
+    expect(h.deleteMutate).not.toHaveBeenCalled();
+    expect(screen.getByRole('group', { name: 'Delete this comment?' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: L.yes }));
+    expect(h.deleteMutate).toHaveBeenCalledTimes(1);
     expect(h.deleteMutate.mock.calls[0][0]).toBe('mine');
+  });
+
+  it('No and Escape back out of a delete without deleting, and focus returns to Delete', () => {
+    h.user = USER;
+    h.comments = [comment({ id: 'mine', isOwn: true, authorLabel: 'dayo' })];
+    renderIt();
+    fireEvent.click(screen.getByRole('button', { name: L.del }));
+    const no = screen.getByRole('button', { name: L.no });
+    expect(document.activeElement).toBe(no);
+    fireEvent.click(no);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: L.del }));
+    fireEvent.click(screen.getByRole('button', { name: L.del }));
+    fireEvent.keyDown(screen.getByRole('button', { name: L.no }), { key: 'Escape' });
+    expect(screen.queryByRole('group', { name: 'Delete this comment?' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: L.del }));
+    expect(h.deleteMutate).not.toHaveBeenCalled();
+  });
+
+  it('asking on one comment leaves the others alone', () => {
+    h.user = USER;
+    h.isAdmin = true;
+    h.comments = [comment({ id: 'a' }), comment({ id: 'b' })];
+    renderIt();
+    fireEvent.click(screen.getAllByRole('button', { name: L.del })[1]);
+    expect(screen.getAllByRole('button', { name: L.del })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: L.yes }));
+    expect(h.deleteMutate.mock.calls[0][0]).toBe('b');
   });
 
   it('an admin sees DELETE on every live comment', () => {
