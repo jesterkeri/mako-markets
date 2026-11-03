@@ -53,7 +53,8 @@ export const accountLocksPassing = () => ({
     const { users } = await import('@/db/schema');
     return tx.select().from(users).where().limit(3);
   },
-  lockSafeRows: async () => {},
+  lockSafeRows: async () => [],
+  lockAddressVersion: async () => {},
   lockCeremonies: async () => [],
   lockChallenges: async () => [],
   lockRememberedRows: async () => [],

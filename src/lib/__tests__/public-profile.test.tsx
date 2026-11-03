@@ -46,10 +46,7 @@ afterEach(async () => {
 async function seed() {
   t = await createTestDb();
   currentDb = t.db;
-  await t.client.exec(`
-    CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email text, wallet_address text, display_name text, avatar_url text);
-    CREATE TABLE user_safes (user_id uuid NOT NULL, chain_id integer NOT NULL, safe_address text NOT NULL);
-  `);
+  // users + user_safes stubs come from the leaderboard harness (#214: 0020's triggers name them).
   const { rows } = await t.client.query<{ id: string }>(`INSERT INTO users (email, display_name) VALUES ('kemi@example.com', 'Kemi') RETURNING id`);
   await t.client.query(`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES ($1, 10143, $2)`, [rows[0].id, SAFE]);
   await t.client.query(`INSERT INTO users (wallet_address) VALUES ($1), ($2)`, [WALLET, NEWBIE]);

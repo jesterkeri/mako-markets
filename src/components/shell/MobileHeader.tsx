@@ -9,6 +9,8 @@ import { SignInLink } from '@/components/signin/SignInLink';
 import { formatUsdc } from '@/lib/usdc';
 import { accountAddress, useUser } from '@/lib/use-user';
 
+import { NotificationBadge, bellLabel } from '@/components/notifications/NotificationList';
+
 import { BetaTag } from './BetaTag';
 import { ICON, StrokeIcon } from './icons';
 
@@ -49,8 +51,9 @@ export function MobileHeader({ onSearch }: Props) {
       )}
       {user ? (
         <>
-          <Link href="/notifications" aria-label="Notifications" className="m3-press" style={roundButton}>
+          <Link href="/notifications" aria-label={bellLabel(user.unreadNotifications)} className="m3-press" style={{ ...roundButton, position: 'relative' }}>
             <StrokeIcon d={ICON.bell} size={20} />
+            <NotificationBadge count={user.unreadNotifications} />
           </Link>
           <Link
             href="/me"

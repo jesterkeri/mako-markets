@@ -21,6 +21,7 @@ import { pct2, usd2 } from './format';
 import { ICON, StrokeIcon, SunIcon } from './icons';
 import { BetaTag } from './BetaTag';
 import { NotificationsPanel } from './NotificationsPanel';
+import { NotificationBadge, bellLabel } from '@/components/notifications/NotificationList';
 import { useDismiss } from './use-dismiss';
 
 export function BtcPrice() {
@@ -69,7 +70,7 @@ function ThemeSwitch() {
   );
 }
 
-function Bell() {
+function Bell({ unread }: { unread: number | null | undefined }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -79,15 +80,16 @@ function Bell() {
     <div ref={wrap} style={{ position: 'relative' }}>
       <button
         ref={trigger}
-        aria-label="Notifications"
+        aria-label={bellLabel(unread)}
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen((o) => !o)}
         style={{ position: 'relative', flex: 'none', width: 40, height: 40, borderRadius: 9999, background: 'var(--raise)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
       >
         <StrokeIcon d={ICON.bell} size={18} />
+        <NotificationBadge count={unread} />
       </button>
-      {open && <NotificationsPanel />}
+      {open && <NotificationsPanel onClose={close} />}
     </div>
   );
 }
@@ -292,7 +294,7 @@ export function DesktopHeader() {
         <ThemeSwitch />
         {user ? (
           <>
-            <Bell />
+            <Bell unread={user.unreadNotifications} />
             <Wallet user={user} />
           </>
         ) : isLoading ? null : (

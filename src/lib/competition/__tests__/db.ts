@@ -15,19 +15,14 @@ export const addr = (tag: string) => `0x${tag.repeat(40 / tag.length)}` as `0x${
 export const codeOf = (a: string) => `r-${a.toLowerCase().slice(2, 32)}`;
 
 export async function competitionDb(): Promise<TestDb> {
+  // Since #214 the leaderboard harness creates users (id, email, wallet_address, display_name, avatar_url) and
+  // user_safes itself, because 0020's triggers name them; only the competition's extra columns are added here.
   const t = await createTestDb();
   await t.client.exec(`
-    CREATE TABLE users (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      email text,
-      wallet_address text,
-      magic_eoa text,
-      display_name text,
-      avatar_url text,
-      ref text,
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-    CREATE TABLE user_safes (user_id uuid NOT NULL, chain_id integer NOT NULL, safe_address text NOT NULL);
+    ALTER TABLE users
+      ADD COLUMN magic_eoa text,
+      ADD COLUMN ref text,
+      ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
   `);
   return t;
 }

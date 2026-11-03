@@ -17,6 +17,11 @@ import 'server-only';
 // rejection the transaction ROLLS BACK, so a throttled attempt consumes
 // NEITHER bucket. The row-locked upsert serializes a user's concurrent POSTs,
 // so N parallel requests can't all observe an under-cap count.
+//
+// #214: parameterised ({prefix, perMinute, perDay}) so notification-setting
+// writes share the table: NOTIFY_WRITE_LIMIT keys 'n:m:' / 'n:d:', 20 a minute
+// and 300 a day. Comments keep an empty prefix, so their keys stay 'm:' / 'd:'
+// and every app version counts comments in the same buckets.
 // ----------------------------------------------------------------------------
 
 import { sql } from 'drizzle-orm';
@@ -25,6 +30,17 @@ import type { DbOrTx } from '@/db/client';
 import { RATE_PER_DAY, RATE_PER_MINUTE } from './types';
 
 export type ReserveResult = { ok: true } | { ok: false; scope: 'minute' | 'day' };
+
+export interface ReserveLimit {
+  prefix: string;
+  perMinute: number;
+  perDay: number;
+}
+
+/// Comment POSTs (the default): 'm:' / 'd:' keys.
+export const COMMENT_LIMIT: ReserveLimit = { prefix: '', perMinute: RATE_PER_MINUTE, perDay: RATE_PER_DAY };
+/// Notification settings writes (prefs now; watch, follow and alert writes in later slices share it).
+export const NOTIFY_WRITE_LIMIT: ReserveLimit = { prefix: 'n:', perMinute: 20, perDay: 300 };
 
 /// 60s fixed window: floor(epoch_seconds / 60). Matches the SQL form
 /// floor(extract(epoch from now())/60).
@@ -62,24 +78,25 @@ async function increment(tx: DbOrTx, userId: string, windowKey: string): Promise
   return rows.length > 0 ? Number(rows[0].count) : 0;
 }
 
-/// Reserve one attempt for `userId` at instant `now`. Returns { ok: true } when
+/// Reserve one attempt for `userId` at instant `now` under `limit` (comments by default). Returns { ok: true } when
 /// both windows are under cap (both incremented, committed); otherwise
 /// { ok: false, scope } and NEITHER bucket is consumed (rolled back).
 export async function reserveAttemptOrReject(
   db: DbOrTx,
   userId: string,
   now: Date,
+  limit: ReserveLimit = COMMENT_LIMIT,
 ): Promise<ReserveResult> {
-  const minuteKey = minuteWindowKey(now);
-  const dayKey = dayWindowKey(now);
+  const minuteKey = limit.prefix + minuteWindowKey(now);
+  const dayKey = limit.prefix + dayWindowKey(now);
   try {
     await db.transaction(async (tx) => {
       // Minute first: an over-cap minute rejects before the day bucket is even
       // touched, so a throttled burst never consumes daily budget.
       const minute = await increment(tx, userId, minuteKey);
-      if (minute > RATE_PER_MINUTE) throw new ReserveReject('minute');
+      if (minute > limit.perMinute) throw new ReserveReject('minute');
       const day = await increment(tx, userId, dayKey);
-      if (day > RATE_PER_DAY) throw new ReserveReject('day');
+      if (day > limit.perDay) throw new ReserveReject('day');
     });
     return { ok: true };
   } catch (e) {

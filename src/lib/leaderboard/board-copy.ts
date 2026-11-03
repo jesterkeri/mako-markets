@@ -4,7 +4,8 @@
 //  - Profit is claims minus stakes, each counted when it happens (src/lib/leaderboard/queries.ts): stakes count when
 //    placed, and a win or a refund counts only once it is claimed. Not "on settled bets", and an unclaimed refund
 //    is not zero.
-//  - The ledger is indexed every 30 minutes (cf-worker/src/index.ts, `minute % 30`), not every minute.
+//  - The ledger is indexed every 15 minutes (cf-worker/src/index.ts pings /api/cron/notify at `minute % 15`), not every
+//    minute.
 //  - There are no profile pages yet, so nothing invites a tap through to one.
 //  - There is no win rate: the ledger records bets and claims, not results.
 
@@ -25,7 +26,7 @@ export const BOARD_COPY = {
   everyoneElse: 'Everyone else',
   nobodyElse: 'No one else on the board yet.',
   footnote: 'Profit is claimed winnings and refunds minus stakes. Each counts when it happens, so a win shows once it is claimed.',
-  cadence: 'Updates about every 30 minutes.',
+  cadence: 'Updates about every 15 minutes.',
   syncing: 'Recent bets are not counted yet, so this board is incomplete for now.',
   loading: 'LOADING…',
 } as const;

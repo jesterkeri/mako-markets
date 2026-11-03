@@ -52,11 +52,7 @@ beforeEach(async () => {
   budget.upstash.mockClear();
   vi.stubGlobal('fetch', blob);
   t = await createTestDb();
-  currentDb = t.db;
-  await t.client.exec(`
-    CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email text, wallet_address text, display_name text, avatar_url text);
-    CREATE TABLE user_safes (user_id uuid NOT NULL, chain_id integer NOT NULL, safe_address text NOT NULL);
-  `);
+  currentDb = t.db; // users + user_safes stubs come from the harness (#214)
   ids.email = (await t.client.query<{ id: string }>(`INSERT INTO users (email) VALUES ('e@x.y') RETURNING id`)).rows[0].id;
   await t.client.query(`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES ($1, 10143, $2)`, [ids.email, SAFE]);
   ids.wallet = (await t.client.query<{ id: string }>(`INSERT INTO users (wallet_address) VALUES ($1) RETURNING id`, [WALLET])).rows[0].id;

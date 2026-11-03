@@ -11,7 +11,7 @@ import {
   validateSigninChallenge,
   TOTP_SIGNIN_MOVE_PURPOSE,
 } from '@/lib/auth-challenges';
-import { lockCeremonies, lockChallenges, lockRememberedRows, lockSafeRows, lockSessions, lockUserRow } from '@/lib/account-locks';
+import { lockAddressVersion, lockCeremonies, lockChallenges, lockRememberedRows, lockSafeRows, lockSessions, lockUserRow } from '@/lib/account-locks';
 import {
   claimVerification,
   insertBinding,
@@ -60,7 +60,7 @@ import { databaseNowMs } from '@/lib/db-clock';
 import { lockPrivyUser, readCheckpoint, writeAdmission } from '@/lib/privy-admission';
 import { recordPrivyMismatch } from '@/lib/privy-mismatch';
 import { checkIdentity, judgeAccount, readPrivyAccountById } from '@/lib/privy-server';
-import { applyEmbeddedMove } from '@/lib/user-upsert';
+import { applyEmbeddedMove, moveRewritesSafe } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
@@ -377,6 +377,9 @@ export async function POST(req: Request) {
       const rows = rbOn ? await lockRememberedRows(tx, user.id) : [];
       // (5) On a move, the session rows it deletes.
       if (moveTo !== null) await lockSessions(tx, { userId: user.id });
+      // (6) A move to a new signer rewrites the Safe after `t`: the shared address version row now (Codex
+      // NOTIFICATIONS_S1 R6 F1). The same `from` the move below is conditioned on.
+      if (moveTo !== null && moveRewritesSafe(user.magicEoa, moveTo)) await lockAddressVersion(tx);
 
       const t = await databaseNowMs(tx);
 

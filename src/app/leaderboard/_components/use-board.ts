@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { BoardPeriod, BoardSort, BoardWire } from '@/lib/leaderboard/board-view';
 
 /// 90 seconds, as the previous board polled (#191-4). The board is a shared 45-second server cache over a ledger the
-/// indexer refreshes every 30 minutes, so polling faster buys nothing. Hidden tabs do not poll.
+/// indexer refreshes every 15 minutes, so polling faster buys nothing. Hidden tabs do not poll.
 const REFETCH_MS = 90_000;
 
 /// GET /api/leaderboard for one period and sort. `me` is the signed-in account's address; it only adds the caller's

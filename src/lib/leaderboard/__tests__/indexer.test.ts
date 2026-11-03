@@ -404,7 +404,9 @@ describe('runLeaderboardIndexerOnce', () => {
     expect(result.contracts).toHaveLength(2);
     const [a, b] = result.contracts;
     expect(a.mutex).toBe('error');
-    expect(a.error).toContain('hard failure');
+    // A fixed code, never the message (#214 plan §4: messages can carry the RPC URL and request bodies).
+    expect(a.error).toBe('scan_failed:Error');
+    expect(a.error).not.toContain('hard failure');
     expect(a.eventsInserted).toBe(0);
     // B still ran to completion despite A's failure (review MINOR-5).
     expect(b.mutex).toBe('acquired');

@@ -53,9 +53,9 @@ export interface BoardWire {
 // ---------------------------------------------------------------------------------------------------------------
 // Freshness
 
-/// The indexer runs every 30 minutes (about 6,000 blocks at Monad's 0.3-second blocks). Further behind the chain
-/// than about three missed runs, the board is missing recent bets even when the indexer reports its last run as
-/// complete (a stalled indexer never sets a new target).
+/// The indexer runs every 15 minutes, inside /api/cron/notify (about 3,000 blocks at Monad's 0.3-second blocks).
+/// Further behind the chain than about six missed runs, the board is missing recent bets even when the indexer
+/// reports its last run as complete (a stalled indexer never sets a new target).
 export const INDEX_BEHIND_BLOCKS = 20_000n;
 
 /// True when the ledger's last indexed block is more than INDEX_BEHIND_BLOCKS behind the chain head. Unknown

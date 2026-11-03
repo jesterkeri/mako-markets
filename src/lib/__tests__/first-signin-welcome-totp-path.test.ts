@@ -57,7 +57,10 @@ vi.mock('@/lib/csrf', () => ({
   checkSameOrigin: mocks.checkSameOrigin,
 }));
 
-vi.mock('@/lib/user-upsert', () => ({ applyEmbeddedMove: mocks.applyEmbeddedMove }));
+vi.mock('@/lib/user-upsert', () => ({
+  applyEmbeddedMove: mocks.applyEmbeddedMove,
+  moveRewritesSafe: (from: string | null, to: string) => from !== to.toLowerCase(),
+}));
 vi.mock('@/lib/auth-challenges', () => ({
   TOTP_SIGNIN_MOVE_PURPOSE: 'totp_signin_move',
   challengeLiveAt: () => true,

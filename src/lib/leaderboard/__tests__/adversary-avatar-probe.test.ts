@@ -24,11 +24,7 @@ afterEach(async () => {
 });
 
 async function fresh(): Promise<TestDb> {
-  t = await createTestDb();
-  await t.client.exec(`
-    CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email text, wallet_address text, display_name text, avatar_url text);
-    CREATE TABLE user_safes (user_id uuid NOT NULL, chain_id integer NOT NULL, safe_address text NOT NULL);
-  `);
+  t = await createTestDb(); // users + user_safes stubs come from the harness (#214)
   return t;
 }
 

@@ -52,7 +52,6 @@ loadEnv({ path: '.env' });
 import process from 'node:process';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { createPublicClient, http } from 'viem';
 
 async function main() {
   // Modules imported AFTER dotenv so env-reading module scope
@@ -62,7 +61,7 @@ async function main() {
   // tsx does not). The script builds its own postgres-js handle below,
   // same as the other operator scripts.
   const { monadTestnet, MONAD_TESTNET_ID } = await import('../src/lib/chain');
-  const { runLeaderboardIndexerOnce, LEADERBOARD_CONFIRMATIONS } =
+  const { runLeaderboardIndexerOnce, createScanClient, LEADERBOARD_CONFIRMATIONS } =
     await import('../src/lib/leaderboard/indexer');
   const { LEADERBOARD_CONTRACTS } = await import(
     '../src/lib/leaderboard/contracts'
@@ -102,10 +101,8 @@ async function main() {
     process.exit(0);
   }
 
-  const publicClient = createPublicClient({
-    chain: monadTestnet,
-    transport: http(rpcUrl),
-  });
+  // #214: the gated scan client (at most 8 requests a second, viem retries off); no hard stop for the seed.
+  const publicClient = createScanClient(rpcUrl);
 
   const startedAt = Date.now();
   let totalInserted = 0;

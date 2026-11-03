@@ -1710,7 +1710,8 @@ type VercelCronPath =
   | '/api/cron/pm-indexer'
   | '/api/cron/pm-maintenance'
   | '/api/cron/leaderboard'
-  | '/api/cron/avatar-sweep';
+  | '/api/cron/avatar-sweep'
+  | '/api/cron/notify';
 
 /// Fire one HTTP cron tick against the Vercel app. Runs as a
 /// "fire and forget" inside ctx.waitUntil so a slow Vercel response
@@ -1809,21 +1810,20 @@ export default {
     // ABANDONED op; a user retry recovers it sooner.
     // avatar-sweep rides the same tick (Joshua 2026-10-19, owner decision Q-D): deletes removed and replaced profile
     // photos no account points at, so each is gone within about 15 minutes. No extra DB wakeup.
+    // notify (#214, NOTIFICATIONS_PLAN r8 §3.9) rides the same tick: it runs the #186 leaderboard ledger scan (which
+    // now also announces pool results), the Rounds scan and the prune, so it replaces the 30-minute leaderboard ping.
+    // Deploy this only after the app's /api/cron/notify is live on production and its catch-up loop is done (§7 S1).
     if (minute % 15 === 0) {
       ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-fast'));
       ctx.waitUntil(pingVercelCron(env, '/api/cron/avatar-sweep'));
+      ctx.waitUntil(pingVercelCron(env, '/api/cron/notify'));
     }
 
-    // aa-slow + leaderboard — every 30 min (both were every 5 min), ALIGNED
-    // with an aa-fast tick (minute 0/30 is a subset of the 15-min ticks) so
-    // they piggyback an existing DB wakeup instead of creating new ones.
-    // aa-slow = stale-row sweep + ambiguous-row alerts. leaderboard = #186
-    // main-market event ledger; its read API caches 30-60s and the board
-    // only shifts when bets/claims land, so 30-min indexing is fine.
-    // (Cold-start population is scripts/seed-leaderboard.mts's job.)
+    // aa-slow — every 30 min (was every 5 min), ALIGNED with an aa-fast tick (minute 0/30 is a subset of the 15-min
+    // ticks) so it piggybacks an existing DB wakeup. aa-slow = stale-row sweep + ambiguous-row alerts. The leaderboard
+    // ping that rode here is replaced by notify above; /api/cron/leaderboard stays callable by hand.
     if (minute % 30 === 0) {
       ctx.waitUntil(pingVercelCron(env, '/api/cron/aa-slow'));
-      ctx.waitUntil(pingVercelCron(env, '/api/cron/leaderboard'));
     }
 
     // PAUSED 2026-07-20 (#191): Private Markets is dark

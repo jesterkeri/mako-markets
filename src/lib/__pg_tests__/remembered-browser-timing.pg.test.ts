@@ -329,6 +329,50 @@ describe.runIf(URL_)('[r29] the direct move locks its Safe and session rows befo
   }
 });
 
+/// A notification batch's last statement (src/lib/notifications/produce.ts, step 5), held open by H.
+const versionShare = () => (tx: Parameters<Parameters<typeof hold>[1]>[0]) => tx`SELECT version FROM account_address_version WHERE id FOR SHARE`;
+
+describe.runIf(URL_)('[notifications R6 F1] a sign-in that writes a Safe address takes the version row before t', () => {
+  for (const [name, kind] of [
+    ['(a) a bound account with no Safe rows (it adds them)', 'bound'],
+    ['(b) a Magic-era direct move (it rewrites them)', 'magic'],
+  ] as const) {
+    it(`${name}, a notification batch holding the version row past the nonce's expiry: proof_expired, nothing written`, async () => {
+      await account(kind);
+      const before = await H.observer`SELECT magic_eoa, privy_user_id FROM users WHERE id = ${h.userId}`;
+      const safes = await H.observer`SELECT chain_id, safe_address FROM user_safes WHERE user_id = ${h.userId} ORDER BY chain_id`;
+      const sessions = await H.observer`SELECT id FROM sessions WHERE user_id = ${h.userId}`;
+      const { expiresMs } = await shortNonce();
+      const H1 = await hold(H, versionShare());
+      const p = signIn();
+      const wait = await waitBlocked(H, H1.pid);
+      expect(wait.xactStartMs).toBeLessThan(expiresMs);
+      await sleepUntilDb(H, expiresMs + 1_000);
+      await H1.release();
+      const out = await p;
+      expect(out.body).toMatchObject({ ok: false, status: 'proof_expired' });
+      expect(await H.observer`SELECT magic_eoa, privy_user_id FROM users WHERE id = ${h.userId}`).toEqual(before);
+      expect(await H.observer`SELECT chain_id, safe_address FROM user_safes WHERE user_id = ${h.userId} ORDER BY chain_id`).toEqual(safes);
+      expect(await H.observer`SELECT id FROM sessions WHERE user_id = ${h.userId}`).toEqual(sessions);
+      expect(await nonceConsumed()).toBe(false);
+    }, 30_000);
+  }
+
+  it('(c) a returning sign-in with every Safe row writes no address and never waits on the batch', async () => {
+    await account('bound');
+    await H.observer`INSERT INTO user_safes (user_id, chain_id, safe_address) VALUES (${h.userId}, 10143, ${'0x' + '7'.repeat(40)}), (${h.userId}, 84532, ${'0x' + '7'.repeat(40)})`;
+    await shortNonce();
+    const H1 = await hold(H, versionShare());
+    try {
+      const out = await signIn();
+      expect(out.body).toMatchObject({ ok: true, authed: true });
+      expect(await nonceConsumed()).toBe(true);
+    } finally {
+      await H1.release();
+    }
+  }, 30_000);
+});
+
 describe.runIf(URL_)('[r28] the legacy challenge is judged on t at /api/user/auth/totp, before the code', () => {
   /// A challenge for this account, live for LIFETIME_MS by the database clock, optionally naming a ceremony.
   async function shortChallenge(ceremonyId?: string): Promise<{ id: string; expiresMs: number }> {
