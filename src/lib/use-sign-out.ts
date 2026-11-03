@@ -6,7 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAccount, useDisconnect } from 'wagmi';
 
 import { useEmbeddedActions } from '@/components/PrivyAuth';
-import { USER_QUERY_KEY } from '@/lib/use-user';
+import { setUserData } from '@/lib/use-user';
 
 /// How long the Privy session end may take before it is reported as not finished (it can hang on a degraded network).
 const PRIVY_LOGOUT_BOUND_MS = 4_000;
@@ -110,7 +110,7 @@ export function useSignOut() {
         bound = false;
       }
       // Mako's session is gone from here on, whatever happens next, and the app says so.
-      queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
+      setUserData(queryClient, { authed: false });
       return finish(await cleanUp({ privy: opts.forget === true || !bound, wallet: isConnected }));
     } finally {
       setBusy(false);
@@ -134,7 +134,7 @@ export function useSignOut() {
         setError('Signing out everywhere did not work just now. Nothing changed; try again.');
         return false;
       }
-      queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
+      setUserData(queryClient, { authed: false });
       return finish(await cleanUp({ privy: true, wallet: isConnected }));
     } finally {
       setBusy(false);

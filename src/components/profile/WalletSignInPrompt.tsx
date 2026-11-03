@@ -5,7 +5,7 @@ import { useSignMessage } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { signInWithWallet } from '@/lib/wallet-auth-client';
-import { USER_QUERY_KEY } from '@/lib/use-user';
+import { setUserData, USER_QUERY_KEY } from '@/lib/use-user';
 
 // ----------------------------------------------------------------------------
 // WalletSignInPrompt
@@ -52,7 +52,7 @@ export function WalletSignInPrompt({ address }: { address: `0x${string}` }) {
               // ['user'] expects. signInWithWallet stripped the route's
               // `ok` flag so this write does NOT leak `ok: true` into
               // the cache (codex round-2 MAJOR fix).
-              queryClient.setQueryData(USER_QUERY_KEY, r.user);
+              setUserData(queryClient, r.user);
               await queryClient.invalidateQueries({ queryKey: USER_QUERY_KEY });
             } else {
               setError(r.error);

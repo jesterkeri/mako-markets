@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useDisconnect } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { USER_QUERY_KEY } from '@/lib/use-user';
+import { setUserData } from '@/lib/use-user';
 
 // ----------------------------------------------------------------------------
 // WalletDriftBanner
@@ -61,7 +61,7 @@ export function WalletDriftBanner({
         setBusy(null);
         return;
       }
-      queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
+      setUserData(queryClient, { authed: false });
       // Stay on the current page. The drift resolves once the cache
       // updates because `user` is now null; the consumer flips to its
       // pre-sign-in render (e.g., WalletSignInPrompt on /profile).

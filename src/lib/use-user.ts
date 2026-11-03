@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
 
 // ----------------------------------------------------------------------------
 // src/lib/use-user.ts
@@ -111,6 +111,14 @@ type UnauthedResponse = { authed: false };
 type UserMeResponse = AuthedUser | UnauthedResponse;
 
 export const USER_QUERY_KEY = ['user'] as const;
+
+/// Writes the account a sign-in or sign-out just established. A /api/user/me read already in flight read the session
+/// before that change, so it is cancelled first; otherwise its late answer overwrites this one (#214: the 5-minute
+/// badge re-read makes such a read likely). Every direct write to USER_QUERY_KEY goes through here.
+export function setUserData(client: QueryClient, data: AuthedUser | { authed: false }): void {
+  void client.cancelQueries({ queryKey: USER_QUERY_KEY });
+  client.setQueryData(USER_QUERY_KEY, data);
+}
 
 async function fetchUser(): Promise<UserMeResponse> {
   const res = await fetch('/api/user/me', { credentials: 'same-origin' });

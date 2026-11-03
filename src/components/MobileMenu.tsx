@@ -9,7 +9,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { AvatarCircle } from '@/components/AvatarCircle';
 import { Logo } from '@/components/Logo';
-import { useUser, USER_QUERY_KEY } from '@/lib/use-user';
+import { setUserData, useUser } from '@/lib/use-user';
 import { getDisplayName, getIdentityLabel } from '@/lib/user-display';
 import { usePageScrollLock } from '@/lib/use-page-scroll-lock';
 
@@ -169,7 +169,7 @@ export function MobileMenu({ className }: { className?: string }) {
           setSignOutError('Sign-out failed. Please retry.');
           return;
         }
-        queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
+        setUserData(queryClient, { authed: false });
       }
       if (connectedWallet) {
         try {

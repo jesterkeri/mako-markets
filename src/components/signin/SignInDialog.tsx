@@ -20,7 +20,7 @@ import { maskEmail } from '@/components/shell/SignOutConfirm';
 import { checkShortcut, confirmWalletFree, continueGatedSignIn, startOver as requestStartOver, type StepAResult } from '@/lib/privy-gated-signin';
 import { EMAIL_AGAIN, GATE_MESSAGES, lockedMessage, submitTotp, type SessionResult } from '@/lib/session-exchange';
 import { closeSignIn, useSignInOpen } from '@/lib/sign-in-store';
-import { accountAddress, USER_QUERY_KEY, type AuthedUser } from '@/lib/use-user';
+import { accountAddress, setUserData, type AuthedUser } from '@/lib/use-user';
 import { formatAddress } from '@/lib/user-display';
 import { tourHref } from '@/lib/tour';
 import { signInWithWallet } from '@/lib/wallet-auth-client';
@@ -103,7 +103,7 @@ function SignInFlow() {
   }, [close]);
 
   const signedIn = (user: AuthedUser, firstSignIn: boolean) => {
-    queryClient.setQueryData(USER_QUERY_KEY, user);
+    setUserData(queryClient, user);
     if (firstSignIn) setStep({ kind: 'done', user });
     else closeSignIn();
   };
