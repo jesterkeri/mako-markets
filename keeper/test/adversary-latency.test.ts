@@ -212,6 +212,15 @@ describe('a due round on a slow public RPC (adversary, fix/workers-no-batch)', (
     });
   });
 
+  // Production before the batch ban sent this one whenever 7 requests fit the old 40 s budget (L <= 5.71 s).
+  it('after the previous run\'s transaction landed, at 5.7 s an answer it still sends (2159977 range)', async () => {
+    w.meta.inFlight = { hash: keccak256('0x01'), nonce: 3, roundId: '6', sentAt: w.now - 60_000, kind: 'settle' };
+    w.receipt = { status: '0x1' };
+    w.latencyMs = 5_700;
+    const o = await runKeeper(cfg, deps());
+    expect({ status: o.status, order: w.order, sent: w.sent.length }).toEqual({ status: 'sent', order: ['simulate', 'sign', 'record', 'send'], sent: 1 });
+  });
+
   // The guard does not rest on the overlap model above: under either model, at every answer time, a run either sends
   // the transaction it signs or signs nothing.
   for (const serial of [false, true])

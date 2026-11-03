@@ -27,8 +27,10 @@ export interface Env {
   HEALTHCHECKS_PING_URL: string;
 }
 
-/// A run that starts must finish well inside the cron period and the lease.
-const RUN_BUDGET_MS = 40_000;
+/// A run that starts must finish well inside the cron period and the lease (LEASE_MS 50 s, taken after this clock
+/// starts, so at least 5 s is left for the commit). 45 s, not 40 s, since run.ts keeps a full request timeout in hand
+/// before signing: with 40 s that reserve stopped settlements at answer times production handled (adversary on 52b73f2).
+const RUN_BUDGET_MS = 45_000;
 /// Requests one run may make through `net` (the Healthchecks ping uses its own fetch). One JSON-RPC call per request
 /// since 2026-11-03 (src/rpc.ts), so the worst path is 16: an earlier transaction's receipt, nonce, by-hash and
 /// pending nonce (4), the due reads (2), the close times (1), two reports (2), the pre-send reads (6) and the send
