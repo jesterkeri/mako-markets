@@ -33,7 +33,7 @@
 // user's own /avatars/<id>/ path), exactly as the public comments wire does; a legacy pasted URL is never served.
 // ----------------------------------------------------------------------------
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { getAddress, isAddress } from 'viem';
 
 import type { DbOrTx } from '@/db/client';
