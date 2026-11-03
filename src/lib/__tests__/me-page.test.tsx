@@ -161,6 +161,16 @@ describe('Me page', () => {
     expect(screen.getAllByText('You’ve created 1 pool.').length).toBeGreaterThan(0);
   });
 
+  // Joshua 2026-10-24: the lines broke where five cells left the sixth slot of the 3-column grid empty.
+  it('the desktop totals fill whole rows of the grid, so every rule closes', () => {
+    renderMe();
+    const grid = screen.getByText('BALANCE').parentElement!.parentElement!;
+    const cols = grid.style.gridTemplateColumns.match(/repeat\((\d+)/)?.[1];
+    expect(cols).toBe('3');
+    const used = Array.from(grid.children).reduce((n, c) => n + Number((c as HTMLElement).style.gridColumn.match(/span (\d+)/)?.[1] ?? 1), 0);
+    expect(used % 3).toBe(0);
+  });
+
   it('shows the error, not zeros, when the stake read failed every retry with nothing read', () => {
     betFails = 'nothing-read';
     renderMe();
@@ -197,7 +207,10 @@ describe('Me page', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Claim 12.93 USDC' })[0]);
     fireEvent.click(screen.getAllByRole('button', { name: /Confirm · 12\.933333 USDC/ })[0]);
 
-    await waitFor(() => expect(screen.getAllByText('12.933333 USDC is in your balance.').length).toBeGreaterThan(0));
+    // The black claim tile (Joshua 2026-10-24): the win, its amount, where it went.
+    await waitFor(() => expect(screen.getAllByText('12.933333 USDC').length).toBeGreaterThan(0));
+    expect(screen.getAllByText('You won').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('In your balance.').length).toBeGreaterThan(0);
     await waitFor(() => expect(refetchBets).toHaveBeenCalled());
     // After the refetch the chain says claimed: nothing left, and the row reads what landed.
     await waitFor(() => expect(totals()['READY TO CLAIM']).toBe('0.00 USDC'));
@@ -206,6 +219,13 @@ describe('Me page', () => {
     expect(screen.queryAllByRole('button', { name: 'Claim 12.93 USDC' })).toHaveLength(0);
     // Won all time counts the win whether or not it was claimed.
     expect(totals()['WON ALL TIME']).toBe('12.93 USDC');
+
+    // The tile's Share opens this pool's win card, as the row's Share would (Joshua 2026-10-24).
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ bets: [] }), { status: 200 }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Share your win' })[0]);
+    expect(screen.getAllByRole('dialog', { name: 'Share your result' }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('You won')).toBeNull();
+    expect(String(fetch.mock.calls[0][0])).toBe(`/api/me/bets?account=${SAFE}&pool=1`);
   });
 
   it('lists settled results as won and lost', () => {

@@ -31,7 +31,7 @@ describe('rule 1: a crypto pool settles on the target its question shows', () =>
       const r = buildPool({ kind: 'crypto', symbol, direction: 'above', strike: Number(typed), durationSec: 3600 }, NOW);
       // Refusing a target it cannot show exactly also meets the rule.
       if (!r.ok) return;
-      const shownText = r.pool.question.match(/\$([\d,.]+) in /)?.[1] ?? 'NaN';
+      const shownText = r.pool.question.match(/\$([\d,.]+) at /)?.[1] ?? 'NaN';
       const shown = Number(shownText.replace(/,/g, ''));
       const settles = resolverStrike(r.pool.oracleRef);
       expect({ question: r.pool.question, shown }).toEqual({ question: r.pool.question, shown: settles });
@@ -42,7 +42,7 @@ describe('rule 1: a crypto pool settles on the target its question shows', () =>
     const r = buildPool({ kind: 'crypto', symbol: 'LINK', direction: 'above', strike: 9.70545, durationSec: 3600 }, NOW);
     if (!r.ok) return;
     const close = 9.7052;
-    const wordsSayYes = close > Number(r.pool.question.match(/\$([\d,.]+) in /)?.[1]?.replace(/,/g, '') ?? 'NaN');
+    const wordsSayYes = close > Number(r.pool.question.match(/\$([\d,.]+) at /)?.[1]?.replace(/,/g, '') ?? 'NaN');
     expect({ question: r.pool.question, wordsSayYes, resolverSaysYes: resolverSaysYes(resolverStrike(r.pool.oracleRef), close) }).toEqual({
       question: r.pool.question,
       wordsSayYes,

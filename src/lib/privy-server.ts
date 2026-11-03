@@ -117,6 +117,9 @@ export interface PrivyAccountRead {
   user: GateUser;
   /// The resource of the single embedded wallet, when there is exactly one with an id; otherwise null.
   wallet: GateWallet | null;
+  /// The verified access token's Privy session id (`sid`) and issue time (`iat`, Unix seconds, Privy's clock). Set only
+  /// by readPrivyAccount, which verified a token; a read by id has none (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.2).
+  token?: { sessionId: string; issuedAt: number };
 }
 
 async function readById(client: PrivyClient, userId: string): Promise<PrivyAccountRead> {
@@ -152,7 +155,8 @@ async function readById(client: PrivyClient, userId: string): Promise<PrivyAccou
 export async function readPrivyAccount(accessToken: string): Promise<PrivyAccountRead> {
   const client = privy();
   const claims = await client.utils().auth().verifyAccessToken(accessToken);
-  return readById(client, claims.user_id);
+  const read = await readById(client, claims.user_id);
+  return { ...read, token: { sessionId: claims.session_id, issuedAt: claims.issued_at } };
 }
 
 /// Deletes a Privy user: ONLY for the self-service Start over of an account that never completed its first sign-in

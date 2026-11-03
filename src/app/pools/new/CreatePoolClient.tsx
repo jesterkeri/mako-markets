@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDiscover } from './use-discover';
 
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { ConfirmSheet, TileShareButton, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { BetCardSheet, useBetLog } from '@/components/PnlShareSheet';
 import { SignInLink } from '@/components/signin/SignInLink';
 import { explorerUrl } from '@/lib/chain';
 import { MarketType, type MarketWithId } from '@/lib/contract';
@@ -112,6 +113,15 @@ export function CreatePoolClient() {
   const now = useLiveNowSec();
   const { user } = useUser();
   const account = user ? accountAddress(user) : null;
+  /// The creator's first bet card that is open: the new pool's bet placed card (Joshua 2026-10-26), for the BetPlaced
+  /// log the create receipt holds for this account. Another account signing in closes it for good.
+  const [betCard, setBetCard] = useState<{ pool: bigint; tx: string; log: number; question: string } | null>(null);
+  const [shareAccount, setShareAccount] = useState(account);
+  if (shareAccount !== account) {
+    setShareAccount(account);
+    setBetCard(null);
+  }
+  const closeShare = useCallback(() => setBetCard(null), []);
   const balanceQ = useUsdcBalance(account ?? undefined);
   const balance = typeof balanceQ.data === 'bigint' ? balanceQ.data : null;
   const createsQ = useCreatorCreatesToday(account ?? undefined);
@@ -139,6 +149,9 @@ export function CreatePoolClient() {
   const crypto = useDiscover<{ prices: Record<string, { usd: number }> }>(kind === 'crypto' ? '/api/discover/crypto' : null, 10_000);
 
   const tx = usePoolTx();
+  // createMarket emits BetPlaced for the creator's seed, so the create receipt names the first bet, as a bet's does.
+  const createTx = tx.tx?.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null ? tx.phase.txHash : undefined;
+  const betLog = useBetLog(createTx, tx.createdId ?? 0n, account);
   useEffect(() => {
     if (tx.phase.step === 'done') setStep(4);
   }, [tx.phase.step]);
@@ -174,7 +187,8 @@ export function CreatePoolClient() {
   const bothSides = mine.length ? Math.round((mine.filter((m) => m.totalYes > 0n && m.totalNo > 0n).length * 100) / mine.length) : null;
 
   const openCreate = () => {
-    if (!pool || !draft || seed === null || seedProblem || tx.tx) return;
+    if (!pool || !draft || now === null || seed === null || seedProblem || tx.tx) return;
+    setBetCard(null); // a card from an earlier create never outlives the next one
     const side = seedYes ? 'YES' : 'NO';
     setSheetSpec({
       glyph: '+',
@@ -190,9 +204,12 @@ export function CreatePoolClient() {
       note: 'Your first bet goes into the pool like any other bet. If nobody takes the other side, everyone is refunded.',
       doneTitle: 'Your pool is live',
       doneBody: pool.question,
+      // The black tile, as for a placed bet (Joshua 2026-10-26): the creator's first bet is a bet.
+      doneTile: { big: side, small: `${usdcExact(seed)} USDC, your first bet` },
       doneSecondary: { label: 'View in Pools', href: '/pools' },
     });
-    tx.open({ kind: 'create', draft, seed, seedYes });
+    // The same `now` the sheet's pool was built from, so the chain gets exactly the title and times shown.
+    tx.open({ kind: 'create', draft, nowSec: now, openedAtMs: performance.now(), seed, seedYes });
   };
 
   const v: ViewProps = {
@@ -268,8 +285,23 @@ export function CreatePoolClient() {
           onCancel={tx.close}
           onRetry={tx.retry}
           onClose={tx.close}
+          doneExtra={
+            createTx && tx.createdId !== null && betLog.status !== 'none' ? (
+              <TileShareButton
+                disabled={betLog.status !== 'found'}
+                onClick={() => {
+                  if (betLog.status !== 'found' || tx.createdId === null) return;
+                  setBetCard({ pool: tx.createdId, tx: createTx, log: betLog.log, question: sheetSpec.doneBody });
+                  tx.close();
+                }}
+              >
+                {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
+              </TileShareButton>
+            ) : undefined
+          }
         />
       )}
+      {betCard && <BetCardSheet poolId={betCard.pool} tx={betCard.tx} log={betCard.log} question={betCard.question} onClose={closeShare} />}
     </>
   );
 }

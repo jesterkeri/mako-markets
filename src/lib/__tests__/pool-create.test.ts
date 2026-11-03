@@ -13,38 +13,42 @@ const ok = (r: ReturnType<typeof buildPool>) => {
 };
 
 describe('price pools', () => {
-  it('crypto: the resolver reference SYMBOL:gt|lt:STRIKE and the dollar question with the duration label', () => {
+  // NOW = 2027-01-15T08:00:00Z, a whole minute. A 1H pool closes at ceil((NOW + 3600 + 60 + 30) / 60) * 60 = NOW + 3720
+  // (09:02 UTC); a 5M pool at NOW + 420 (08:07 UTC); 7D at floor((NOW + 604800 - 60) / 60) * 60 = NOW + 604740.
+  it('crypto: the resolver reference SYMBOL:gt|lt:STRIKE and a title stating the price check in UTC', () => {
     const p = ok(buildPool({ kind: 'crypto', symbol: 'btc', direction: 'above', strike: 84523, durationSec: 300 }, NOW));
-    expect(p).toMatchObject({ mType: MarketType.CRYPTO, oracleRef: 'BTC:gt:84523', question: 'Will BTC close above $84,523 in 5 minutes?' });
+    expect(p).toMatchObject({ mType: MarketType.CRYPTO, oracleRef: 'BTC:gt:84523', question: 'Will BTC be above $84,523 at 08:07 UTC on Fri 15 Jan?' });
     expect(buildPool({ kind: 'crypto', symbol: 'MON', direction: 'below', strike: 0.0275, durationSec: 604800 }, NOW)).toMatchObject({
       ok: true,
-      pool: { oracleRef: 'MON:lt:0.0275', question: 'Will MON close below $0.0275 in 7 days?' },
+      pool: { oracleRef: 'MON:lt:0.0275', question: 'Will MON be below $0.0275 at 07:59 UTC on Fri 22 Jan?' },
     });
   });
 
-  it('forex, commodities and stocks: their own verb, no dollar sign', () => {
-    expect(ok(buildPool({ kind: 'forex', symbol: 'EURUSD', direction: 'above', strike: 1.095, durationSec: 3600 }, NOW)).question).toBe('Will EURUSD trade above 1.095 in 1 hour?');
-    expect(ok(buildPool({ kind: 'commodities', symbol: 'XAUUSD', direction: 'below', strike: 2400, durationSec: 86400 }, NOW)).question).toBe('Will XAUUSD settle below 2400 in 24 hours?');
+  it('forex and commodities as pairs without a dollar sign, stocks with one', () => {
+    expect(ok(buildPool({ kind: 'forex', symbol: 'EURUSD', direction: 'above', strike: 1.095, durationSec: 3600 }, NOW)).question).toBe('Will EUR/USD be above 1.095 at 09:02 UTC on Fri 15 Jan?');
+    expect(ok(buildPool({ kind: 'commodities', symbol: 'XAUUSD', direction: 'below', strike: 2400, durationSec: 86400 }, NOW)).question).toBe('Will XAU/USD be below 2,400 at 08:02 UTC on Sat 16 Jan?');
     expect(ok(buildPool({ kind: 'stocks', symbol: 'NVDA', direction: 'above', strike: 200, durationSec: 3600 }, NOW))).toMatchObject({
       mType: MarketType.STOCKS,
-      question: 'Will NVDA close above 200 in 1 hour?',
+      question: 'Will NVDA be above $200 at 09:02 UTC on Fri 15 Jan?',
       oracleRef: 'NVDA:gt:200',
     });
   });
 
-  it('runs from now plus the landing buffer, capped under 7 days, and stops betting at the contract-suggested point', () => {
+  it('closes on a whole minute after the landing buffer and the sheet hold, 7D capped and rounded down, and stops betting at the contract-suggested point', () => {
     const p = ok(buildPool({ kind: 'crypto', symbol: 'BTC', direction: 'above', strike: 1, durationSec: 3600 }, NOW));
-    // 3600 + 60 s buffer; up to 1 hour (3660 s is over) the 24h band applies: 60% of the duration.
-    expect(p.closeTime).toBe(BigInt(NOW + 3660));
-    expect(p.bettingCloseTime).toBe(BigInt(NOW + Math.floor((3660 * 6000) / 10000)));
+    // 3600 + 60 s buffer + 30 s hold, rounded up to 3720; over 1 hour the 24h band applies: 60% of the duration.
+    expect(p.closeTime).toBe(BigInt(NOW + 3720));
+    expect(p.bettingCloseTime).toBe(BigInt(NOW + Math.floor((3720 * 6000) / 10000)));
     const week = ok(buildPool({ kind: 'crypto', symbol: 'BTC', direction: 'above', strike: 1, durationSec: 604800 }, NOW));
     expect(week.closeTime).toBe(BigInt(NOW + 604800 - 60));
+    const weekLate = ok(buildPool({ kind: 'crypto', symbol: 'BTC', direction: 'above', strike: 1, durationSec: 604800 }, NOW + 59));
+    expect(weekLate.closeTime).toBe(BigInt(NOW + 604800 - 60));
   });
 
   it('shows the exact target, grouped the same way in every browser, and refuses one it cannot show plainly', () => {
     const q = (strike: number) => buildPool({ kind: 'crypto', symbol: 'BTC', direction: 'above', strike, durationSec: 3600 }, NOW);
-    expect(q(1234567.891)).toMatchObject({ ok: true, pool: { question: 'Will BTC close above $1,234,567.891 in 1 hour?', oracleRef: 'BTC:gt:1234567.891' } });
-    expect(q(9.70545)).toMatchObject({ ok: true, pool: { question: 'Will BTC close above $9.70545 in 1 hour?' } });
+    expect(q(1234567.891)).toMatchObject({ ok: true, pool: { question: 'Will BTC be above $1,234,567.891 at 09:02 UTC on Fri 15 Jan?', oracleRef: 'BTC:gt:1234567.891' } });
+    expect(q(9.70545)).toMatchObject({ ok: true, pool: { question: 'Will BTC be above $9.70545 at 09:02 UTC on Fri 15 Jan?' } });
     expect(q(0.0000001)).toEqual({ ok: false, reason: 'This target is too small or too large for a pool to settle.' });
   });
 

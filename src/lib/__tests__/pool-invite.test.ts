@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { MarketType, Outcome, type MarketWithId } from '@/lib/contract';
-import { intentUrl, linkDisplay, poolInviteCard, poolInviteLink, SHARE_ORIGIN, shareText, type ShareTarget } from '@/lib/pool-invite';
+import { cardFigure, intentUrl, linkDisplay, poolInviteCard, poolInviteLink, SHARE_ORIGIN, shareText, type ShareTarget } from '@/lib/pool-invite';
 import { formatPays, poolRow } from '@/lib/pool-list';
 import { poolClock } from '@/lib/pool-rules';
 import { refFromSearch } from '@/lib/ref-tag';
@@ -66,6 +66,12 @@ describe('the shared link', () => {
     expect(url.searchParams.get('utm_source')).toBe('link');
   });
 
+  it('points at a page of the pool when given one, such as a bet’s share card', () => {
+    const card = '/pools/88/pnl/0xabc/2/placed';
+    expect(poolInviteLink(88n, 'x', card)).toBe('https://makomarket.xyz/pools/88/pnl/0xabc/2/placed?utm_source=x&utm_campaign=pool-88');
+    expect(new URL(intentUrl('telegram', 88n, 'Q', card)).searchParams.get('url')).toBe(poolInviteLink(88n, 'telegram', card));
+  });
+
   it('prints without the scheme', () => {
     expect(linkDisplay(poolInviteLink(88n, 'link'))).toBe('makomarket.xyz/pools/88?utm_source=link&utm_campaign=pool-88');
   });
@@ -78,7 +84,7 @@ describe('share-intent URLs', () => {
   it('X opens the official post intent with the text and the link as separate, encoded values', () => {
     const raw = intentUrl('x', 88n, NASTY);
     const url = new URL(raw);
-    expect(`${url.origin}${url.pathname}`).toBe('https://x.com/intent/tweet');
+    expect(`${url.origin}${url.pathname}`).toBe('https://x.com/intent/post');
     expect(url.searchParams.get('text')).toBe(`${NASTY} on Mako Market`);
     expect(url.searchParams.get('url')).toBe(poolInviteLink(88n, 'x'));
     expect([...url.searchParams.keys()]).toEqual(['text', 'url']);
@@ -171,5 +177,32 @@ describe('the card', () => {
     expect(card.clock).toEqual({ label: clock.label, value: clock.value });
     expect(card.scanTitle).toBe('Scan to view');
     expect(card.minLine).toBeNull();
+  });
+});
+
+// Codex R1 F2: a side's figures are uint256 (totals) and uint32 (bettors), so the card shortens them from a million
+// and every value fits the side pill.
+describe('cardFigure', () => {
+  it.each([
+    [0n, '0'],
+    [999_999n, '999,999'],
+    [1_000_000n, '1.00M'],
+    [1_239_999n, '1.23M'],
+    [45_678_901_234n, '45.6B'],
+    [789_999_999_999_999n, '789T'],
+    [1_000_000_000_000_000n, '1.00e15'],
+    [4_294_967_295n, '4.29B'],
+    [2n ** 256n - 1n, '1.15e77'],
+  ])('%s -> %s', (n, text) => {
+    expect(cardFigure(n)).toBe(text);
+  });
+
+  it('shortens a side\'s amount and pays from a million, and keeps them exact below', () => {
+    const m = { ...pool(), totalYes: 1n, totalNo: 2n ** 256n - 2n, yesBettorCount: 4294967295 };
+    const [yes, no] = poolInviteCard(m, NOW, { yes: 'YES', no: 'NO' }).sides;
+    expect(yes.amount).toBe('0.00');
+    expect(no.amount).toBe('1.15e71');
+    expect(yes.pays).toMatch(/^\d\.\d\de\d+x$/);
+    expect(no.pays).toMatch(/^\d\.\d\dx$/);
   });
 });

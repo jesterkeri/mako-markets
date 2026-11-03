@@ -1,9 +1,11 @@
 import 'server-only';
 
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 
 import { type DbOrTx } from '@/db/client';
 import { sessions, userSafes, users, type User } from '@/db/schema';
+import { lockEmbeddedCandidates } from './account-locks';
+import { revokeRememberedRows, voidCeremonies } from './remembered-browser-store';
 import { SAFE_TRACKED_CHAIN_IDS } from './chain';
 import { deriveSafeAddress } from './safe';
 import { normalizeEmail } from './email';
@@ -185,9 +187,15 @@ export interface EmbeddedUpsert {
  * succeed). Repoints the account's Safe on every tracked chain and, when the signer changes, revokes every
  * session. Returns null, having changed nothing, if either condition no longer holds.
  */
+/// Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.3, "Account move"): the move revokes every remembered row
+/// of the account and voids the pending ceremonies, except the one its own sign-in is spending (the bind is written
+/// after the move, r19). The caller locked these rows before its live time `t` and passes their ids.
+export type MoveInvalidation = { rowIds: string[]; ceremonyIds: string[]; nowMs: number };
+
 export async function applyEmbeddedMove(
   tx: DbOrTx,
   args: { userId: string; from: string | null; to: string; privyUserId: string },
+  invalidate?: MoveInvalidation,
 ): Promise<User | null> {
   const to = normalizeEoa(args.to);
   const updated = await tx
@@ -202,6 +210,10 @@ export async function applyEmbeddedMove(
     )
     .returning();
   if (updated.length !== 1) return null;
+  if (invalidate) {
+    await revokeRememberedRows(tx, invalidate.rowIds, 'account_move', invalidate.nowMs);
+    await voidCeremonies(tx, invalidate.ceremonyIds, invalidate.nowMs);
+  }
   if (args.from === to) return updated[0]; // bound to Privy, signer unchanged: nothing else moves
   const safeAddress = deriveSafeAddress(to as `0x${string}`);
   for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
@@ -261,38 +273,81 @@ export async function upsertEmbeddedUser(
   /// here, so a bad value is dropped rather than failing the sign-in on the CHECK.
   opts: { deferMoveIfTotp?: boolean; ref?: string | null } = {},
 ): Promise<EmbeddedUpsert> {
+  return finishEmbeddedUser(tx, await prepareEmbeddedUser(tx, rawEmail, rawWallets, privyUserId, opts));
+}
+
+/// What prepareEmbeddedUser decided, with the users row it holds locked.
+export type PreparedEmbedded =
+  | { action: 'reuse'; user: User; directMove: false }
+  | { action: 'create'; user: User; directMove: false }
+  /// A 2FA account due to move: nothing changes here; /api/user/auth/totp moves it after the second factor.
+  | { action: 'pending'; user: User; directMove: false; to: string }
+  /// A Magic-era account without 2FA: moved at once by finishEmbeddedUser.
+  | { action: 'move'; user: User; directMove: true; to: string; privyUserId: string };
+
+/**
+ * The first half of upsertEmbeddedUser, run at lock level (2) (SIGNIN_REMEMBERED_BROWSER_PLAN r29, Codex R15 F1): locks
+ * every users row the sign-in could be about, in id order, decides on the rows it holds, and for `create` inserts the
+ * new row now, before the caller reads its live time `t` (an insert's only possible wait, on a concurrent uncommitted
+ * insert of the same email, wallet or Privy id, therefore also falls before `t`). Changes nothing else, so the caller
+ * can take its later locks (the Safe rows, and on a direct move the session rows) before `t` and judge its proof nonce
+ * on `t` before anything moves.
+ */
+export async function prepareEmbeddedUser(
+  tx: DbOrTx,
+  rawEmail: string,
+  rawWallets: string[],
+  privyUserId: string,
+  opts: { deferMoveIfTotp?: boolean; ref?: string | null } = {},
+): Promise<PreparedEmbedded> {
   const email = normalizeEmail(rawEmail);
   const wallets = rawWallets.map((w) => normalizeEoa(w));
   if (wallets.length === 0) throw new Error('upsertEmbeddedUser: no wallets');
   if (!privyUserId) throw new Error('upsertEmbeddedUser: no Privy user id');
 
-  const existing = await tx
-    .select()
-    .from(users)
-    .where(or(eq(users.email, email), inArray(users.magicEoa, wallets), eq(users.privyUserId, privyUserId)))
-    .limit(3);
+  const existing = await lockEmbeddedCandidates(tx, email, wallets, privyUserId);
 
   const d = decideEmbeddedUser(existing, email, wallets, privyUserId);
   switch (d.action) {
     case 'conflict':
       throw new IdentityConflictError(d.reason);
     case 'reuse':
-      return { user: d.row, moved: false };
+      return { action: 'reuse', user: d.row, directMove: false };
     case 'create': {
       const inserted = await tx
         .insert(users)
         .values({ email, magicEoa: d.eoa, privyUserId, authType: 'magic', ref: parseRefTag(opts.ref) })
         .onConflictDoNothing()
         .returning();
-      if (inserted.length === 1) return { user: inserted[0], moved: false, created: true };
+      if (inserted.length === 1) return { action: 'create', user: inserted[0], directMove: false };
       // A concurrent sign-in created it first: refuse rather than guess; the retry resolves cleanly.
       throw new IdentityConflictError('email_with_different_eoa');
     }
-    case 'move': {
+    case 'move':
       // A 2FA account moves only after its second factor: proving the email alone must not change the
       // account's signer, Safe or Privy identity, or sign its owner out (adversary pass, 2026-09-29).
-      if (opts.deferMoveIfTotp && d.row.totpSecret) return { user: d.row, moved: false, pendingMoveTo: d.eoa };
-      const moved = await applyEmbeddedMove(tx, { userId: d.row.id, from: d.row.magicEoa, to: d.eoa, privyUserId });
+      if (opts.deferMoveIfTotp && d.row.totpSecret) return { action: 'pending', user: d.row, directMove: false, to: d.eoa };
+      return { action: 'move', user: d.row, directMove: true, to: d.eoa, privyUserId };
+  }
+}
+
+/// The second half: applies the decision, writing only rows prepareEmbeddedUser and the caller already locked.
+export async function finishEmbeddedUser(
+  tx: DbOrTx,
+  p: PreparedEmbedded,
+  /// For a move: the remembered-browser invalidation applyEmbeddedMove also performs (SIGNIN_REMEMBERED_BROWSER_PLAN
+  /// r29 2.3, "Account move").
+  moveOpts?: MoveInvalidation,
+): Promise<EmbeddedUpsert> {
+  switch (p.action) {
+    case 'reuse':
+      return { user: p.user, moved: false };
+    case 'create':
+      return { user: p.user, moved: false, created: true };
+    case 'pending':
+      return { user: p.user, moved: false, pendingMoveTo: p.to };
+    case 'move': {
+      const moved = await applyEmbeddedMove(tx, { userId: p.user.id, from: p.user.magicEoa, to: p.to, privyUserId: p.privyUserId }, moveOpts);
       if (!moved) throw new IdentityConflictError('email_with_different_eoa');
       return { user: moved, moved: true };
     }

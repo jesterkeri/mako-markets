@@ -37,3 +37,26 @@ export function refFromCookieHeader(header: string | null): string | null {
   }
   return null;
 }
+
+/// Shared links always point at production, never at the preview or local host the sharer happens to be on.
+export const SHARE_ORIGIN = 'https://makomarket.xyz';
+
+// Referral tags: `r-` plus the first 30 hex characters of the referrer's account address (the Safe for an email
+// account, the wallet for a wallet account), lower-cased. Exactly 32 characters, so the rule above and the DB CHECK
+// accept it unchanged, and it is computed from the public address, so no code table is needed.
+const REFERRAL = /^r-[0-9a-f]{30}$/;
+
+/// The referral code for an account address.
+export function referralCode(address: string): string {
+  return `r-${address.toLowerCase().slice(2, 32)}`;
+}
+
+/// True for a referral tag, false for a campaign tag or anything else.
+export function isReferralTag(tag: string | null): boolean {
+  return tag !== null && REFERRAL.test(tag);
+}
+
+/// The invite link: `?ref=` only, because `refFromSearch` prefers `utm_campaign`.
+export function referralLink(address: string): string {
+  return `${SHARE_ORIGIN}/?ref=${referralCode(address)}`;
+}

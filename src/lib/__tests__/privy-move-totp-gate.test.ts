@@ -54,6 +54,7 @@ vi.mock('@/lib/csrf', () => ({ checkSameOrigin: mocks.checkSameOrigin }));
 vi.mock('@/lib/privy-server', async () => (await import('./helpers/gate-pass')).privyServerPassing((t) => mocks.verifyPrivyLogin(t)));
 vi.mock('@/lib/privy-proof', async () => (await import('./helpers/gate-pass')).privyProofPassing());
 vi.mock('@/lib/privy-admission', async () => (await import('./helpers/gate-pass')).privyAdmissionNone());
+vi.mock('@/lib/account-locks', async () => (await import('./helpers/gate-pass')).accountLocksPassing());
 vi.mock('@/lib/privy-mismatch', () => ({ recordPrivyMismatch: async () => {} }));
 vi.mock('@/lib/allowlist', () => ({ isAllowedForCurrentStage: mocks.isAllowedForCurrentStage }));
 vi.mock('@/lib/auth-challenges', () => ({

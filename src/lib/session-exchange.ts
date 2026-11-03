@@ -12,6 +12,10 @@ export type SessionResult =
   | { kind: 'totp'; challengeId: string }
   /// The identity proof is still valid; the same request can be retried.
   | { kind: 'retry'; message: string }
+  /// The signed proof or its nonce expired on the way: the gate retries once with a fresh one, then says so.
+  | { kind: 'proof_expired'; message: string }
+  /// Remembered browsers: this Privy session needs a fresh email code first (the dialog sends one and says why).
+  | { kind: 'email_required'; reason: 'too_late' | 'other_device' | 'not_confirmed' }
   /// `startOver`: a locked account that never completed its first sign-in, which the server offers to start over.
   | { kind: 'error'; message: string; startOver?: true };
 
@@ -43,9 +47,35 @@ export const GATE_MESSAGES = {
   mfa_proof_required: "The authenticator check didn't finish, so you're not signed in. Try again.",
   proof_cancelled: 'Sign-in needs the code from your authenticator app. Try again when you have it.',
   unavailable: 'Sign-in is unavailable for a moment. Try again shortly.',
+  proof_expired: 'The sign-in check expired before it reached Mako Market. Try again.',
+  clock_skew: "Your device's clock is ahead of the real time, so sign-in can't be checked. Set the clock to update automatically, then try again.",
+  totp_locked: 'Too many wrong codes. Sign-in is paused for this account for a few minutes; try again after that.',
 } as const;
 
+/// Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.2): why a new email code is needed, in one line, each
+/// followed by the new code being sent. No em dashes, no "we/our/us".
+export const EMAIL_AGAIN = {
+  too_late: 'Your sign-in took too long. A new code is on its way to your email.',
+  other_device: 'You signed in on another device meanwhile. A new code is on its way to your email.',
+  not_confirmed: "Mako Market couldn't confirm this sign-in. A new code is on its way to your email.",
+  /// "Continue as" on a browser the server will not continue: before any authenticator prompt.
+  continue_needs_email: 'This browser needs a code from your email first. It is on its way.',
+} as const;
+
+function emailReason(v: unknown): 'too_late' | 'other_device' | 'not_confirmed' {
+  return v === 'too_late' || v === 'other_device' ? v : 'not_confirmed';
+}
+
 /// Any answer from POST /api/user/auth (or a refusal from /api/user/auth/proof) as the dialog's next step.
+/// The lockout refusal names when sign-in opens again (owner 2026-10-26: keep the stricter rule, say when), in the
+/// device's own time like every other deadline; the plain message when the server sent no readable time.
+export function lockedMessage(retryAt: unknown): string {
+  const at = typeof retryAt === 'string' ? Date.parse(retryAt) : NaN;
+  if (!Number.isFinite(at)) return GATE_MESSAGES.totp_locked;
+  const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `Too many wrong codes. Sign-in is paused for this account until ${time}; try again then.`;
+}
+
 export function mapSessionResponse(status: number, body: Record<string, unknown> | null): SessionResult {
   if (status >= 500) return { kind: 'retry', message: body?.error === 'privy_unavailable' ? GATE_MESSAGES.unavailable : 'Server error. Your code is still good; try again.' };
   if (!body) return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
@@ -53,15 +83,23 @@ export function mapSessionResponse(status: number, body: Record<string, unknown>
   if (status === 200 && body.authed === true) {
     return { kind: 'signed_in', user: toUser(body), firstSignIn: body.firstSignIn === true };
   }
+  if (body.status === 'email_required') return { kind: 'email_required', reason: emailReason(body.reason) };
   if (body.status === 'account_locked') return { kind: 'error', message: GATE_MESSAGES.account_locked };
   if (body.status === 'email_changed') return { kind: 'error', message: GATE_MESSAGES.email_changed };
   if (body.status === 'mfa_proof_required') return { kind: 'retry', message: GATE_MESSAGES.mfa_proof_required };
+  if (body.status === 'proof_expired') return { kind: 'proof_expired', message: GATE_MESSAGES.proof_expired };
+  if (body.status === 'clock_skew') return { kind: 'error', message: GATE_MESSAGES.clock_skew };
+  if (status === 429 && body.error === 'totp_locked') return { kind: 'error', message: lockedMessage(body.retryAt) };
   const error = typeof body.error === 'string' ? body.error : undefined;
   if (status >= 400) return { kind: 'error', message: (error && ERRORS[error]) ?? 'Sign-in failed. Please try again.' };
   return { kind: 'retry', message: 'Unexpected response. Your code is still good; try again.' };
 }
 
-export type TotpResult = { kind: 'signed_in'; user: AuthedUser; firstSignIn: boolean } | { kind: 'state'; next: TotpRequiredState };
+export type TotpResult =
+  | { kind: 'signed_in'; user: AuthedUser; firstSignIn: boolean }
+  | { kind: 'state'; next: TotpRequiredState }
+  /// Remembered browsers: the bind or shortcut re-checked at the second step failed; a fresh email code is needed.
+  | { kind: 'email_required'; reason: 'too_late' | 'other_device' | 'not_confirmed' };
 
 /// POST /api/user/auth/totp with an authenticator or recovery code. Every failure reading comes from
 /// mapTotpResponse, the reviewed mapper.
@@ -83,6 +121,7 @@ export async function submitTotp(state: TotpRequiredState, code: string): Promis
   } catch {
     if (res.ok) return { kind: 'state', next: { ...state, submitting: false, error: 'Unexpected response. Please retry.' } };
   }
+  if (res.status === 200 && body?.status === 'email_required') return { kind: 'email_required', reason: emailReason(body.reason) };
   const outcome = mapTotpResponse(state, res.status, body);
   if (outcome.kind === 'state') return outcome;
   if (body && body.authed === true) return { kind: 'signed_in', user: toUser(body), firstSignIn: body.firstSignIn === true };

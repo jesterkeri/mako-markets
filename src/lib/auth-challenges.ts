@@ -44,24 +44,38 @@ export type SigninChallenge = {
   purpose: SigninPurpose;
   /// Set on a pending Privy move: the Privy user the account binds to once TOTP passes.
   privyUserId: string | null;
+  /// Remembered browsers (migration 0019): what /api/user/auth/totp re-checks and writes (ChallengeBinding). Optional
+  /// so a challenge issued with the feature off, or read by older code, has none.
+  rbCeremonyId?: string | null;
+  rbRowId?: string | null;
+  rbSidHash?: string | null;
+  rbFactorFingerprint?: number | null;
 };
 
-/// INSERT a fresh totp_signin challenge bound to (userId, magicEoa) and
-/// return its id. Caller passes a `tx` when participating in a larger
-/// transaction (the auth route does this so the challenge insert is atomic
-/// with the user upsert it follows).
+/// What a remembered-browser bind or shortcut carries from /api/user/auth to /api/user/auth/totp (migration 0019): the
+/// ceremony to spend OR the remembered row to use, the Privy session id's hash, the authenticator fingerprint.
+export type ChallengeBinding =
+  | { ceremonyId: string; rowId?: undefined; sidHash: string; factorFingerprint: number }
+  | { ceremonyId?: undefined; rowId: string; sidHash: string; factorFingerprint: number };
+
+/// INSERT a fresh totp_signin challenge bound to (userId, magicEoa) and return its id, inside the sign-in transaction.
+/// `nowMs` is that transaction's live database time `t`, read after its locks: the challenge expires at t + its TTL
+/// and /api/user/auth/totp judges it on its own `t`, one clock (SIGNIN_REMEMBERED_BROWSER_PLAN r29 [r28]). The insert
+/// takes a fresh random id, so it waits on nothing.
 export async function createSigninChallenge(args: {
-  tx?: DbOrTx;
+  tx: DbOrTx;
   userId: string;
   magicEoa: string;
+  nowMs: number;
   ttlSec?: number;
   purpose?: SigninPurpose;
   privyUserId?: string;
+  binding?: ChallengeBinding | null;
 }): Promise<string> {
   const ttlSec = args.ttlSec ?? SIGNIN_CHALLENGE_TTL_SEC;
-  const expiresAt = new Date(Date.now() + ttlSec * 1000);
-  const writer = args.tx ?? db;
-  const inserted = await writer
+  const expiresAt = new Date(args.nowMs + ttlSec * 1000);
+  const b = args.binding ?? null;
+  const inserted = await args.tx
     .insert(authChallenges)
     .values({
       userId: args.userId,
@@ -69,6 +83,10 @@ export async function createSigninChallenge(args: {
       purpose: args.purpose ?? TOTP_SIGNIN_PURPOSE,
       privyUserId: args.privyUserId ?? null,
       expiresAt,
+      rbCeremonyId: b?.ceremonyId ?? null,
+      rbRowId: b?.rowId ?? null,
+      rbSidHash: b ? b.sidHash : null,
+      rbFactorFingerprint: b ? b.factorFingerprint : null,
     })
     .returning({ id: authChallenges.id });
   return inserted[0].id;
@@ -78,6 +96,10 @@ export async function createSigninChallenge(args: {
 /// Returns the bound userId + magicEoa or null. Does NOT consume — wrong-code
 /// attempts run validate-then-verify-then-don't-consume so the challenge
 /// stays alive across retries.
+///
+/// A fast refusal only [r28]: it compares with now() in its own one-statement read before the route's transaction, so
+/// it refuses a challenge already expired when the request arrives; every challenge it lets through is judged again,
+/// locked, on the route's live time `t` (challengeLiveAt) before the code is checked.
 export async function validateSigninChallenge(args: {
   challengeId: string;
 }): Promise<SigninChallenge | null> {
@@ -87,6 +109,10 @@ export async function validateSigninChallenge(args: {
       magicEoa: authChallenges.magicEoa,
       purpose: authChallenges.purpose,
       privyUserId: authChallenges.privyUserId,
+      rbCeremonyId: authChallenges.rbCeremonyId,
+      rbRowId: authChallenges.rbRowId,
+      rbSidHash: authChallenges.rbSidHash,
+      rbFactorFingerprint: authChallenges.rbFactorFingerprint,
     })
     .from(authChallenges)
     .where(
@@ -115,19 +141,31 @@ export async function consumeSigninChallengeInTx(args: {
   /// The purpose the challenge was validated with: consume binds it, so a challenge is consumed only as what
   /// it was issued for.
   purpose?: SigninPurpose;
+  /// The route transaction's live database time `t`, read after its locks [r28]: never now(), the transaction's start.
+  nowMs: number;
 }): Promise<boolean> {
+  const t = new Date(args.nowMs);
   const consumed = await args.tx
     .update(authChallenges)
-    .set({ consumedAt: sql`now()` })
+    .set({ consumedAt: t })
     .where(
       and(
         eq(authChallenges.id, args.challengeId),
         eq(authChallenges.purpose, args.purpose ?? TOTP_SIGNIN_PURPOSE),
         eq(authChallenges.userId, args.userId),
         isNull(authChallenges.consumedAt),
-        gt(authChallenges.expiresAt, sql`now()`),
+        gt(authChallenges.expiresAt, t),
       ),
     )
     .returning({ id: authChallenges.id });
   return consumed.length === 1;
+}
+
+/// The locked challenge row, judged on the route's live time `t` [r28]: unconsumed, of this purpose and account, and
+/// unexpired at `t`. Checked BEFORE the code, so a challenge that expired while the route waited costs no strike.
+export function challengeLiveAt(
+  row: { userId: string; purpose: string; consumedAt: Date | null; expiresAt: Date } | null | undefined,
+  args: { userId: string; purpose: SigninPurpose; nowMs: number },
+): boolean {
+  return !!row && row.userId === args.userId && row.purpose === args.purpose && row.consumedAt === null && row.expiresAt.getTime() > args.nowMs;
 }

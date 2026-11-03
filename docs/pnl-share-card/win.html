@@ -1,0 +1,65 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Mako Market PnL share card (win)</title>
+<!-- Design reference only, 1600x900. The app renders this card from live data; see SPEC.md. --><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=Inter:wght@500;700&family=JetBrains+Mono:wght@700&display=swap">
+<style>:root{--pl:#16A34A;--side:#16A34A;--st:#14B8A6;--sided:#0D6B30}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1600px;height:900px;overflow:hidden;background:#000;color:#EDE6D6;font-family:"JetBrains Mono",monospace}
+.m{font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+.bg{position:absolute;inset:0;background:url(../../public/share/pnl-win.png) right bottom/cover no-repeat}
+.shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.85) 0%,rgba(0,0,0,.4) 50%,rgba(0,0,0,0) 66%)}
+.br{position:absolute;width:56px;height:56px;border-color:rgba(237,230,214,.7);border-style:solid;border-width:0}
+.tl{left:36px;top:36px;border-left-width:2px;border-top-width:2px}.tr{right:36px;top:36px;border-right-width:2px;border-top-width:2px}
+.bl{left:36px;bottom:36px;border-left-width:2px;border-bottom-width:2px}.bR{right:36px;bottom:36px;border-right-width:2px;border-bottom-width:2px}
+.hd{position:absolute;left:76px;right:76px;top:66px;display:flex;justify-content:space-between;align-items:center}
+.brand{display:flex;align-items:center;gap:12px;font:800 32px "Bricolage Grotesque";letter-spacing:-.03em}
+.brand svg{width:46px}
+.beta{font:700 13px "JetBrains Mono";letter-spacing:.14em;background:#FACC15;color:#000;border-radius:7px;padding:5px 9px;margin-left:10px}
+.st{display:flex;align-items:center;gap:10px;font-size:18px;color:var(--st)}
+.st i{width:11px;height:11px;border-radius:50%;background:var(--st);box-shadow:0 0 0 5px color-mix(in srgb,var(--st) 22%,transparent)}
+.lab{font:700 15px "JetBrains Mono";letter-spacing:.12em;text-transform:uppercase;color:#8a857a}
+.mission{position:absolute;left:76px;top:150px;width:900px}
+.mission .q{margin-top:12px;font:800 66px/1 "Bricolage Grotesque";letter-spacing:-.04em;color:#F4EFE4}
+.alt{position:absolute;left:76px;top:300px}
+.alt .v{margin-top:6px;font:800 186px/0.9 "Bricolage Grotesque";letter-spacing:-.055em;color:var(--pl);margin-left:-.035em}
+.alt .v i,.alt .s i{font-style:normal;margin-right:.09em}
+.alt .v.neg{margin-left:0}
+.alt .s{margin-top:14px;display:flex;align-items:baseline;gap:12px}
+.alt .s b{font:800 36px "Bricolage Grotesque";letter-spacing:-.02em;color:var(--pl)}
+.alt .s span{font:500 24px Inter;color:#8a857a}
+.pl3{position:absolute;left:76px;top:594px;display:flex;align-items:center;padding:22px 52px 24px;border-radius:999px;background:#FACC15}
+.pl3 div{padding:0 34px;border-left:2px solid rgba(10,10,10,.28)}
+.pl3 .lab{color:#0A0A0A;opacity:.78}
+.pl3 div:first-child{padding-left:0;border-left:0}
+.pl3 div:last-child{padding-right:0}
+.pl3 b{display:block;margin-top:10px;font:800 36px/1 "Bricolage Grotesque";letter-spacing:-.02em;color:#0A0A0A}
+.pl3 b small{font:700 18px Inter;letter-spacing:0;color:#0A0A0A;opacity:.72;margin-left:6px}
+.pl3 .y{color:var(--sided)}
+.ret{position:absolute;left:1366px;top:214px;width:130px;height:130px;border:2px solid rgba(250,204,21,.9);border-radius:50%}
+.ret:before,.ret:after{content:"";position:absolute}
+.ret:before{left:-26px;right:-26px;top:63px;height:2px;background:linear-gradient(90deg,rgba(250,204,21,.9) 22px,transparent 22px,transparent 156px,rgba(250,204,21,.9) 156px)}
+.ret:after{top:-26px;bottom:-26px;left:63px;width:2px;background:linear-gradient(180deg,rgba(250,204,21,.9) 22px,transparent 22px,transparent 156px,rgba(250,204,21,.9) 156px)}
+.tagr{position:absolute;left:1146px;top:166px;font-size:15px;color:rgba(250,204,21,.9);text-align:right;width:200px;line-height:1.5}
+.ftr{position:absolute;left:76px;right:76px;bottom:58px;height:84px;display:flex;justify-content:space-between;align-items:center}
+.who{display:flex;align-items:center;gap:16px}
+.who .nm{position:relative}
+.av{width:64px;height:64px;border-radius:50%;background:#FACC15;color:#000;display:grid;place-items:center;font:800 30px "Bricolage Grotesque";box-shadow:0 0 0 3px #000,0 0 0 5px rgba(237,230,214,.5)}
+.who b{display:block;font:800 28px/1 "Bricolage Grotesque";letter-spacing:-.02em;color:#EDE6D6}
+.who span{position:absolute;left:0;top:calc(100% + 8px);white-space:nowrap;font-size:14px;color:#8a857a}
+.cta{display:flex;align-items:center;gap:14px}
+.qr{width:84px;height:84px;background:#EDE6D6;border-radius:14px;padding:9px}
+.qrs{width:100%;height:100%;display:block}
+.u{color:#000;background:#FACC15;border-radius:999px;padding:16px 30px;font:800 28px "Bricolage Grotesque";letter-spacing:-.01em}
+</style></head><body>
+<div class="bg"></div><div class="shade"></div>
+<div class="br tl"></div><div class="br tr"></div><div class="br bl"></div><div class="br bR"></div>
+<div class="hd"><div class="brand"><svg viewBox="-3 -3 406 316" fill="currentColor"><path d="M 25,285 L 80,259 C 80,227 112,177 123,169 L 115,251 L 150,259 C 160,186 246,135 246,135 C 246,135 226,156 211,196 C 196,235 196,259 196,259 L 239,308 C 229,222 306,86 380,5 C 298,40 193,111 160,153 C 160,153 155,132 163,104 C 170,76 184,50 183,47 C 112,81 44,221 25,285 Z"/></svg>Mako Market<span class="beta">BETA</span></div><span class="st m"><i></i>Called it</span></div>
+<div class="mission"><span class="lab">The call · Football pool</span><div class="q">Will Arsenal win on Saturday?</div></div>
+<div class="alt"><span class="lab">Return</span><div class="v">+61.7%</div><div class="s"><b>+6.17 USDC</b><span>profit</span></div></div>
+<div class="pl3">
+ <div><span class="lab">Side</span><b class="y">YES</b></div>
+ <div><span class="lab">Stake</span><b>10.00<small>USDC</small></b></div>
+ <div><span class="lab">Payout</span><b>16.17<small>USDC</small></b></div>
+</div>
+<div class="tagr m">Target locked<br><span style="color:var(--pl)">+61.7%</span></div><div class="ret"></div>
+<div class="ftr"><div class="who"><div class="av">Y</div><div class="nm"><b>@yourhandle</b><span class="m">23 Oct 2026</span></div></div>
+<div class="cta"><div class="qr"><img class="qrs" src="../../public/share/qr-makomarket.png"></div><span class="u">makomarket.xyz</span></div></div>
+</body></html>

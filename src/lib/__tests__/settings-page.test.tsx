@@ -27,6 +27,7 @@ vi.mock('@/components/profile/TotpDisableModal', () => ({ TotpDisableModal: ({ o
 vi.mock('@/components/profile/RegenerateRecoveryCodesModal', () => ({ RegenerateRecoveryCodesModal: ({ open }: { open: boolean }) => (open ? <div>regenerate-modal</div> : null) }));
 vi.mock('@/components/shell/SignOutConfirm', () => ({ maskEmail: (e: string) => e }));
 vi.mock('@/lib/sign-out-store', () => ({ openSignOut: mocks.openSignOut }));
+vi.mock('@/lib/use-sign-out', () => ({ useSignOut: () => ({ signOutEverywhere: vi.fn(), busy: false, error: null }) }));
 vi.mock('@/components/signin/SignInLink', () => ({ SignInLink: ({ children }: { children: React.ReactNode }) => <a href="/signin">{children}</a> }));
 
 import { SettingsClient } from '@/app/settings/SettingsClient';

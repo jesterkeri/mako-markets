@@ -49,7 +49,7 @@ import { POST } from '../../app/api/aa/sponsor/route';
 import { wrapperCallDataFor } from '../user-op';
 
 const req = (body: unknown) =>
-  new Request('http://localhost/api/aa/sponsor', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' }, body: JSON.stringify(body) });
+  new Request('http://localhost/api/aa/sponsor', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': MAGIC_EOA }, body: JSON.stringify(body) });
 const betBody = (isYes: boolean, amount: bigint) => ({ kind: 'bet_single', chainId: 10143, call: { to: MAKO_ADDRESS, value: '0x0', data: placeBet(90n, isYes, amount) } });
 
 function storedOp(callData: Hex) {

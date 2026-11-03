@@ -1,8 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { recoveryCodes, users } from '@/db/schema';
-import { totpStepGuard } from '@/lib/totp-step-guard';
+import { lockUserRow } from '@/lib/account-locks';
+import { lockoutClearable, totpStepGuard } from '@/lib/totp-step-guard';
 import { checkSameOrigin } from '@/lib/csrf';
 import { verifyAndConsumeRecoveryCode } from '@/lib/recovery-codes';
 import {
@@ -42,6 +43,14 @@ class FactorFailure extends Error {
   constructor() {
     super('factor_failure');
     this.name = 'FactorFailure';
+  }
+}
+
+/// A lockout is active on the users row the transaction locked: refused with no strike and no write (r26).
+class LockedOut extends Error {
+  constructor(public readonly until: Date) {
+    super('totp_locked');
+    this.name = 'LockedOut';
   }
 }
 
@@ -109,6 +118,14 @@ export async function POST(req: Request) {
 
   try {
     await db.transaction(async (tx) => {
+      // Lock and check first (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.3, r26): the users row, then the lockout on
+      // clock_timestamp(). A lockout committed while this request waited for the row refuses here, before any write:
+      // nothing deleted, no strike. With the row held no lockout can start, so a zero from a guarded update below is
+      // always a replay.
+      const locked = await lockUserRow(tx, user.id);
+      if (!locked) throw new FactorFailure();
+      if (locked.lockedNow && locked.totpLockedUntil) throw new LockedOut(locked.totpLockedUntil);
+
       if (totpCode !== null) {
         let plaintextSecret: string;
         try {
@@ -157,7 +174,7 @@ export async function POST(req: Request) {
         }
       }
 
-      await tx
+      const cleared = await tx
         .update(users)
         .set({
           totpSecret: null,
@@ -166,13 +183,19 @@ export async function POST(req: Request) {
           totpFailedAttempts: 0,
           totpLockedUntil: null,
         })
-        .where(eq(users.id, user.id));
+        .where(and(eq(users.id, user.id), lockoutClearable()))
+        .returning({ id: users.id });
+      if (cleared.length === 0) throw new FactorFailure();
       await tx.delete(recoveryCodes).where(eq(recoveryCodes.userId, user.id));
     });
   } catch (err) {
+    if (err instanceof LockedOut) {
+      return Response.json({ error: 'totp_locked', retryAt: err.until.toISOString() }, { status: 429 });
+    }
     if (err instanceof FactorFailure) {
+      // The writer's own after-state, judged on its own live time (r27), never this instance's clock.
       const post = await bumpTotpFailedAttempts({ userId: user.id });
-      if (isLockoutActive(post.lockedUntil)) {
+      if (post.active && post.lockedUntil) {
         return Response.json(
           { error: 'totp_locked', retryAt: post.lockedUntil!.toISOString() },
           { status: 429 },

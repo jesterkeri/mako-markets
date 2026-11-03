@@ -18,7 +18,7 @@ import { useBoard } from './use-board';
 // "All markets" and "Pools" read the same board, because pools are the only markets in the ledger; "Rounds" is
 // shown as coming soon until rounds are indexed.
 
-export function LeaderboardClient() {
+export function LeaderboardClient({ competition }: { competition?: { desktop: React.ReactNode; mobile: React.ReactNode } }) {
   const { user, isLoading: userLoading } = useUser();
   const account = user ? accountAddress(user) : null;
   const [scope, setScope] = useState<BoardScope>('all');
@@ -48,10 +48,10 @@ export function LeaderboardClient() {
   return (
     <>
       <div className="mk-desk mk-desk-frame">
-        <BoardDesktop {...props} />
+        <BoardDesktop {...props} competition={competition?.desktop} />
       </div>
       <div className="mk-mob mk-m">
-        <BoardMobile {...props} />
+        <BoardMobile {...props} competition={competition?.mobile} />
       </div>
     </>
   );

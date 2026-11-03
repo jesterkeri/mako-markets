@@ -13,6 +13,8 @@ export type BoardProps = {
   /// Past bets are still being indexed: the board is incomplete.
   syncing: boolean;
   retry: () => void;
+  /// The Competition tab's content, rendered on the server (the standings read the database).
+  competition?: React.ReactNode;
 };
 
 export const TONE_FG: Record<Tone, string> = {

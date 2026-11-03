@@ -7,7 +7,7 @@ import { PoolClient } from './PoolClient';
 
 const FALLBACK_TITLE = 'Pool · Mako Market Beta';
 
-/// A shared pool link unfurls with the pool's own question and status (the image is ./opengraph-image.tsx).
+/// A shared pool link unfurls with the pool's own question and status (the image is ./opengraph-image.tsx, CARD_SIZE).
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const poolId = poolIdFrom(id);
@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return {
     title: s.title,
     description: s.description,
-    openGraph: { title: s.title, description: s.description, url: s.url, siteName: 'Mako Market', type: 'website', images: [{ url: s.image, width: 1200, height: 630, alt: s.alt }] },
+    openGraph: { title: s.title, description: s.description, url: s.url, siteName: 'Mako Market', type: 'website', images: [{ url: s.image, width: 1600, height: 900, alt: s.alt }] },
     twitter: { card: 'summary_large_image', title: s.title, description: s.description, images: [s.image] },
   };
 }

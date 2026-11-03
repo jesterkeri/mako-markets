@@ -9,3 +9,11 @@ import { users } from '@/db/schema';
 export function totpStepGuard(userId: string, step: bigint): SQL {
   return and(eq(users.id, userId), sql`(${users.totpLastUsedStep} IS NULL OR ${users.totpLastUsedStep} < ${step})`)!;
 }
+
+/// The extra WHERE of every update that clears totp_locked_until on a correct code (SIGNIN_REMEMBERED_BROWSER_PLAN r29
+/// 2.3, r22): only an expired lockout is ever cleared, judged on clock_timestamp() (never now(), the transaction's
+/// start). Each such route has already locked the row and refused an active lockout (r26), so this never changes the
+/// outcome; it is the second line of defence, and a zero from the update is always a replay.
+export function lockoutClearable(): SQL {
+  return sql`(${users.totpLockedUntil} IS NULL OR ${users.totpLockedUntil} <= clock_timestamp())`;
+}

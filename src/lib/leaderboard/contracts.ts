@@ -27,9 +27,10 @@ export type LeaderboardContract = {
 };
 
 /** Live v4 deploy block (2026-05-18, block 32603678). Paired with the
- *  MAKO_ADDRESS fallback in contract.ts — the two rotate together via env
- *  (NEXT_PUBLIC_MAKO_ADDRESS + NEXT_PUBLIC_MAKO_DEPLOY_BLOCK), same pairing
- *  the admin analytics route already relies on. */
+ *  MAKO_ADDRESS fallback in contract.ts. Changing NEXT_PUBLIC_MAKO_ADDRESS
+ *  and NEXT_PUBLIC_MAKO_DEPLOY_BLOCK alone no longer moves the app: the
+ *  address must have a reviewed record in mako-release-record.ts, whose
+ *  deployBlock the env value must equal (contract.ts MAKO_RELEASE). */
 const LIVE_V4_DEPLOY_BLOCK = 32603678;
 
 function parseDeployBlock(raw: string | undefined, fallback: number): number {

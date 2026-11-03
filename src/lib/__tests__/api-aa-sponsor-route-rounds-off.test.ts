@@ -54,7 +54,7 @@ describe('/api/aa/sponsor — Rounds not live', () => {
     const res = await POST(
       new Request('http://localhost/api/aa/sponsor', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+        headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': '0x2222222222222222222222222222222222222222' },
         body: JSON.stringify({ kind, chainId: 10143, call: { to: SOME, value: '0x0', data } }),
       }),
     );
@@ -77,7 +77,7 @@ describe('/api/aa/sponsor — Rounds not live', () => {
     const res = await POST(
       new Request('http://localhost/api/aa/sponsor', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+        headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-mako-eoa': '0x2222222222222222222222222222222222222222' },
         body: JSON.stringify({
           kind: 'round_enter_batched',
           chainId: 10143,

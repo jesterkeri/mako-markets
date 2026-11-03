@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { parseRefTag, REF_COOKIE, refFromCookieHeader, refFromSearch } from '../ref-tag';
+import { isReferralTag, parseRefTag, REF_COOKIE, referralCode, referralLink, refFromCookieHeader, refFromSearch } from '../ref-tag';
 
 describe('parseRefTag', () => {
   it('keeps lower-case letters, digits and hyphens, 1 to 32 characters, lower-casing and trimming first', () => {
@@ -36,6 +36,27 @@ describe('where the tag comes from', () => {
     expect(refFromCookieHeader(`${REF_COOKIE}=%E0%A4%A`)).toBeNull();
     expect(refFromCookieHeader(`${REF_COOKIE}=Bad Tag`)).toBeNull();
     expect(refFromCookieHeader(null)).toBeNull();
+  });
+});
+
+describe('referral tags', () => {
+  const ADDR = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
+
+  it('is r- plus the first 30 hex of the address, lower-cased, 32 characters, and passes the ref rule', () => {
+    const code = referralCode(ADDR);
+    expect(code).toBe('r-bc5a58487d7949da2b76ac84afc032');
+    expect(code).toHaveLength(32);
+    expect(parseRefTag(code)).toBe(code);
+    expect(refFromSearch(`?ref=${code}`)).toBe(code);
+    expect(referralLink(ADDR)).toBe(`https://makomarket.xyz/?ref=${code}`);
+    expect(refFromSearch(new URL(referralLink(ADDR)).search)).toBe(code);
+  });
+
+  it('tells a referral tag from a campaign tag', () => {
+    expect(isReferralTag(referralCode(ADDR))).toBe(true);
+    for (const other of [null, 'post3', 'pool-142', 'r-', 'r-launch', `r-${'a'.repeat(29)}`, `r-${'a'.repeat(31)}`, `r-${'g'.repeat(30)}`, `R-${'a'.repeat(30)}`]) {
+      expect(isReferralTag(other)).toBe(false);
+    }
   });
 });
 

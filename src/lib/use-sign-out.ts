@@ -79,13 +79,22 @@ export function useSignOut() {
     [done],
   );
 
-  const signOut = useCallback(async (): Promise<boolean> => {
+  /// Remembered browsers (SIGNIN_REMEMBERED_BROWSER_PLAN r29 2.5): on a browser the server says is bound
+  /// (`bound: true`), an ordinary sign-out keeps the Privy session so the next sign-in here needs only the
+  /// authenticator; an unbound browser ends it as before. `forget` ("Sign out and forget this browser") also revokes the
+  /// binding and always ends the Privy session.
+  const signOut = useCallback(async (opts: { forget?: boolean } = {}): Promise<boolean> => {
     setBusy(true);
     setError(null);
     try {
       let res: Response;
       try {
-        res = await fetch('/api/user/logout', { method: 'POST', credentials: 'same-origin' });
+        res = await fetch('/api/user/logout', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(opts.forget ? { forget: true } : {}),
+        });
       } catch {
         setError('Network error. Nothing changed; try again.');
         return false;
@@ -94,7 +103,37 @@ export function useSignOut() {
         setError('Sign-out failed. Nothing changed; try again.');
         return false;
       }
+      let bound = false;
+      try {
+        bound = ((await res.json()) as { bound?: unknown }).bound === true;
+      } catch {
+        bound = false;
+      }
       // Mako's session is gone from here on, whatever happens next, and the app says so.
+      queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
+      return finish(await cleanUp({ privy: opts.forget === true || !bound, wallet: isConnected }));
+    } finally {
+      setBusy(false);
+    }
+  }, [cleanUp, finish, isConnected, queryClient]);
+
+  /// "Sign out everywhere": every session of the account ends and every remembered browser is forgotten (server), then
+  /// this browser's Privy session ends too.
+  const signOutEverywhere = useCallback(async (): Promise<boolean> => {
+    setBusy(true);
+    setError(null);
+    try {
+      let res: Response;
+      try {
+        res = await fetch('/api/user/sign-out-everywhere', { method: 'POST', credentials: 'same-origin' });
+      } catch {
+        setError('Network error. Nothing changed; try again.');
+        return false;
+      }
+      if (!res.ok) {
+        setError('Signing out everywhere did not work just now. Nothing changed; try again.');
+        return false;
+      }
       queryClient.setQueryData(USER_QUERY_KEY, { authed: false });
       return finish(await cleanUp({ privy: true, wallet: isConnected }));
     } finally {
@@ -116,5 +155,5 @@ export function useSignOut() {
   /// Leaves anyway, by the user's choice, with the leftover still in place.
   const leave = done;
 
-  return { signOut, retry, leave, busy, error, leftover };
+  return { signOut, signOutEverywhere, retry, leave, busy, error, leftover };
 }

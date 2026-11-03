@@ -83,6 +83,27 @@ describe('ConfirmSheet', () => {
     expect(link?.getAttribute('href')).toBe(`https://testnet.monadvision.com/tx/${TX}`);
   });
 
+  it('a placed bet is done on a black tile with the Mako mark: the side in big type and the stake, then Share and the transaction', () => {
+    const handlers = { onConfirm: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(), onClose: vi.fn() };
+    vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+    const spec: ConfirmSpec = { ...SPEC, doneTile: { big: 'NO', small: '10.00 USDC' } };
+    render(<ConfirmSheet spec={spec} phase={{ step: 'done', txHash: TX }} wallet={MAKO} {...handlers} doneExtra={<button type="button">Share your call</button>} />);
+    const status = screen.getAllByRole('status')[0];
+    expect(status.textContent).toBe('Bet placedNO10.00 USDC');
+    const tile = status.parentElement as HTMLElement;
+    // Black for every pool (Joshua 2026-10-24): a side colour means nothing for team or price pools.
+    expect(tile.style.background).toBe('#000');
+    expect(tile.style.color).toBe('var(--mako-paper)');
+    // The mark is decoration only: hidden from screen readers and outside the status text.
+    const mark = tile.querySelector('svg')?.parentElement as HTMLElement;
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.style.zIndex).toBe('-1');
+    // The old body line is not repeated under the big side.
+    expect(screen.queryByText('10.00 USDC on NO.')).toBeNull();
+    expect(screen.getAllByText(/Transaction · 0x71c3…aaaa/).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Share your call' }).length).toBeGreaterThan(0);
+  });
+
   it('claims "No USDC left your wallet" only when the flow knows nothing moved', () => {
     const base = { step: 'failed' as const, title: 'Betting closed first', body: 'The pool closed before your bet reached Monad.', primary: { label: 'Browse pools', href: '/pools' }, secondary: { label: 'Close' } };
     mount({ ...base, nothingMoved: true });

@@ -69,11 +69,11 @@ function board(url: URL, over: Partial<BoardWire> = {}): BoardWire {
   };
 }
 
-function mount() {
+function mount(competition?: { desktop: React.ReactNode; mobile: React.ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <LeaderboardClient />
+      <LeaderboardClient competition={competition} />
     </QueryClientProvider>,
   );
 }
@@ -101,10 +101,13 @@ describe('Leaderboard page', () => {
     expect(url.searchParams.get('me')).toBe(ME);
   });
 
-  it('every registered player opens their profile at /u/<address> (13a), and nothing else on the board is a link', async () => {
+  it('every registered player opens their profile at /u/<address> (13a), and nothing else on the board is a link but the competition', async () => {
     const { container } = mount();
     await screen.findAllByText('kemi');
-    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    const all = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    // The $100 competition link under the title, once per layout (REFERRAL_COMPETITION_PLAN section 4).
+    expect(all.filter((h) => h === '/leaderboard/competition')).toHaveLength(2);
+    const hrefs = all.filter((h) => h !== '/leaderboard/competition');
     expect(hrefs.length).toBeGreaterThan(0);
     for (const h of hrefs) expect(h, h).toMatch(/^\/u\/0x[0-9a-f]{40}$/);
     expect(hrefs).toContain('/u/0x00000000000000000000000000000000000000a1');
@@ -199,6 +202,28 @@ describe('Leaderboard page', () => {
     fireEvent.click(retry[0]);
     await screen.findAllByText('kemi');
     expect(fetchMock.mock.calls.length).toBeGreaterThan(before);
+  });
+});
+
+describe('Leaderboard: Competition tab (Joshua 2026-10-26)', () => {
+  it('sits in the Markets group right after All markets; picking it shows the server-rendered standings instead of the board, without period or sort', async () => {
+    mount({ desktop: <p>desk standings</p>, mobile: <p>phone standings</p> });
+    await screen.findAllByText('kemi');
+    for (const g of screen.getAllByRole('group', { name: 'Markets' })) expect([...g.querySelectorAll('button')].map((b) => b.textContent).slice(0, 2)).toEqual(['All markets', 'Competition']);
+    expect(screen.getAllByRole('group', { name: 'Period' })).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Competition' })[0]);
+    expect(screen.getByText('desk standings')).toBeTruthy();
+    expect(screen.getByText('phone standings')).toBeTruthy();
+    expect(screen.queryAllByText('kemi')).toHaveLength(0);
+    expect(screen.queryAllByRole('group', { name: 'Period' })).toHaveLength(0);
+    expect(screen.queryAllByRole('group', { name: 'Sort' })).toHaveLength(0);
+    for (const b of screen.getAllByRole('button', { name: 'Competition' })) expect(b.getAttribute('aria-pressed')).toBe('true');
+
+    // Back to the board: the same request as before, nothing lost.
+    fireEvent.click(screen.getAllByRole('button', { name: 'All markets' })[0]);
+    expect(await screen.findAllByText('kemi')).not.toHaveLength(0);
+    expect(screen.queryByText('desk standings')).toBeNull();
   });
 });
 

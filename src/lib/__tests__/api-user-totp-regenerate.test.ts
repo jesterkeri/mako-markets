@@ -44,6 +44,11 @@ vi.mock('@/lib/recovery-codes', () => ({
   generateRecoveryCodes: mocks.generateRecoveryCodes,
   hashRecoveryCode: mocks.hashRecoveryCode,
 }));
+// The users row is locked with no lockout active (lock and check first, r26); route-level lockout races run on
+// PGlite in remembered-browser-lockout-routes.test.ts.
+vi.mock('@/lib/account-locks', () => ({
+  lockUserRow: async () => ({ privyUserId: null, totpFailedAttempts: 0, totpLockedUntil: null, lockedNow: false, privyEmailVerifiedSeen: null }),
+}));
 vi.mock('@/lib/totp-lockout', () => ({
   bumpTotpFailedAttempts: mocks.bumpTotpFailedAttempts,
   isLockoutActive: (d: Date | null) => !!d && d.getTime() > Date.now(),
@@ -255,7 +260,7 @@ describe('POST /api/user/totp/regenerate-recovery-codes', () => {
     mocks.decryptTotpSecret.mockReturnValue('JBSWY3DPEHPK3PXP');
     mocks.verifyTotpCode.mockReturnValue({ ok: false });
     const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 5, lockedUntil });
+    mocks.bumpTotpFailedAttempts.mockResolvedValue({ attempts: 5, lockedUntil, active: true });
 
     const { POST } = await import('../../app/api/user/totp/regenerate-recovery-codes/route');
     const res = await POST(makeRequest({ totpCode: '123456' }));

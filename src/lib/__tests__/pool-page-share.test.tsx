@@ -90,9 +90,8 @@ describe('pool page share control', () => {
     });
     expect(screen.getAllByRole('dialog', { name: 'Share' }).length).toBeGreaterThan(0);
     expect(writeText).not.toHaveBeenCalled();
-    // The card is the pool's own: its state, not a call to bet.
-    expect(screen.getAllByText('YES WON').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Scan to join')).toBeNull();
+    // The card is the pool's own link preview (its state and figures are drawn there, pool-invite.test.ts).
+    expect(screen.getAllByRole('img', { name: /^Share card for / })[0].getAttribute('src')).toMatch(/^\/pools\/\d+\/opengraph-image$/);
 
     await act(async () => {
       fireEvent.keyDown(document, { key: 'Escape' });
@@ -114,14 +113,14 @@ describe('pool page share control', () => {
     expect(screen.queryByRole('dialog', { name: 'Share' })).toBeNull();
   });
 
-  it('an open pool is shared from the header, desktop and mobile, and its card asks people to join', async () => {
+  it('an open pool is shared from the header, desktop and mobile, with the pool\'s card', async () => {
     state.market = OPEN;
     renderPage(true);
     expect(screen.queryByText('Result receipt')).toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'SHARE ↗' }));
     });
-    expect(screen.getAllByText('Scan to join').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('img', { name: /^Share card for / }).length).toBeGreaterThan(0);
     await act(async () => {
       fireEvent.keyDown(document, { key: 'Escape' });
     });
