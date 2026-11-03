@@ -39,12 +39,14 @@ import { createNotifyDb, hex32, setCursor, walletAccount } from './harness';
 const SECRET = 'test-cron-secret-0123456789';
 const SENTINEL_KEY = 'SENTINELKEYadversary0000000000';
 const RPC_URL = `https://rpc.example/v2/${SENTINEL_KEY}`;
-const F = 1_000; // NOTIFY_FROM_BLOCK
-const HEAD = 1_216;
 const POOL = 5n;
 const ALICE = '0xa11ce00000000000000000000000000000000001';
 const CREATOR = '0xc4ea7040000000000000000000000000000000c1';
 const V4 = LEADERBOARD_CONTRACTS[0].address;
+// Above the live V4 deploy block: since the root release guard (staging, naming engine) the deploy block is the
+// reviewed record's, never a test env's 0, and the scan never reads below it.
+const F = LEADERBOARD_CONTRACTS[0].deployBlock + 1_000; // NOTIFY_FROM_BLOCK
+const HEAD = F + 216;
 
 const MARKET_RESOLVED = parseAbiItem('event MarketResolved(uint256 indexed id, uint8 outcome)');
 
