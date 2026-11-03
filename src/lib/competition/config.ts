@@ -4,8 +4,10 @@
 // Owner decision 2026-10-23: the competition starts at noon UTC on Saturday 24 October 2026 and runs 14 days. It must
 // be after the production release; RELEASE_RUNBOOK checks the live page shows it before the promote. END follows from
 // it, so a slipped release changes only this value, in a reviewed commit.
+// Owner decision 2026-11-03: extended by 7 days (low turnout), so it runs 21 days and ends 2026-11-14 12:00 UTC. The
+// start, the referral rules and everything else are unchanged.
 export const COMPETITION_START = new Date('2026-10-24T12:00:00Z');
-export const COMPETITION_END = new Date(COMPETITION_START.getTime() + 14 * 24 * 60 * 60 * 1000);
+export const COMPETITION_END = new Date(COMPETITION_START.getTime() + 21 * 24 * 60 * 60 * 1000);
 /// Owner decision 2026-10-24: a referral is earned once and keeps counting, not only inside one competition, so a
 /// player needs 2 referrals one time. A friend's account counts if it was created from this instant (midnight UTC on
 /// the first competition's start day; older accounts never count) and has placed a bet. Profit still counts from START.

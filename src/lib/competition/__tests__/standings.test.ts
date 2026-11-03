@@ -64,7 +64,7 @@ describe('who is entered', () => {
     await event(t, { actor: addr('b1'), market: 1, kind: 'bet', amount: U, when: at(1) });
     await account(t, { wallet: addr('b2'), ref: codeOf(REF) }); // no bet
     await account(t, { wallet: addr('b3'), ref: codeOf(REF) });
-    await event(t, { actor: addr('b3'), market: 1, kind: 'bet', amount: U, when: at(14 * 24) }); // exactly END
+    await event(t, { actor: addr('b3'), market: 1, kind: 'bet', amount: U, when: at(21 * 24) }); // exactly END
     expect(await readPositions(t.db as never)).toEqual([]);
   });
 
@@ -156,9 +156,9 @@ describe('what counts', () => {
     await referrerWith(t, REF, 2);
     await event(t, { actor: REF, market: 5, kind: 'bet', amount: 2n * U, when: at(0), yes: true }); // at START: in
     await event(t, { actor: REF, market: 5, kind: 'bet', amount: U, when: at(3), yes: false });
-    await event(t, { actor: REF, market: 5, kind: 'claim', amount: 3n * U, when: at(14 * 24 - 1) }); // last hour: in
-    await event(t, { actor: REF, market: 6, kind: 'bet', amount: U, when: at(14 * 24) }); // at END: out
-    await event(t, { actor: REF, market: 5, kind: 'claim', amount: 9n * U, when: at(14 * 24 + 1) }); // after END: out
+    await event(t, { actor: REF, market: 5, kind: 'claim', amount: 3n * U, when: at(21 * 24 - 1) }); // last hour: in
+    await event(t, { actor: REF, market: 6, kind: 'bet', amount: U, when: at(21 * 24) }); // at END: out
+    await event(t, { actor: REF, market: 5, kind: 'claim', amount: 9n * U, when: at(21 * 24 + 1) }); // after END: out
     expect(await readPositions(t.db as never)).toEqual([{ actor: REF, market: '5', yes: 2n * U, no: U, claimed: 3n * U }]);
   });
 

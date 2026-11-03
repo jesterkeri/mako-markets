@@ -134,8 +134,12 @@ describe('competition copy', () => {
     }
   });
 
-  it('shows the window in UTC, END fourteen days after START, referrals open at midnight UTC that day', () => {
-    expect(COMPETITION_END.getTime() - COMPETITION_START.getTime()).toBe(14 * 24 * 60 * 60 * 1000);
+  it('shows the window in UTC, END 21 days after START (extended 2026-11-03), referrals open at midnight UTC that day', () => {
+    expect(COMPETITION_END.getTime() - COMPETITION_START.getTime()).toBe(21 * 24 * 60 * 60 * 1000);
+    expect(COMPETITION_START.toISOString()).toBe('2026-10-24T12:00:00.000Z');
+    expect(COMPETITION_END.toISOString()).toBe('2026-11-14T12:00:00.000Z');
+    expect(COMPETITION_COPY.rules[0]).toBe('Runs from 2026-10-24 12:00 to 2026-11-14 12:00 UTC.');
+    expect(COMPETITION_COPY.live).toBe('Live until 2026-11-14 12:00 UTC.');
     expect(at(-12)).toEqual(REFERRALS_OPEN);
     expect(COMPETITION_COPY.rules[0]).toMatch(/^Runs from \d{4}-\d\d-\d\d \d\d:00 to \d{4}-\d\d-\d\d \d\d:00 UTC\.$/);
     expect(referralProgress(3, 2)).toEqual({ joined: '3 signed up with your link or code', qualified: '2 of them placed a bet', entered: true });
