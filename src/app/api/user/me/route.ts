@@ -44,7 +44,8 @@ const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
 //
 // #214 `unreadNotifications` is the bell's badge: unread notifications, capped
 // at 100, or null when the count fails (never fails this route). useUser
-// refetches /me on mount and focus, so the badge adds no request.
+// refetches /me on mount, focus and every 5 minutes while signed in and
+// visible (use-user.ts UNREAD_REFRESH_MS).
 // ----------------------------------------------------------------------------
 
 export async function GET() {
