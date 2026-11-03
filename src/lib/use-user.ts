@@ -129,12 +129,18 @@ export function accountAddress(user: AuthedUser): `0x${string}` {
   return (user.authType === 'magic' ? user.safeAddress : user.walletAddress) as `0x${string}`;
 }
 
+/// #214: the bell's unread count rides on /api/user/me, so a signed-in, visible tab rechecks it every 5 minutes
+/// (production writes notifications every 15). Never for a signed-out visitor or a background tab. TanStack restarts
+/// every observer's timer on each read of the shared query, so the callers' timers fire as one read.
+export const UNREAD_REFRESH_MS = 5 * 60_000;
+
 export function useUser() {
   const query = useQuery<UserMeResponse>({
     queryKey: USER_QUERY_KEY,
     queryFn: fetchUser,
     staleTime: 30_000,
     refetchOnMount: 'always',
+    refetchInterval: (q) => (q.state.data?.authed ? UNREAD_REFRESH_MS : false),
     retry: 1,
     retryDelay: 500,
   });
