@@ -117,8 +117,10 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   w.requests.push(url);
   if (url.startsWith(RPC)) {
     if (w.rpcStatus !== 200) return new Response('limited', { status: w.rpcStatus });
-    const calls = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] }[];
-    return Response.json(calls.map((c) => ({ jsonrpc: '2.0', id: c.id, ...(rpcAnswer(c.method, c.params) as object) })));
+    const c = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+    // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+    if (Array.isArray(c)) return new Response('Restricted JSON RPC method', { status: 403 });
+    return Response.json({ jsonrpc: '2.0', id: c.id, ...(rpcAnswer(c.method, c.params) as object) });
   }
   if (url.startsWith(DS)) {
     const b = Number(new URL(url).searchParams.get('timestamp'));
@@ -129,7 +131,7 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 }) as typeof fetch;
 
 function deps(): Deps {
-  const net = makeNet(fakeFetch, () => w.now, async () => {}, w.now + 40_000, 11);
+  const net = makeNet(fakeFetch, () => w.now, async () => {}, w.now + 40_000, 16);
   return {
     net,
     state: {

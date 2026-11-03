@@ -123,15 +123,17 @@ function answer(method: string, params: unknown[]): unknown {
 }
 
 const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-  const calls = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] }[];
-  return Response.json(calls.map((c) => ({ jsonrpc: '2.0', id: c.id, ...(answer(c.method, c.params) as object) })));
+  const c = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+  // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+  if (Array.isArray(c)) return new Response('Restricted JSON RPC method', { status: 403 });
+  return Response.json({ jsonrpc: '2.0', id: c.id, ...(answer(c.method, c.params) as object) });
 }) as typeof fetch;
 
 let signed = 0;
 function deps(): Deps {
   const nowMs = () => w.now * 1000;
   return {
-    net: makeNet(fakeFetch, nowMs, async () => {}, nowMs() + 40_000, 11),
+    net: makeNet(fakeFetch, nowMs, async () => {}, nowMs() + 40_000, 16),
     state: {
       acquire: async () => ({ ok: true as const, token: 1, meta: structuredClone(w.meta) }),
       recordInFlight: async (_t: number, f: InFlight, _n: number, extra?: Partial<Meta>) => {

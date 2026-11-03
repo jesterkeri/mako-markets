@@ -154,8 +154,10 @@ class Chain {
   fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith(RPC)) {
-      const calls = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] }[];
-      return Response.json(calls.map((c) => ({ jsonrpc: '2.0', id: c.id, ...(this.answer(c.method, c.params) as object) })));
+      const c = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+      // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+      if (Array.isArray(c)) return new Response('Restricted JSON RPC method', { status: 403 });
+      return Response.json({ jsonrpc: '2.0', id: c.id, ...(this.answer(c.method, c.params) as object) });
     }
     if (url.startsWith(DS)) {
       const b = Number(new URL(url).searchParams.get('timestamp'));
@@ -169,7 +171,7 @@ class Chain {
   deps(): Deps {
     const nowMs = () => this.now * 1000;
     return {
-      net: makeNet(this.fetch, nowMs, async () => {}, nowMs() + 40_000, 11),
+      net: makeNet(this.fetch, nowMs, async () => {}, nowMs() + 40_000, 16),
       state: {
         acquire: async () => ({ ok: true as const, token: 1, meta: structuredClone(this.meta) }),
         recordInFlight: async (_t: number, f: InFlight) => {

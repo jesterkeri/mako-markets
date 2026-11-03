@@ -28,15 +28,19 @@ import { advanceCursor, allocateConfirmations, compareHeads, confirmAtBlock, dis
 import type { AcquireResult, CommitPayload, CommitResult, CriticalRow, NoteRow, WarningRow } from './state';
 
 /// HTTP requests an ordinary slice-1 run may make: provider B 11, resolver
-/// RPC 2 (the rr probe and one second-source confirmation), probes 3,
-/// Telegram 4, Healthchecks 1 = 21, so 23 with the two Durable Object calls
-/// (review r5: the ceiling enforced is the one documented).
-export const MAX_HTTP_REQUESTS = 21;
+/// RPC 4 (the rr probe's chain id and block number, then one second-source
+/// confirmation: the block check and one read), probes 3, Telegram 4,
+/// Healthchecks 1 = 23, so 25 with the two Durable Object calls (review r5:
+/// the ceiling enforced is the one documented). It was 21 / 23 until the
+/// public RPC began refusing array bodies on 2026-11-03: each of its calls is
+/// now its own request (src/rpc.ts rpcEach); provider B still batches.
+export const MAX_HTTP_REQUESTS = 23;
 /// The bootstrap run (review r3) reads every id below N from the public RPC
-/// at the snapshot block, up to 10 requests instead of 1: 30 HTTP + 2 Durable
-/// Object = 32, still below r15's worst case of 48 and the 100 cap.
+/// at the snapshot block, up to 10 reads instead of 1 (after the one block
+/// check): 32 HTTP + 2 Durable Object = 34, still below r15's worst case of 48
+/// and the 100 cap (it was 30 / 32 before 2026-11-03).
 export const BOOTSTRAP_PUBLIC_REQUESTS = 10;
-export const MAX_HTTP_REQUESTS_BOOTSTRAP = 30; // provider B 11, rr 1, public snapshot reads 10, probes 3, Telegram 4, Healthchecks 1
+export const MAX_HTTP_REQUESTS_BOOTSTRAP = 32; // provider B 11, rr 2, public block check 1 + snapshot reads 10, probes 3, Telegram 4, Healthchecks 1
 
 export interface RunEnv {
   makoAddress: string;
@@ -207,7 +211,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
     const d = await discP;
     if (!d.ok || d.value.nextMarketId > BOOTSTRAP_MAX_IDS) return { pub, boot: null };
     const ids = Array.from({ length: d.value.nextMarketId }, (_, i) => i);
-    return { pub, boot: await readPublicAtBlock(net, env.publicRpcUrl, env.makoAddress, d.value, ids, BOOTSTRAP_PUBLIC_REQUESTS) };
+    return { pub, boot: await readPublicAtBlock(net, env.publicRpcUrl, env.makoAddress, d.value, ids, BOOTSTRAP_PUBLIC_REQUESTS, pub) };
   };
   const probeTasks: (() => Promise<ProbeResult>)[] = [];
   if (due.nc) probeTasks.push(() => probeComments(net, env.appUrl));
@@ -303,7 +307,7 @@ export async function runOnce(deps: Deps, scheduledTime: number): Promise<RunRep
       ? compareHeads(Array.from({ length: d.nextMarketId }, (_, i) => i), reads, publicSide.boot)
       : { ...emptyConfirmation, unavailable: true, reason: d.nextMarketId > BOOTSTRAP_MAX_IDS ? 'too many markets to bootstrap in one run' : 'public RPC not read' };
   } else if (d && toConfirm.length) {
-    confirmation = await confirmAtBlock(net, env.publicRpcUrl, env.makoAddress, d, selected, toConfirm, reads);
+    confirmation = await confirmAtBlock(net, env.publicRpcUrl, env.makoAddress, d, selected, toConfirm, reads, pub);
   }
   const commandStatus = (id: number): 'confirmed' | 'withheld' | 'deferred' | 'unchecked' => {
     if (overCap.has(id)) return 'deferred';

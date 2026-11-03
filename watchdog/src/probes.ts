@@ -3,7 +3,7 @@
 
 import { CHAIN_ID, PROBE_CHART_SYMBOL, PROBE_MARKET_ID, PROBE_MARKET_TITLE, RR_MAX_LAG_BLOCKS } from './config';
 import { send, type Net } from './net';
-import { rpcBatch, safeQuantity } from './rpc';
+import { rpcEach, safeQuantity } from './rpc';
 import type { DiscoveryResult } from './scan';
 import type { Obs } from './classify';
 
@@ -41,7 +41,7 @@ export interface PublicRpc {
 }
 
 export async function readPublicRpc(net: Net, url: string): Promise<PublicRpc> {
-  const b = await rpcBatch(net, url, [
+  const b = await rpcEach(net, url, [
     { method: 'eth_chainId', params: [] },
     { method: 'eth_blockNumber', params: [] },
   ]);

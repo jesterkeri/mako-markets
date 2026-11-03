@@ -80,18 +80,16 @@ function answerRead(data: Hex): Hex {
 const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (url.startsWith(RPC)) {
-    const calls = JSON.parse(String(init?.body)) as { id: number; params: [{ to: Hex; data: Hex }] }[];
-    return Response.json(
-      calls.map((c) => {
-        if (c.params[0].to.toLowerCase() === MULTICALL3.toLowerCase()) {
-          const { args } = decodeFunctionData({ abi: AGGREGATE3_ABI, data: c.params[0].data });
-          let results = (args![0] as readonly { callData: Hex }[]).map((x) => ({ success: true, returnData: answerRead(x.callData) }));
-          if (w.mangle) results = w.mangle(results);
-          return { jsonrpc: '2.0', id: c.id, result: encodeFunctionResult({ abi: AGGREGATE3_ABI, functionName: 'aggregate3', result: results }) };
-        }
-        return { jsonrpc: '2.0', id: c.id, result: answerRead(c.params[0].data) };
-      }),
-    );
+    const c = JSON.parse(String(init?.body)) as { id: number; params: [{ to: Hex; data: Hex }] };
+    // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+    if (Array.isArray(c)) return new Response('Restricted JSON RPC method', { status: 403 });
+    if (c.params[0].to.toLowerCase() === MULTICALL3.toLowerCase()) {
+      const { args } = decodeFunctionData({ abi: AGGREGATE3_ABI, data: c.params[0].data });
+      let results = (args![0] as readonly { callData: Hex }[]).map((x) => ({ success: true, returnData: answerRead(x.callData) }));
+      if (w.mangle) results = w.mangle(results);
+      return Response.json({ jsonrpc: '2.0', id: c.id, result: encodeFunctionResult({ abi: AGGREGATE3_ABI, functionName: 'aggregate3', result: results }) });
+    }
+    return Response.json({ jsonrpc: '2.0', id: c.id, result: answerRead(c.params[0].data) });
   }
   // Data Streams is never asked in these tests: every due round is seeded with a fresh check.
   throw new Error('unexpected url');
@@ -99,7 +97,7 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 
 function deps(accept: () => boolean = () => true): WatchDeps {
   return {
-    net: makeNet(fakeFetch, () => w.now, async () => {}, w.now + 120_000, 14),
+    net: makeNet(fakeFetch, () => w.now, async () => {}, w.now + 120_000, 15),
     state: {
       acquire: async () => ({ ok: true as const, token: 1, meta: structuredClone(w.meta) }),
       commit: async (_t, m) => {

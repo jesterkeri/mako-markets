@@ -79,16 +79,14 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (url.startsWith(RPC)) {
     if (w.rpcDown) return new Response('down', { status: 503 });
-    const calls = JSON.parse(String(init?.body)) as { id: number; params: [{ to: Hex; data: Hex }] }[];
-    w.rpcItems += calls.length;
-    return Response.json(
-      calls.map((c) => {
-        // Multicall3: answer each inner read with the same fake, as the real contract would.
-        const mc = multicallAnswer(c.params[0], (inner) => readItem(inner.data));
-        if (mc) return { jsonrpc: '2.0', id: c.id, ...(mc as object) };
-        return { jsonrpc: '2.0', id: c.id, result: answerRead(c.params[0].data) };
-      }),
-    );
+    const c = JSON.parse(String(init?.body)) as { id: number; params: [{ to: Hex; data: Hex }] };
+    // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+    if (Array.isArray(c)) return new Response('Restricted JSON RPC method', { status: 403 });
+    w.rpcItems += 1;
+    // Multicall3: answer each inner read with the same fake, as the real contract would.
+    const mc = multicallAnswer(c.params[0], (inner) => readItem(inner.data));
+    if (mc) return Response.json({ jsonrpc: '2.0', id: c.id, ...(mc as object) });
+    return Response.json({ jsonrpc: '2.0', id: c.id, result: answerRead(c.params[0].data) });
   }
   if (url.startsWith(DS)) {
     w.dsRequests++;
@@ -116,7 +114,7 @@ function answerRead(data: Hex): Hex {
 
 function deps(): WatchDeps {
   return {
-    net: makeNet(fakeFetch, () => w.now, async () => {}, w.now + 120_000, 14),
+    net: makeNet(fakeFetch, () => w.now, async () => {}, w.now + 120_000, 15),
     state: {
       acquire: async () => ({ ok: true as const, token: 1, meta: structuredClone(w.meta) }),
       commit: async (_t, m) => {

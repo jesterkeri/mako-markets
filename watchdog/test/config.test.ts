@@ -17,14 +17,15 @@ describe('wrangler.toml matches the enforced limits', () => {
   it('the documented request ceilings are the enforced ones, plus the two Durable Object calls', () => {
     const ordinary = MAX_HTTP_REQUESTS + 2;
     const bootstrap = MAX_HTTP_REQUESTS_BOOTSTRAP + 2;
-    expect(ordinary).toBe(23);
-    expect(bootstrap).toBe(32);
+    expect(ordinary).toBe(25);
+    expect(bootstrap).toBe(34);
     expect(toml).toContain(`at most ${ordinary} requests`);
     expect(toml).toContain(`at most ${bootstrap}`);
-    // The enumerated ordinary call graph: 11 provider B, 1 rr, 1 confirmation,
-    // 3 probes, 4 Telegram, 1 Healthchecks.
-    expect(11 + 1 + 1 + 3 + 4 + 1).toBe(MAX_HTTP_REQUESTS);
-    // The bootstrap run swaps the single confirmation for up to 10 public reads.
+    // The enumerated ordinary call graph: 11 provider B (batched), the public
+    // RPC one call per request since 2026-11-03: rr 2 (chain id, block number),
+    // confirmation 2 (block check, one read); 3 probes, 4 Telegram, 1 Healthchecks.
+    expect(11 + 2 + 2 + 3 + 4 + 1).toBe(MAX_HTTP_REQUESTS);
+    // The bootstrap run swaps the single read for up to 10 public reads.
     expect(MAX_HTTP_REQUESTS - 1 + BOOTSTRAP_PUBLIC_REQUESTS).toBe(MAX_HTTP_REQUESTS_BOOTSTRAP);
   });
   it('the scan and scheduling constants the plan fixes', () => {

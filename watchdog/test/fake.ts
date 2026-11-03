@@ -239,7 +239,10 @@ export function makeFetch(w: World): typeof fetch {
     if (url.startsWith(PUBLIC_RPC)) {
       w.log.push(`${host} rpc`);
       if (w.publicDown) return new Response('down', { status: 503 });
-      return Response.json(answerRpc(w, JSON.parse(body), false));
+      const call = JSON.parse(body) as { id: number; method: string; params: unknown[] };
+      // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+      if (Array.isArray(call)) return new Response('Restricted JSON RPC method', { status: 403 });
+      return Response.json((answerRpc(w, [call], false) as unknown[])[0]);
     }
     if (host === 'api.telegram.org') {
       const text = (JSON.parse(body) as { text: string }).text;

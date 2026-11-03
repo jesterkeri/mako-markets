@@ -1,4 +1,5 @@
-// JSON-RPC array batches over one HTTP request. A rate-limit answer (HTTP
+// JSON-RPC array batches over one HTTP request (provider B), and the same
+// calls one per request (rpcEach, the public RPC). A rate-limit answer (HTTP
 // 429 or JSON-RPC -32011, F26) is a retryable failure and never means
 // "no data".
 
@@ -39,6 +40,49 @@ export async function rpcBatch(net: Net, url: string, calls: RpcCall[]): Promise
       items[e.id] = { ok: false, kind: code !== undefined && RATE_LIMIT_CODES.has(code) ? 'rate_limited' : 'rpc_error', code };
     } else if ('result' in e) {
       items[e.id] = { ok: true, result: e.result };
+    }
+  }
+  return { ok: true, items };
+}
+
+/// Gap between two public-RPC calls of one run: under 10 a second (the public RPC allows about 15 items a second).
+export const CALL_SPACING_MS = 110;
+const lastCall = new WeakMap<Net, number>();
+
+/// rpcBatch's result for the public Monad RPC, which since 2026-11-03 answers any JSON-RPC array body with HTTP 403
+/// "Restricted JSON RPC method": each call is its own request, item i for call i. A failed request, an unreadable
+/// answer, or an error object without the call's id fails the whole list, as a failed batch did, and the remaining
+/// calls are not sent; an error answer to one call fails that item only, as before. Provider B keeps rpcBatch.
+export async function rpcEach(net: Net, url: string, calls: RpcCall[]): Promise<RpcBatch> {
+  const items: RpcItem[] = [];
+  for (let i = 0; i < calls.length; i++) {
+    const last = lastCall.get(net);
+    if (last !== undefined && last + CALL_SPACING_MS > net.now()) await net.sleep(last + CALL_SPACING_MS - net.now());
+    lastCall.set(net, net.now());
+    const body = JSON.stringify({ jsonrpc: '2.0', id: i, method: calls[i].method, params: calls[i].params });
+    const res = await send(net, url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    if (!res.ok) return { ok: false, kind: res.kind, status: res.status };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(res.text);
+    } catch {
+      return { ok: false, kind: 'bad_response' };
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ok: false, kind: 'bad_response' };
+    const e = parsed as { id?: unknown; result?: unknown; error?: { code?: unknown } | null };
+    const error = e.error !== undefined && e.error !== null ? e.error : null;
+    const code = typeof error?.code === 'number' ? error.code : undefined;
+    const limited = code !== undefined && RATE_LIMIT_CODES.has(code);
+    if (e.id !== i) {
+      // Some providers answer a refused request with one error object and no id: the whole list fails.
+      if (error) return { ok: false, kind: limited ? 'rate_limited' : 'bad_response' };
+      items.push({ ok: false, kind: 'bad_response' });
+    } else if (error) {
+      items.push({ ok: false, kind: limited ? 'rate_limited' : 'rpc_error', code });
+    } else if ('result' in e) {
+      items.push({ ok: true, result: e.result });
+    } else {
+      items.push({ ok: false, kind: 'bad_response' });
     }
   }
   return { ok: true, items };

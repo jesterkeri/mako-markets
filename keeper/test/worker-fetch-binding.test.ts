@@ -27,7 +27,9 @@ describe('scheduled() calls fetch the way workerd requires', () => {
       reached++;
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       const err = (id: unknown) => ({ jsonrpc: '2.0', id, error: { code: -32000, message: 'test-only' } });
-      return Promise.resolve(Response.json(Array.isArray(body) ? body.map((c: { id: unknown }) => err(c.id)) : err(body?.id ?? 0)));
+      // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+      if (Array.isArray(body)) return Promise.resolve(new Response('Restricted JSON RPC method', { status: 403 }));
+      return Promise.resolve(Response.json(err(body?.id ?? 0)));
     } as typeof fetch;
     vi.spyOn(console, 'log').mockImplementation(() => {});
     // A fresh test-only key, with KEEPER_ADDRESS set to match it (readEnv refuses a key for another address).

@@ -38,19 +38,31 @@ export async function send(net: Net, url: string, init: RequestInit): Promise<Ht
   if (net.requests >= net.maxRequests) return { ok: false, kind: 'budget' };
   net.requests++;
   const timeoutMs = Math.min(FETCH_TIMEOUT_MS, remaining);
-  let res: Response;
+  // The same timeout as AbortSignal.timeout, but cleared once the body is read: one call per request since 2026-11-03
+  // doubles the requests, and workerd caps an isolate at 10,000 live timers (the day-long test runs hit it).
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new DOMException('The operation timed out.', 'TimeoutError')), timeoutMs);
   try {
-    res = await net.fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-  } catch (err) {
-    const name = (err as { name?: string } | null)?.name;
-    return { ok: false, kind: name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network' };
+    let res: Response;
+    try {
+      res = await net.fetch(url, { ...init, signal: ctl.signal });
+    } catch (err) {
+      const name = (err as { name?: string } | null)?.name;
+      return { ok: false, kind: name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network' };
+    }
+    let text: string;
+    try {
+      text = await res.text();
+    } catch {
+      return { ok: false, kind: 'timeout', status: res.status };
+    }
+    return classify(res, text);
+  } finally {
+    clearTimeout(timer);
   }
-  let text: string;
-  try {
-    text = await res.text();
-  } catch {
-    return { ok: false, kind: 'timeout', status: res.status };
-  }
+}
+
+function classify(res: Response, text: string): HttpResult {
   if (res.status === 429) return { ok: false, kind: 'rate_limited', status: 429, headers: res.headers, text };
   if (res.status < 200 || res.status >= 300) return { ok: false, kind: 'http', status: res.status, headers: res.headers, text };
   return { ok: true, status: res.status, headers: res.headers, text };

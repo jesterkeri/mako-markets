@@ -22,8 +22,9 @@ export interface Env {
 }
 
 const RUN_BUDGET_MS = 120_000;
-/// 2 RPC batches + 2 reports for each of 4 rounds + Telegram + Healthchecks.
-const MAX_REQUESTS = 14;
+/// 3 RPC calls (roundCount and DURATION, then one Multicall3 read; one call per request since 2026-11-03, it was 2
+/// batches) + 2 reports for each of 4 rounds + Telegram + Healthchecks, with the same 2 spare as before.
+const MAX_REQUESTS = 15;
 
 function required(raw: string | undefined, label: string): string {
   const v = raw?.trim();

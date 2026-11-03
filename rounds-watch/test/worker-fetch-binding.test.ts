@@ -24,10 +24,12 @@ describe('scheduled() calls fetch the way workerd requires', () => {
       const url = String(input);
       calls.push(url.startsWith('https://hc.example') ? 'healthchecks' : 'rpc');
       if (url.startsWith('https://hc.example')) return Promise.resolve(new Response('OK'));
-      const batch = JSON.parse(String(init?.body)) as { id: number }[];
+      const c = JSON.parse(String(init?.body)) as { id: number };
+      // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+      if (Array.isArray(c)) return Promise.resolve(new Response('Restricted JSON RPC method', { status: 403 }));
       // roundCount() = 0, DURATION() = 900: a contract with no rounds yet, as deployed today.
       const results = [word(0n), word(900n)];
-      return Promise.resolve(Response.json(batch.map((c) => ({ jsonrpc: '2.0', id: c.id, result: results[c.id] }))));
+      return Promise.resolve(Response.json({ jsonrpc: '2.0', id: c.id, result: results[c.id] }));
     } as typeof fetch;
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((m: unknown) => void logs.push(String(m)));
@@ -41,6 +43,6 @@ describe('scheduled() calls fetch the way workerd requires', () => {
     };
     await worker.scheduled({ scheduledTime: Date.now(), cron: '*/5 * * * *', noRetry() {} } as ScheduledController, testEnv);
     expect(logs.map((l) => JSON.parse(l).watch)).toEqual(['quiet']);
-    expect(calls).toEqual(['rpc', 'healthchecks']);
+    expect(calls).toEqual(['rpc', 'rpc', 'healthchecks']); // roundCount and DURATION, one call per request
   });
 });

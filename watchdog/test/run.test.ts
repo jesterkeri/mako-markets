@@ -69,7 +69,7 @@ describe('first run (bootstrap)', () => {
     expect(r.payload!.meta).toMatchObject({ creationCursor: 3, bootstrapN: 3, resolvedBootstrapped: true });
     expect(r.payload!.auditAppend).toEqual([]);
     expect(w.telegram.sent.join('\n')).toContain('Resolved before the watchdog, not audited (2): 0-1');
-    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(32); // the bootstrap run's ceiling
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(34); // the bootstrap run's ceiling
 
     // Second run: nothing new to say.
     w.telegram.sent = [];
@@ -439,7 +439,7 @@ describe('timing and budget', () => {
     const r = await runOnce(makeDeps(w, state, logs), Math.floor(t0 / FIVE_MIN) * FIVE_MIN);
     expect(r.kind).toBe('completed');
     expect(r.committed).toBe(true);
-    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(32); // the bootstrap run's ceiling
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(34); // the bootstrap run's ceiling
     expect(w.log.filter((l) => l.startsWith('providerb')).length).toBe(11);
     expect(w.clock.t - t0).toBeLessThan(200_000);
     expect(r.telegramMessages.length).toBeLessThanOrEqual(4);
@@ -880,7 +880,7 @@ describe('one-way state needs the second source (review r2)', () => {
     const r1 = await tick(w, state);
     expect(r1.payload!.meta).toMatchObject({ resolvedBootstrapped: true, creationCursor: 450 });
     expect(r1.effective).toBe(true);
-    expect(r1.httpRequests + r1.doCalls).toBeLessThanOrEqual(32);
+    expect(r1.httpRequests + r1.doCalls).toBeLessThanOrEqual(34);
     expect(w.telegram.sent.join('\n')).toContain('Resolved before the watchdog, not audited (449): 0-448');
     // 449 resolves after the snapshot block: queued once.
     w.markets[449] = { ...w.markets[449], resolved: true, outcome: 1 };
@@ -1069,15 +1069,15 @@ describe('sustained load and budgets (review r4)', () => {
     expect(w.telegram.sent.join('\n')).toContain('BEFORE WATCHDOG #1 STOCKS KO');
   });
 
-  it('the bootstrap run stays inside its own ceiling of 32 requests', async () => {
+  it('the bootstrap run stays inside its own ceiling of 34 requests', async () => {
     const w = makeWorld({ clock: { t: Date.UTC(2026, 8, 19, 13, 0, 1) } });
     const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
     w.markets = Array.from({ length: 2000 }, () => base);
     const r = await tick(w, freshState());
     expect(r.payload!.meta.resolvedBootstrapped).toBe(true);
-    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(32);
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(34);
     expect(w.log.filter((l) => l.startsWith('providerb'))).toHaveLength(11); // 1 discovery + 10 pages
-    expect(w.log.filter((l) => l.startsWith('publicrpc'))).toHaveLength(11); // 1 rr probe + 10 snapshot reads
+    expect(w.log.filter((l) => l.startsWith('publicrpc'))).toHaveLength(13); // rr probe 2 + block check 1 + 10 snapshot reads, one call each
   });
 
   it('with providers in parallel, a 2,000-market bootstrap at 10 s a request finishes inside the 200 s deadline', async () => {
@@ -1091,7 +1091,8 @@ describe('sustained load and budgets (review r4)', () => {
     expect(r.committed).toBe(true);
     expect(r.payload!.meta.resolvedBootstrapped).toBe(true);
     expect(w.clock.t - t0).toBeLessThan(200_000);
-    // Provider B and the public RPC run as separate lanes, about 110 s each.
+    // Provider B and the public RPC run as separate lanes: about 110 s and, one call per request since
+    // 2026-11-03, about 130 s (rr 2, block check 1, 10 reads).
     expect(w.clock.t - t0).toBeGreaterThan(110_000);
   });
 });
@@ -1230,7 +1231,7 @@ describe('partial Telegram delivery in any order (review r6)', () => {
 });
 
 describe('budget and category overlap (review r5)', () => {
-  it('an ordinary minute-zero run makes 21 HTTP requests: 11 provider B, 1 rr, 1 confirmation, 3 probes, 4 Telegram, 1 Healthchecks', async () => {
+  it('an ordinary minute-zero run makes 23 HTTP requests: 11 provider B, 2 rr, 2 confirmation, 3 probes, 4 Telegram, 1 Healthchecks', async () => {
     const w = makeWorld({ clock: { t: Date.UTC(2026, 8, 19, 12, 55, 1) } });
     const state = freshState();
     const base = closedMarket(1, 'LINK:gt:20', nowS(w), 2 * 86_400, 1_000_000n, 0n);
@@ -1241,12 +1242,12 @@ describe('budget and category overlap (review r5)', () => {
     const r = await tick(w, state);
     const count = (h: string) => w.log.filter((l) => l.startsWith(h)).length;
     expect(count('providerb')).toBe(11);
-    expect(count('publicrpc')).toBe(2); // rr probe + one confirmation
+    expect(count('publicrpc')).toBe(4); // rr probe 2 + confirmation 2 (block check, one read)
     expect(count('app.test')).toBe(3);
     expect(count('api.telegram.org')).toBeLessThanOrEqual(4);
     expect(count('hc-ping.test')).toBe(1);
-    expect(r.httpRequests).toBeLessThanOrEqual(21);
-    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(23);
+    expect(r.httpRequests).toBeLessThanOrEqual(23);
+    expect(r.httpRequests + r.doCalls).toBeLessThanOrEqual(25);
   });
 
   it('an id that is both a new resolution and a cursor id takes one slot, not two', async () => {
@@ -1259,7 +1260,7 @@ describe('budget and category overlap (review r5)', () => {
     for (let i = 0; i < 200; i++) w.markets.push({ ...openMarket(1, 'BTC:gt:1', w), resolved: true, outcome: 1 });
     w.log = [];
     const r = await tick(w, state);
-    expect(w.log.filter((l) => l.startsWith('publicrpc')).length).toBe(2); // rr + ONE confirmation request
+    expect(w.log.filter((l) => l.startsWith('publicrpc')).length).toBe(4); // rr 2 + ONE confirmation (block check, one read)
     expect(r.payload!.auditAppend).toHaveLength(200); // all 200 confirmed in one run
     expect(r.payload!.meta.creationCursor).toBe(201);
     expect(r.effective).toBe(true);

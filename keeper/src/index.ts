@@ -29,8 +29,11 @@ export interface Env {
 
 /// A run that starts must finish well inside the cron period and the lease.
 const RUN_BUDGET_MS = 40_000;
-/// T0.1c keeper bound: at most 10 requests per round; one round per run, plus the Healthchecks ping.
-const MAX_REQUESTS = 11;
+/// Requests one run may make through `net` (the Healthchecks ping uses its own fetch). One JSON-RPC call per request
+/// since 2026-11-03 (src/rpc.ts), so the worst path is 16: an earlier transaction's receipt, nonce, by-hash and
+/// pending nonce (4), the due reads (2), the close times (1), two reports (2), the pre-send reads (6) and the send
+/// (1). It was 11 (T0.1c: 10 a round) while calls went as array batches.
+const MAX_REQUESTS = 16;
 
 function address(raw: string | undefined, label: string): Hex {
   if (!raw) throw new Error(`${label} is not set`);

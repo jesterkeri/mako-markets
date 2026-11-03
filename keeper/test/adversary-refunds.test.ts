@@ -10,7 +10,8 @@
 // getMarket(0..51) to live V4 0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195: HTTP 200, 52 items, of which
 // 35, 36, 37 and 44 (four tries) were `{"code":-32011,"message":"requests limited to 15/sec"}`. The items
 // answered were mostly the early ones (e.g. ids 0-6, 8, 11, 12, 14, 18, 19, 21, 23, 25, 26), and no
-// item past position 35 was answered in any try. The fake answers the first 15 items and limits the rest.
+// item past position 35 was answered in any try. The fake answers the first 15 items and limits the rest; since
+// 2026-11-03 the RPC refuses array bodies, so the items are a run's single calls.
 
 import { decodeFunctionData, encodeErrorResult, encodeFunctionResult, keccak256, type Hex } from 'viem';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -56,8 +57,9 @@ let w: {
   pings: { kind: string; body: string }[];
   meta: Meta;
   statuses: Outcome[];
-  /// Items per JSON-RPC array request the RPC answers; the rest get -32011. Infinity: no limit.
+  /// Calls per run the RPC answers; the rest get -32011. Infinity: no limit.
   perBatch: number;
+  callsThisRun: number;
 };
 
 function describeTx(to: Hex, data: Hex): Sent {
@@ -123,13 +125,14 @@ const revert = (errorName: string) => ({
 });
 
 const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-  const calls = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] }[];
+  const c = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] };
+  // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+  if (Array.isArray(c)) return new Response('Restricted JSON RPC method', { status: 403 });
+  // The item limit now counts single calls: the first `perBatch` calls of a run are answered, the rest limited.
   return Response.json(
-    calls.map((c, i) =>
-      i < w.perBatch
-        ? { jsonrpc: '2.0', id: c.id, ...(answer(c.method, c.params) as object) }
-        : { jsonrpc: '2.0', id: c.id, error: { code: -32011, message: 'requests limited to 15/sec' } },
-    ),
+    w.callsThisRun++ < w.perBatch
+      ? { jsonrpc: '2.0', id: c.id, ...(answer(c.method, c.params) as object) }
+      : { jsonrpc: '2.0', id: c.id, error: { code: -32011, message: 'requests limited to 15/sec' } },
   );
 }) as typeof fetch;
 
@@ -137,7 +140,7 @@ let signed = 0;
 function deps(): Deps {
   const nowMs = () => w.now * 1000;
   return {
-    net: makeNet(fakeFetch, nowMs, async () => {}, nowMs() + 40_000, 11),
+    net: makeNet(fakeFetch, nowMs, async () => {}, nowMs() + 40_000, 16),
     state: {
       acquire: async () => ({ ok: true as const, token: 1, meta: structuredClone(w.meta) }),
       recordInFlight: async (_t: number, f: InFlight, _n: number, extra?: Partial<Meta>) => {
@@ -163,6 +166,7 @@ function deps(): Deps {
 
 async function minutes(n: number, cfg: RunConfig = baseCfg): Promise<void> {
   for (let i = 0; i < n; i++) {
+    w.callsThisRun = 0;
     w.statuses.push(await runKeeper(cfg, deps()));
     w.now += 60;
   }
@@ -180,6 +184,7 @@ beforeEach(() => {
     meta: structuredClone(INITIAL_META),
     statuses: [],
     perBatch: Infinity,
+    callsThisRun: 0,
   };
 });
 
@@ -189,7 +194,7 @@ describe('adversary: automatic refunds', () => {
   it('an overdue V4 market whose read is rate-limited on every run is refunded or alerted, never silently skipped', async () => {
     // 13 unresolved markets not yet due (the open set), then market 13, 24 hours past close.
     w.world.markets = [...Array.from({ length: 13 }, () => market(T0 + 10 * DAY)), market(T0 - DAY)];
-    w.perBatch = 15; // the public RPC's "requests limited to 15/sec", per JSON-RPC array request
+    w.perBatch = 15; // the public RPC's "requests limited to 15/sec", counted over a run's single calls
     await minutes(60); // one hour of cron runs
 
     const refunded = w.sent.some((s) => s.to === POOLS && s.id === 13n);

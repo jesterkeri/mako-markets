@@ -20,7 +20,7 @@ import {
 } from './config';
 import { aggregate3GetMarkets, decodeAddressWord, decodeAggregate3, decodeMarketHead, decodeUintWord, SEL, type MarketHead } from './abi';
 import type { Net } from './net';
-import { hexQuantity, rpcBatch, safeQuantity, type RpcCall } from './rpc';
+import { hexQuantity, rpcBatch, rpcEach, safeQuantity, type RpcCall } from './rpc';
 
 export interface ScanPlan {
   /// The stored cursor. Above N only if a provider reported N going backwards.
@@ -234,29 +234,46 @@ export interface PublicRead {
 }
 
 /// Reads `ids` from the public RPC (a different operator from provider B) at
-/// provider B's finalized block: every request also checks chain 10143 and the
-/// block's hash and time. At most `maxRequests` requests of 200 ids, sent one
-/// at a time (one request in flight per provider).
-export async function readPublicAtBlock(net: Net, publicUrl: string, mako: string, d: Discovery, ids: number[], maxRequests: number): Promise<PublicRead> {
+/// provider B's finalized block. At most `maxRequests` reads of 200 ids, sent
+/// one at a time (one request in flight per provider).
+///
+/// Since 2026-11-03 the public RPC refuses JSON-RPC array bodies (HTTP 403), so
+/// every call is its own request and none shares one with another. So the
+/// checks run once, first: chain 10143 is this run's rr probe answer (`rr`,
+/// its own request a moment earlier, as a separate chain-id request here would
+/// be; a failed probe makes the public RPC unavailable for this run), then the
+/// block's hash and time. Each read is one aggregate3 of its 200 ids (live
+/// public RPC, 2026-11-03: 200 getMarket in one eth_call, 200 of 200
+/// succeeded), 1 request instead of a batch of 6, so the bootstrap's 10 reads
+/// stay inside the run deadline. Every call names the block number, as before.
+export async function readPublicAtBlock(
+  net: Net,
+  publicUrl: string,
+  mako: string,
+  d: Discovery,
+  ids: number[],
+  maxRequests: number,
+  rr: { ok: boolean; chainId: number | null; reason: string },
+): Promise<PublicRead> {
   const heads = new Map<number, MarketHead | null>();
   const perRequest = IDS_PER_CALL * CALLS_PER_REQUEST;
   const blockTag = '0x' + d.finalizedBlock.toString(16);
-  for (let r = 0; r * perRequest < ids.length; r++) {
-    if (r >= maxRequests) break;
-    const slice = ids.slice(r * perRequest, (r + 1) * perRequest);
-    const chunks: number[][] = [];
-    for (let i = 0; i < slice.length; i += IDS_PER_CALL) chunks.push(slice.slice(i, i + IDS_PER_CALL));
-    const b = await rpcBatch(net, publicUrl, [
-      { method: 'eth_chainId', params: [] },
-      { method: 'eth_getBlockByNumber', params: [blockTag, false] },
-      ...chunks.map((c) => ({ method: 'eth_call', params: [{ to: MULTICALL3, data: aggregate3GetMarkets(mako, c) }, blockTag] })),
-    ]);
-    if (!b.ok) return { unavailable: true, reason: `public RPC ${b.kind}`, heads };
-    const [chain, blk, ...pages] = b.items;
-    if (!chain.ok || safeQuantity(chain.result) !== CHAIN_ID) return { unavailable: true, reason: 'public RPC chain id', heads };
+  if (ids.length && maxRequests > 0) {
+    if (!rr.ok) return { unavailable: true, reason: `public RPC ${rr.reason}`, heads };
+    if (rr.chainId !== CHAIN_ID) return { unavailable: true, reason: 'public RPC chain id', heads };
+    const check = await rpcEach(net, publicUrl, [{ method: 'eth_getBlockByNumber', params: [blockTag, false] }]);
+    if (!check.ok) return { unavailable: true, reason: `public RPC ${check.kind}`, heads };
+    const [blk] = check.items;
     const block = blk.ok ? (blk.result as { hash?: unknown; timestamp?: unknown } | null) : null;
     if (typeof block?.hash !== 'string' || block.hash.toLowerCase() !== d.finalizedHash) return { unavailable: true, reason: 'public RPC block differs', heads };
     if (safeQuantity(block.timestamp) !== d.finalizedTimestamp) return { unavailable: true, reason: 'public RPC block time differs', heads };
+  }
+  for (let r = 0; r * perRequest < ids.length; r++) {
+    if (r >= maxRequests) break;
+    const chunks = [ids.slice(r * perRequest, (r + 1) * perRequest)];
+    const b = await rpcEach(net, publicUrl, chunks.map((c) => ({ method: 'eth_call', params: [{ to: MULTICALL3, data: aggregate3GetMarkets(mako, c) }, blockTag] })));
+    if (!b.ok) return { unavailable: true, reason: `public RPC ${b.kind}`, heads };
+    const pages = b.items;
     chunks.forEach((chunk, i) => {
       const item = pages[i];
       let datas: (string | null)[] | null = null;
@@ -333,8 +350,9 @@ export function allocateConfirmations(categories: number[][], budget = CONFIRM_I
 }
 
 /// Second-source confirmation for an ordinary run (reviews r1 to r4): one
-/// public request for `selected` (at most CONFIRM_IDS_PER_RUN ids, chosen by
-/// allocateConfirmations); every other id in `all` is reported deferred.
+/// public read for `selected` (at most CONFIRM_IDS_PER_RUN ids, chosen by
+/// allocateConfirmations) after the block check; every other id in `all` is
+/// reported deferred. `rr` is this run's rr probe answer (chain id).
 export async function confirmAtBlock(
   net: Net,
   publicUrl: string,
@@ -343,8 +361,9 @@ export async function confirmAtBlock(
   selected: number[],
   all: number[],
   providerHeads: Map<number, MarketHead | null>,
+  rr: { ok: boolean; chainId: number | null; reason: string },
 ): Promise<Confirmation> {
   if (!all.length) return { confirmed: new Set(), disagreed: [], deferred: [], unread: [], unavailable: false, reason: '' };
-  const pub = await readPublicAtBlock(net, publicUrl, mako, d, selected.slice(0, CONFIRM_IDS_PER_RUN), 1);
+  const pub = await readPublicAtBlock(net, publicUrl, mako, d, selected.slice(0, CONFIRM_IDS_PER_RUN), 1, rr);
   return compareHeads(all, providerHeads, pub);
 }
