@@ -19,7 +19,8 @@ export type DrawingTool =
   | 'eraser';
 
 export interface DrawingPoint {
-  /** Unix seconds (lightweight-charts time). */
+  /** Chart time (lightweight-charts): Unix seconds shifted to the viewer's wall clock (src/lib/chart-time.ts), not a
+   *  real instant. */
   time: number;
   price: number;
 }
