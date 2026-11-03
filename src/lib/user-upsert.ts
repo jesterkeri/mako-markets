@@ -192,6 +192,12 @@ export interface EmbeddedUpsert {
 /// after the move, r19). The caller locked these rows before its live time `t` and passes their ids.
 export type MoveInvalidation = { rowIds: string[]; ceremonyIds: string[]; nowMs: number };
 
+/// Whether a move from `from` to `to` rewrites the account's Safe rows (applyEmbeddedMove), and so fires 0020's address
+/// trigger. A sign-in decides on this before `t` whether to take the address version row (lockAddressVersion).
+export function moveRewritesSafe(from: string | null, to: string): boolean {
+  return from !== normalizeEoa(to);
+}
+
 export async function applyEmbeddedMove(
   tx: DbOrTx,
   args: { userId: string; from: string | null; to: string; privyUserId: string },
@@ -214,7 +220,7 @@ export async function applyEmbeddedMove(
     await revokeRememberedRows(tx, invalidate.rowIds, 'account_move', invalidate.nowMs);
     await voidCeremonies(tx, invalidate.ceremonyIds, invalidate.nowMs);
   }
-  if (args.from === to) return updated[0]; // bound to Privy, signer unchanged: nothing else moves
+  if (!moveRewritesSafe(args.from, to)) return updated[0]; // bound to Privy, signer unchanged: nothing else moves
   const safeAddress = deriveSafeAddress(to as `0x${string}`);
   for (const chainId of SAFE_TRACKED_CHAIN_IDS) {
     await tx

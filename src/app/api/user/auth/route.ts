@@ -62,7 +62,7 @@ import {
 } from '@/lib/user-session';
 import { refFromCookieHeader } from '@/lib/ref-tag';
 import { lockAddressVersion, lockCeremonies, lockRememberedRows, lockSafeRows, lockSessions } from '@/lib/account-locks';
-import { finishEmbeddedUser, IdentityConflictError, prepareEmbeddedUser } from '@/lib/user-upsert';
+import { finishEmbeddedUser, IdentityConflictError, moveRewritesSafe, prepareEmbeddedUser } from '@/lib/user-upsert';
 import { magicUserToWire } from '@/lib/users-wire';
 
 const EMAIL_CHANGE_COOLDOWN_MS = 365 * 24 * 60 * 60 * 1000;
@@ -380,9 +380,15 @@ export async function POST(req: Request) {
       const rows = rb.enabled ? await lockRememberedRows(tx, prepared.user.id) : [];
       // (5) A direct move (a Magic-era account without Mako's own TOTP) deletes every session of the account.
       if (prepared.directMove) await lockSessions(tx, { userId: prepared.user.id });
-      // (6) A sign-in that will add a Safe row (a missing chain) or move the Safe after `t` takes the shared address
-      // version row now, so its trigger cannot wait on a notification batch after `t` (Codex NOTIFICATIONS_S1 R6 F1).
-      if (prepared.directMove || SAFE_TRACKED_CHAIN_IDS.some((c) => !safeChains.includes(c))) await lockAddressVersion(tx);
+      // (6) A sign-in that will write a Safe address after `t` takes the shared address version row now, so its trigger
+      // cannot wait on a notification batch after `t` (Codex NOTIFICATIONS_S1 R6 F1): a move to a new signer, or a
+      // reuse/create missing a chain. A pending move writes nothing here (it answers totp_required), nor does a move whose
+      // signer is already the Privy wallet; those, like every returning sign-in, never queue on the row.
+      const writesAddress =
+        prepared.action === 'move'
+          ? moveRewritesSafe(prepared.user.magicEoa, prepared.to)
+          : prepared.action !== 'pending' && SAFE_TRACKED_CHAIN_IDS.some((c) => !safeChains.includes(c));
+      if (writesAddress) await lockAddressVersion(tx);
 
       const t = await databaseNowMs(tx);
 
