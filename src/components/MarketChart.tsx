@@ -28,6 +28,7 @@ import { DrawingEditor } from '@/components/chart/DrawingEditor';
 import { CHART_COLOR_KEYS, type ChartColors } from '@/lib/chart-colors';
 import type { ChartAssetClass } from '@/lib/chart-symbols';
 import { dayTime } from '@/lib/pool-rules';
+import { saveTimeframe, useSavedTimeframe } from '@/lib/chart-timeframe';
 import { useChartColors } from '@/lib/use-chart-colors';
 import type { Candle, Timeframe } from '@/types/chart';
 import type { ChartInnerHandle } from '@/components/chart/ChartInner';
@@ -131,7 +132,10 @@ function newDrawingId(): string {
 
 export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimeframe, pair, compact, fullHref, page }: Props) {
   const options = timeframes ?? TIMEFRAMES_BY_CLASS[assetClass];
-  const [tf, setTf] = useState<Timeframe>(initialTimeframe ?? defaultTimeframe(assetClass));
+  // The timeframe last picked on any chart, when this chart offers it (OBS-001); else this chart's own default.
+  const saved = useSavedTimeframe();
+  const tf = saved && options.includes(saved) ? saved : (initialTimeframe ?? defaultTimeframe(assetClass));
+  const setTf = saveTimeframe;
   const [toolsOpen, setToolsOpen] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
   const [showMA20, setShowMA20] = useState(false);
@@ -267,15 +271,9 @@ export function MarketChart({ oracleSymbol, assetClass, timeframes, initialTimef
     setSelectedId(null);
   }, [drawings.length, snapshotForUndo]);
 
-  // Render-phase reset on assetClass change. Drawings carry symbol-
-  // specific price coordinates that don't map to a different asset,
-  // so wipe them on symbol switch.
-  const [prevAssetClass, setPrevAssetClass] = useState(assetClass);
+  // Drawings carry symbol-specific price coordinates that don't map to a different asset, so wipe them on symbol
+  // switch. (The timeframe needs no reset: it is derived above, so an asset class without it falls back by itself.)
   const [prevSymbol, setPrevSymbol] = useState(oracleSymbol);
-  if (assetClass !== prevAssetClass) {
-    setPrevAssetClass(assetClass);
-    setTf(defaultTimeframe(assetClass));
-  }
   if (oracleSymbol !== prevSymbol) {
     setPrevSymbol(oracleSymbol);
     setDrawings([]);
