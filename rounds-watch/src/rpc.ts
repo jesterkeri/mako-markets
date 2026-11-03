@@ -2,7 +2,7 @@
 // rate-limit answer (HTTP 429 or JSON-RPC -32011/-32005) is its own kind, so a limited public RPC is reported
 // as rate-limited, never mistaken for "nothing to settle".
 
-import { send, type FailKind, type Net } from './net';
+import { send, type FailKind, type HttpResult, type Net } from './net';
 
 export interface RpcCall {
   method: string;
@@ -22,16 +22,24 @@ const lastCall = new WeakMap<Net, number>();
 
 /// Same result as the array batch it replaced, item i for call i, but each call is its own request: since 2026-11-03
 /// the public Monad RPC answers any JSON-RPC array body with HTTP 403 "Restricted JSON RPC method". A failed request,
-/// an unreadable answer, or an error object without the call's id fails the whole list, as a failed batch did, and
-/// the remaining calls are not sent; an error answer to one call fails that item only, as before.
+/// an unreadable answer, or an error object without the call's id fails the whole list, as a failed batch did
+/// (every call is still sent, as the array's were); an error answer to one call fails that item only, as before.
 export async function rpcBatch(net: Net, url: string, calls: RpcCall[]): Promise<RpcBatch> {
-  const items: RpcItem[] = [];
+  // Each call starts CALL_SPACING_MS after the one before WITHOUT waiting for its answer, so a list costs about one
+  // answer time, as the array did. Waiting for each answer let a slow RPC push the keeper's send past its run deadline
+  // after it had signed and recorded the transaction (adversary on b7c6aab, 2026-11-03).
+  const answers: Promise<HttpResult>[] = [];
   for (let i = 0; i < calls.length; i++) {
     const last = lastCall.get(net);
     if (last !== undefined && last + CALL_SPACING_MS > net.now()) await net.sleep(last + CALL_SPACING_MS - net.now());
     lastCall.set(net, net.now());
     const body = JSON.stringify({ jsonrpc: '2.0', id: i, method: calls[i].method, params: calls[i].params });
-    const res = await send(net, url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    answers.push(send(net, url, { method: 'POST', headers: { 'content-type': 'application/json' }, body }));
+  }
+  const results = await Promise.all(answers);
+  const items: RpcItem[] = [];
+  for (let i = 0; i < calls.length; i++) {
+    const res = results[i];
     if (!res.ok) return { ok: false, kind: res.kind, status: res.status };
     let parsed: unknown;
     try {

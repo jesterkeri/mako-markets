@@ -44,10 +44,10 @@ describe('rpcEach, one call per request', () => {
     expect(CALL_SPACING_MS).toBeGreaterThan(100);
   });
 
-  it('fails the whole list on a refused request, and sends nothing after it', async () => {
+  it('fails the whole list on a refused request; every call is still sent, as in the array', async () => {
     const w = world((b) => (b.method === 'eth_blockNumber' ? new Response('Restricted JSON RPC method', { status: 403 }) : ok(b)));
     expect(await rpcEach(w.net, 'https://rpc.test', calls('eth_chainId', 'eth_blockNumber', 'eth_gasPrice'))).toEqual({ ok: false, kind: 'http', status: 403 });
-    expect(w.bodies).toHaveLength(2);
+    expect(w.bodies).toHaveLength(3);
   });
 
   it('maps a rate-limit error object without an id to a rate-limited list, and an item error to that item only', async () => {
