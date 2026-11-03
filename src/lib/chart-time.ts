@@ -3,7 +3,7 @@
 //
 // lightweight-charts draws every time value (axis ticks, crosshair label) as UTC and has no time zone option. To show
 // the viewer's own wall-clock time, like the rest of the site, every time given to the chart is shifted by the
-// viewer's UTC offset, and any chart time read back as a real instant is shifted back.
+// viewer's UTC offset. Nothing reads a chart time back as a real instant today (drawings stay in chart time).
 //
 // One offset for the whole page load, read on the client the first time a chart needs it (inside an effect, never
 // during a server render). A per-candle offset would make the autumn DST hour produce repeated or out-of-order times,
@@ -27,9 +27,4 @@ export function chartTimeOffsetSec(): number {
 /** A real instant (ms since epoch) as the chart time that lightweight-charts labels with the viewer's local time. */
 export function toChartTime(ms: number): Time {
   return (ms / 1000 + chartTimeOffsetSec()) as Time;
-}
-
-/** A chart time back to the real instant (ms since epoch). Use it before formatting or comparing a chart time. */
-export function fromChartTime(t: Time): number {
-  return ((t as number) - chartTimeOffsetSec()) * 1000;
 }

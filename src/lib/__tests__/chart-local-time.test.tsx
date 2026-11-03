@@ -72,20 +72,18 @@ const label = (chartTimeSec: number) => new Date(chartTimeSec * 1000).toISOStrin
 describe('chart-time helper', () => {
   it('UTC+1: a real instant becomes a chart time 3600 s later, labelled with the local wall clock', async () => {
     viewerAt(3600);
-    const { chartTimeOffsetSec, toChartTime, fromChartTime } = await import('@/lib/chart-time');
+    const { chartTimeOffsetSec, toChartTime } = await import('@/lib/chart-time');
     expect(chartTimeOffsetSec()).toBe(3600);
     expect(toChartTime(T0)).toBe(T0 / 1000 + 3600);
     expect(label(toChartTime(T0) as number)).toBe('09:45');
-    expect(fromChartTime(toChartTime(T0))).toBe(T0);
   });
 
   it('UTC-5: the shift is negative', async () => {
     viewerAt(-18000);
-    const { chartTimeOffsetSec, toChartTime, fromChartTime } = await import('@/lib/chart-time');
+    const { chartTimeOffsetSec, toChartTime } = await import('@/lib/chart-time');
     expect(chartTimeOffsetSec()).toBe(-18000);
     expect(toChartTime(T0)).toBe(T0 / 1000 - 18000);
     expect(label(toChartTime(T0) as number)).toBe('03:45');
-    expect(fromChartTime(toChartTime(T0))).toBe(T0);
   });
 
   it('UTC viewer: no shift (and 0, not -0)', async () => {

@@ -19,8 +19,8 @@ export type DrawingTool =
   | 'eraser';
 
 export interface DrawingPoint {
-  /** Chart time (lightweight-charts), i.e. Unix seconds shifted to the viewer's wall clock (src/lib/chart-time.ts).
-   *  Use fromChartTime() before treating it as a real instant. */
+  /** Chart time (lightweight-charts): Unix seconds shifted to the viewer's wall clock (src/lib/chart-time.ts), not a
+   *  real instant. */
   time: number;
   price: number;
 }
