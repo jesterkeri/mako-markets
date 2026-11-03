@@ -1062,18 +1062,18 @@ export async function runResolver(env: Env): Promise<void> {
   } as const;
 
   const account = privateKeyToAccount(cfg.adminKey);
-  // batch: true → viem groups JSON-RPC calls into a single HTTP request
-  // (array body), drastically reducing the number of HTTP hits we make on
-  // Monad testnet's 15 req/sec rate limiter. Without this, scanning 30
-  // markets blasts 30 sequential eth_calls and ~17 of them get 429'd.
+  // No JSON-RPC batching: with `batch: true` viem sends EVERY request as an array body, even a single call, and the
+  // public Monad RPC refuses array bodies (403 "Restricted JSON RPC method", seen 2026-11-03), which stopped every
+  // tick at the authorization check. The rate limit counts items, not HTTP requests, so the paced scan below keeps
+  // the same load either way.
   const walletClient = createWalletClient({
     account,
     chain: monadTestnet,
-    transport: http(cfg.rpcUrl, { batch: true }),
+    transport: http(cfg.rpcUrl),
   });
   const publicClient = createPublicClient({
     chain: monadTestnet,
-    transport: http(cfg.rpcUrl, { batch: true }),
+    transport: http(cfg.rpcUrl),
   });
 
   const ts = new Date().toISOString().slice(11, 19);
@@ -1146,15 +1146,10 @@ export async function runResolver(env: Env): Promise<void> {
   };
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
 
-  // Pre-fetch markets in small parallel chunks, pausing between each. viem's
-  // `batch: true` on the transport does NOT batch JSON-RPC array bodies
-  // against Monad's public RPC in practice (verified 2026-04-21: batch:true
-  // + Promise.allSettled produced MORE rate-limit failures, not fewer, so
-  // each request goes out as its own HTTP hit). Monad testnet enforces
-  // ~15 req/sec; sending 5 in parallel every 500ms keeps us at ~10 req/sec
-  // worst case, well under the limit, without needing multicall3 or an
-  // alternative provider. Tradeoff: ~3s added to tick latency for 30
-  // markets, which is fine when cron fires every 60s.
+  // Pre-fetch markets in small parallel chunks, pausing between each. Each read is its own HTTP request (the
+  // clients above do not batch). Monad testnet enforces ~15 items/sec; sending 5 in parallel every 500ms keeps us at
+  // ~10/sec worst case, well under the limit, without needing multicall3 or an alternative provider. Tradeoff: ~3s
+  // added to tick latency for 30 markets, which is fine when cron fires every 60s.
   //
   // Uses allSettled so a single getMarket failure (decoding, ABI drift,
   // transient corruption) doesn't tank the whole tick.

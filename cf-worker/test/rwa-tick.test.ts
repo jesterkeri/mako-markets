@@ -227,7 +227,8 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     return json({ report: { feedID: r.feedID, observationsTimestamp: r.ts, fullReport: r.full } });
   }
   const body = JSON.parse(String(init?.body));
-  if (url === MAKO_RPC) return json(Array.isArray(body) ? body.map(makoAnswer) : makoAnswer(body));
+  // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+  if (url === MAKO_RPC) return Array.isArray(body) ? new Response('Restricted JSON RPC method', { status: 403 }) : json(makoAnswer(body));
   if (url.startsWith('https://testnet-rpc.monad.xyz') || url.startsWith('https://monad-testnet.g.alchemy.com') || url.startsWith('https://rpc.ankr.com/monad_testnet')) {
     return json(verifyAnswer(body, url.startsWith('https://monad-testnet.g.alchemy.com')));
   }

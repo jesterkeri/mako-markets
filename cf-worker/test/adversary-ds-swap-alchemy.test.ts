@@ -111,7 +111,8 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     return json({ report: { feedID: fixture.feedID, observationsTimestamp: CLOSE, fullReport: fixture.fullReport } });
   }
   const body = JSON.parse(String(init?.body));
-  if (url === MAKO_RPC) return json(Array.isArray(body) ? body.map(makoAnswer) : makoAnswer(body));
+  // as the public Monad RPC answers since 2026-11-03: single calls only, any array body is refused
+  if (url === MAKO_RPC) return Array.isArray(body) ? new Response('Restricted JSON RPC method', { status: 403 }) : json(makoAnswer(body));
   // Any other host is a verification provider here: record its hostname and answer as Monad would.
   verifyHosts.push(new URL(url).hostname);
   return json(verifyAnswer(body));
