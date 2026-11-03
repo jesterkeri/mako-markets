@@ -42,6 +42,8 @@ export const CHAIN_ID = 10143;
 export const REPORT_MISSING_ALERT_S = 30 * 60;
 /// A transaction with no receipt and an unconsumed nonce after this long is treated as dropped.
 export const TX_STUCK_MS = 3 * 60_000;
+/// Time kept beyond the run's slowest answer before signing (see sendTx).
+export const SIGN_MARGIN_MS = 1_000;
 /// An unhealthy condition must persist this long, from the start of the run that first saw it, before it is
 /// reported, so one rate-limited minute does not page. Four minutes, not five: a failure can begin up to a
 /// minute before the next run sees it, and T0.1c wants the alert within 5 minutes of the first failure.
@@ -520,9 +522,12 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
     return { status: 'tx-stuck', detail: `${label} replacement needs nonce ${meta.replaceNonce}, pending is ${nonce}; nothing sent` };
   }
 
-  // Sign only with time left for the send's full timeout: a transaction signed and recorded but never sent blocks every
-  // send for TX_STUCK_MS and is then counted as a failure (adversary on b7c6aab, a slow public RPC).
-  if (deps.net.deadlineAt - deps.net.now() < FETCH_TIMEOUT_MS) return { status: 'rpc-error', detail: `${label} deadline before signing; nothing signed` };
+  // Sign only with time left to send: a transaction signed and recorded but never sent blocks every send for TX_STUCK_MS
+  // and is then counted as a failure (adversary on b7c6aab, a slow public RPC). The time kept is this run's slowest
+  // answer plus SIGN_MARGIN_MS, at most the send's full timeout; a fixed full timeout stopped settlements and
+  // replacements at answer times production handled (adversary on 52b73f2 and 3636b4f).
+  const reserveMs = Math.min(FETCH_TIMEOUT_MS, deps.net.slowestMs + SIGN_MARGIN_MS);
+  if (deps.net.deadlineAt - deps.net.now() < reserveMs) return { status: 'rpc-error', detail: `${label} deadline before signing; nothing signed` };
   const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
   const sentAt = deps.net.now();
