@@ -9,8 +9,10 @@
 // during a server render). A per-candle offset would make the autumn DST hour produce repeated or out-of-order times,
 // which lightweight-charts refuses, and the chart's dedupe would drop candles.
 //
-// shortcut: in zones with daylight saving, intraday candles from before the last DST switch are labelled one hour
-// off (they get today's offset, not the offset they had). Fix if anyone needs exact labels across a DST switch:
+// shortcut: in zones with daylight saving, two cases are labelled one hour off: intraday candles from before the last
+// DST switch (they get today's offset, not the offset they had), and every new candle in a tab left open across a
+// switch, until reload (the offset is kept for the tab's life, so drawings never move). Accepted by the owner
+// 2026-11-03 (Nigeria has no DST). Fix if anyone needs exact labels across a DST switch:
 // lightweight-charts' `localization.timeFormatter` + `timeScale.tickMarkFormatter` with real per-instant formatting.
 // ----------------------------------------------------------------------------
 
