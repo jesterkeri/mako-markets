@@ -1035,16 +1035,31 @@ function validateEnv(env: Env): {
   };
 }
 
+/// The main loop's market order: every id not in `slow` ascending, then the `slow` ids rotated by one place a minute.
+export function tickOrder(count: number, slow: readonly number[], nowMs: number): number[] {
+  const slowSet = new Set(slow);
+  const turn = slow.length === 0 ? 0 : Math.floor(nowMs / 60_000) % slow.length;
+  return [...Array.from({ length: count }, (_, i) => i).filter((i) => !slowSet.has(i)), ...slow.slice(turn), ...slow.slice(0, turn)];
+}
+
 export async function runResolver(env: Env, startedAt: number = Date.now()): Promise<void> {
   const deadline = startedAt + TICK_BUDGET_MS;
   // Every request this tick makes ends by the deadline: the budget only gates new work, and provider fetches had no
   // timeout while viem's retries held a send about 40 s past it (adversary on 04f52bc). Past the deadline a request
   // fails at once, so viem's retries cost only their backoff. Every caller treats a failed request as transient.
-  const tickFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  // viem waits out a Retry-After header with no cap before its retry (adversary on 6668b66: 30 s held the tick to 59 s),
+  // so a longer one is cut to the whole seconds left: the retry then lands at the deadline and fails at once.
+  const tickFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const left = deadline - Date.now();
-    if (left <= 0) return Promise.reject(new Error('tick deadline passed'));
+    if (left <= 0) throw new Error('tick deadline passed');
     const cap = AbortSignal.timeout(left);
-    return fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, cap]) : cap });
+    const res = await fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, cap]) : cap });
+    const wait = Number.parseInt(res.headers.get('Retry-After') ?? '', 10);
+    const leftS = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+    if (!(wait > leftS)) return res;
+    const headers = new Headers(res.headers);
+    headers.set('Retry-After', String(leftS));
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   }) as typeof fetch;
   const cfg = validateEnv(env);
   // Crypto price source (src/crypto-datastreams.ts). Data Streams credentials are read here and never logged.
@@ -1329,7 +1344,21 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   }
 
 
-  for (let i = 0n; i < count; i++) {
+  // Pools whose decision needs its own upstream request this tick (a match, a game, a Data Streams report) go last,
+  // and their start rotates each minute, so pools that never settle but cost time every tick cannot keep the 50 s
+  // budget from the pools after them (adversary on 6668b66): a pool whose price is already in hand is always reached,
+  // and with an unchanged set of slow pools each one is first among them at least once every slowIdx.length ticks.
+  const slowIdx = indicesWhere(
+    (r, idx) =>
+      fetchable(r, idx) &&
+      (r.value.mType === MarketType.FOOTBALL ||
+        r.value.mType === MarketType.BASKETBALL ||
+        dsTurn.has(idx) ||
+        cryptoShadowTurn.has(idx) ||
+        rwaShadowTurn.has(idx)),
+  );
+  for (const idx of tickOrder(marketResults.length, slowIdx, startedAt)) {
+    const i = BigInt(idx);
     if (walletOutOfFunds) {
       console.warn(`[${ts}] wallet out of funds earlier in tick — skipping remaining markets`);
       break;
