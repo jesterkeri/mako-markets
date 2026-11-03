@@ -129,6 +129,20 @@ describe('getUserSession — soft deauth paths return null', () => {
     expect(await getUserSession()).toBeNull();
   });
 
+  it('throwOnLookupError: a DB failure is rethrown, not answered as signed out (#214 /api/user/me)', async () => {
+    mocks.cookieGet.mockReturnValue({ value: await mintSessionCookie() });
+    mocks.rows.mockRejectedValue(new Error('connection drop'));
+    const { getUserSession } = await import('../user-session');
+    await expect(getUserSession({ throwOnLookupError: true })).rejects.toThrow('connection drop');
+  });
+
+  it('throwOnLookupError: a missing session row is still null', async () => {
+    mocks.cookieGet.mockReturnValue({ value: await mintSessionCookie() });
+    mocks.rows.mockResolvedValue([]);
+    const { getUserSession } = await import('../user-session');
+    expect(await getUserSession({ throwOnLookupError: true })).toBeNull();
+  });
+
   it('returns null when session row not found', async () => {
     mocks.cookieGet.mockReturnValue({ value: await mintSessionCookie() });
     mocks.rows.mockResolvedValue([]);

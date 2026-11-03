@@ -94,6 +94,13 @@ describe('GET /api/user/me — wire shape', () => {
     expect(await res.json()).toEqual({ authed: false });
   });
 
+  it('a failed session lookup is an error, never { authed: false } (#214: the badge re-reads /me every 5 minutes)', async () => {
+    mocks.getUserSession.mockRejectedValue(new Error('connection drop'));
+    const { GET } = await import('@/app/api/user/me/route');
+    await expect(GET()).rejects.toThrow('connection drop');
+    expect(mocks.getUserSession).toHaveBeenCalledWith({ throwOnLookupError: true });
+  });
+
   it('returns { authed: false } when session points to deleted user', async () => {
     mocks.getUserSession.mockResolvedValue({
       authType: 'magic',

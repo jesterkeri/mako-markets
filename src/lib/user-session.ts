@@ -174,6 +174,10 @@ export async function createSession(
  * - returns null:  missing cookie, bad MAC, cookie expired, session row
  *                  deleted, DB query rejected / timeout / connection drop.
  *                  DB errors are logged to stderr for observability.
+ *                  With `throwOnLookupError` (only /api/user/me, #214) the
+ *                  DB lookup failure is rethrown instead: that route is
+ *                  re-read every 5 minutes, and a soft "signed out" there
+ *                  would flip a live account's whole UI to signed out.
  * - throws:        `USER_SESSION_SECRET` missing or <32 chars (deploy-config
  *                  error that must surface at first auth attempt), and
  *                  `cookies()` called outside a Next server route context
@@ -185,7 +189,7 @@ export async function createSession(
  *
  * Call this at the top of every route that requires an authenticated user.
  */
-export async function getUserSession(): Promise<UserSession | null> {
+export async function getUserSession(opts: { throwOnLookupError?: boolean } = {}): Promise<UserSession | null> {
   const store = await cookies();
   const raw = store.get(USER_SESSION_COOKIE)?.value;
   if (!raw) return null;
@@ -222,6 +226,7 @@ export async function getUserSession(): Promise<UserSession | null> {
     // "not signed in", the user retries or re-auths, and the error shows up
     // in logs rather than a 500 response body.
     console.error('[user-session] DB lookup failed', err);
+    if (opts.throwOnLookupError) throw err;
     return null;
   }
 
