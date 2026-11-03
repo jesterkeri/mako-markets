@@ -1148,7 +1148,7 @@ export async function runResolver(env: Env): Promise<void> {
 
   // Pre-fetch markets in small parallel chunks, pausing between each. Each read is its own HTTP request (the
   // clients above do not batch). Monad testnet enforces ~15 items/sec; sending 5 in parallel every 500ms keeps us at
-  // ~10/sec worst case, well under the limit, without needing multicall3 or an alternative provider. Tradeoff: ~3s
+  // ~10/sec during the scan, and the pause after the last chunk keeps the send path that follows under the limit too, without needing multicall3 or an alternative provider. Tradeoff: ~3s
   // added to tick latency for 30 markets, which is fine when cron fires every 60s.
   //
   // Uses allSettled so a single getMarket failure (decoding, ABI drift,
@@ -1170,9 +1170,9 @@ export async function runResolver(env: Env): Promise<void> {
       ),
     );
     marketResults.push(...chunk);
-    if (end < countNum) {
-      await new Promise<void>((r) => setTimeout(r, READ_CHUNK_DELAY_MS));
-    }
+    // Pause after the LAST chunk too: the send path below starts at once, and without this pause the last two
+    // chunks plus its reads and the send fell inside one second (16 items, over the limit; adversary, 2026-11-03).
+    await new Promise<void>((r) => setTimeout(r, READ_CHUNK_DELAY_MS));
   }
 
   // Decide every market up front (src/settlement.ts). One-sided pools and
