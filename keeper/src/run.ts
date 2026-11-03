@@ -30,7 +30,7 @@ import {
   type Due,
   type HmacHex,
 } from '../../rounds-delivery/src/index';
-import { send, type Net } from './net';
+import { FETCH_TIMEOUT_MS, send, type Net } from './net';
 import { hexQuantity, rpcBatch, safeQuantity, type RpcCall, type RpcItem } from './rpc';
 import { decodeErrorResult, decodeFunctionResult, encodeFunctionData, type Abi } from 'viem';
 import { POOLS_ABI, ROUND_STATUS, ROUNDS_REFUND_ABI } from './abi-refunds';
@@ -520,6 +520,9 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
     return { status: 'tx-stuck', detail: `${label} replacement needs nonce ${meta.replaceNonce}, pending is ${nonce}; nothing sent` };
   }
 
+  // Sign only with time left for the send's full timeout: a transaction signed and recorded but never sent blocks every
+  // send for TX_STUCK_MS and is then counted as a failure (adversary on b7c6aab, a slow public RPC).
+  if (deps.net.deadlineAt - deps.net.now() < FETCH_TIMEOUT_MS) return { status: 'rpc-error', detail: `${label} deadline before signing; nothing signed` };
   const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
   const sentAt = deps.net.now();

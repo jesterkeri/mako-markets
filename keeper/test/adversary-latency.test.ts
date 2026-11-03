@@ -51,6 +51,9 @@ const RAW = '0x02f8aa' as Hex;
 interface World {
   now: number;
   latencyMs: number;
+  /// The adversary's original model: the RPC answers one request at a time, so overlapping requests queue.
+  serial: boolean;
+  lastDue: number;
   receipt: null | { status: string };
   sent: Hex[];
   order: string[];
@@ -102,8 +105,10 @@ function rpcAnswer(method: string, params: unknown[]): unknown {
 const inFlight: { due: number; go: () => void }[] = [];
 const slowFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
   new Promise<Response>((resolve, reject) => {
+    const due = (w.serial ? Math.max(w.now, w.lastDue) : w.now) + w.latencyMs;
+    w.lastDue = due;
     inFlight.push({
-      due: w.now + w.latencyMs,
+      due,
       go: () => {
         try {
           resolve(answer(input, init));
@@ -167,6 +172,8 @@ beforeEach(() => {
   w = {
     now: (CLOSE + 301) * 1000,
     latencyMs: 0,
+    serial: false,
+    lastDue: 0,
     receipt: null,
     sent: [],
     order: [],
@@ -204,4 +211,21 @@ describe('a due round on a slow public RPC (adversary, fix/workers-no-batch)', (
       sent: 1,
     });
   });
+
+  // The guard does not rest on the overlap model above: under either model, at every answer time, a run either sends
+  // the transaction it signs or signs nothing.
+  for (const serial of [false, true])
+    it(`never signs a transaction it cannot send (${serial ? 'serial' : 'overlapping'} RPC, 2 to 10 s an answer)`, async () => {
+      const seen: string[] = [];
+      for (let ms = 2_000; ms <= 10_000; ms += 250) {
+        w = { ...w, now: (CLOSE + 301) * 1000, latencyMs: ms, serial, lastDue: 0, sent: [], order: [], meta: structuredClone(INITIAL_META) };
+        const o = await runKeeper(cfg, deps());
+        const signed = w.order.includes('sign');
+        expect({ ms, signed, sent: w.sent.length, recorded: w.order.includes('record') }).toEqual({ ms, signed, sent: signed ? 1 : 0, recorded: signed });
+        seen.push(`${ms}:${o.status}`);
+      }
+      // Both outcomes occur, so the range crosses the boundary.
+      expect(seen.some((x) => x.endsWith(':sent'))).toBe(true);
+      expect(seen.some((x) => !x.endsWith(':sent'))).toBe(true);
+    });
 });

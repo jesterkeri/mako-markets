@@ -3,7 +3,7 @@
 // next run retries). Errors are reduced to a kind, so a URL or header can never reach a log line, an alert or
 // the Durable Object.
 
-const FETCH_TIMEOUT_MS = 10_000;
+export const FETCH_TIMEOUT_MS = 10_000;
 
 export type FailKind = 'timeout' | 'deadline' | 'budget' | 'network' | 'http' | 'rate_limited' | 'bad_response';
 
