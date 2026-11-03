@@ -20,6 +20,7 @@ import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import eurOpen from './fixtures/fixture-eurusd-1789735483.json';
 import eurClosed from './fixtures/fixture-eurusd-1789214400.json';
 import { makoAbi } from '../src/abi';
+import { viaMulticall } from './multicall-fake';
 
 // An hour after the latest fixture close: every pool has closed and no report has expired (BTC expires 1792121160,
 // EUR closed 1791806400, EUR open 1792327483).
@@ -175,14 +176,18 @@ function makoAnswer(m: Rpc) {
       });
     }
     case 'eth_call': {
-      const d = decodeFunctionData({ abi: makoAbi, data: (m.params![0] as { data: Hex }).data });
-      const result =
-        d.functionName === 'owner' || d.functionName === 'resolver'
+      return ok(
+        viaMulticall(m.params![0] as { to?: string; data: Hex }, (data) => {
+          const d = decodeFunctionData({ abi: makoAbi, data });
+          return (
+            d.functionName === 'owner' || d.functionName === 'resolver'
           ? encodeFunctionResult({ abi: makoAbi, functionName: d.functionName, result: resolverAddr })
           : d.functionName === 'nextMarketId'
             ? encodeFunctionResult({ abi: makoAbi, functionName: 'nextMarketId', result: BigInt(pools.length) })
-            : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market((d.args as [bigint])[0]) as never });
-      return ok(result);
+            : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market((d.args as [bigint])[0]) as never })
+          );
+        }),
+      );
     }
     default:
       return err({ code: -32601, message: `stub: ${m.method}` });

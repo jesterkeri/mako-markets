@@ -19,13 +19,16 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { makoAbi } from '../src/abi';
+import { viaMulticall } from './multicall-fake';
 import { runResolver, type Env } from '../src/index';
 
 const MAKO = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
 const MAKO_RPC = 'http://public-monad-rpc.stub/';
 const FINAL_BLOCK = 0x4930000n;
 const ZERO_WORD = `0x${'0'.repeat(64)}`;
-const N_MARKETS = 200;
+let nMarkets = 200;
+/// When set, no receipt ever arrives (the transaction stays pending past every wait).
+let receiptNever = false;
 const RATE_PER_S = 15;
 
 const key = generatePrivateKey();
@@ -136,9 +139,22 @@ function answer(m: Rpc) {
       sentHashes.add(h);
       return ok(h);
     }
+    case 'eth_getTransactionByHash': {
+      // A sent transaction is known and pending (no block), so viem keeps waiting for its receipt.
+      const raw = raws.find((r) => keccak256(r) === m.params![0]);
+      if (!raw) return ok(null);
+      const t = parseTransaction(raw as TransactionSerialized);
+      const q = (v: bigint | number | undefined) => `0x${BigInt(v ?? 0).toString(16)}`;
+      return ok({
+        hash: keccak256(raw), nonce: q(t.nonce), blockHash: null, blockNumber: null, transactionIndex: null,
+        from: resolverAddr.toLowerCase(), to: t.to?.toLowerCase(), value: q(t.value), gas: q(t.gas), input: t.data,
+        type: '0x2', chainId: q(t.chainId), maxFeePerGas: q(t.maxFeePerGas), maxPriorityFeePerGas: q(t.maxPriorityFeePerGas),
+        accessList: [], v: '0x0', r: `0x${'1'.repeat(64)}`, s: `0x${'1'.repeat(64)}`, yParity: '0x0',
+      });
+    }
     case 'eth_getTransactionReceipt': {
       const h = m.params![0] as string;
-      if (!sentHashes.has(h)) return ok(null);
+      if (receiptNever || !sentHashes.has(h)) return ok(null);
       return ok({
         transactionHash: h,
         transactionIndex: '0x0',
@@ -157,14 +173,18 @@ function answer(m: Rpc) {
       });
     }
     case 'eth_call': {
-      const d = decodeFunctionData({ abi: makoAbi, data: (m.params![0] as { data: Hex }).data });
-      const result =
-        d.functionName === 'owner' || d.functionName === 'resolver'
+      return ok(
+        viaMulticall(m.params![0] as { to?: string; data: Hex }, (data) => {
+          const d = decodeFunctionData({ abi: makoAbi, data });
+          return (
+            d.functionName === 'owner' || d.functionName === 'resolver'
           ? encodeFunctionResult({ abi: makoAbi, functionName: d.functionName, result: resolverAddr })
           : d.functionName === 'nextMarketId'
-            ? encodeFunctionResult({ abi: makoAbi, functionName: 'nextMarketId', result: BigInt(N_MARKETS) })
-            : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market(Number((d.args as [bigint])[0])) as never });
-      return ok(result);
+            ? encodeFunctionResult({ abi: makoAbi, functionName: 'nextMarketId', result: BigInt(nMarkets) })
+            : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market(Number((d.args as [bigint])[0])) as never })
+          );
+        }),
+      );
     }
     default:
       return err({ code: -32601, message: `stub: ${m.method}` });
@@ -214,11 +234,11 @@ function maxPerSecond(): number {
   return best;
 }
 
-async function tick(extra: Partial<Env> = {}): Promise<string[]> {
+async function tick(extra: Partial<Env> = {}, startedAt?: number): Promise<string[]> {
   vi.stubGlobal('fetch', vi.fn(stubFetch));
   const lines: string[] = [];
   for (const k of ['log', 'warn', 'error'] as const) vi.spyOn(console, k).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
-  await runResolver({ MAKO_ADDRESS: MAKO, MONAD_RPC_URL: MAKO_RPC, ADMIN_PRIVATE_KEY: key, ...extra } as Env);
+  await runResolver({ MAKO_ADDRESS: MAKO, MONAD_RPC_URL: MAKO_RPC, ADMIN_PRIVATE_KEY: key, ...extra } as Env, startedAt);
   return lines;
 }
 
@@ -233,6 +253,8 @@ afterEach(() => {
   limited = 0;
   limitedMethods.length = 0;
   latencyMs = 0;
+  nMarkets = 200;
+  receiptNever = false;
 });
 
 describe('adversary resolver-no-batch: a 200-market tick against the public RPC as it answers since 2026-11-03', () => {
@@ -262,3 +284,35 @@ describe('adversary resolver-no-batch: a 200-market tick against the public RPC 
     expect(methods).not.toContain('eth_sendRawTransaction');
   }, 120_000);
 });
+
+// Codex RESOLVER_NO_BATCH R1 F1: a tick must end inside the one-minute cron even when its receipt never comes. The real
+// budget is 50 s from the scheduled time; each case starts the tick with part of it already spent, so it runs in
+// seconds, through the same deadline code.
+describe('tick budget (Codex R1 F1): a receipt that never arrives cannot carry a tick past its deadline', () => {
+  const BUDGET_MS = 50_000;
+  for (const n of [200, 400])
+    it(`${n} markets, receipt pending: one forceRefund(150), never rate-limited, the tick ends by its deadline`, async () => {
+      nMarkets = n;
+      receiptNever = true;
+      latencyMs = 40;
+      const startedAt = Date.now() - (BUDGET_MS - 22_000); // 22 s left
+      const lines = await tick({}, startedAt);
+      const endedLate = Date.now() - (startedAt + BUDGET_MS);
+      const report = `arrays=${arrays} limited=${limited} maxItemsIn1s=${maxPerSecond()} total=${itemTimes.length} endedLate=${endedLate}`;
+      expect(arrays, report).toBe(0);
+      expect(limited, report).toBe(0);
+      expect(raws.length, lines.join('\n')).toBe(1);
+      expect(decodeFunctionData({ abi: makoAbi, data: parseTransaction(raws[0] as TransactionSerialized).data! }).args).toEqual([150n]);
+      // At most one poll interval past the deadline (the receipt race resolves on its timer, viem's poll is abandoned).
+      expect(endedLate, report).toBeLessThan(1_000);
+      // The scan is n / 50 calls, not n / 5 chunks.
+      expect(methods.filter((x) => x === 'eth_call').length, report).toBeLessThan(n / 50 + 10);
+    }, 60_000);
+
+  it('with under 15 s left before any send, nothing is sent and the log says the budget is spent', async () => {
+    const lines = await tick({}, Date.now() - (BUDGET_MS - 12_000)); // 12 s left
+    expect(raws.length, lines.join('\n')).toBe(0);
+    expect(lines.some((l) => /tick budget/.test(l)), lines.join('\n')).toBe(true);
+  }, 60_000);
+});
+

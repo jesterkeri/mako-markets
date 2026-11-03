@@ -38,6 +38,7 @@ import {
   hexToString,
   type Address,
   type Hex,
+  type Abi,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { makoAbi } from './abi';
@@ -126,6 +127,14 @@ export interface Env {
 }
 
 const RECEIPT_TIMEOUT_MS = 45_000;
+/// A tick ends within TICK_BUDGET_MS of its scheduled time, inside the one-minute cron, so ticks do not overlap (Codex
+/// RESOLVER_NO_BATCH R1 F1). The receipt wait is cut to the time left; a receipt timeout is already safe across ticks
+/// (sendOnce, src/settlement.ts).
+const TICK_BUDGET_MS = 50_000;
+/// No new market work starts with less than this left: the finalized re-read, both nonce reads and the send.
+const TICK_MIN_LEFT_MS = 15_000;
+/// Multicall3, at the same address on Monad testnet as on every EVM chain (keeper and watchdog read through it too).
+const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
 
 // Upstream statuses that mean "the event will not produce a valid result
 // on its originally scheduled date" → auto-refund without waiting for the
@@ -1021,7 +1030,8 @@ function validateEnv(env: Env): {
   };
 }
 
-export async function runResolver(env: Env): Promise<void> {
+export async function runResolver(env: Env, startedAt: number = Date.now()): Promise<void> {
+  const deadline = startedAt + TICK_BUDGET_MS;
   const cfg = validateEnv(env);
   // Crypto price source (src/crypto-datastreams.ts). Data Streams credentials are read here and never logged.
   const crypto = readCryptoPriceSource(env.CRYPTO_PRICE_SOURCE);
@@ -1077,6 +1087,12 @@ export async function runResolver(env: Env): Promise<void> {
   });
 
   const ts = new Date().toISOString().slice(11, 19);
+  const outOfTime = (where: string): boolean => {
+    const left = deadline - Date.now();
+    if (left >= TICK_MIN_LEFT_MS) return false;
+    console.warn(`[${ts}] tick budget: ${Math.max(0, left)} ms left at ${where}; the rest waits for the next tick`);
+    return true;
+  };
 
   // Banner — logs ONLY the public address, never the private key.
   console.log(
@@ -1146,32 +1162,30 @@ export async function runResolver(env: Env): Promise<void> {
   };
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
 
-  // Pre-fetch markets in small parallel chunks, pausing between each. Each read is its own HTTP request (the
-  // clients above do not batch). Monad testnet enforces ~15 items/sec; sending 5 in parallel every 500ms keeps us at
-  // ~10/sec during the scan, and the pause after the last chunk keeps the send path that follows under the limit too, without needing multicall3 or an alternative provider. Tradeoff: ~3s
-  // added to tick latency for 30 markets, which is fine when cron fires every 60s.
-  //
-  // Uses allSettled so a single getMarket failure (decoding, ABI drift,
-  // transient corruption) doesn't tank the whole tick.
+  // Read the markets 50 at a time through Multicall3 (one eth_call each, never an array body: the public Monad RPC
+  // refuses those since 2026-11-03), pausing after every chunk. 200 markets are 4 calls, so the scan stays a few seconds
+  // as the market count grows, inside the tick budget; the per-market paced scan this replaces took 20 s at 200 markets
+  // and would have left no time to send from about 350 (Codex RESOLVER_NO_BATCH R1 F1). allowFailure keeps one bad
+  // market from failing the rest; a failed call marks only its own chunk unread for this tick.
   const countNum = Number(count);
-  const READ_CHUNK_SIZE = 5;
+  const READ_CHUNK_SIZE = 50;
   const READ_CHUNK_DELAY_MS = 500;
   const marketResults: PromiseSettledResult<Market>[] = [];
   for (let start = 0; start < countNum; start += READ_CHUNK_SIZE) {
-    const end = Math.min(start + READ_CHUNK_SIZE, countNum);
-    const chunk = await Promise.allSettled(
-      Array.from({ length: end - start }, (_, j) =>
-        publicClient.readContract({
-          address: cfg.makoAddress,
-          abi: makoAbi,
-          functionName: 'getMarket',
-          args: [BigInt(start + j)],
-        }) as Promise<Market>,
-      ),
-    );
-    marketResults.push(...chunk);
-    // Pause after the LAST chunk too: the send path below starts at once, and without this pause the last two
-    // chunks plus its reads and the send fell inside one second (16 items, over the limit; adversary, 2026-11-03).
+    if (outOfTime(`the scan, market ${start} of ${countNum}; nothing is sent this tick`)) return;
+    const ids = Array.from({ length: Math.min(READ_CHUNK_SIZE, countNum - start) }, (_, j) => BigInt(start + j));
+    try {
+      const reads = await publicClient.multicall({
+        multicallAddress: MULTICALL3,
+        batchSize: 0, // one eth_call per chunk: viem would otherwise split it by calldata size and send the parts at once
+        allowFailure: true,
+        contracts: ids.map((id) => ({ address: cfg.makoAddress, abi: makoAbi as Abi, functionName: 'getMarket', args: [id] })),
+      });
+      for (const r of reads)
+        marketResults.push(r.status === 'success' ? { status: 'fulfilled', value: r.result as unknown as Market } : { status: 'rejected', reason: r.error });
+    } catch (e) {
+      for (let k = 0; k < ids.length; k++) marketResults.push({ status: 'rejected', reason: e });
+    }
     await new Promise<void>((r) => setTimeout(r, READ_CHUNK_DELAY_MS));
   }
 
@@ -1239,7 +1253,7 @@ export async function runResolver(env: Env): Promise<void> {
     waitForReceipt: async (hash) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
       const timeout = new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), RECEIPT_TIMEOUT_MS);
+        timer = setTimeout(() => resolve('timeout'), Math.max(0, Math.min(RECEIPT_TIMEOUT_MS, deadline - Date.now())));
       });
       try {
         const r = await Promise.race([publicClient.waitForTransactionReceipt({ hash }), timeout]);
@@ -1270,6 +1284,7 @@ export async function runResolver(env: Env): Promise<void> {
     const action = actions[Number(i)];
     if (readResult.status !== 'fulfilled') continue;
     if (action !== 'resolve_one_sided' && action !== 'force_refund') continue;
+    if (outOfTime(`market ${i} (no-data pass)`)) break;
     const result = await runNoDataAction(keeperIo, keeperTick, i, action);
     if (result === 'sent' || result === 'dry_run') {
       if (action === 'force_refund') forceRefunds++;
@@ -1305,6 +1320,7 @@ export async function runResolver(env: Env): Promise<void> {
       console.warn(`[${ts}] wallet out of funds earlier in tick — skipping remaining markets`);
       break;
     }
+    if (outOfTime(`market ${i}`)) break;
 
     scanned++;
 
@@ -1783,7 +1799,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     ctx.waitUntil(
-      runResolver(env).catch((error) => {
+      runResolver(env, event.scheduledTime).catch((error) => {
         console.error('[resolver] tick error:', shortErrorMessage(error));
       }),
     );

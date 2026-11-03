@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import { makoAbi } from '../src/abi';
+import { viaMulticall } from './multicall-fake';
 import { runResolver, type Env } from '../src/index';
 
 const CLOSE = Number(fixture.observationsTimestamp);
@@ -73,14 +74,16 @@ function market(id: bigint) {
 function makoAnswer(m: { id: number; method: string; params?: unknown[] }) {
   if (m.method === 'eth_chainId') return { jsonrpc: '2.0', id: m.id, result: '0x279f' };
   if (m.method !== 'eth_call') return { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: `stub: ${m.method}` } };
-  const call = (m.params![0] as { data: Hex }).data;
-  const d = decodeFunctionData({ abi: makoAbi, data: call });
-  const result =
-    d.functionName === 'owner' || d.functionName === 'resolver'
+  const result = viaMulticall(m.params![0] as { to?: string; data: Hex }, (call) => {
+    const d = decodeFunctionData({ abi: makoAbi, data: call });
+    return (
+      d.functionName === 'owner' || d.functionName === 'resolver'
       ? encodeFunctionResult({ abi: makoAbi, functionName: d.functionName, result: resolverAddr })
       : d.functionName === 'nextMarketId'
         ? encodeFunctionResult({ abi: makoAbi, functionName: 'nextMarketId', result: MARKET_COUNT })
-        : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market((d.args as [bigint])[0]) as never });
+        : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market((d.args as [bigint])[0]) as never })
+    );
+  });
   return { jsonrpc: '2.0', id: m.id, result };
 }
 

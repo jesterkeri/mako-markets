@@ -30,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import fixture from './fixtures/fixture-btcusd-1789529160.json';
 import { makoAbi } from '../src/abi';
+import { viaMulticall } from './multicall-fake';
 
 // Codex DS_SWAP R4: verification blocks must be fresh on the worker clock; pin Date to an hour after the fixture close.
 beforeEach(() => {
@@ -181,14 +182,18 @@ function makoAnswer(m: Rpc) {
       });
     }
     case 'eth_call': {
-      const d = decodeFunctionData({ abi: makoAbi, data: (m.params![0] as { data: Hex }).data });
-      const result =
-        d.functionName === 'owner' || d.functionName === 'resolver'
+      return ok(
+        viaMulticall(m.params![0] as { to?: string; data: Hex }, (data) => {
+          const d = decodeFunctionData({ abi: makoAbi, data });
+          return (
+            d.functionName === 'owner' || d.functionName === 'resolver'
           ? encodeFunctionResult({ abi: makoAbi, functionName: d.functionName, result: resolverAddr })
           : d.functionName === 'nextMarketId'
             ? encodeFunctionResult({ abi: makoAbi, functionName: 'nextMarketId', result: BigInt(pools.length) })
-            : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market((d.args as [bigint])[0]) as never });
-      return ok(result);
+            : encodeFunctionResult({ abi: makoAbi, functionName: 'getMarket', result: market((d.args as [bigint])[0]) as never })
+          );
+        }),
+      );
     }
     default:
       return err({ code: -32601, message: `stub: ${m.method}` });
