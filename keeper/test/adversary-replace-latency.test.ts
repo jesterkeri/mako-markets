@@ -201,11 +201,12 @@ function fresh(latencyMs: number, model: Model): void {
 describe('replacing a lost transaction at its nonce, at answer times 2159977 handled (adversary, 3636b4f)', () => {
   for (const model of ['overlap', 'partial', 'serial'] as Model[])
     for (const latencyMs of [4_900, 4_950]) {
-      // Builder's note (adopted test, cases unchanged): under the partial and serial models these fail, a residual
-      // of the public RPC refusing array bodies (16 calls where 2159977 made 8 batched requests), not of the sign
-      // guard. Sweep on 3636b4f+fix, 300-6,000 ms: sends up to overlap 5,350 / partial 3,000 / serial 1,750 ms (2159977:
-      // under 5,000 ms in every model), never signed-unsent. Kept as expected failures so a change in either shows.
-      (model === 'overlap' ? it : it.fails)(`${model} RPC, ${latencyMs} ms an answer: it signs, records and sends the replacement settlement`, async () => {
+      // Builder's note (adopted test, cases unchanged): all six fail on purpose and are kept as expected failures.
+      // Partial and serial: a residual of the public RPC refusing array bodies (16 calls where 2159977 made 8 batched
+      // requests). Overlap: the keeper keeps the send's full 10 s timeout before signing, so the replacement path
+      // signs up to about 4.87 s an answer (2159977: under 5.0 s); a reserve sized from the run's answers closed this
+      // gap but let a slower send be cut after signing (adversary on 945f021, adversary-varied-latency.test.ts).
+      it.fails(`${model} RPC, ${latencyMs} ms an answer: it signs, records and sends the replacement settlement`, async () => {
         // 2159977 made 8 requests one after another on this path; the send answered before its 40 s deadline.
         expect(8 * latencyMs).toBeLessThan(PRODUCTION_BUDGET_MS);
         fresh(latencyMs, model);

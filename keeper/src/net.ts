@@ -19,8 +19,6 @@ export interface Net {
   /// Hard ceiling on requests in this run (S6).
   maxRequests: number;
   requests: number;
-  /// The longest a request of this run has taken to answer or fail (ms), timeouts included.
-  slowestMs: number;
 }
 
 export function makeNet(
@@ -30,7 +28,7 @@ export function makeNet(
   deadlineAt: number,
   maxRequests: number,
 ): Net {
-  return { fetch: fetchFn, now, sleep, deadlineAt, maxRequests, requests: 0, slowestMs: 0 };
+  return { fetch: fetchFn, now, sleep, deadlineAt, maxRequests, requests: 0 };
 }
 
 /// One HTTP request. Returns a kind instead of throwing.
@@ -44,7 +42,6 @@ export async function send(net: Net, url: string, init: RequestInit): Promise<Ht
   // doubles the requests, and workerd caps an isolate at 10,000 live timers (the day-long test runs hit it).
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(new DOMException('The operation timed out.', 'TimeoutError')), timeoutMs);
-  const startedAt = net.now();
   try {
     let res: Response;
     try {
@@ -62,7 +59,6 @@ export async function send(net: Net, url: string, init: RequestInit): Promise<Ht
     return classify(res, text);
   } finally {
     clearTimeout(timer);
-    net.slowestMs = Math.max(net.slowestMs, net.now() - startedAt);
   }
 }
 
