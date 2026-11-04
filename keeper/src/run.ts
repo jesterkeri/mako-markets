@@ -377,7 +377,13 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
             if (!res.ok) return rpcFailure(res.kind);
             return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} sent again, unchanged, through this provider` };
           }
-          if (cfg.other) return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} ${TO_OTHER}` };
+          // Offered for TX_STUCK_MS at most: an other provider that cannot be reached never received the bytes, so after
+          // that the sender judges alone, as with no fallback, and a dead other provider cannot stall it (adversary on
+          // 1a08f54). The time is kept in the record; losing it to a failed commit only restarts the offer.
+          if (cfg.other && (f.handOffAt === undefined || nowMs - f.handOffAt < TX_STUCK_MS)) {
+            if (f.handOffAt === undefined) meta.inFlight = { ...f, handOffAt: nowMs };
+            return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} ${TO_OTHER}` };
+          }
         }
         if (f.handedAt !== undefined && nowMs - f.handedAt < TX_STUCK_MS)
           return { status: 'tx-pending', detail: `${label} ${f.hash} sent again through the other provider` };

@@ -180,6 +180,20 @@ describe('Codex KEEPER_SAFEGUARDS R1 F2: a provider that acknowledges a send but
     expect(mined.size).toBe(1);
   });
 
+  it('the fallback misses its first hand-off run: the offer stands for TX_STUCK_MS, so the next try still reaches it', async () => {
+    reset();
+    nodes[PRIMARY].broadcasts = false;
+    const cfg = base(FB_A);
+    await runs(cfg, 1);
+    clock = stored.inFlight!.sentAt + TX_STUCK_MS + 5_000;
+    const ask = await runs(cfg, 1); // the primary, the sender, asks for the other provider
+    nodes[FB_A].refuse = 503;
+    const miss = await runs(cfg, 1); // the fallback refuses this one run
+    nodes[FB_A].refuse = null;
+    const log = [...ask, ...miss, ...(await runs(cfg, 10))];
+    expect({ settled, atNonce: atNonce(), failures: stored.txFailures }, log.join('\n')).toEqual({ settled: true, atNonce: 1, failures: {} });
+  });
+
   it('with no fallback configured, the primary still judges and replaces it at the same nonce (behaviour as before)', async () => {
     reset();
     nodes[PRIMARY].broadcasts = false;

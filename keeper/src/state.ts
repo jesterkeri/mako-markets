@@ -35,6 +35,8 @@ export interface InFlight {
   /// the sender may call it lost (Codex KEEPER_SAFEGUARDS R1 F2).
   handedTo?: string;
   handedAt?: number;
+  /// When the sender first asked for it to go through the other provider; the offer lapses TX_STUCK_MS later.
+  handOffAt?: number;
 }
 
 export interface Meta {
