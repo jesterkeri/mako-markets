@@ -137,10 +137,11 @@ const TICK_BUDGET_MS = 50_000;
 export const TICK_OVERRUN_MS = 1_050;
 /// No new market work starts with less than this left: the finalized re-read, both nonce reads and the send.
 const TICK_MIN_LEFT_MS = 15_000;
-/// Gap between two call starts on the chain RPC: 5 calls a second, so this Worker and the keeper together stay at or
-/// under the public RPC's ~15 items a second, with the five-minute Workers on other minutes (Codex WORKERS_NO_BATCH R1
-/// F2, Joshua 2026-11-04 "stagger + slower pacing").
-export const RPC_CALL_SPACING_MS = 200;
+/// Gap between two call starts on the chain RPC: about 4.8 calls a second, so this Worker, the keeper and one
+/// five-minute Worker (they run on different minutes) together stay near 14.3, under the public RPC's ~15 items a second
+/// with margin for timer rounding (Codex WORKERS_NO_BATCH R1 F2, Joshua 2026-11-04 "stagger + slower pacing"; 210
+/// rather than 200 ms on Codex's follow-up, since 3 x 5 a second is exactly 15).
+export const RPC_CALL_SPACING_MS = 210;
 /// Multicall3, at the same address on Monad testnet as on every EVM chain (keeper and watchdog read through it too).
 const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
 

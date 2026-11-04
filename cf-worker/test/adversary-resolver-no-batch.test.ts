@@ -199,7 +199,7 @@ let limited = 0;
 const limitedMethods: string[] = [];
 const itemTimes: number[] = [];
 const methods: string[] = [];
-/// When each request reached the stub, before its latency (builder addition for the 200 ms pacing).
+/// When each request reached the stub, before its latency (builder addition for the chain-RPC pacing).
 const starts: number[] = [];
 
 async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -322,18 +322,19 @@ describe('tick budget (Codex R1 F1): a receipt that never arrives cannot carry a
 
 
 // Builder addition (Codex WORKERS_NO_BATCH R1 F2, Joshua 2026-11-04 "stagger + slower pacing"): the resolver starts its
-// chain RPC calls RPC_CALL_SPACING_MS apart, so with the keeper at the same rate the two stay at or under ~15 a second.
-describe('pacing: chain RPC calls start 200 ms apart (5 a second)', () => {
+// chain RPC calls RPC_CALL_SPACING_MS (210) apart, so with the keeper and one five-minute Worker they stay near 14.3 a second.
+describe('pacing: chain RPC calls start 210 ms apart (about 4.8 a second)', () => {
   for (const lat of [0, 120])
-    it(`200 markets, latency ${lat} ms: every start at least 200 ms after the one before, one send`, async () => {
+    it(`200 markets, latency ${lat} ms: every start at least 210 ms after the one before, one send`, async () => {
       latencyMs = lat;
       const lines = await tick();
       const gaps = starts.slice(1).map((t, i) => t - starts[i]);
       const report = `starts=${starts.length} minGap=${Math.min(...gaps).toFixed(1)} maxItemsIn1s=${maxPerSecond()}`;
-      expect(RPC_CALL_SPACING_MS).toBe(200);
-      // 2 ms for timer rounding between Date.now (the pacer) and performance.now (the stub; measured down to 198.9 ms
-      // under full-suite load): about 5 a second. A sliding one-second window can still hold a 6th start at its edge.
+      expect(RPC_CALL_SPACING_MS).toBe(210);
+      // 2 ms for timer rounding between Date.now (the pacer) and performance.now (the stub; measured 1.1 ms short of
+      // the spacing under full-suite load): about 4.8 a second, so never more than 5 in a second.
       expect(Math.min(...gaps), report).toBeGreaterThanOrEqual(RPC_CALL_SPACING_MS - 2);
+      expect(maxPerSecond(), report).toBeLessThanOrEqual(5);
       expect(limited, report).toBe(0);
       expect(raws.length, lines.join('\n')).toBe(1);
     }, 120_000);
