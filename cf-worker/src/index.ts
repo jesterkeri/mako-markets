@@ -137,6 +137,10 @@ const TICK_BUDGET_MS = 50_000;
 export const TICK_OVERRUN_MS = 1_050;
 /// No new market work starts with less than this left: the finalized re-read, both nonce reads and the send.
 const TICK_MIN_LEFT_MS = 15_000;
+/// Gap between two call starts on the chain RPC: 5 calls a second, so this Worker and the keeper together stay at or
+/// under the public RPC's ~15 items a second, with the five-minute Workers on other minutes (Codex WORKERS_NO_BATCH R1
+/// F2, Joshua 2026-11-04 "stagger + slower pacing").
+export const RPC_CALL_SPACING_MS = 200;
 /// Multicall3, at the same address on Monad testnet as on every EVM chain (keeper and watchdog read through it too).
 const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
 
@@ -1073,6 +1077,16 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
     headers.set('Retry-After', String(leftS));
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   }) as typeof fetch;
+  // Chain RPC calls start RPC_CALL_SPACING_MS apart, concurrent ones included (each takes the next slot before it
+  // waits). A wait never runs past the deadline; a call whose slot lies beyond it fails there at once (tickFetch).
+  let nextRpcSlot = 0;
+  const rpcFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const slot = Math.max(Date.now(), nextRpcSlot);
+    nextRpcSlot = slot + RPC_CALL_SPACING_MS;
+    const wait = Math.min(slot - Date.now(), deadline - Date.now());
+    if (wait > 0) await new Promise<void>((r) => setTimeout(r, wait));
+    return tickFetch(input, init);
+  }) as typeof fetch;
   const cfg = validateEnv(env);
   // Crypto price source (src/crypto-datastreams.ts). Data Streams credentials are read here and never logged.
   const crypto = readCryptoPriceSource(env.CRYPTO_PRICE_SOURCE);
@@ -1120,11 +1134,11 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   const walletClient = createWalletClient({
     account,
     chain: monadTestnet,
-    transport: http(cfg.rpcUrl, { fetchFn: tickFetch }),
+    transport: http(cfg.rpcUrl, { fetchFn: rpcFetch }),
   });
   const publicClient = createPublicClient({
     chain: monadTestnet,
-    transport: http(cfg.rpcUrl, { fetchFn: tickFetch }),
+    transport: http(cfg.rpcUrl, { fetchFn: rpcFetch }),
   });
 
   const ts = new Date().toISOString().slice(11, 19);

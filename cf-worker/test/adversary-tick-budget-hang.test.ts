@@ -221,7 +221,9 @@ describe('adversary tick budget: work started inside the budget is not bounded b
   it('(c) a scan chunk that never answers, started at the 15 s threshold, ends the tick within the stated overrun', async () => {
     world = Array(100).fill('resolved');
     hangScan = true;
-    const startedAt = Date.now() - (BUDGET_MS - 15_400);
+    // Builder: was 15_400 left at the tick start. Since chain calls start 200 ms apart (Codex WORKERS_NO_BATCH R1 F2)
+    // the reads before the scan take about 0.4 s, so 16 s left still starts the scan just above the 15 s threshold.
+    const startedAt = Date.now() - (BUDGET_MS - 16_000);
     const { late, lines } = await tickLateness(startedAt, 5_000);
     expect(hung, lines.join('\n')).toContain('aggregate3');
     expect(raws.length).toBe(0);

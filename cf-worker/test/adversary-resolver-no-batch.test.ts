@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { makoAbi } from '../src/abi';
 import { viaMulticall } from './multicall-fake';
-import { runResolver, type Env } from '../src/index';
+import { RPC_CALL_SPACING_MS, runResolver, type Env } from '../src/index';
 
 const MAKO = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
 const MAKO_RPC = 'http://public-monad-rpc.stub/';
@@ -199,10 +199,13 @@ let limited = 0;
 const limitedMethods: string[] = [];
 const itemTimes: number[] = [];
 const methods: string[] = [];
+/// When each request reached the stub, before its latency (builder addition for the 200 ms pacing).
+const starts: number[] = [];
 
 async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = String(input instanceof Request ? input.url : input);
   if (url !== MAKO_RPC) throw new Error(`stub: unexpected request to ${url}`);
+  starts.push(performance.now());
   if (latencyMs > 0) await new Promise((r) => setTimeout(r, latencyMs));
   const body = JSON.parse(String(init?.body));
   if (Array.isArray(body)) {
@@ -248,6 +251,7 @@ afterEach(() => {
   raws.length = 0;
   sentHashes.clear();
   itemTimes.length = 0;
+  starts.length = 0;
   methods.length = 0;
   arrays = 0;
   limited = 0;
@@ -316,3 +320,21 @@ describe('tick budget (Codex R1 F1): a receipt that never arrives cannot carry a
   }, 60_000);
 });
 
+
+// Builder addition (Codex WORKERS_NO_BATCH R1 F2, Joshua 2026-11-04 "stagger + slower pacing"): the resolver starts its
+// chain RPC calls RPC_CALL_SPACING_MS apart, so with the keeper at the same rate the two stay at or under ~15 a second.
+describe('pacing: chain RPC calls start 200 ms apart (5 a second)', () => {
+  for (const lat of [0, 120])
+    it(`200 markets, latency ${lat} ms: every start at least 200 ms after the one before, one send`, async () => {
+      latencyMs = lat;
+      const lines = await tick();
+      const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+      const report = `starts=${starts.length} minGap=${Math.min(...gaps).toFixed(1)} maxItemsIn1s=${maxPerSecond()}`;
+      expect(RPC_CALL_SPACING_MS).toBe(200);
+      // 2 ms for timer rounding between Date.now (the pacer) and performance.now (the stub; measured down to 198.9 ms
+      // under full-suite load): about 5 a second. A sliding one-second window can still hold a 6th start at its edge.
+      expect(Math.min(...gaps), report).toBeGreaterThanOrEqual(RPC_CALL_SPACING_MS - 2);
+      expect(limited, report).toBe(0);
+      expect(raws.length, lines.join('\n')).toBe(1);
+    }, 120_000);
+});
