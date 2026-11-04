@@ -59,6 +59,8 @@ function rpcAnswer(method: string, params: unknown[]): unknown {
       return { result: '0x4' };
     case 'eth_sendRawTransaction':
       return { result: keccak256(params[0] as Hex) };
+    case 'eth_getTransactionReceipt':
+      return { result: null };
   }
   return { error: { code: -32601 } };
 }
@@ -121,10 +123,17 @@ describe('held-back sends alert on the second run in a row (Joshua 2026-11-04)',
 
     const second = await run(10_500);
     expect(second.heldBack).toBe(2);
-    expect(second.alarm).toContain('2 runs in a row held back a send');
+    expect(second.alarm).toContain('2 runs held back a send since the keeper last sent');
     // Two minutes in, well before UNHEALTHY_REPORT_MS (4 min): the fail ping comes from the held-back rule.
-    expect(second.pings).toEqual([{ kind: 'fail', body: expect.stringContaining('ALARM 2 runs in a row held back a send') }]);
+    expect(second.pings).toEqual([{ kind: 'fail', body: expect.stringContaining('ALARM 2 runs held back a send since the keeper last sent') }]);
     expect(signed).toBe(0);
+
+    // A quiet run between (an earlier transaction still pending, nothing held back, nothing sent): the count stays
+    // at 2 until a send, but only a held-back run alerts, so this one does not page.
+    stored.inFlight = { hash: keccak256('0x01'), nonce: 4, roundId: '6', sentAt: clock - 10_000, kind: 'settle' };
+    const quiet = await run(45_000);
+    expect({ status: quiet.status, heldBack: quiet.heldBack, fail: quiet.pings.some((p) => p.kind === 'fail') }).toEqual({ status: 'tx-pending', heldBack: 2, fail: false });
+    stored.inFlight = null;
 
     const third = await run(45_000);
     expect({ status: third.status, heldBack: third.heldBack, signed }).toEqual({ status: 'sent', heldBack: 0, signed: 1 });

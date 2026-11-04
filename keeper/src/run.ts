@@ -51,6 +51,8 @@ export const UNHEALTHY_REPORT_MS = 4 * 60_000;
 export const HELD_BACK_ALERT_RUNS = 2;
 /// The detail a run ends with when it holds back a send (sendTx); it signed nothing, so nothing is in flight.
 const HELD_BACK = 'deadline before signing; nothing signed';
+/// The end of a tx-stuck detail when this run's node did not send the transaction in flight and cannot see it.
+const NOT_SENDER = 'unknown to this node, which did not send it; nothing sent';
 /// Transactions for one round that revert on chain or are dropped, after which it is no longer sent.
 export const MAX_TX_FAILURES = 2;
 /// Gas balance for fewer than this many settlements is reported, so it is topped up before it runs out.
@@ -212,10 +214,9 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     useFallback: a.useFallback ?? false,
   };
   // One provider for the whole run, so its nonce, receipt and pending reads and its send all come from the same node.
-  // While a transaction is in flight, that is the node which sent it, whatever the last run asked for.
-  const pinned = meta.inFlight !== null;
-  const fallback = pinned ? meta.inFlight!.via === 'fallback' : meta.useFallback === true && !!cfg.fallbackRpcUrl;
-  const runCfg: RunConfig = fallback ? { ...cfg, rpcUrl: cfg.fallbackRpcUrl ?? '', onFallback: true } : cfg;
+  // Which one is decided at the end of the previous run (below).
+  const fallback = meta.useFallback === true && !!cfg.fallbackRpcUrl;
+  const runCfg: RunConfig = fallback ? { ...cfg, rpcUrl: cfg.fallbackRpcUrl!, onFallback: true } : cfg;
 
   // The breaker's reset is Joshua's: REFUND_BREAKER_RESET clears a trip only if it is later than the trip AND
   // not in the future. A future reset would otherwise clear every trip until that time, which is no breaker
@@ -228,11 +229,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
 
   let outcome: Outcome;
   try {
-    outcome =
-      fallback && !cfg.fallbackRpcUrl
-        ? // Fail closed: only the fallback node can say what happened to a transaction it sent.
-          { status: 'tx-stuck', detail: 'the transaction in flight was sent through RPC_FALLBACK_URL, which is no longer set; nothing sent' }
-        : await settleOne(runCfg, deps, token, meta);
+    outcome = await settleOne(runCfg, deps, token, meta);
   } catch {
     // Anything unexpected is reported by kind only; the error text could carry a URL.
     outcome = { status: 'rpc-error', detail: 'unexpected' };
@@ -245,12 +242,21 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     ]);
 
   if (fallback) outcome = { ...outcome, fallback: true };
-  // After an RPC-failed run the next one tries the other provider, so a failing fallback hands back to the primary
-  // instead of holding every later run (adversary on c2c6336).
-  meta.useFallback = (outcome.status === 'rpc-error' || outcome.status === 'rpc-rate-limited') && !fallback;
-  meta.heldBack = outcome.status === 'rpc-error' && outcome.detail?.endsWith(HELD_BACK) ? (meta.heldBack ?? 0) + 1 : 0;
-  if (meta.heldBack >= HELD_BACK_ALERT_RUNS)
-    outcome = withAlarms(outcome, [`${meta.heldBack} runs in a row held back a send: the RPC answers too slowly to sign and send inside one run`]);
+  // The next run's provider. After an RPC-failed run, the other one, so neither a failing primary nor a failing
+  // fallback can hold every later run (adversaries on c2c6336 and fc1ff7c). After a run whose node could not see a
+  // transaction it did not send, the other one too: only the sender may judge it lost (settleOne). Otherwise the
+  // primary: any node sees a receipt or a used nonce.
+  const rpcFailed = outcome.status === 'rpc-error' || outcome.status === 'rpc-rate-limited';
+  const notSender = outcome.status === 'tx-stuck' && outcome.detail?.endsWith(NOT_SENDER) === true;
+  meta.useFallback = (rpcFailed || notSender) && !fallback;
+  // Held-back sends count until a run sends (any other run leaves the count), and alert on a held-back run only, so
+  // a slow primary alternating with fallback runs that send nothing still alerts (adversary on fc1ff7c).
+  const held = outcome.status === 'rpc-error' && outcome.detail?.endsWith(HELD_BACK) === true;
+  const sent = outcome.status === 'sent' || outcome.status === 'sent-low-gas';
+  meta.heldBack = held ? (meta.heldBack ?? 0) + 1 : sent ? 0 : (meta.heldBack ?? 0);
+  const heldAlert = held && meta.heldBack >= HELD_BACK_ALERT_RUNS;
+  if (heldAlert)
+    outcome = withAlarms(outcome, [`${meta.heldBack} runs held back a send since the keeper last sent: the RPC answers too slowly to sign and send inside one run`]);
 
   const end = deps.net.now();
   meta.lastStatus = describe(outcome);
@@ -264,7 +270,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     meta.unhealthySince ??= now;
   }
 
-  if ((meta.unhealthySince !== null && end - meta.unhealthySince >= UNHEALTHY_REPORT_MS) || (meta.heldBack ?? 0) >= HELD_BACK_ALERT_RUNS)
+  if ((meta.unhealthySince !== null && end - meta.unhealthySince >= UNHEALTHY_REPORT_MS) || heldAlert)
     await deps.ping('fail', `mako-settlement-keeper ${describe(outcome)}`);
   else if (!unhealthyRun(outcome)) await deps.ping('ok', describe(outcome));
   return outcome;
@@ -343,6 +349,9 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
           // It may still land: keep it, send nothing, and say so every run until it resolves.
           return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} ${known ? 'still known to the node' : 'pending'}` };
         }
+        // Only the node that sent it may call it lost: another node may simply never have seen it, while the sender
+        // still holds it (adversary on c2c6336). Here it waits; the next run goes to the sender (runKeeper).
+        if ((f.via === 'fallback') !== (cfg.onFallback === true)) return { status: 'tx-stuck', detail: `${label} ${f.hash} ${NOT_SENDER}` };
         // Unknown to the node and its nonce unused: it may be replaced, at the SAME nonce only, so at most one of
         // the two can ever execute. The record is KEPT until a replacement at that nonce is actually recorded
         // (sendTx overwrites it then and counts the failure) or the nonce is used on chain: a run that ends

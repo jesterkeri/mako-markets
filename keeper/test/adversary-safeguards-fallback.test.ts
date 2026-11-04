@@ -208,10 +208,10 @@ describe('adversary on RPC_FALLBACK_URL (c2c6336)', () => {
   });
 });
 
-// Builder cases for the fix: a transaction is checked only on the node that sent it (InFlight.via), and a run that
-// needs the fallback for that check, with RPC_FALLBACK_URL no longer set, signs nothing.
-describe('builder: the in-flight transaction stays on the node that sent it', () => {
-  it('sent through the fallback, it is checked on the fallback even after a run that would go back to the primary', async () => {
+// Builder cases for the fix: only the node that sent a transaction (InFlight.via) may judge it lost, and the run after
+// a clean one goes to that node; with RPC_FALLBACK_URL no longer set, the primary never judges a fallback-sent one lost.
+describe('builder: only the sending node judges the in-flight transaction lost', () => {
+  it('sent through the fallback and lost to the primary\'s view: the primary waits, the next run asks the fallback', async () => {
     reset();
     primary.refuse = 429;
     expect((await run()).status).toBe('rpc-rate-limited');
@@ -221,17 +221,23 @@ describe('builder: the in-flight transaction stays on the node that sent it', ()
     expect({ status: sent.status, providers: sent.providers, via: stored.inFlight?.via, next: stored.useFallback }).toEqual({ status: 'sent', providers: ['fallback'], via: 'fallback', next: false });
     expect(fallback.pool.size).toBe(1);
     clock = stored.inFlight!.sentAt + TX_STUCK_MS + 5_000;
-    const check = await run();
-    expect({ status: check.status, providers: check.providers, signed: signedTxs.length }).toEqual({ status: 'tx-stuck', providers: ['fallback'], signed: 1 });
+    const onPrimary = await run();
+    expect({ status: onPrimary.status, providers: onPrimary.providers, next: stored.useFallback, signed: signedTxs.length }).toEqual({ status: 'tx-stuck', providers: ['primary'], next: true, signed: 1 });
+    expect(onPrimary.detail).toContain('did not send it');
+    clock += 60_000;
+    const onSender = await run();
+    expect({ status: onSender.status, providers: onSender.providers, signed: signedTxs.length }).toEqual({ status: 'tx-stuck', providers: ['fallback'], signed: 1 });
+    expect(onSender.detail).toContain('still known to the node');
   });
 
-  it('sent through the fallback, with RPC_FALLBACK_URL since removed: nothing read, nothing signed, tx-stuck', async () => {
+  it('sent through the fallback, with RPC_FALLBACK_URL since removed: the primary never judges it lost, nothing signed', async () => {
     reset();
     stored.inFlight = { hash: keccak256('0x01'), nonce: NONCE, roundId: '6', sentAt: clock - TX_STUCK_MS - 60_000, kind: 'settle', via: 'fallback' };
+    stored.useFallback = true;
     hits.length = 0;
     const o = await runKeeper({ ...cfg, fallbackRpcUrl: null }, deps());
-    expect({ status: o.status, rpcHits: hits.length, signed: signedTxs.length, kept: stored.inFlight?.hash }).toEqual({ status: 'tx-stuck', rpcHits: 0, signed: 0, kept: keccak256('0x01') });
-    expect(o.detail).toContain('RPC_FALLBACK_URL');
+    expect({ status: o.status, providers: [...new Set(hits)], signed: signedTxs.length, kept: stored.inFlight?.hash }).toEqual({ status: 'tx-stuck', providers: ['primary'], signed: 0, kept: keccak256('0x01') });
+    expect(o.detail).toContain('did not send it');
     expect(o.detail).not.toContain('sentinel');
   });
 });
