@@ -21,6 +21,9 @@ export interface InFlight {
   roundId: string;
   sentAt: number;
   kind?: TxKind;
+  /// Sent through RPC_FALLBACK_URL. A transaction is checked only on the node that sent it: another node that never
+  /// saw it would report it lost, and the keeper would sign a second one at its nonce (adversary on c2c6336).
+  via?: 'fallback';
 }
 
 export interface Meta {

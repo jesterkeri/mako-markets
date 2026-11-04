@@ -156,6 +156,8 @@ export interface RunConfig {
   /// RPC_FALLBACK_URL (secret, never logged): a whole run goes through it after a run that ended in an RPC failure, so
   /// one slow or refusing provider cannot keep settlements waiting. Unset: every run uses rpcUrl, as before.
   fallbackRpcUrl?: string | null;
+  /// Set by runKeeper only: this run talks to fallbackRpcUrl, so a transaction it sends is recorded as sent there.
+  onFallback?: true;
   datastreamsUrl: string;
   datastreamsKey: string;
   datastreamsSecret: string;
@@ -210,8 +212,10 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     useFallback: a.useFallback ?? false,
   };
   // One provider for the whole run, so its nonce, receipt and pending reads and its send all come from the same node.
-  const fallback = meta.useFallback === true && !!cfg.fallbackRpcUrl;
-  const runCfg: RunConfig = fallback ? { ...cfg, rpcUrl: cfg.fallbackRpcUrl! } : cfg;
+  // While a transaction is in flight, that is the node which sent it, whatever the last run asked for.
+  const pinned = meta.inFlight !== null;
+  const fallback = pinned ? meta.inFlight!.via === 'fallback' : meta.useFallback === true && !!cfg.fallbackRpcUrl;
+  const runCfg: RunConfig = fallback ? { ...cfg, rpcUrl: cfg.fallbackRpcUrl ?? '', onFallback: true } : cfg;
 
   // The breaker's reset is Joshua's: REFUND_BREAKER_RESET clears a trip only if it is later than the trip AND
   // not in the future. A future reset would otherwise clear every trip until that time, which is no breaker
@@ -224,7 +228,11 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
 
   let outcome: Outcome;
   try {
-    outcome = await settleOne(runCfg, deps, token, meta);
+    outcome =
+      fallback && !cfg.fallbackRpcUrl
+        ? // Fail closed: only the fallback node can say what happened to a transaction it sent.
+          { status: 'tx-stuck', detail: 'the transaction in flight was sent through RPC_FALLBACK_URL, which is no longer set; nothing sent' }
+        : await settleOne(runCfg, deps, token, meta);
   } catch {
     // Anything unexpected is reported by kind only; the error text could carry a URL.
     outcome = { status: 'rpc-error', detail: 'unexpected' };
@@ -237,7 +245,9 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     ]);
 
   if (fallback) outcome = { ...outcome, fallback: true };
-  meta.useFallback = outcome.status === 'rpc-error' || outcome.status === 'rpc-rate-limited';
+  // After an RPC-failed run the next one tries the other provider, so a failing fallback hands back to the primary
+  // instead of holding every later run (adversary on c2c6336).
+  meta.useFallback = (outcome.status === 'rpc-error' || outcome.status === 'rpc-rate-limited') && !fallback;
   meta.heldBack = outcome.status === 'rpc-error' && outcome.detail?.endsWith(HELD_BACK) ? (meta.heldBack ?? 0) + 1 : 0;
   if (meta.heldBack >= HELD_BACK_ALERT_RUNS)
     outcome = withAlarms(outcome, [`${meta.heldBack} runs in a row held back a send: the RPC answers too slowly to sign and send inside one run`]);
@@ -549,7 +559,7 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
   const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
   const sentAt = deps.net.now();
-  const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt, kind: job.kind };
+  const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt, kind: job.kind, ...(cfg.onFallback ? { via: 'fallback' as const } : {}) };
   const extra: Partial<Meta> = job.countPoolRefund ? { poolRefundsSent: [...meta.poolRefundsSent, sentAt] } : {};
   // A replacement supersedes the record of the transaction the node lost: that one failed, so count it now,
   // when the replacement at its nonce is recorded (and not before, adversary on 5ed962d).
