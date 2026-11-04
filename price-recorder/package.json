@@ -1,0 +1,33 @@
+{
+  "name": "mako-price-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mako Market price recorder: a Cloudflare Worker that records one-minute candles from Chainlink Data Streams for the charts (CHARTS_DS_PLAN). It never settles anything and shares no runtime state with the resolver.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "vitest run",
+    "rules-version": "node scripts/gen-rules-version.mjs",
+    "bundle": "node scripts/gen-rules-version.mjs --check && wrangler deploy --dry-run --outdir dist",
+    "bundle:spike": "wrangler deploy --dry-run --outdir dist-spike --name mako-price-recorder-spike src/bundle-spike.ts && node scripts/run-spike.mjs",
+    "reference": "python3 -I scripts/reference_ohlc.py",
+    "reference:rollups": "python3 -I scripts/reference_rollups.py"
+  },
+  "dependencies": {
+    "viem": "2.50.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.13",
+    "@cloudflare/workers-types": "5.20260919.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.135.0"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}
