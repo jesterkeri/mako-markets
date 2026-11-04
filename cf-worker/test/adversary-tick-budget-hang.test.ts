@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { makoAbi } from '../src/abi';
 import { viaMulticall } from './multicall-fake';
-import { runResolver, type Env } from '../src/index';
+import { runResolver, TICK_OVERRUN_MS, type Env } from '../src/index';
 
 const MAKO = '0xbC5A58487D7949dA2B76aC84AfC032fD0aa26195';
 const MAKO_RPC = 'http://public-monad-rpc.stub/';
@@ -132,6 +132,8 @@ function hang(signal: AbortSignal | null | undefined): Promise<Response> {
 }
 
 let hangMethod: string | null = null;
+/// Hang every eth_call to Multicall3, the market scan's getMarket chunks (builder, Codex R2 F1).
+let hangScan = false;
 let hangFootball = false;
 const hung: string[] = [];
 
@@ -147,6 +149,11 @@ async function stubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   if (url !== MAKO_RPC) throw new Error(`stub: unexpected request to ${url}`);
   const body = JSON.parse(String(init?.body));
   if (Array.isArray(body)) return new Response('Restricted JSON RPC method', { status: 403 });
+  const to = ((body as Rpc).params?.[0] as { to?: string } | undefined)?.to?.toLowerCase();
+  if (hangScan && (body as Rpc).method === 'eth_call' && to === '0xca11bde05977b3631167028862be2a173976ca11') {
+    hung.push('aggregate3');
+    return hang(init?.signal);
+  }
   if ((body as Rpc).method === hangMethod) {
     hung.push((body as Rpc).method);
     return hang(init?.signal);
@@ -178,6 +185,7 @@ afterEach(() => {
   hung.length = 0;
   hangMethod = null;
   hangFootball = false;
+  hangScan = false;
   world = [];
 });
 
@@ -205,5 +213,20 @@ describe('adversary tick budget: work started inside the budget is not bounded b
     expect(raws.length).toBe(0);
     expect(late, `tick still running 30 s after its deadline; hung on ${hung.join(', ')}`).not.toBeNull();
     expect(late!, `${hung.length} hung requests (viem retries)\n${lines.join('\n')}`).toBeLessThan(1_000);
+  }, 120_000);
+
+  // Builder's case for Codex RESOLVER_NO_BATCH R2 F1: a scan chunk that starts with just over TICK_MIN_LEFT_MS left and
+  // never answers is cut off at the deadline, and the tick ends at once: measured 3 ms late, against 502 ms with the
+  // old fixed 500 ms scan pause. TICK_OVERRUN_MS is the general bound, for a viem retry scheduled across the deadline.
+  it('(c) a scan chunk that never answers, started at the 15 s threshold, ends the tick within the stated overrun', async () => {
+    world = Array(100).fill('resolved');
+    hangScan = true;
+    const startedAt = Date.now() - (BUDGET_MS - 15_400);
+    const { late, lines } = await tickLateness(startedAt, 5_000);
+    expect(hung, lines.join('\n')).toContain('aggregate3');
+    expect(raws.length).toBe(0);
+    expect(late, 'tick still running 5 s after its deadline').not.toBeNull();
+    expect(late!, lines.join('\n')).toBeLessThan(300);
+    expect(late!).toBeLessThan(TICK_OVERRUN_MS);
   }, 120_000);
 });

@@ -129,8 +129,12 @@ export interface Env {
 const RECEIPT_TIMEOUT_MS = 45_000;
 /// A tick ends within TICK_BUDGET_MS of its scheduled time, inside the one-minute cron, so ticks do not overlap (Codex
 /// RESOLVER_NO_BATCH R1 F1). The receipt wait is cut to the time left; a receipt timeout is already safe across ticks
-/// (sendOnce, src/settlement.ts).
+/// (sendOnce, src/settlement.ts). Every request ends by the deadline (tickFetch), but viem still waits its own retry
+/// backoff (150 + 300 + 600 ms) for a call cut off there, so the bound is TICK_BUDGET_MS + TICK_OVERRUN_MS, 51.05 s,
+/// still inside the 60 s cron (Codex RESOLVER_NO_BATCH R2 F1).
 const TICK_BUDGET_MS = 50_000;
+/// viem's default retry backoff for a call in flight at the deadline: 3 retries of 150 * 2^n ms, each failing at once.
+export const TICK_OVERRUN_MS = 1_050;
 /// No new market work starts with less than this left: the finalized re-read, both nonce reads and the send.
 const TICK_MIN_LEFT_MS = 15_000;
 /// Multicall3, at the same address on Monad testnet as on every EVM chain (keeper and watchdog read through it too).
@@ -1035,10 +1039,18 @@ function validateEnv(env: Env): {
   };
 }
 
-/// The main loop's market order: every id not in `slow` ascending, then the `slow` ids rotated by one place a minute.
+/// The main loop's market order: every id not in `slow` ascending, then the `slow` ids (ascending) starting from the
+/// first one at or after a cursor that walks the id space one id a minute, modulo `span`, the smallest power of two at
+/// or above `count`. The cursor never depends on which pools are slow, so pools joining or leaving the slow set cannot
+/// keep it from any pool (Codex RESOLVER_NO_BATCH R2 F2): a pool that stays slow is first among them at least once in
+/// any `span` consecutive minutes in which `count` (nextMarketId, which only grows) stays within one power of two.
 export function tickOrder(count: number, slow: readonly number[], nowMs: number): number[] {
   const slowSet = new Set(slow);
-  const turn = slow.length === 0 ? 0 : Math.floor(nowMs / 60_000) % slow.length;
+  let span = 1;
+  while (span < count) span *= 2;
+  const cursor = Math.floor(nowMs / 60_000) % span;
+  const at = slow.findIndex((id) => id >= cursor);
+  const turn = at === -1 ? 0 : at;
   return [...Array.from({ length: count }, (_, i) => i).filter((i) => !slowSet.has(i)), ...slow.slice(turn), ...slow.slice(0, turn)];
 }
 
@@ -1215,7 +1227,9 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
     } catch (e) {
       for (let k = 0; k < ids.length; k++) marketResults.push({ status: 'rejected', reason: e });
     }
-    await new Promise<void>((r) => setTimeout(r, READ_CHUNK_DELAY_MS));
+    // Never past the deadline: after a chunk cut off there, the tick ends at once (Codex RESOLVER_NO_BATCH R2 F1).
+    const pause = Math.min(READ_CHUNK_DELAY_MS, deadline - Date.now());
+    if (pause > 0) await new Promise<void>((r) => setTimeout(r, pause));
   }
 
   // Decide every market up front (src/settlement.ts). One-sided pools and
@@ -1246,9 +1260,8 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   // The main loop's order: pools whose decision needs its own upstream request (a match, a game, a Data Streams report)
   // go last, rotated one place a minute, so pools that never settle but cost time every tick cannot keep the 50 s
   // budget from the pools after them (adversary on 6668b66). The slow set is chosen by type, not by this minute's Data
-  // Streams turn, so it stays the same from minute to minute (adversary on b52c114: a set that changed with the turn
-  // let the rotation line up the same way every minute). With an unchanged set each slow pool is first among them once
-  // every slowIdx.length ticks, and the first one, if it settles on Data Streams, always holds one of the turns.
+  // Streams turn (adversary on b52c114), and the rotation walks the id space, not this list (Codex R2 F2; tickOrder
+  // states the bound). The first slow pool, if it settles on Data Streams, always holds one of the turns.
   const slowIdx = indicesWhere(
     (r, idx) =>
       fetchable(r, idx) &&
