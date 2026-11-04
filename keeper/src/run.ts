@@ -46,6 +46,11 @@ export const TX_STUCK_MS = 3 * 60_000;
 /// reported, so one rate-limited minute does not page. Four minutes, not five: a failure can begin up to a
 /// minute before the next run sees it, and T0.1c wants the alert within 5 minutes of the first failure.
 export const UNHEALTHY_REPORT_MS = 4 * 60_000;
+/// Runs in a row that hold back a send for lack of time, after which Healthchecks is told at once rather than after
+/// UNHEALTHY_REPORT_MS: one slow minute stays quiet, a second means the RPC keeps settlements waiting (Joshua 2026-11-04).
+export const HELD_BACK_ALERT_RUNS = 2;
+/// The detail a run ends with when it holds back a send (sendTx); it signed nothing, so nothing is in flight.
+const HELD_BACK = 'deadline before signing; nothing signed';
 /// Transactions for one round that revert on chain or are dropped, after which it is no longer sent.
 export const MAX_TX_FAILURES = 2;
 /// Gas balance for fewer than this many settlements is reported, so it is topped up before it runs out.
@@ -196,6 +201,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     poolsOpen: [...(a.poolsOpen ?? [])],
     poolRefundsSent: [...(a.poolRefundsSent ?? [])],
     breakerTrippedAt: a.breakerTrippedAt ?? null,
+    heldBack: a.heldBack ?? 0,
   };
 
   // The breaker's reset is Joshua's: REFUND_BREAKER_RESET clears a trip only if it is later than the trip AND
@@ -221,6 +227,10 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
         (resetFuture ? ' (the REFUND_BREAKER_RESET set now is in the future, so it is ignored)' : ''),
     ]);
 
+  meta.heldBack = outcome.status === 'rpc-error' && outcome.detail?.endsWith(HELD_BACK) ? (meta.heldBack ?? 0) + 1 : 0;
+  if (meta.heldBack >= HELD_BACK_ALERT_RUNS)
+    outcome = withAlarms(outcome, [`${meta.heldBack} runs in a row held back a send: the RPC answers too slowly to sign and send inside one run`]);
+
   const end = deps.net.now();
   meta.lastStatus = describe(outcome);
   meta.lastRunAt = end;
@@ -233,7 +243,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     meta.unhealthySince ??= now;
   }
 
-  if (meta.unhealthySince !== null && end - meta.unhealthySince >= UNHEALTHY_REPORT_MS)
+  if ((meta.unhealthySince !== null && end - meta.unhealthySince >= UNHEALTHY_REPORT_MS) || (meta.heldBack ?? 0) >= HELD_BACK_ALERT_RUNS)
     await deps.ping('fail', `mako-settlement-keeper ${describe(outcome)}`);
   else if (!unhealthyRun(outcome)) await deps.ping('ok', describe(outcome));
   return outcome;
@@ -524,7 +534,7 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
   // send for TX_STUCK_MS and is then counted as a failure (adversary on b7c6aab, a slow public RPC). A reserve sized
   // from this run's answers (945f021) let a send slower than the reads be cut after signing (adversary on 945f021), so
   // the full timeout is kept, at the cost of a few slow-RPC answer times production settled at (test it.fails cases).
-  if (deps.net.deadlineAt - deps.net.now() < FETCH_TIMEOUT_MS) return { status: 'rpc-error', detail: `${label} deadline before signing; nothing signed` };
+  if (deps.net.deadlineAt - deps.net.now() < FETCH_TIMEOUT_MS) return { status: 'rpc-error', detail: `${label} ${HELD_BACK}` };
   const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
   const sentAt = deps.net.now();

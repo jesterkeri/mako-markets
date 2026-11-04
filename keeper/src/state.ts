@@ -46,6 +46,8 @@ export interface Meta {
   poolRefundsSent: number[];
   /// Set when the breaker trips; V4 refunds stay halted until REFUND_BREAKER_RESET is later than this.
   breakerTrippedAt: number | null;
+  /// Runs in a row that held back a send because too little time was left to sign and send it (run.ts sendTx).
+  heldBack?: number;
 }
 
 export const INITIAL_META: Meta = {
