@@ -212,8 +212,19 @@ describe('a due round on a slow public RPC (adversary, fix/workers-no-batch)', (
     });
   });
 
+  // Builder's note: since calls start 200 ms apart (Codex WORKERS_NO_BATCH R1 F2, Joshua 2026-11-04 chose "stagger +
+  // slower pacing"), this path sends up to 5.60 s an answer (measured: 5.60 sent, 5.61 rpc-error). The case below
+  // pins that edge; the adopted 5.7 s case is kept as an expected failure, the residual band 5.61 to 5.71 s.
+  it('after the previous run\'s transaction landed, at 5.6 s an answer it still sends (edge at 200 ms spacing)', async () => {
+    w.meta.inFlight = { hash: keccak256('0x01'), nonce: 3, roundId: '6', sentAt: w.now - 60_000, kind: 'settle' };
+    w.receipt = { status: '0x1' };
+    w.latencyMs = 5_600;
+    const o = await runKeeper(cfg, deps());
+    expect({ status: o.status, order: w.order, sent: w.sent.length }).toEqual({ status: 'sent', order: ['simulate', 'sign', 'record', 'send'], sent: 1 });
+  });
+
   // Production before the batch ban sent this one whenever 7 requests fit the old 40 s budget (L <= 5.71 s).
-  it('after the previous run\'s transaction landed, at 5.7 s an answer it still sends (2159977 range)', async () => {
+  it.fails('after the previous run\'s transaction landed, at 5.7 s an answer it still sends (2159977 range)', async () => {
     w.meta.inFlight = { hash: keccak256('0x01'), nonce: 3, roundId: '6', sentAt: w.now - 60_000, kind: 'settle' };
     w.receipt = { status: '0x1' };
     w.latencyMs = 5_700;

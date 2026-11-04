@@ -7,7 +7,7 @@ import { BOOTSTRAP_PUBLIC_REQUESTS, MAX_HTTP_REQUESTS, MAX_HTTP_REQUESTS_BOOTSTR
 // same thing (review r5: the documented cap drifted from the enforced one).
 describe('wrangler.toml matches the enforced limits', () => {
   it('cron, CPU, subrequests, Durable Object binding and migration', () => {
-    expect(toml).toContain('crons = ["*/5 * * * *"]');
+    expect(toml).toContain('crons = ["3-59/5 * * * *"]');
     expect(toml).toContain('cpu_ms = 5000');
     expect(toml).toContain('subrequests = 100');
     expect(toml).toContain('name = "WATCHDOG_STATE"');

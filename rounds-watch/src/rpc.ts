@@ -16,8 +16,9 @@ export type RpcBatch = { ok: true; items: RpcItem[] } | { ok: false; kind: FailK
 
 const RATE_LIMIT_CODES = new Set([-32011, -32005, 429]);
 
-/// Gap between two calls of one run, so a run stays under 10 calls a second (the public RPC allows about 15 items).
-export const CALL_SPACING_MS = 110;
+/// Gap between two call starts of one run: 5 calls a second, so the keeper and the resolver together stay at or under
+/// the public RPC's ~15 items a second, with the five-minute Workers on other minutes (Codex WORKERS_NO_BATCH R1 F2).
+export const CALL_SPACING_MS = 200;
 const lastCall = new WeakMap<Net, number>();
 
 /// Same result as the array batch it replaced, item i for call i, but each call is its own request: since 2026-11-03

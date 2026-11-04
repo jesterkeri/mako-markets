@@ -13,11 +13,12 @@ export interface ProbeResult {
   detail: string;
 }
 
-/// Which probes are due at this run's minute (r4 §5.4): pb and rr every run,
-/// comments at minutes 0 and 30, the market page and charts at minute 0.
+/// Which probes are due at this run (r4 §5.4): pb and rr every run, comments in the first run of each half hour,
+/// the market page and charts in the first run of each hour. "First run" is the one in minutes 0-4 (or 30-34), so it
+/// holds whatever minute offset the five-minute cron has (it runs at minutes 3, 8, ... since Codex WORKERS_NO_BATCH F2).
 export function dueProbes(scheduledTime: number): { nc: boolean; mp: boolean; ch: boolean } {
   const minute = new Date(scheduledTime).getUTCMinutes();
-  return { nc: minute === 0 || minute === 30, mp: minute === 0, ch: minute === 0 };
+  return { nc: minute % 30 < 5, mp: minute < 5, ch: minute < 5 };
 }
 
 /// pb: provider B answers, on chain 10143, and its latest block has advanced
