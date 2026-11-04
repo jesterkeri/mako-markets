@@ -212,13 +212,14 @@ describe('a due round on a slow public RPC (adversary, fix/workers-no-batch)', (
     });
   });
 
-  // Builder's note: since calls start 200 ms apart (Codex WORKERS_NO_BATCH R1 F2, Joshua 2026-11-04 chose "stagger +
-  // slower pacing"), this path sends up to 5.60 s an answer (measured: 5.60 sent, 5.61 rpc-error). The case below
-  // pins that edge; the adopted 5.7 s case is kept as an expected failure, the residual band 5.61 to 5.71 s.
-  it('after the previous run\'s transaction landed, at 5.6 s an answer it still sends (edge at 200 ms spacing)', async () => {
+  // Builder's note: since calls start 210 ms apart (Codex WORKERS_NO_BATCH R1 F2, Joshua 2026-11-04 chose "stagger +
+  // slower pacing"; 210 rather than 200 ms on Codex's follow-up), this path sends up to 5.58 s an answer (measured:
+  // 5.58 sent, 5.59 rpc-error; 5.60 at 200 ms). The case below pins that edge; the adopted 5.7 s case is kept as an
+  // expected failure, the residual band 5.59 to 5.71 s.
+  it('after the previous run\'s transaction landed, at 5.58 s an answer it still sends (edge at 210 ms spacing)', async () => {
     w.meta.inFlight = { hash: keccak256('0x01'), nonce: 3, roundId: '6', sentAt: w.now - 60_000, kind: 'settle' };
     w.receipt = { status: '0x1' };
-    w.latencyMs = 5_600;
+    w.latencyMs = 5_580;
     const o = await runKeeper(cfg, deps());
     expect({ status: o.status, order: w.order, sent: w.sent.length }).toEqual({ status: 'sent', order: ['simulate', 'sign', 'record', 'send'], sent: 1 });
   });

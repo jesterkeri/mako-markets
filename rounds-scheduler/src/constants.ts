@@ -22,6 +22,10 @@ export const MAX_SCAN_PAGES = 10;
 export const SEND_TIMEOUT_MS = 20_000;
 /// Each read request is abandoned after this long, with no retry.
 export const READ_TIMEOUT_MS = 10_000;
+/// Gap between two public-RPC call starts, concurrent ones included: about 4.8 a second, so with the keeper and the
+/// resolver, which share this Worker's minutes, the public RPC sees about 14.3 a second, under its ~15 (Codex
+/// WORKERS_NO_BATCH R1 F2 and its follow-up; adversary on 626f612 found this Worker unpaced).
+export const CALL_SPACING_MS = 210;
 
 /// The most subrequests one run can make. Cloudflare counts every fetch and every Durable Object call
 /// (developers.cloudflare.com/workers/platform/limits/#subrequests); both RPC clients make no retries, so each read
