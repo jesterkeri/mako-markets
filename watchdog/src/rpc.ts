@@ -45,8 +45,9 @@ export async function rpcBatch(net: Net, url: string, calls: RpcCall[]): Promise
   return { ok: true, items };
 }
 
-/// Gap between two public-RPC calls of one run: under 10 a second (the public RPC allows about 15 items a second).
-export const CALL_SPACING_MS = 110;
+/// Gap between two public-RPC call starts of one run: 5 calls a second, so the keeper and the resolver together stay at
+/// or under the public RPC's ~15 items a second, with this Worker on other minutes (Codex WORKERS_NO_BATCH R1 F2).
+export const CALL_SPACING_MS = 200;
 const lastCall = new WeakMap<Net, number>();
 
 /// rpcBatch's result for the public Monad RPC, which since 2026-11-03 answers any JSON-RPC array body with HTTP 403

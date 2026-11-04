@@ -7,7 +7,9 @@ compatibility_date = "2026-09-01"
 # both seconds. No wallet key; sends nothing on-chain; separate from the keeper so it fails independently.
 
 [triggers]
-crons = ["*/5 * * * *"]
+# Minutes 1, 6, 11, ...: off the watchdog's minutes, so at most one five-minute Worker shares a minute with the
+# keeper and the resolver (Codex WORKERS_NO_BATCH R1 F2).
+crons = ["1-59/5 * * * *"]
 
 [limits]
 cpu_ms = 5000

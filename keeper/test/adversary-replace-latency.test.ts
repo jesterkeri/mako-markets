@@ -15,7 +15,7 @@
 // adversary-sign-reserve.test.ts. Spec rule 4 forbids a result that rests on one overlap model, so each case
 // runs under three: full overlap (most favourable to 3636b4f), the measured partial overlap (an answer can come
 // no sooner than L/2 after the previous one: 6 calls 110 ms apart at 0.3 s each finish at 1.05 s, measured
-// 1.07 s on 2026-11-04), and full serialisation. 2159977 never has two requests in flight, so all three models
+// 1.07 s on 2026-11-04, when the spacing was 110 ms; it is 200 ms since Codex WORKERS_NO_BATCH R1 F2), and full serialisation. 2159977 never has two requests in flight, so all three models
 // are the same for it. Array bodies are answered item by item ONLY so this file can be replayed on 2159977.
 
 import { encodeAbiParameters, encodeFunctionResult, keccak256, type Hex } from 'viem';
