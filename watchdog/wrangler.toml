@@ -10,7 +10,7 @@ compatibility_date = "2026-09-01"
 # Every 5 minutes at minutes 3, 8, 13, ...: off rounds-watch's minutes, so at most one five-minute Worker shares a
 # minute with the keeper and the resolver (Codex WORKERS_NO_BATCH R1 F2). Schedule decisions use event.scheduledTime.
 [triggers]
-crons = ["3-59/5 * * * *"]
+crons = ["3,8,13,18,23,28,33,38,43,48,53,58 * * * *"]
 
 # CPU ceiling per run, and the subrequest cap. An ordinary completed slice-1 run
 # makes at most 25 requests (23 HTTP + 2 Durable Object); the one bootstrap run
