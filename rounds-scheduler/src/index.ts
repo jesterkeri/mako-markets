@@ -6,7 +6,7 @@
 import { createPublicClient, defineChain, encodeFunctionData, getAddress, http, keccak256, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-import { MAX_SCAN_PAGES, READ_TIMEOUT_MS, ROUNDS_ABI, SEND_TIMEOUT_MS } from './constants';
+import { CALL_SPACING_MS, MAX_SCAN_PAGES, READ_TIMEOUT_MS, ROUNDS_ABI, SEND_TIMEOUT_MS } from './constants';
 import { MAX_LEAD_S, planSchedule, type ChainView, type HouseView } from './plan';
 import { type Acquired, type SchedulerState, type SendIntent } from './state';
 
@@ -88,13 +88,23 @@ async function runLocked(env: Env, nowS: number, deps: RunDeps, token: number): 
   const dryRun = isDryRun(env);
   // No retries on reads either (Codex Rounds r4): viem's default retries a 408/429/5xx up to 3 times, each a separate
   // subrequest, which WORST_CASE_SUBREQUESTS does not count. A failed read ends this run; the next cron tries again.
+  // Both clients start their calls CALL_SPACING_MS apart: each call takes the next slot before it waits, so the
+  // concurrent reads (Promise.all pairs) are spaced too. Only fast answers wait; the slow-RPC worst case is unchanged.
+  let nextSlot = 0;
+  const paced = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const slot = Math.max(Date.now(), nextSlot);
+    nextSlot = slot + CALL_SPACING_MS;
+    const wait = slot - Date.now();
+    if (wait > 0) await new Promise<void>((r) => setTimeout(r, wait));
+    return fetch(input, init);
+  }) as typeof fetch;
   const client = createPublicClient({
     chain: monad,
-    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0 }),
+    transport: http(env.RPC_URL.trim(), { timeout: READ_TIMEOUT_MS, retryCount: 0, fetchFn: paced }),
     batch: { multicall: true },
   });
   const c = { address: rounds, abi: ROUNDS_ABI } as const;
-  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0 }) });
+  const sender = createPublicClient({ chain: monad, transport: http(env.RPC_URL.trim(), { timeout: SEND_TIMEOUT_MS, retryCount: 0, fetchFn: paced }) });
   const skips: string[] = [];
 
   // An earlier run's recorded send comes first (Codex Rounds r3). Until the chain shows its nonce used, nothing new
