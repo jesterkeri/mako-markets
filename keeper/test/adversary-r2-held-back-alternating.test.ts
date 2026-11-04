@@ -9,6 +9,11 @@
 // resets both the held-back count and unhealthySince; the run after is on the primary again and holds round 7 back
 // again. Nothing is ever sent, so per the spec the count is never reset, yet no fail ping is ever made: round 7 waits on
 // the slow primary with Healthchecks told "ok" every other minute.
+//
+// Builder's change after the adversary on 19850ff: a held-back round now keeps its turn, so a working fallback settles
+// round 7 (adversary-r3-held-round-fallback.test.ts). To keep this test's point, held-back runs separated by runs that
+// send nothing must still alert, the fallback here REFUSES every request (HTTP 429), so the run between is
+// rpc-rate-limited instead of waiting-report. The assertions are unchanged.
 
 import { encodeAbiParameters, encodeFunctionResult, toHex, type Hex } from 'viem';
 import { describe, expect, it } from 'vitest';
@@ -85,6 +90,7 @@ const fetchNow = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (node) {
     hits.push(node);
     if (node === 'primary') clock += PRIMARY_ANSWER_MS;
+    else return new Response('refused', { status: 429 });
     const body = JSON.parse(String(init?.body));
     return Response.json({ jsonrpc: '2.0', id: body.id, ...(answer(body.method, body.params) as object) });
   }

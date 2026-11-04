@@ -227,6 +227,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     meta.poolRefundsSent = [];
   }
 
+  const triedBefore = { ...meta.attempts };
   let outcome: Outcome;
   try {
     outcome = await settleOne(runCfg, deps, token, meta);
@@ -254,6 +255,14 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
   const held = outcome.status === 'rpc-error' && outcome.detail?.endsWith(HELD_BACK) === true;
   const sent = outcome.status === 'sent' || outcome.status === 'sent-low-gas';
   meta.heldBack = held ? (meta.heldBack ?? 0) + 1 : sent ? 0 : (meta.heldBack ?? 0);
+  // A held-back send used no turn: put back the stamp this run gave its round or refund, so the next run, on the other
+  // provider, takes the same one instead of a different due target (adversary on 19850ff). Pruned keys stay pruned.
+  if (held)
+    for (const [k, v] of Object.entries(meta.attempts))
+      if (v !== triedBefore[k]) {
+        if (k in triedBefore) meta.attempts[k] = triedBefore[k];
+        else delete meta.attempts[k];
+      }
   const heldAlert = held && meta.heldBack >= HELD_BACK_ALERT_RUNS;
   if (heldAlert)
     outcome = withAlarms(outcome, [`${meta.heldBack} runs held back a send since the keeper last sent: the RPC answers too slowly to sign and send inside one run`]);
@@ -569,7 +578,9 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
   const hash = keccak256(raw);
   const sentAt = deps.net.now();
   const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt, kind: job.kind, ...(cfg.onFallback ? { via: 'fallback' as const } : {}) };
-  const extra: Partial<Meta> = job.countPoolRefund ? { poolRefundsSent: [...meta.poolRefundsSent, sentAt] } : {};
+  // The record makes the send durable, so it resets the held-back count too: a run that dies after it and before its
+  // commit has still sent (adversary on 19850ff).
+  const extra: Partial<Meta> = { heldBack: 0, ...(job.countPoolRefund ? { poolRefundsSent: [...meta.poolRefundsSent, sentAt] } : {}) };
   // A replacement supersedes the record of the transaction the node lost: that one failed, so count it now,
   // when the replacement at its nonce is recorded (and not before, adversary on 5ed962d).
   const replaced = meta.replaceNonce !== undefined ? meta.inFlight : null;
