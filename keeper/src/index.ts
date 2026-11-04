@@ -34,10 +34,11 @@ export interface Env {
 /// before signing: with 40 s that reserve stopped settlements at answer times production handled (adversary on 52b73f2).
 const RUN_BUDGET_MS = 45_000;
 /// Requests one run may make through `net` (the Healthchecks ping uses its own fetch). One JSON-RPC call per request
-/// since 2026-11-03 (src/rpc.ts), so the worst path is 16: an earlier transaction's receipt, nonce, by-hash and
-/// pending nonce (4), the due reads (2), the close times (1), two reports (2), the pre-send reads (6) and the send
-/// (1). It was 11 (T0.1c: 10 a round) while calls went as array batches.
-const MAX_REQUESTS = 16;
+/// since 2026-11-03 (src/rpc.ts), so the worst path is 17: an earlier transaction's receipt, nonce, by-hash and
+/// pending nonce (4) and the other provider's by-hash when it was sent again there (1), the due reads (2), the close
+/// times (1), two reports (2), the pre-send reads (6) and the send (1). It was 11 (T0.1c: 10 a round) while calls went
+/// as array batches.
+const MAX_REQUESTS = 17;
 
 function address(raw: string | undefined, label: string): Hex {
   if (!raw) throw new Error(`${label} is not set`);

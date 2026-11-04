@@ -221,13 +221,18 @@ describe('builder: only the sending node judges the in-flight transaction lost',
     expect({ status: sent.status, providers: sent.providers, via: stored.inFlight?.via, next: stored.useFallback }).toEqual({ status: 'sent', providers: ['fallback'], via: 'fallback', next: false });
     expect(fallback.pool.size).toBe(1);
     clock = stored.inFlight!.sentAt + TX_STUCK_MS + 5_000;
+    // Builder, after Codex KEEPER_SAFEGUARDS R1 F2: the primary, which did not send it, sends the SAME bytes again
+    // instead of judging it (was: waits and hands the next run to the fallback). Nothing new is signed.
     const onPrimary = await run();
-    expect({ status: onPrimary.status, providers: onPrimary.providers, next: stored.useFallback, signed: signedTxs.length }).toEqual({ status: 'tx-stuck', providers: ['primary'], next: true, signed: 1 });
-    expect(onPrimary.detail).toContain('did not send it');
+    expect({ status: onPrimary.status, providers: onPrimary.providers, next: stored.useFallback, signed: signedTxs.length, held: primary.pool.size }).toEqual({ status: 'tx-stuck', providers: ['primary'], next: false, signed: 1, held: 1 });
+    expect(onPrimary.detail).toContain('sent again, unchanged');
+    expect([...primary.pool.keys()]).toEqual([...fallback.pool.keys()]);
     clock += 60_000;
-    const onSender = await run();
-    expect({ status: onSender.status, providers: onSender.providers, signed: signedTxs.length }).toEqual({ status: 'tx-stuck', providers: ['fallback'], signed: 1 });
-    expect(onSender.detail).toContain('still known to the node');
+    expect((await run()).status).toBe('tx-pending');
+    clock = stored.inFlight!.handedAt! + TX_STUCK_MS + 5_000;
+    const later = await run();
+    expect({ status: later.status, providers: later.providers, signed: signedTxs.length }).toEqual({ status: 'tx-stuck', providers: ['primary'], signed: 1 });
+    expect(later.detail).toContain('still known to the node');
   });
 
   it('sent through the fallback, with RPC_FALLBACK_URL since removed: the primary never judges it lost, nothing signed', async () => {
@@ -237,7 +242,7 @@ describe('builder: only the sending node judges the in-flight transaction lost',
     hits.length = 0;
     const o = await runKeeper({ ...cfg, fallbackRpcUrl: null }, deps());
     expect({ status: o.status, providers: [...new Set(hits)], signed: signedTxs.length, kept: stored.inFlight?.hash }).toEqual({ status: 'tx-stuck', providers: ['primary'], signed: 0, kept: keccak256('0x01') });
-    expect(o.detail).toContain('did not send it');
+    expect(o.detail).toContain('no longer configured');
     expect(o.detail).not.toContain('sentinel');
   });
 });

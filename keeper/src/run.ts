@@ -53,6 +53,15 @@ export const HELD_BACK_ALERT_RUNS = 2;
 const HELD_BACK = 'deadline before signing; nothing signed';
 /// The end of a tx-stuck detail when this run's node did not send the transaction in flight and cannot see it.
 const NOT_SENDER = 'unknown to this node, which did not send it; nothing sent';
+/// The end of a tx-stuck detail when the sender asks for the stuck transaction to go through the other provider next run.
+const TO_OTHER = 'to be sent again, unchanged, through the other provider; nothing sent';
+
+/// A stable, non-secret name for an RPC endpoint: the first 16 hex digits of the SHA-256 of its URL. The URL can carry a
+/// provider key, so only this is stored, and it changes whenever the URL does.
+export async function nodeId(url: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url)));
+  return Array.from(d.slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+}
 /// Transactions for one round that revert on chain or are dropped, after which it is no longer sent.
 export const MAX_TX_FAILURES = 2;
 /// Gas balance for fewer than this many settlements is reported, so it is topped up before it runs out.
@@ -160,6 +169,9 @@ export interface RunConfig {
   fallbackRpcUrl?: string | null;
   /// Set by runKeeper only: this run talks to fallbackRpcUrl, so a transaction it sends is recorded as sent there.
   onFallback?: true;
+  /// Set by runKeeper only: nodeId of this run's endpoint, and the other configured endpoint, if any.
+  nodeId?: string;
+  other?: { id: string; url: string };
   datastreamsUrl: string;
   datastreamsKey: string;
   datastreamsSecret: string;
@@ -215,8 +227,13 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
   };
   // One provider for the whole run, so its nonce, receipt and pending reads and its send all come from the same node.
   // Which one is decided at the end of the previous run (below).
-  const fallback = meta.useFallback === true && !!cfg.fallbackRpcUrl;
-  const runCfg: RunConfig = fallback ? { ...cfg, rpcUrl: cfg.fallbackRpcUrl!, onFallback: true } : cfg;
+  const primaryId = await nodeId(cfg.rpcUrl);
+  const fallbackId = cfg.fallbackRpcUrl ? await nodeId(cfg.fallbackRpcUrl) : null;
+  const hasFallback = fallbackId !== null && fallbackId !== primaryId;
+  const fallback = meta.useFallback === true && hasFallback;
+  const runCfg: RunConfig = fallback
+    ? { ...cfg, rpcUrl: cfg.fallbackRpcUrl!, onFallback: true, nodeId: fallbackId!, other: { id: primaryId, url: cfg.rpcUrl } }
+    : { ...cfg, nodeId: primaryId, other: hasFallback ? { id: fallbackId!, url: cfg.fallbackRpcUrl! } : undefined };
 
   // The breaker's reset is Joshua's: REFUND_BREAKER_RESET clears a trip only if it is later than the trip AND
   // not in the future. A future reset would otherwise clear every trip until that time, which is no breaker
@@ -248,7 +265,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
   // transaction it did not send, the other one too: only the sender may judge it lost (settleOne). Otherwise the
   // primary: any node sees a receipt or a used nonce.
   const rpcFailed = outcome.status === 'rpc-error' || outcome.status === 'rpc-rate-limited';
-  const notSender = outcome.status === 'tx-stuck' && outcome.detail?.endsWith(NOT_SENDER) === true;
+  const notSender = outcome.status === 'tx-stuck' && (outcome.detail?.endsWith(NOT_SENDER) === true || outcome.detail?.endsWith(TO_OTHER) === true);
   meta.useFallback = (rpcFailed || notSender) && !fallback;
   // Held-back sends count until a run sends (any other run leaves the count), and alert on a held-back run only, so
   // a slow primary alternating with fallback runs that send nothing still alerts (adversary on fc1ff7c).
@@ -342,6 +359,28 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
         meta.txFailures[fk] = (meta.txFailures[fk] ?? 0) + 1;
         prior = { status: 'tx-dropped', detail: `${label} ${f.hash} nonce used` };
       } else {
+        const here = cfg.nodeId;
+        const primaryId = cfg.onFallback ? cfg.other?.id : here;
+        const fallbackId = cfg.onFallback ? here : cfg.other?.id;
+        const sender = f.node ?? (f.via === 'fallback' ? fallbackId : primaryId);
+        // Before anyone may call it lost, its own signed bytes go through the other provider too, so a provider that
+        // answers a send but never broadcasts it cannot spend the target's failures on itself (Codex KEEPER_SAFEGUARDS
+        // R1 F2). The same bytes are the same transaction, so this can never put a second one at the nonce. The record
+        // is written first, as for any send: the other node may hold it from then on.
+        if (f.raw && f.handedTo === undefined && here !== undefined) {
+          if (here !== sender) {
+            const handed: InFlight = { ...f, handedTo: here, handedAt: nowMs };
+            const recorded = await deps.state.recordInFlight(token, handed, nowMs);
+            if (!recorded.ok) return { status: 'lease-lost', detail: label };
+            meta.inFlight = handed;
+            const res = await rpcBatch(deps.net, cfg.rpcUrl, [{ method: 'eth_sendRawTransaction', params: [f.raw] }]);
+            if (!res.ok) return rpcFailure(res.kind);
+            return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} sent again, unchanged, through this provider` };
+          }
+          if (cfg.other) return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} ${TO_OTHER}` };
+        }
+        if (f.handedAt !== undefined && nowMs - f.handedAt < TX_STUCK_MS)
+          return { status: 'tx-pending', detail: `${label} ${f.hash} sent again through the other provider` };
         // The nonce is unused. A null receipt does not mean dropped: the node may hold it, unmined. Ask.
         const more = await rpc(cfg, deps, [
           { method: 'eth_getTransactionByHash', params: [f.hash] },
@@ -360,7 +399,26 @@ async function settleOne(cfg: RunConfig, deps: Deps, token: number, meta: Meta):
         }
         // Only the node that sent it may call it lost: another node may simply never have seen it, while the sender
         // still holds it (adversary on c2c6336). Here it waits; the next run goes to the sender (runKeeper).
-        if ((f.via === 'fallback') !== (cfg.onFallback === true)) return { status: 'tx-stuck', detail: `${label} ${f.hash} ${NOT_SENDER}` };
+        // The sender is named by its URL's fingerprint, so a node swapped in under the same variable is not it (Codex
+        // KEEPER_SAFEGUARDS R1 F1). If neither configured node sent it, nobody may judge it: it waits until it lands,
+        // or until that endpoint is configured again.
+        if (sender !== here) {
+          if (sender === undefined || sender !== cfg.other?.id)
+            return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} sent through an endpoint no longer configured; nothing sent` };
+          return { status: 'tx-stuck', detail: `${label} ${f.hash} ${NOT_SENDER}` };
+        }
+        // A node it was sent again through may hold it too, so it must also not know it. Never judged without it.
+        if (f.handedTo !== undefined) {
+          const holder = f.handedTo === cfg.other?.id ? cfg.other.url : null;
+          if (holder === null)
+            return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} also sent through an endpoint no longer configured; nothing sent` };
+          const o = await rpcBatch(deps.net, holder, [{ method: 'eth_getTransactionByHash', params: [f.hash] }]);
+          if (!o.ok || !o.items[0].ok)
+            return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} the other provider, which also holds it, did not answer; nothing sent` };
+          const r = o.items[0].result;
+          if (r !== null && r !== undefined)
+            return { status: 'tx-stuck', detail: `${label} ${f.hash} nonce ${f.nonce} still known to the other provider` };
+        }
         // Unknown to the node and its nonce unused: it may be replaced, at the SAME nonce only, so at most one of
         // the two can ever execute. The record is KEPT until a replacement at that nonce is actually recorded
         // (sendTx overwrites it then and counts the failure) or the nonce is used on chain: a run that ends
@@ -577,7 +635,16 @@ async function sendTx(cfg: RunConfig, deps: Deps, token: number, meta: Meta, job
   const raw = await deps.sign({ to: job.to, data: job.data, nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
   const hash = keccak256(raw);
   const sentAt = deps.net.now();
-  const inFlight: InFlight = { hash, nonce, roundId: job.target, sentAt, kind: job.kind, ...(cfg.onFallback ? { via: 'fallback' as const } : {}) };
+  const inFlight: InFlight = {
+    hash,
+    nonce,
+    roundId: job.target,
+    sentAt,
+    kind: job.kind,
+    ...(cfg.onFallback ? { via: 'fallback' as const } : {}),
+    ...(cfg.nodeId ? { node: cfg.nodeId } : {}),
+    raw,
+  };
   // The record makes the send durable, so it resets the held-back count too: a run that dies after it and before its
   // commit has still sent (adversary on 19850ff).
   const extra: Partial<Meta> = { heldBack: 0, ...(job.countPoolRefund ? { poolRefundsSent: [...meta.poolRefundsSent, sentAt] } : {}) };

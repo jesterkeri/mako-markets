@@ -25,6 +25,16 @@ export interface InFlight {
   /// judge it lost: another node that never saw it would, and the keeper would sign a second one at its nonce
   /// (adversary on c2c6336).
   via?: 'fallback';
+  /// The node that sent it: a fingerprint of the URL it went through (run.ts nodeId), never the URL. Only that node may
+  /// judge it lost, so changing RPC_URL or RPC_FALLBACK_URL while it is in flight cannot hand that judgement to a node
+  /// that never saw it (Codex KEEPER_SAFEGUARDS R1 F1). Older records have none and fall back to `via`.
+  node?: string;
+  /// The signed bytes, so a stuck transaction can be sent again, unchanged, through the other provider.
+  raw?: string;
+  /// The node it was sent again through, and when: that node may hold it too, so it must also say it does not before
+  /// the sender may call it lost (Codex KEEPER_SAFEGUARDS R1 F2).
+  handedTo?: string;
+  handedAt?: number;
 }
 
 export interface Meta {
