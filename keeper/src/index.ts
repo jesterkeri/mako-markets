@@ -19,6 +19,8 @@ export interface Env {
   REFUND_BREAKER_RESET?: string;
   KEEPER_ADDRESS: string;
   RPC_URL: string;
+  /// Secret (an Alchemy URL carries its key): used for a whole run after a run that ended in an RPC failure.
+  RPC_FALLBACK_URL?: string;
   DATASTREAMS_URL: string;
   DRY_RUN?: string;
   KEEPER_PRIVATE_KEY: string;
@@ -54,7 +56,14 @@ function required(raw: string | undefined, label: string): string {
 
 function https(raw: string | undefined, label: string): string {
   const v = required(raw, label).replace(/\/$/, '');
-  if (new URL(v).protocol !== 'https:') throw new Error(`${label} must be HTTPS`);
+  let protocol: string;
+  try {
+    protocol = new URL(v).protocol;
+  } catch {
+    // The runtime's own message can quote the value, and RPC_FALLBACK_URL carries a provider key.
+    throw new Error(`${label} is not a valid URL`);
+  }
+  if (protocol !== 'https:') throw new Error(`${label} must be HTTPS`);
   return v;
 }
 
@@ -79,6 +88,7 @@ export function readEnv(env: Env): { cfg: RunConfig; key: Hex } {
     breakerResetAt: breakerReset(env.REFUND_BREAKER_RESET),
     keeperAddress,
     rpcUrl: https(env.RPC_URL, 'RPC_URL'),
+    fallbackRpcUrl: env.RPC_FALLBACK_URL?.trim() ? https(env.RPC_FALLBACK_URL, 'RPC_FALLBACK_URL') : null,
     datastreamsUrl: https(env.DATASTREAMS_URL, 'DATASTREAMS_URL'),
     datastreamsKey: required(env.DATASTREAMS_API_KEY, 'DATASTREAMS_API_KEY'),
     datastreamsSecret: required(env.DATASTREAMS_API_SECRET, 'DATASTREAMS_API_SECRET'),

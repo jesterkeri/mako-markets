@@ -130,6 +130,8 @@ export interface Outcome {
   detail?: string;
   /// The earlier transaction's result, when this run resolved it and went on to the next round.
   prior?: Outcome;
+  /// This run read and sent through RPC_FALLBACK_URL (Joshua 2026-11-04), never the URL itself.
+  fallback?: true;
   /// A condition that is unhealthy whatever this run's own status: a pending round 30+ minutes past close,
   /// or one no longer sent after repeated failed transactions. Raised every run while it holds, so a failing
   /// round cannot hide between other rounds' healthy runs.
@@ -138,7 +140,7 @@ export interface Outcome {
 
 const line = (o: Outcome): string => (o.detail ? `${o.status}:${o.detail}` : o.status);
 export function describe(o: Outcome): string {
-  return [line(o), o.prior ? `after ${line(o.prior)}` : null, o.alarm ? `ALARM ${o.alarm}` : null].filter(Boolean).join(' | ');
+  return [line(o), o.prior ? `after ${line(o.prior)}` : null, o.fallback ? 'via fallback RPC' : null, o.alarm ? `ALARM ${o.alarm}` : null].filter(Boolean).join(' | ');
 }
 export const unhealthyRun = (o: Outcome): boolean =>
   isUnhealthy(o.status) || (o.prior !== undefined && isUnhealthy(o.prior.status)) || o.alarm !== undefined;
@@ -151,6 +153,9 @@ export interface RunConfig {
   breakerResetAt: number | null;
   keeperAddress: Hex;
   rpcUrl: string;
+  /// RPC_FALLBACK_URL (secret, never logged): a whole run goes through it after a run that ended in an RPC failure, so
+  /// one slow or refusing provider cannot keep settlements waiting. Unset: every run uses rpcUrl, as before.
+  fallbackRpcUrl?: string | null;
   datastreamsUrl: string;
   datastreamsKey: string;
   datastreamsSecret: string;
@@ -202,7 +207,11 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
     poolRefundsSent: [...(a.poolRefundsSent ?? [])],
     breakerTrippedAt: a.breakerTrippedAt ?? null,
     heldBack: a.heldBack ?? 0,
+    useFallback: a.useFallback ?? false,
   };
+  // One provider for the whole run, so its nonce, receipt and pending reads and its send all come from the same node.
+  const fallback = meta.useFallback === true && !!cfg.fallbackRpcUrl;
+  const runCfg: RunConfig = fallback ? { ...cfg, rpcUrl: cfg.fallbackRpcUrl! } : cfg;
 
   // The breaker's reset is Joshua's: REFUND_BREAKER_RESET clears a trip only if it is later than the trip AND
   // not in the future. A future reset would otherwise clear every trip until that time, which is no breaker
@@ -215,7 +224,7 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
 
   let outcome: Outcome;
   try {
-    outcome = await settleOne(cfg, deps, token, meta);
+    outcome = await settleOne(runCfg, deps, token, meta);
   } catch {
     // Anything unexpected is reported by kind only; the error text could carry a URL.
     outcome = { status: 'rpc-error', detail: 'unexpected' };
@@ -227,6 +236,8 @@ export async function runKeeper(cfg: RunConfig, deps: Deps): Promise<Outcome> {
         (resetFuture ? ' (the REFUND_BREAKER_RESET set now is in the future, so it is ignored)' : ''),
     ]);
 
+  if (fallback) outcome = { ...outcome, fallback: true };
+  meta.useFallback = outcome.status === 'rpc-error' || outcome.status === 'rpc-rate-limited';
   meta.heldBack = outcome.status === 'rpc-error' && outcome.detail?.endsWith(HELD_BACK) ? (meta.heldBack ?? 0) + 1 : 0;
   if (meta.heldBack >= HELD_BACK_ALERT_RUNS)
     outcome = withAlarms(outcome, [`${meta.heldBack} runs in a row held back a send: the RPC answers too slowly to sign and send inside one run`]);

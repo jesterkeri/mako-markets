@@ -58,4 +58,19 @@ describe('keeper config', () => {
     expect(() => readEnv(base({ ROUNDS_ADDRESS: '' }))).toThrow('ROUNDS_ADDRESS is not set');
     expect(() => readEnv(base({ RPC_URL: 'http://testnet-rpc.monad.xyz/' }))).toThrow('RPC_URL must be HTTPS');
   });
+
+  it('reads RPC_FALLBACK_URL as optional HTTPS, and a bad one is refused by name only', () => {
+    expect(readEnv(base()).cfg.fallbackRpcUrl).toBeNull();
+    expect(readEnv(base({ RPC_FALLBACK_URL: '  ' })).cfg.fallbackRpcUrl).toBeNull();
+    expect(readEnv(base({ RPC_FALLBACK_URL: 'https://monad-testnet.g.alchemy.com/v2/sentinel/' })).cfg.fallbackRpcUrl).toBe('https://monad-testnet.g.alchemy.com/v2/sentinel');
+    expect(() => readEnv(base({ RPC_FALLBACK_URL: 'http://monad-testnet.g.alchemy.com/v2/sentinel' }))).toThrow('RPC_FALLBACK_URL must be HTTPS');
+    let message = '';
+    try {
+      readEnv(base({ RPC_FALLBACK_URL: 'https://[sentinel-key' }));
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toBe('RPC_FALLBACK_URL is not a valid URL');
+  });
 });
+

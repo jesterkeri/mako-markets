@@ -48,6 +48,8 @@ export interface Meta {
   breakerTrippedAt: number | null;
   /// Runs in a row that held back a send because too little time was left to sign and send it (run.ts sendTx).
   heldBack?: number;
+  /// The next run uses RPC_FALLBACK_URL: set when a run ends in an RPC failure (run.ts), cleared by any other end.
+  useFallback?: boolean;
 }
 
 export const INITIAL_META: Meta = {
