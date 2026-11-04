@@ -1243,10 +1243,25 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   const rwaEligibleIdx = (r: PromiseSettledResult<Market>, idx: number): boolean =>
     fetchable(r, idx) && isRwaType(r.value.mType) && rwaDsEligible(r.value.mType, r.value.oracleRef);
   const indicesWhere = (pred: (r: PromiseSettledResult<Market>, idx: number) => boolean) => marketResults.flatMap((r, idx) => (pred(r, idx) ? [idx] : []));
-  const dsTurn = dsTurns(
-    indicesWhere((r, idx) => (crypto.source === 'datastreams' && cryptoEligibleIdx(r, idx)) || (rwa.source === 'datastreams' && rwaEligibleIdx(r, idx))),
-    Date.now(),
+  // The main loop's order: pools whose decision needs its own upstream request (a match, a game, a Data Streams report)
+  // go last, rotated one place a minute, so pools that never settle but cost time every tick cannot keep the 50 s
+  // budget from the pools after them (adversary on 6668b66). The slow set is chosen by type, not by this minute's Data
+  // Streams turn, so it stays the same from minute to minute (adversary on b52c114: a set that changed with the turn
+  // let the rotation line up the same way every minute). With an unchanged set each slow pool is first among them once
+  // every slowIdx.length ticks, and the first one, if it settles on Data Streams, always holds one of the turns.
+  const slowIdx = indicesWhere(
+    (r, idx) =>
+      fetchable(r, idx) &&
+      (r.value.mType === MarketType.FOOTBALL ||
+        r.value.mType === MarketType.BASKETBALL ||
+        (crypto.source !== 'coingecko' && cryptoEligibleIdx(r, idx)) ||
+        (rwa.source !== 'pyth' && rwaEligibleIdx(r, idx))),
   );
+  const order = tickOrder(marketResults.length, slowIdx, startedAt);
+  const liveDs = indicesWhere((r, idx) => (crypto.source === 'datastreams' && cryptoEligibleIdx(r, idx)) || (rwa.source === 'datastreams' && rwaEligibleIdx(r, idx)));
+  const lead = slowIdx.length > 0 && liveDs.includes(order[order.length - slowIdx.length]) ? order[order.length - slowIdx.length] : null;
+  const dsTurn = dsTurns(liveDs.filter((idx) => idx !== lead), Date.now(), lead === null ? DS_PER_TICK : DS_PER_TICK - 1);
+  if (lead !== null) dsTurn.add(lead);
   const cryptoShadowTurn = dsTurns(crypto.source === 'datastreams-shadow' ? indicesWhere(cryptoEligibleIdx) : [], Date.now());
   const rwaShadowTurn = dsTurns(rwa.source === 'datastreams-shadow' ? indicesWhere(rwaEligibleIdx) : [], Date.now(), 1);
   const needsPyth = rwa.source !== 'datastreams' && needsData([MarketType.FOREX, MarketType.COMMODITIES, MarketType.STOCKS]);
@@ -1344,20 +1359,7 @@ export async function runResolver(env: Env, startedAt: number = Date.now()): Pro
   }
 
 
-  // Pools whose decision needs its own upstream request this tick (a match, a game, a Data Streams report) go last,
-  // and their start rotates each minute, so pools that never settle but cost time every tick cannot keep the 50 s
-  // budget from the pools after them (adversary on 6668b66): a pool whose price is already in hand is always reached,
-  // and with an unchanged set of slow pools each one is first among them at least once every slowIdx.length ticks.
-  const slowIdx = indicesWhere(
-    (r, idx) =>
-      fetchable(r, idx) &&
-      (r.value.mType === MarketType.FOOTBALL ||
-        r.value.mType === MarketType.BASKETBALL ||
-        dsTurn.has(idx) ||
-        cryptoShadowTurn.has(idx) ||
-        rwaShadowTurn.has(idx)),
-  );
-  for (const idx of tickOrder(marketResults.length, slowIdx, startedAt)) {
+  for (const idx of order) {
     const i = BigInt(idx);
     if (walletOutOfFunds) {
       console.warn(`[${ts}] wallet out of funds earlier in tick — skipping remaining markets`);

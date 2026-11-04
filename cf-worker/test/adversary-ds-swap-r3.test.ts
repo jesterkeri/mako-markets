@@ -171,6 +171,8 @@ describe('adversary r3: the rotation stride resets when the eligible count shrin
     const r = await runUntilSettled(118n, 12);
     expect(r.settledInRun).not.toBeNull();
     expect(r.settledInRun!).toBeLessThanOrEqual(12);
-    expect(r.settledInRun).toBe(6); // the observed worst case for this scenario, pinned so a regression shows
+    // Pinned so a regression shows. Was 6; 2 since fix/resolver-no-batch: the first slow pool of each minute holds one of
+    // the two Data Streams turns (src/index.ts, after adversary r3 on b52c114), and here that is pool 118 at minute 2.
+    expect(r.settledInRun).toBe(2);
   }, 300_000);
 });
