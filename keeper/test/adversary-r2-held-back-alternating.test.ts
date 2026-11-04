@@ -134,7 +134,7 @@ function deps(): Deps {
 describe('adversary r2: held-back sends that alternate with a fallback run on another round', () => {
   it('round 7 held back on three runs with nothing sent between them must reach Healthchecks as a fail', async () => {
     const runs: string[] = [];
-    let start = clock;
+    const start = clock;
     for (let i = 0; i < 6; i++) {
       clock = start + i * 60_000;
       hits.length = 0;
