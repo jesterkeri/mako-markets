@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
 import type { MeRound } from '@/lib/me-rounds';
-import { chartGeometry, type MePosition, type MeRange, type ProfitSeries } from '@/lib/me-stats';
+import { chartGeometry, type MePosition, type MeRange, type MeStats, type ProfitSeries } from '@/lib/me-stats';
 import { STATE_PILL, type PoolState } from '@/lib/pool-list';
 import { V1_ASSET } from '@/lib/rounds-model';
 import type { AuthedUser } from '@/lib/use-user';
@@ -20,6 +20,36 @@ export const BAR = 'color-mix(in srgb, var(--mako-canvas-fg) 16%, transparent)';
 export type Loadable<T> = { status: 'loading' } | { status: 'error' } | { status: 'ready'; value: T };
 
 export type MeTab = 'active' | 'settled';
+
+/// A total that counts rounds as well as pools: Unavailable while the rounds read has failed, never a pools-only
+/// figure that would read too low (Joshua 2026-11-20).
+export function chainTotal(c: MeChain, pick: (s: MeStats) => bigint): Loadable<bigint> {
+  if (c.status !== 'ready') return c;
+  return c.roundsUnavailable ? { status: 'error' } : { status: 'ready', value: pick(c.stats) };
+}
+
+/// True when the page is up but the rounds read failed: pools show, the totals and round claims do not.
+export const roundsUnavailable = (c: MeChain): boolean => c.status === 'ready' && c.roundsUnavailable;
+
+/// Shown under the totals while rounds could not be read, with a way to read them again.
+export function RoundsUnavailableNote({ onRetry, mobile }: { onRetry: () => void; mobile?: boolean }) {
+  return (
+    <div
+      role="status"
+      style={{ display: 'flex', alignItems: 'center', gap: 12, margin: mobile ? '10px 16px 0' : '14px 4px 0', padding: '10px 10px 10px 16px', borderRadius: mobile ? 20 : 12, background: 'var(--raise)', fontSize: 14, lineHeight: 1.4 }}
+    >
+      <span style={{ flex: 1, minWidth: 0 }}>Rounds couldn’t load, so the totals are unavailable. Your pools still show.</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        className={mobile ? 'm3-press' : 'mk-press97'}
+        style={{ flex: 'none', height: 36, padding: '0 14px', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', fontSize: 13, fontWeight: 800 }}
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
 
 /// One row of "Ready to claim": a pool or a round (2026-10-13), still claimable, or claimed from this page a moment
 /// ago.

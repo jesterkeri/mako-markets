@@ -85,7 +85,8 @@ vi.mock('wagmi', async () => {
 /// Rounds for Me (2026-10-13): 'off' by default so the pool cases read as before; the round cases set a ready read.
 type RoundsRead = { status: 'off' } | { status: 'loading' } | { status: 'error' } | { status: 'ready'; rounds: unknown[]; stakes: Map<string, unknown> };
 let roundsRead: RoundsRead = { status: 'off' };
-vi.mock('@/lib/use-me-rounds', () => ({ useMeRounds: () => ({ ...roundsRead, refetch: vi.fn() }) }));
+const refetchRounds = vi.fn();
+vi.mock('@/lib/use-me-rounds', () => ({ useMeRounds: () => ({ ...roundsRead, refetch: refetchRounds }) }));
 
 vi.mock('@/lib/hooks', () => ({
   useAllMarkets: () => ({ ...marketsState, refetch: vi.fn() }),
@@ -304,8 +305,47 @@ describe('Me page', () => {
     it('a failed rounds read shows the error for the totals, never pools-only totals', () => {
       roundsRead = { status: 'error' };
       renderMe();
-      expect(totals()['IN PLAY']).toBe('Unavailable');
-      expect(totals()['WON ALL TIME']).toBe('Unavailable');
+      expect(totals()).toEqual({ BALANCE: '50.00 USDC', 'IN PLAY': 'Unavailable', 'READY TO CLAIM': 'Unavailable', 'WON ALL TIME': 'Unavailable' });
+      // Mobile too: In play, Won all time and the Ready to claim count (adversary on cffadab).
+      const mob = document.querySelector('.mk-mob') as HTMLElement;
+      expect(within(mob).getAllByText('Unavailable').length).toBe(3);
+    });
+
+    // Joshua 2026-11-20: the Envio deployment expired and every Me page went blank. Pools must still show.
+    it('a failed rounds read keeps the pools: positions, pool claims, the note and Try again', () => {
+      roundsRead = { status: 'error' };
+      refetchRounds.mockClear();
+      renderMe();
+      expect(screen.queryAllByText('Can’t load your positions')).toHaveLength(0);
+      const desk = document.querySelector('.mk-desk') as HTMLElement;
+      const mob = document.querySelector('.mk-mob') as HTMLElement;
+      for (const root of [desk, mob]) {
+        expect(within(root).getByText('Open pool?')).toBeTruthy();
+        expect(within(root).getByRole('button', { name: 'Claim 12.93 USDC' })).toBeTruthy();
+        expect(within(root).getByRole('status').textContent).toContain('Rounds couldn’t load');
+      }
+      // The pool claim still opens its confirm sheet.
+      fireEvent.click(within(desk).getByRole('button', { name: 'Claim 12.93 USDC' }));
+      expect(screen.getAllByRole('button', { name: /Confirm · 12\.933333 USDC/ }).length).toBeGreaterThan(0);
+      fireEvent.click(within(desk).getByRole('button', { name: 'Try again' }));
+      expect(refetchRounds).toHaveBeenCalledTimes(1);
+    });
+
+    it('a failed rounds read never says everything is claimed or nothing is left to claim', () => {
+      roundsRead = { status: 'error' };
+      bets = bets.map((b, i) => (i === 1 ? [b[0], b[1], true] : b)); // the one pool win already claimed
+      renderMe();
+      expect(screen.queryAllByText(/Everything claimed/)).toHaveLength(0);
+      expect(screen.queryAllByText('Nothing to claim yet')).toHaveLength(0);
+      expect(screen.getAllByText('Round claims show here once Rounds load.').length).toBe(2);
+    });
+
+    it('a rounds read still loading keeps the whole page loading, as before', () => {
+      roundsRead = { status: 'loading' };
+      renderMe();
+      expect(totals()['IN PLAY']).toBe('');
+      expect(screen.queryAllByRole('status')).toHaveLength(0);
+      expect(screen.queryAllByText('Open pool?')).toHaveLength(0);
     });
   });
 });
