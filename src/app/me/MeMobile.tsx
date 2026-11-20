@@ -21,6 +21,7 @@ import {
   claimKey,
   claimReason,
   claimTitle,
+  chainTotal,
   CopyButton,
   CREATE_HREF,
   display,
@@ -29,6 +30,8 @@ import {
   poolHref,
   ProfitChart,
   resultColour,
+  RoundsUnavailableNote,
+  roundsUnavailable,
   SETTINGS_HREF,
   sideOf,
   statePill,
@@ -58,6 +61,7 @@ export function MeMobile(v: MeView) {
     <div>
       <Identity {...v} />
       <Tiles {...v} />
+      {roundsUnavailable(v.chain) && <RoundsUnavailableNote onRetry={v.retry} mobile />}
       <TestUsdc account={v.account} />
       <ReferralCard account={v.account} variant="mobile" />
       <div style={{ padding: '10px 16px 0' }}>
@@ -150,9 +154,8 @@ export function Figure({ value, size, colour, flash }: { value: Loadable<bigint>
 }
 
 function Tiles(v: MeView) {
-  const c = v.chain;
-  const inPlay: Loadable<bigint> = c.status === 'ready' ? { status: 'ready', value: c.stats.inPlay } : c;
-  const won: Loadable<bigint> = c.status === 'ready' ? { status: 'ready', value: c.stats.wonAllTime } : c;
+  const inPlay = chainTotal(v.chain, (s) => s.inPlay);
+  const won = chainTotal(v.chain, (s) => s.wonAllTime);
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: 10, padding: '14px 16px 0' }}>
       <div style={{ position: 'relative', gridRow: 'span 2', borderRadius: '32px 32px 32px 12px', background: 'var(--mako-signal)', color: '#000', boxShadow: 'var(--edge)', padding: 18 }}>
@@ -332,7 +335,7 @@ function ReadyToClaim(v: MeView) {
             </div>
           );
         })}
-        {v.pendingClaims === 0 && <div style={{ marginTop: 12, fontSize: 14, fontWeight: 700 }}>✓ Everything claimed. It’s in your balance.</div>}
+        {v.pendingClaims === 0 && !roundsUnavailable(v.chain) && <div style={{ marginTop: 12, fontSize: 14, fontWeight: 700 }}>✓ Everything claimed. It’s in your balance.</div>}
       </div>
     </div>
   );

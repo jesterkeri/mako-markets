@@ -20,6 +20,7 @@ import {
   claimKey,
   claimReason,
   claimTitle,
+  chainTotal,
   CopyButton,
   CREATE_HREF,
   display,
@@ -29,6 +30,8 @@ import {
   ProfitChart,
   rangeStart,
   resultColour,
+  RoundsUnavailableNote,
+  roundsUnavailable,
   sideOf,
   statePill,
   Svg,
@@ -60,6 +63,7 @@ export function MeDesktop(v: MeView) {
         <Identity {...v} />
         {v.photoOpen && <PhotoPanel {...v} />}
         <Totals {...v} />
+        {roundsUnavailable(v.chain) && <RoundsUnavailableNote onRetry={v.retry} />}
         {v.chain.status === 'ready' ? (
           <>
             <div style={{ marginTop: 26, padding: '0 4px' }}>
@@ -268,8 +272,7 @@ export function Amount({ value, colour, suffix = ' USDC' }: { value: Loadable<bi
 }
 
 function Totals(v: MeView) {
-  const c = v.chain;
-  const from = (pick: (s: Extract<typeof c, { status: 'ready' }>['stats']) => bigint): Loadable<bigint> => (c.status === 'ready' ? { status: 'ready', value: pick(c.stats) } : c);
+  const from = (pick: Parameters<typeof chainTotal>[1]) => chainTotal(v.chain, pick);
   const cells: [string, Loadable<bigint>, string?][] = [
     ['BALANCE', v.balance],
     ['IN PLAY', from((s) => s.inPlay)],
@@ -508,10 +511,19 @@ function ReadyToClaim(v: MeView) {
       })}
       {v.pendingClaims === 0 && (
         <div style={{ marginTop: 14, padding: 14, borderRadius: 12, background: 'var(--raise)', boxShadow: 'var(--edge)', ...mono, fontSize: 12 }}>
-          <div style={{ fontWeight: 700 }}>{v.allClaimed ? '✓ Everything claimed' : 'Nothing to claim yet'}</div>
-          <div style={{ color: 'var(--dim)', marginTop: 4 }}>
-            {v.allClaimed ? 'It’s in your balance. Winnings and refunds land here.' : 'Winnings and refunds show up here when a pool you bet on settles.'}
-          </div>
+          {roundsUnavailable(v.chain) ? (
+            <>
+              <div style={{ fontWeight: 700 }}>Nothing to claim from pools</div>
+              <div style={{ color: 'var(--dim)', marginTop: 4 }}>Round claims show here once Rounds load.</div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontWeight: 700 }}>{v.allClaimed ? '✓ Everything claimed' : 'Nothing to claim yet'}</div>
+              <div style={{ color: 'var(--dim)', marginTop: 4 }}>
+                {v.allClaimed ? 'It’s in your balance. Winnings and refunds land here.' : 'Winnings and refunds show up here when a pool you bet on settles.'}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

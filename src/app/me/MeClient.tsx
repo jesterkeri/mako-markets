@@ -18,7 +18,7 @@ import { formatAddress } from '@/lib/user-display';
 
 import { MeDesktop } from './MeDesktop';
 import { FeedbackRow, MeMobile } from './MeMobile';
-import { BAR, display, type ClaimItem, type Loadable, type MeTab, type MeView } from './MeParts';
+import { BAR, display, roundsUnavailable, type ClaimItem, type Loadable, type MeTab, type MeView } from './MeParts';
 import { useMeData } from './use-me-data';
 import { useProfileEdit } from './use-profile-edit';
 
@@ -151,8 +151,10 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     ...[...landed.values()].map((p): ClaimItem => ({ kind: 'pool', p, landed: true })),
     ...[...landedRounds.values()].map((r): ClaimItem => ({ kind: 'round', r, landed: true })),
   ];
+  // Rounds not read: their claims are unknown, so the total is Unavailable and nothing is called all claimed.
+  const noRounds = roundsUnavailable(chain);
   const ready: Loadable<bigint> =
-    chain.status === 'ready' ? { status: 'ready', value: sumClaims(pending) + pendingRounds.reduce((s, r) => s + (r.claim ?? 0n), 0n) } : chain;
+    chain.status !== 'ready' ? chain : noRounds ? { status: 'error' } : { status: 'ready', value: sumClaims(pending) + pendingRounds.reduce((s, r) => s + (r.claim ?? 0n), 0n) };
 
   const view: MeView = {
     user,
@@ -166,7 +168,7 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     ready,
     claimItems,
     pendingClaims: pending.length + pendingRounds.length,
-    allClaimed: pending.length + pendingRounds.length === 0 && (landed.size + landedRounds.size > 0 || (chain.status === 'ready' && chain.stats.claimedBefore)),
+    allClaimed: !noRounds && pending.length + pendingRounds.length === 0 && (landed.size + landedRounds.size > 0 || (chain.status === 'ready' && chain.stats.claimedBefore)),
     series: chain.status === 'ready' && now !== null ? profitSeries(chain.positions, now, range) : null,
     now,
     labelsOf: data.labelsOf,

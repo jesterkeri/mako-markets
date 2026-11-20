@@ -192,8 +192,12 @@ function makeWrapper() {
 }
 
 type Chain = ReturnType<typeof useMeData>['chain'];
+/// Since 2026-11-20 a failed rounds read leaves the page ready with `roundsUnavailable` (pools only, totals read
+/// Unavailable). It must carry no round at all, so anything else here is spelled out and fails the comparison.
+const ROUNDS_DOWN = 'rounds-unavailable';
 function summarise(c: Chain): string {
   if (c.status !== 'ready') return c.status;
+  if (c.roundsUnavailable) return c.rounds.length === 0 && c.roundClaims.length === 0 ? ROUNDS_DOWN : `${ROUNDS_DOWN} WITH ${c.rounds.length} rounds`;
   return `ready inPlay=${c.stats.inPlay} won=${c.stats.wonAllTime} roundClaims=${c.roundClaims.map((r) => `${r.round.id}:${r.claim}`).join(',')}`;
 }
 function track() {
@@ -342,7 +346,7 @@ describe('indexer lag never hides a round', () => {
     history(400);
     env.globalRounds = 400 - ME_ROUNDS_MAX_UNINDEXED - 1;
     const t = track();
-    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
     expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
     expect(roundCalls).toEqual([]);
   });
@@ -377,10 +381,10 @@ describe('an indexer for ANOTHER Rounds contract is never trusted (Codex ME_ROUN
   it.each([101, 105, 112])('chain count 100, foreign head %i (ahead by 1 to 12): unavailable, never ready, no round read', async (head) => {
     foreignIndexer(head);
     const t = track();
-    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
     await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
     expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
-    expect(t.current().chain.status).toBe('error');
+    expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN);
     expect(roundCalls).toEqual([]);
   });
 
@@ -392,10 +396,10 @@ describe('an indexer for ANOTHER Rounds contract is never trusted (Codex ME_ROUN
     foreignIndexer(100, fingerprint);
     const t = track();
     await waitFor(() => expect(roundCalls).toContain('roundOf:100'), { timeout: 4000 });
-    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
     await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
     expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
-    expect(t.current().chain.status).toBe('error');
+    expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN);
   });
 
   it('the page reads Unavailable for the foreign same-count indexer, never pools-only totals', async () => {
@@ -403,7 +407,8 @@ describe('an indexer for ANOTHER Rounds contract is never trusted (Codex ME_ROUN
     const Wrapper = makeWrapper();
     render(<Wrapper><MeClient /></Wrapper>);
     await waitFor(() => expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0), { timeout: 4000 });
-    expect(screen.queryByText('4.00')).toBeNull();
+    // Pool positions show now (2026-11-20); the In play total must not be pools-only.
+    for (const el of screen.getAllByText('IN PLAY')) expect(el.parentElement!.textContent).toBe('IN PLAYUnavailable');
     expect(screen.queryByRole('button', { name: /^Claim 2.95/ })).toBeNull();
   });
 
@@ -437,7 +442,7 @@ describe('an indexer for ANOTHER Rounds contract is never trusted (Codex ME_ROUN
     env.rounds[99] = { ...env.rounds[99], openTime: String(BigInt(NOW - 19_999)) };
     env.entries = [];
     await act(async () => { t.current().refetch(); });
-    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
   });
 });
 
@@ -446,7 +451,7 @@ describe('a failed discovery: rounds unavailable, never pools-only totals', () =
     history(400);
     discoveryDown = true;
     const t = track();
-    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
     expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
     expect(roundCalls).toEqual([]);
     cleanup();
@@ -454,14 +459,15 @@ describe('a failed discovery: rounds unavailable, never pools-only totals', () =
     const Wrapper = makeWrapper();
     render(<Wrapper><MeClient /></Wrapper>);
     await waitFor(() => expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0), { timeout: 4000 });
-    expect(screen.queryByText('4.00')).toBeNull();
+    // Pool positions show now (2026-11-20); the In play total must not be pools-only.
+    for (const el of screen.getAllByText('IN PLAY')) expect(el.parentElement!.textContent).toBe('IN PLAYUnavailable');
   });
 
   it('indexer not configured (503 from the route): error, not an empty list', async () => {
     history(400);
     delete process.env.ENVIO_ROUNDS_GRAPHQL_URL;
     const t = track();
-    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
     expect(t.seen.some((s) => s.startsWith('ready'))).toBe(false);
   });
 
@@ -483,7 +489,7 @@ describe('indexer query budget (Envio development plan: 100 queries a minute)', 
     history(400);
     discoveryDown = true;
     const t = track();
-    await waitFor(() => expect(t.current().chain.status).toBe('error'), { timeout: 4000 });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 500));
     });

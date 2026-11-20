@@ -20,7 +20,10 @@ export type MeChain =
   | { status: 'error' }
   /// `stats.inPlay`, `stats.wonAllTime` and `stats.claimedBefore` count pools AND rounds; `stats.claims` and
   /// `positions` are pools only, `roundClaims` and `rounds` are rounds only.
-  | { status: 'ready'; positions: MePosition[]; stats: MeStats; created: number; rounds: MeRound[]; roundClaims: MeRound[] };
+  /// `roundsUnavailable`: the rounds read failed with nothing read, so `rounds` and `roundClaims` are empty and the
+  /// totals that count rounds (In play, Ready to claim, Won all time) must show Unavailable, never pools alone
+  /// (Joshua 2026-11-20). Everything that reads pools only still shows.
+  | { status: 'ready'; positions: MePosition[]; stats: MeStats; created: number; rounds: MeRound[]; roundClaims: MeRound[]; roundsUnavailable: boolean };
 
 /// Everything Me reads from the chain for one account: every V4 pool, the account's stake in each (one multicall),
 /// and its USDC balance. The balance is separate, so a failed balance read does not hide the positions. The pool and
@@ -53,8 +56,9 @@ export function useMeData(account: `0x${string}`, nowSec: number | null) {
   // Both reads are all-or-nothing, so a failure here is one that outlasted the retries with nothing read before.
   const betsFailed = betsQ.isError && !betsQ.data;
   // Rounds count too (2026-10-13): the totals are never shown from pools alone while the rounds read is pending
-  // or failed. Rounds not configured ('off') counts as no rounds.
-  if (marketsQ.isError || betsFailed || roundsQ.status === 'error') chain = { status: 'error' };
+  // or failed. A failed rounds read no longer blanks the pools (Joshua 2026-11-20): the page is ready with
+  // `roundsUnavailable`, and only the totals read Unavailable. Rounds not configured ('off') counts as no rounds.
+  if (marketsQ.isError || betsFailed) chain = { status: 'error' };
   else if (marketsQ.isLoading || nowSec === null || (ids.length > 0 && bets === null) || roundsQ.status === 'loading') chain = { status: 'loading' };
   else {
     const positions = mePositions(markets, bets ?? new Map(), nowSec);
@@ -74,6 +78,7 @@ export function useMeData(account: `0x${string}`, nowSec: number | null) {
       created: createdCount(markets, account),
       rounds,
       roundClaims: r.claims,
+      roundsUnavailable: roundsQ.status === 'error',
     };
   }
 
