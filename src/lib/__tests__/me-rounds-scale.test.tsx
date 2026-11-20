@@ -118,6 +118,10 @@ const roundCalls: string[] = [];
 let env: FakeEnvio;
 let discoveryHits = 0;
 let discoveryDown = false;
+/// Every rounds read but roundCount is refused (the round count still answers, so a new round still changes the reads).
+let roundReadsDown = false;
+/// A refused call fails only its own item in a multicall (success: false), so every item of the read is still recorded.
+class Refused extends Error {}
 
 function answerMako(data: Hex): Hex {
   const { functionName, args = [] } = decodeFunctionData({ abi: makoAbi, data });
@@ -135,6 +139,7 @@ function answerRounds(data: Hex): Hex {
   const id = Number((args[0] as bigint | undefined) ?? 0n);
   if (functionName === 'roundCount') return encodeFunctionResult({ abi: roundsAbi, functionName, result: BigInt(rounds.length) });
   roundCalls.push(`${functionName}:${id}`);
+  if (roundReadsDown) throw new Refused();
   if (id < 1 || id > rounds.length) throw new Error(`no round ${id}`);
   if (functionName === 'roundOf') return encodeFunctionResult({ abi: roundsAbi, functionName, result: rounds[id - 1] as never });
   const s = roundStakes[`${id}:${String(args[1]).toLowerCase()}`] ?? { side: 0, amount: 0n, claimed: false };
@@ -157,7 +162,14 @@ async function request({ method, params }: { method: string; params?: unknown })
   if (getAddress(to) === MC3) {
     const { args } = decodeFunctionData({ abi: multicall3Abi, data });
     const inner = args[0] as readonly { target: string; callData: Hex }[];
-    const out = inner.map((c) => ({ success: true, returnData: answer(c.target, c.callData) }));
+    const out = inner.map((c) => {
+      try {
+        return { success: true, returnData: answer(c.target, c.callData) };
+      } catch (e) {
+        if (e instanceof Refused) return { success: false, returnData: '0x' as Hex };
+        throw e;
+      }
+    });
     return encodeFunctionResult({ abi: multicall3Abi, functionName: 'aggregate3', result: out });
   }
   return answer(to, data);
@@ -263,6 +275,7 @@ beforeEach(async () => {
   roundCalls.length = 0;
   discoveryHits = 0;
   discoveryDown = false;
+  roundReadsDown = false;
   onlineManager.setOnline(true);
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
   vi.spyOn(globalThis, 'fetch').mockImplementation(browserFetch as typeof fetch);
@@ -481,6 +494,53 @@ describe('a failed discovery: rounds unavailable, never pools-only totals', () =
     await act(async () => { t.current().refetch(); await new Promise((r) => setTimeout(r, 400)); });
     expect(discoveryHits).toBeGreaterThan(before);
     expect(summarise(t.current().chain)).toBe(READY);
+  });
+});
+
+describe('a new round changes the reads, and the new read fails (Codex ME_ROUNDS_DEGRADE R1 F1)', () => {
+  const READY = `ready inPlay=${5n * USDC} won=2950000 roundClaims=7:20000,3:2950000`;
+  const attemptsAt = (id: number) => roundCalls.filter((c) => c === `roundOf:${id}`).length;
+
+  it('the last complete totals stay through the failed new read, never loading or Unavailable, then the new read replaces them', async () => {
+    history(400);
+    const t = track();
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(READY), { timeout: 4000 });
+    const from = t.seen.length;
+    rounds.push(openRound()); // round 401: the count changes, so the read set does (a new query, no previous data)
+    roundReadsDown = true;
+    roundCalls.length = 0;
+    await act(async () => { t.current().refetch(); });
+    // The new set is asked for and every attempt (the first and TanStack's 3 retries) is refused.
+    await waitFor(() => expect(attemptsAt(401)).toBe(4), { timeout: 4000 });
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+    expect(t.seen.slice(from).filter((s) => s !== READY)).toEqual([]);
+    expect(summarise(t.current().chain)).toBe(READY);
+
+    roundReadsDown = false;
+    roundStakes[`401:${A}`] = { side: 1, amount: 3n * USDC, claimed: false };
+    await act(async () => { t.current().refetch(); });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(`ready inPlay=${8n * USDC} won=2950000 roundClaims=7:20000,3:2950000`), { timeout: 4000 });
+  });
+
+  it('evidence against the read retires the kept totals: a later failed read stays Unavailable', async () => {
+    history(100);
+    const t = track();
+    await waitFor(() => expect(summarise(t.current().chain)).toMatch(/^ready/), { timeout: 4000 });
+    vi.resetModules();
+    ({ GET: discoveryRoute } = await import('@/app/api/me/rounds/route'));
+    env.rounds[99] = { ...env.rounds[99], openTime: String(BigInt(NOW - 19_999)) };
+    env.entries = [];
+    await act(async () => { t.current().refetch(); });
+    await waitFor(() => expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN), { timeout: 4000 });
+    const from = t.seen.length;
+    rounds.push(openRound());
+    roundReadsDown = true;
+    roundCalls.length = 0;
+    await act(async () => { t.current().refetch(); });
+    await waitFor(() => expect(attemptsAt(101)).toBe(4), { timeout: 4000 });
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+    expect(t.seen.slice(from).some((s) => s.startsWith('ready'))).toBe(false);
+    expect(summarise(t.current().chain)).toBe(ROUNDS_DOWN);
   });
 });
 
