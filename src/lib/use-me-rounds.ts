@@ -134,8 +134,19 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
     if (last?.owner !== owner || last.read.rounds !== read.rounds || last.read.stakes !== read.stakes) setLast({ owner, read });
     return { ...read, refetch };
   }
+  // While a new read is missing, the indexer's head round may still be checked against the kept read's round of the same
+  // id (a round's openTime, startTime and creator never change): a mismatch is evidence too (adversary on b4a77ad).
+  const head = discovery?.head ?? null;
+  const keptHead = head !== null && last?.owner === owner ? last.read.rounds.find((r) => r.id === head.id) : undefined;
+  const foreign =
+    keptHead !== undefined &&
+    !headMatchesChain(head!, { creator: keptHead.creator, openTime: BigInt(keptHead.openTime), startTime: BigInt(keptHead.startTime) });
+  const evidence = read.status === 'error' || ((read.status === 'loading' || read.status === 'failed') && foreign);
   // Evidence against the read also retires the kept one, so a later failure cannot bring it back.
-  if (read.status === 'error' && last !== null) setLast(null);
+  if (evidence) {
+    if (last !== null) setLast(null);
+    return { status: 'error', refetch };
+  }
   if ((read.status === 'loading' || read.status === 'failed') && last?.owner === owner) return { ...last.read, refetch };
   return read.status === 'failed' ? { status: 'error', refetch } : { ...read, refetch };
 }
