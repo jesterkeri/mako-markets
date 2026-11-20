@@ -514,7 +514,7 @@ function ReadyToClaim(v: MeView) {
         <div style={{ marginTop: 14, padding: 14, borderRadius: 12, background: 'var(--raise)', boxShadow: 'var(--edge)', ...mono, fontSize: 12 }}>
           {roundsUnavailable(v.chain) ? (
             <>
-              <div style={{ fontWeight: 700 }}>Nothing to claim from pools</div>
+              <div style={{ fontWeight: 700 }}>Round claims couldn’t load</div>
               <div style={{ color: 'var(--dim)', marginTop: 4 }}>Round claims show here once Rounds load.</div>
             </>
           ) : (
