@@ -481,7 +481,8 @@ function ReadyToClaim(v: MeView) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingBottom: 10 }}>
         <span style={{ ...display, fontSize: 24, letterSpacing: '-0.02em' }}>Ready to claim</span>
-        <span style={{ ...mono, fontSize: 12, color: 'var(--dim)' }}>{v.pendingClaims}</span>
+        {/* A count from pools alone would read too low while rounds are unknown (adversary on cffadab). */}
+        <span style={{ ...mono, fontSize: 12, color: 'var(--dim)' }}>{roundsUnavailable(v.chain) ? 'Unavailable' : v.pendingClaims}</span>
       </div>
       {v.claimItems.map((c) => {
         const { landed } = c;

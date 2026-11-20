@@ -306,9 +306,9 @@ describe('Me page', () => {
       roundsRead = { status: 'error' };
       renderMe();
       expect(totals()).toEqual({ BALANCE: '50.00 USDC', 'IN PLAY': 'Unavailable', 'READY TO CLAIM': 'Unavailable', 'WON ALL TIME': 'Unavailable' });
-      // Mobile tiles too.
+      // Mobile too: In play, Won all time and the Ready to claim count (adversary on cffadab).
       const mob = document.querySelector('.mk-mob') as HTMLElement;
-      expect(within(mob).getAllByText('Unavailable').length).toBe(2);
+      expect(within(mob).getAllByText('Unavailable').length).toBe(3);
     });
 
     // Joshua 2026-11-20: the Envio deployment expired and every Me page went blank. Pools must still show.
@@ -337,7 +337,7 @@ describe('Me page', () => {
       renderMe();
       expect(screen.queryAllByText(/Everything claimed/)).toHaveLength(0);
       expect(screen.queryAllByText('Nothing to claim yet')).toHaveLength(0);
-      expect(screen.getAllByText('Round claims show here once Rounds load.').length).toBe(1);
+      expect(screen.getAllByText('Round claims show here once Rounds load.').length).toBe(2);
     });
 
     it('a rounds read still loading keeps the whole page loading, as before', () => {

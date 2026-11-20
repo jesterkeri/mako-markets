@@ -79,7 +79,8 @@ export function MeMobile(v: MeView) {
       <div style={{ padding: '8px 16px 0' }}>
         <FeedbackRow />
       </div>
-      {v.chain.status === 'ready' && v.claimItems.length > 0 && <ReadyToClaim {...v} />}
+      {/* Rounds down: the card always shows, so the phone says Ready to claim is unavailable (adversary on cffadab). */}
+      {v.chain.status === 'ready' && (v.claimItems.length > 0 || roundsUnavailable(v.chain)) && <ReadyToClaim {...v} />}
       {/* The creator list reads only the pools, so it stays when the stake or rounds read failed: the Creator earnings
           tile always has its list to lead to (adversary on 03bbb76). */}
       <CreatorEarningsSection user={v.user} account={v.account} variant="mobile" />
@@ -303,7 +304,7 @@ function ReadyToClaim(v: MeView) {
       <div style={{ borderRadius: 32, background: 'var(--m3-inv)', color: 'var(--m3-inv-fg)', boxShadow: 'var(--edge)', padding: '18px 18px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ ...display, fontSize: 22 }}>Ready to claim</span>
-          <span style={{ minWidth: 28, height: 28, padding: '0 8px', boxSizing: 'border-box', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800 }}>{v.pendingClaims}</span>
+          <span style={{ minWidth: 28, height: 28, padding: '0 8px', boxSizing: 'border-box', borderRadius: 9999, background: 'var(--mako-signal)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800 }}>{roundsUnavailable(v.chain) ? 'Unavailable' : v.pendingClaims}</span>
         </div>
         {v.claimItems.map((c) => {
           const { landed } = c;
@@ -335,6 +336,7 @@ function ReadyToClaim(v: MeView) {
             </div>
           );
         })}
+        {roundsUnavailable(v.chain) && <div style={{ marginTop: 12, fontSize: 14, fontWeight: 700 }}>Round claims show here once Rounds load.</div>}
         {v.pendingClaims === 0 && !roundsUnavailable(v.chain) && <div style={{ marginTop: 12, fontSize: 14, fontWeight: 700 }}>✓ Everything claimed. It’s in your balance.</div>}
       </div>
     </div>
