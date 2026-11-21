@@ -1,0 +1,60 @@
+# The top-level name and NO [env.*] blocks, on purpose: plan 6.1 pins the Worker name and says a wrangler
+# environment deploys as its own Worker (`mako-matcher-<env>`) with a fresh Durable Object namespace.
+name = "mako-matcher"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Mako Market off-chain matcher (mako-markets .claude/design/OFFCHAIN_MATCHING_PLAN.md r31 draft 7, slice 2,
+# phase A). Intake, book, matching and the book feed. The settler Durable Object is a stub that sends
+# nothing: no transaction is built, signed or sent from this package yet.
+
+[limits]
+cpu_ms = 5000
+subrequests = 50
+
+# One Durable Object per market (MARKET), reached only through env.MARKET.idFromName(<canonical decimal id>),
+# and one settler (SETTLER), reached only through env.SETTLER.idFromName("settler") (plan 6.1).
+[[durable_objects.bindings]]
+name = "MARKET"
+class_name = "MatcherMarket"
+
+[[durable_objects.bindings]]
+name = "SETTLER"
+class_name = "MatcherSettler"
+
+# Durable Object classes use the declarative `exports` map, which plan 6.1 prefers for a new Worker and which
+# the pinned wrangler (4.135.0, config-schema.json `Exports`) accepts, so the legacy `migrations` array is not
+# used (the two are mutually exclusive). Never set state = "deleted" for either class: it removes the
+# namespace and all its data. A class rename must use state = "renamed" with renamed_to (plan 6.1).
+[exports.MatcherMarket]
+type = "durable-object"
+storage = "sqlite"
+
+[exports.MatcherSettler]
+type = "durable-object"
+storage = "sqlite"
+
+[observability]
+enabled = true
+
+# Non-secret configuration.
+[vars]
+# The exchange (MakoOutcomeExchangeV1) is not deployed for this slice, so no address is set. Without it every
+# request is answered 503 `not_configured` and nothing is read or booked.
+# EXCHANGE_ADDRESS = "0x..."
+CHAIN_ID = "10143"
+PUBLIC_RPC_URL = "https://testnet-rpc.monad.xyz/"
+# Settlement cap K (transactions per UTC day) is set by the approved SETTLEMENT_CAP_DECISION.md and by nothing
+# else. Left unset here: with K unset the settler (phase B) sends nothing, holds every market and alerts.
+# K = "..."
+# The funder contract (MakoFunder, slice 2a) does not exist yet, so its address is unset. With it unset or
+# unreadable the settler (phase B) sends nothing, holds and alerts.
+# FUNDER_ADDRESS = "0x..."
+# Gate G-T (plan 10.3) has not passed. While this is not exactly "true", plan 6.2 rule 4 never blames a party
+# automatically: every sent out-of-gas stops the market.
+GATE_GT_PASSED = "false"
+
+# Secrets, set with `wrangler secret put` from Bitwarden by the owner, never in this file:
+#   PRIMARY_RPC_URL       the primary provider URL with its key (chain reads; phase B adds traces)
+#   OPERATOR_PRIVATE_KEY  the operator key; read only by the settler class, in phase B. Declared now, unused in phase A.
+#   CANCEL_SECRET         shared secret the Next.js app sends in `x-matcher-secret` to cancel an order (slice 3)
