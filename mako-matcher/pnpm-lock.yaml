@@ -14,19 +14,22 @@ importers:
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: ^1.1.13
-        version: 1.1.13(@cloudflare/workers-types@5.20260919.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(vite@8.3.0(esbuild@0.28.1)))
+        version: 1.1.13(@cloudflare/workers-types@5.20260919.1)(@types/node@22.19.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@22.19.1)(vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1)))
       '@cloudflare/workers-types':
         specifier: ^5.20260919.1
         version: 5.20260919.1
+      '@types/node':
+        specifier: 22.19.1
+        version: 22.19.1
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
       vitest:
         specifier: ~4.1.11
-        version: 4.1.11(vite@8.3.0(esbuild@0.28.1))
+        version: 4.1.11(@types/node@22.19.1)(vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1))
       wrangler:
         specifier: ^4.135.0
-        version: 4.135.0(@cloudflare/workers-types@5.20260919.1)
+        version: 4.135.0(@cloudflare/workers-types@5.20260919.1)(@types/node@22.19.1)
 
 packages:
 
@@ -572,6 +575,9 @@ packages:
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
+  '@types/node@22.19.1':
+    resolution: {integrity: sha512-LCCV0HdSZZZb34qifBsyWlUmok6W7ouER+oQIGBScS8EsZsQbrtFTUrDX4hOl+CS6p7cnNC4td+qrSVGSCTUfQ==}
+
   '@vitest/expect@4.1.11':
     resolution: {integrity: sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw==}
 
@@ -855,6 +861,9 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   undici@7.29.0:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
@@ -1007,15 +1016,15 @@ snapshots:
     optionalDependencies:
       workerd: 1.20260918.1
 
-  '@cloudflare/vitest-plugin@1.1.13(@cloudflare/workers-types@5.20260919.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(vite@8.3.0(esbuild@0.28.1)))':
+  '@cloudflare/vitest-plugin@1.1.13(@cloudflare/workers-types@5.20260919.1)(@types/node@22.19.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@22.19.1)(vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1)))':
     dependencies:
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
       cjs-module-lexer: 1.2.3
       esbuild: 0.28.1
-      miniflare: 5.20260918.0-alpha
-      vitest: 4.1.11(vite@8.3.0(esbuild@0.28.1))
-      wrangler: 4.135.0(@cloudflare/workers-types@5.20260919.1)
+      miniflare: 5.20260918.0-alpha(@types/node@22.19.1)
+      vitest: 4.1.11(@types/node@22.19.1)(vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1))
+      wrangler: 4.135.0(@cloudflare/workers-types@5.20260919.1)(@types/node@22.19.1)
       zod: 4.4.3
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
@@ -1339,6 +1348,10 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
+  '@types/node@22.19.1':
+    dependencies:
+      undici-types: 6.21.0
+
   '@vitest/expect@4.1.11':
     dependencies:
       '@standard-schema/spec': 1.1.0
@@ -1348,13 +1361,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.11(vite@8.3.0(esbuild@0.28.1))':
+  '@vitest/mocker@4.1.11(vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.3.0(esbuild@0.28.1)
+      vite: 8.3.0(@types/node@22.19.1)(esbuild@0.28.1)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -1506,10 +1519,10 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  miniflare@5.20260918.0-alpha:
+  miniflare@5.20260918.0-alpha(@types/node@22.19.1):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
-      sharp: 0.35.4
+      sharp: 0.35.4(@types/node@22.19.1)
       undici: 7.29.0
       workerd: 1.20260918.1
       ws: 8.21.0
@@ -1575,7 +1588,7 @@ snapshots:
 
   semver@7.8.5: {}
 
-  sharp@0.35.4:
+  sharp@0.35.4(@types/node@22.19.1):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -1606,6 +1619,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.4
       '@img/sharp-win32-ia32': 0.35.4
       '@img/sharp-win32-x64': 0.35.4
+      '@types/node': 22.19.1
 
   siginfo@2.0.0: {}
 
@@ -1633,6 +1647,8 @@ snapshots:
 
   typescript@5.9.3: {}
 
+  undici-types@6.21.0: {}
+
   undici@7.29.0: {}
 
   unenv@2.0.0-rc.24:
@@ -1656,7 +1672,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  vite@8.3.0(esbuild@0.28.1):
+  vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -1664,13 +1680,14 @@ snapshots:
       rolldown: 1.2.9
       tinyglobby: 0.2.17
     optionalDependencies:
+      '@types/node': 22.19.1
       esbuild: 0.28.1
       fsevents: 2.3.3
 
-  vitest@4.1.11(vite@8.3.0(esbuild@0.28.1)):
+  vitest@4.1.11(@types/node@22.19.1)(vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.3.0(esbuild@0.28.1))
+      '@vitest/mocker': 4.1.11(vite@8.3.0(@types/node@22.19.1)(esbuild@0.28.1))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -1687,8 +1704,10 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.3.0(esbuild@0.28.1)
+      vite: 8.3.0(@types/node@22.19.1)(esbuild@0.28.1)
       why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 22.19.1
     transitivePeerDependencies:
       - msw
 
@@ -1705,13 +1724,13 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20260918.1
       '@cloudflare/workerd-windows-64': 1.20260918.1
 
-  wrangler@4.135.0(@cloudflare/workers-types@5.20260919.1):
+  wrangler@4.135.0(@cloudflare/workers-types@5.20260919.1)(@types/node@22.19.1):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260918.1)
       blake3-wasm: 2.1.5
       esbuild: 0.28.1
-      miniflare: 5.20260918.0-alpha
+      miniflare: 5.20260918.0-alpha(@types/node@22.19.1)
       path-to-regexp: 6.3.0
       unenv: 2.0.0-rc.24
       workerd: 1.20260918.1

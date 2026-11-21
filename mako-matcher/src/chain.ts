@@ -329,16 +329,23 @@ export async function getTxInput(c: ChainCtx, hash: Hex): Promise<{ input: Hex; 
   return { input: v.input.toLowerCase() as Hex, from: v.from.toLowerCase() as Hex, nonce: qty(v.nonce, 'eth_getTransactionByHash') };
 }
 
+/// One direct eth_call to the exchange (a single read needs no Multicall3).
+async function exchangeRead(c: ChainCtx, fn: string, args: unknown[] = []): Promise<unknown> {
+  const v = await must(c, 'eth_call', [{ to: c.exchange, data: encodeCall(fn, args) }, 'latest']);
+  if (typeof v !== 'string' || !HEX.test(v)) throw new ChainError('bad_response', fn);
+  try {
+    return decodeResult(fn, v as Hex);
+  } catch {
+    throw new ChainError('bad_response', fn);
+  }
+}
+
 export async function readPaused(c: ChainCtx): Promise<boolean> {
-  const r = await multicall(c, [{ target: c.exchange, data: encodeCall('paused') }]);
-  if (!r[0].success) throw new ChainError('rpc_error', 'paused');
-  return decodeResult('paused', r[0].returnData) === true;
+  return (await exchangeRead(c, 'paused')) === true;
 }
 
 export async function readIsOperator(c: ChainCtx, who: Hex): Promise<boolean> {
-  const r = await multicall(c, [{ target: c.exchange, data: encodeCall('isOperator', [who]) }]);
-  if (!r[0].success) throw new ChainError('rpc_error', 'isOperator');
-  return decodeResult('isOperator', r[0].returnData) === true;
+  return (await exchangeRead(c, 'isOperator', [who])) === true;
 }
 
 /// `cap()` of the funder contract (MakoFunder, slice 2a: not built yet, so this is the only function the settler

@@ -6,12 +6,13 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test && tsc --noEmit -p integration",
     "test": "vitest run",
     "bundle": "wrangler deploy --dry-run --outdir dist",
     "assert-bundle": "node scripts/assert-bundle.mjs dist",
     "check:vendored": "node scripts/vendor.mjs --check",
-    "test:scripts": "node --test scripts/assert-bundle.test.mjs scripts/vendor.test.mjs"
+    "test:scripts": "node --test scripts/assert-bundle.test.mjs scripts/vendor.test.mjs",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "viem": "^2.47.12"
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.1.13",
     "@cloudflare/workers-types": "^5.20260919.1",
+    "@types/node": "22.19.1",
     "typescript": "^5.9.3",
     "vitest": "~4.1.11",
     "wrangler": "^4.135.0"

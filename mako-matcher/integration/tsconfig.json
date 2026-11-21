@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "moduleResolution": "bundler", "noUnusedLocals": false, "types": ["@cloudflare/workers-types", "node"] },
+  "include": ["./**/*.ts", "../src/settle.ts", "../src/chain.ts", "../src/encode.ts", "../src/order.ts", "../src/trace.ts", "../src/wallets.ts", "../src/outcome.ts", "../src/alerts.ts", "../src/config.ts", "../src/abi.ts", "../src/net.ts", "../src/book.ts"]
+}
