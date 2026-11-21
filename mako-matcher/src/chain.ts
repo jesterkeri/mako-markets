@@ -259,3 +259,92 @@ export async function readLogChunk(c: ChainCtx, from: bigint, to: bigint): Promi
 function eventTopic(e: unknown): Hex {
   return toEventSelector(e as Parameters<typeof toEventSelector>[0]);
 }
+
+// ---- reads the settler needs (phase B). Nothing here sends a transaction. ----
+
+const QTY = /^0x[0-9a-fA-F]{1,64}$/;
+
+function qty(v: unknown, method: string): bigint {
+  if (typeof v !== 'string' || !QTY.test(v)) throw new ChainError('bad_response', method);
+  return BigInt(v);
+}
+
+export async function getBalance(c: ChainCtx, addr: Hex): Promise<bigint> {
+  return qty(await must(c, 'eth_getBalance', [addr, 'latest']), 'eth_getBalance');
+}
+
+/// The account's next nonce at `pending` (what the node will accept), or at `latest` (what is mined).
+export async function getNonce(c: ChainCtx, addr: Hex, tag: 'pending' | 'latest'): Promise<bigint> {
+  return qty(await must(c, 'eth_getTransactionCount', [addr, tag]), 'eth_getTransactionCount');
+}
+
+export async function baseFee(c: ChainCtx): Promise<bigint> {
+  const b = (await must(c, 'eth_getBlockByNumber', ['latest', false])) as { baseFeePerGas?: unknown } | null;
+  if (!b) throw new ChainError('bad_response', 'eth_getBlockByNumber');
+  return qty(b.baseFeePerGas, 'eth_getBlockByNumber');
+}
+
+export async function priorityFee(c: ChainCtx): Promise<bigint> {
+  return qty(await must(c, 'eth_maxPriorityFeePerGas', []), 'eth_maxPriorityFeePerGas');
+}
+
+export async function estimateGas(c: ChainCtx, from: Hex, data: Hex): Promise<{ ok: true; gas: bigint } | { ok: false; kind: string }> {
+  const r = await rpc(c.net, c.rpcUrl, 'eth_estimateGas', [{ from, to: c.exchange, data }, 'latest']);
+  if (r.ok) return { ok: true, gas: qty(r.result, 'eth_estimateGas') };
+  // A revert is an answer (the trace already told us why); anything else is the node failing.
+  if (r.kind === 'rpc_error') return { ok: false, kind: 'reverted' };
+  throw new ChainError(r.kind, 'eth_estimateGas');
+}
+
+/// debug_traceCall with the call tracer at `latest`. Null when the node cannot give one (the caller holds).
+export async function traceCall(c: ChainCtx, from: Hex, data: Hex): Promise<unknown | null> {
+  const r = await rpc(c.net, c.rpcUrl, 'debug_traceCall', [{ from, to: c.exchange, data }, 'latest', { tracer: 'callTracer' }]);
+  return r.ok ? r.result : null;
+}
+
+export async function traceTransaction(c: ChainCtx, hash: Hex): Promise<unknown | null> {
+  const r = await rpc(c.net, c.rpcUrl, 'debug_traceTransaction', [hash, { tracer: 'callTracer' }]);
+  return r.ok ? r.result : null;
+}
+
+export interface Receipt {
+  status: 0 | 1;
+  effectiveGasPrice: bigint | null;
+  gasUsed: bigint | null;
+  blockNumber: bigint | null;
+}
+
+export async function getReceipt(c: ChainCtx, hash: Hex): Promise<Receipt | null> {
+  const v = (await must(c, 'eth_getTransactionReceipt', [hash])) as { status?: unknown; effectiveGasPrice?: unknown; gasUsed?: unknown; blockNumber?: unknown } | null;
+  if (v === null) return null;
+  if (v.status !== '0x1' && v.status !== '0x0') throw new ChainError('bad_response', 'eth_getTransactionReceipt');
+  const opt = (x: unknown) => (typeof x === 'string' && QTY.test(x) ? BigInt(x) : null);
+  return { status: v.status === '0x1' ? 1 : 0, effectiveGasPrice: opt(v.effectiveGasPrice), gasUsed: opt(v.gasUsed), blockNumber: opt(v.blockNumber) };
+}
+
+export async function getTxInput(c: ChainCtx, hash: Hex): Promise<{ input: Hex; from: Hex; nonce: bigint } | null> {
+  const v = (await must(c, 'eth_getTransactionByHash', [hash])) as { input?: unknown; from?: unknown; nonce?: unknown } | null;
+  if (v === null) return null;
+  if (typeof v.input !== 'string' || !HEX.test(v.input) || typeof v.from !== 'string') throw new ChainError('bad_response', 'eth_getTransactionByHash');
+  return { input: v.input.toLowerCase() as Hex, from: v.from.toLowerCase() as Hex, nonce: qty(v.nonce, 'eth_getTransactionByHash') };
+}
+
+export async function readPaused(c: ChainCtx): Promise<boolean> {
+  const r = await multicall(c, [{ target: c.exchange, data: encodeCall('paused') }]);
+  if (!r[0].success) throw new ChainError('rpc_error', 'paused');
+  return decodeResult('paused', r[0].returnData) === true;
+}
+
+export async function readIsOperator(c: ChainCtx, who: Hex): Promise<boolean> {
+  const r = await multicall(c, [{ target: c.exchange, data: encodeCall('isOperator', [who]) }]);
+  if (!r[0].success) throw new ChainError('rpc_error', 'isOperator');
+  return decodeResult('isOperator', r[0].returnData) === true;
+}
+
+/// `cap()` of the funder contract (MakoFunder, slice 2a: not built yet, so this is the only function the settler
+/// asks of it). Null when it cannot be read.
+export async function readFunderCap(c: ChainCtx, funder: Hex): Promise<bigint | null> {
+  const r = await rpc(c.net, c.rpcUrl, 'eth_call', [{ to: funder, data: '0x355274ea' }, 'latest']); // cap()
+  if (!r.ok || typeof r.result !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(r.result)) return null;
+  return BigInt(r.result);
+}

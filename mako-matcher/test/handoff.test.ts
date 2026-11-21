@@ -166,20 +166,39 @@ describe('hand-off to the settler', () => {
   });
 });
 
-describe('the settler stub (phase A)', () => {
-  const call = (path: string, method = 'GET') =>
+describe('the settler object (real class, real storage)', () => {
+  const call = (path: string, method = 'GET', body: unknown = undefined, e: Partial<Env> = {}) =>
     runInDurableObject(env.SETTLER.get(env.SETTLER.idFromName('settler')), async (_i, state) => {
-      const inst = new MatcherSettler(state, env as Env);
-      const res = await inst.fetch(new Request(`https://settler${path}`, { method, body: method === 'POST' ? '{}' : undefined }));
+      const inst = new MatcherSettler(state, { ...env, ...e } as Env);
+      const res = await inst.fetch(new Request(`https://settler${path}`, { method, body: body === undefined ? (method === 'POST' ? '{}' : undefined) : JSON.stringify(body) }));
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     });
 
-  it('refuses every request that is not the read-only refusal question, and sends nothing', async () => {
-    for (const [path, method] of [['/settle', 'POST'], ['/', 'GET'], ['/refused', 'GET'], ['/anything', 'DELETE']] as const) {
-      const r = await call(path, method);
-      expect(r.status, `${method} ${path}`).toBe(503);
-      expect(r.body).toEqual({ ok: false, accepted: false, error: 'settler_not_built' });
-    }
+  it('refuses a proposal while K, the funder address or the key is not configured, and sends nothing', async () => {
+    const p = (await import('./settle-helpers')).DIRECT();
+    // the committed wrangler.toml leaves K and FUNDER_ADDRESS unset; the test bindings add no key either
+    const r = await call('/settle', 'POST', p);
+    expect(r.status).toBe(503);
+    expect(r.body).toMatchObject({ accepted: false, error: 'held_k_unset' });
+  });
+
+  it('refuses a body that is not a proposal, unknown routes, and a settle with no primary RPC', async () => {
+    expect((await call('/settle', 'POST', { nonsense: true })).body).toMatchObject({ accepted: false, error: 'bad_proposal' });
+    expect((await call('/', 'GET')).status).toBe(404);
+    expect((await call('/anything', 'DELETE')).status).toBe(404);
+    expect((await call('/refused', 'GET')).status).toBe(404);
+    const noRpc = await call('/settle', 'POST', {}, { PRIMARY_RPC_URL: undefined });
+    expect(noRpc.status).toBe(503);
+    expect(noRpc.body).toMatchObject({ error: 'held_no_primary_rpc' });
+    const noExchange = await call('/settle', 'POST', {}, { EXCHANGE_ADDRESS: undefined });
+    expect(noExchange.body).toMatchObject({ error: 'not_configured' });
+  });
+
+  it('status shows what it is held to', async () => {
+    const r = await call('/status', 'GET', undefined, { K: '5', FUNDER_ADDRESS: '0x' + 'f0'.repeat(20), GATE_GT_PASSED: 'false' });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ K: '5', funder: '0x' + 'f0'.repeat(20), gateGtPassed: false, sender: null, sends: 0 });
+    expect(((await call('/status', 'GET', undefined, { K: '0' })).body as { K: unknown }).K).toBeNull();
   });
 
   it('answers the daily refusal question from its table (the storage shape phase B writes)', async () => {
@@ -193,7 +212,7 @@ describe('the settler stub (phase A)', () => {
       expect(isRefused(state.storage.sql, m, Date.parse('2001-01-01T12:00:00Z'))).toBe(false);
     });
     expect((await call(`/refused/${m}`)).body).toEqual({ refused: true });
-    expect((await call('/refused/not-an-address')).status).toBe(503);
+    expect((await call('/refused/not-an-address')).status).toBe(404);
     void NOW_MS;
   });
 

@@ -81,6 +81,9 @@ export class World {
   override: ((name: string) => Hex | null) | null = null;
   /// Make an exchange function revert with a named custom error (function name to error name).
   revert: Record<string, string> = {};
+  paused = false;
+  /// Extra methods (the settler's reads, the funder, sends): answer, or return null to fall through.
+  hooks: ((method: string, params: unknown[]) => Promise<RpcAnswer | null>) | null = null;
 
   setCash(a: Hex, v: bigint) {
     this.cash.set(a.toLowerCase() as Hex, v);
@@ -227,6 +230,8 @@ async function exchangeCall(w: World, data: Hex): Promise<{ name: string; result
       return { name, result: enc(w.treasury) };
     case 'isOperator':
       return { name, result: enc(w.operators.has(lower(a[0] as string))) };
+    case 'paused':
+      return { name, result: enc(w.paused) };
     case 'isValidOrderSignature':
       return { name, result: enc(await modelIsValid(w, a)) };
     default:
@@ -234,9 +239,11 @@ async function exchangeCall(w: World, data: Hex): Promise<{ name: string; result
   }
 }
 
-type RpcAnswer = { result: unknown } | { error: { code: number; message: string; data?: Hex } };
+export type RpcAnswer = { result: unknown } | { error: { code: number; message: string; data?: Hex } };
 
 async function answer(w: World, method: string, params: unknown[]): Promise<RpcAnswer> {
+  const hooked = await w.hooks?.(method, params);
+  if (hooked) return hooked;
   switch (method) {
     case 'eth_chainId':
       return { result: `0x${w.chainId.toString(16)}` };
