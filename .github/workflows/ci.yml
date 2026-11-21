@@ -52,6 +52,8 @@ on:
       - 'feat/watchdog-*'
       # Remembered-browser sign-in (#213), pushed here for CI before any review or merge.
       - 'feat/remembered-browser-signin'
+      # The off-chain matcher Worker (slice 2), pushed here for CI before any review or merge.
+      - 'feat/mako-matcher'
 
 # Cancel in-flight runs for the same ref when a new commit lands. Saves
 # CI minutes when force-pushing rapid iterations during review rounds.
@@ -482,4 +484,49 @@ jobs:
         run: pnpm check:feed-status
 
       - name: Build bundle and assert no signing capability
+        run: pnpm bundle && pnpm assert-bundle
+
+  # Off-chain order matcher Worker: mako-matcher/ is its own package like keeper/ and watchdog/ (own lockfile,
+  # installed with --ignore-workspace). Wrangler 4 needs Node 22. The vendored-input check compares the exchange
+  # ABI, the order vectors and the Safe v1.4.1 proxy code with their sha256 sidecars (it also compares with the
+  # mako-contracts checkout where one exists; CI has none, so it says so). The last step builds the deploy bundle
+  # and fails if it can send a transaction, if any module but the settler reads the operator key, or if the
+  # wrangler configuration drifts from the pinned shape.
+  mako-matcher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mako-matcher
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Test the vendoring and bundle scripts
+        run: pnpm test:scripts
+
+      - name: Vendored inputs match their sidecars (fails, never skips)
+        run: pnpm check:vendored
+
+      - name: Build bundle and assert it cannot send
         run: pnpm bundle && pnpm assert-bundle

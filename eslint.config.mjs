@@ -35,6 +35,8 @@ const eslintConfig = defineConfig([
     // Worker build output (gitignored; wrangler writes it locally).
     "watchdog/dist/**",
     "watchdog/.wrangler/**",
+    "mako-matcher/dist/**",
+    "mako-matcher/.wrangler/**",
     "cf-worker/dist/**",
     "cf-worker/.wrangler/**",
   ]),
