@@ -3,7 +3,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, migrate, setMeta, countOrders } from './book';
+import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, markInFlight, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { LOG_CHUNK_BLOCKS, MAX_BODY_BYTES, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
 import type { Env } from './env';
@@ -147,6 +148,24 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
     return json(200, { ok: true, hash: result.hash, booked: true, handedOff });
   }
 
+  if (req.method === 'POST' && url.pathname === '/outcome') {
+    const text = await req.text();
+    let parsed: ReturnType<typeof parseOutcome> = null;
+    try {
+      parsed = parseOutcome(JSON.parse(text));
+    } catch {
+      /* refused below */
+    }
+    if (!parsed) return json(400, { ok: false, code: 'bad_request' });
+    applyOutcome(sql, parsed, alert);
+    return json(200, { ok: true });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/restart') {
+    delMeta(sql, 'stopped');
+    return json(200, { ok: true });
+  }
+
   const del = /^\/orders\/(0x[0-9a-fA-F]{64})$/.exec(url.pathname);
   if (req.method === 'DELETE' && del) {
     const removed = deleteByHash(sql, del[1].toLowerCase() as Hex);
@@ -193,11 +212,14 @@ function serialize(p: Proposal) {
 export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null): Promise<{ handedOff: number }> {
   const sql = state.storage.sql;
   const nowS = Math.floor(deps.now() / 1000);
-  const book = allOrders(sql).filter((o) => o.expiration > BigInt(nowS));
+  // An order in a proposal the settler accepted is in flight until it reports: it is in no other proposal.
+  const book = allOrders(sql).filter((o) => o.expiration > BigInt(nowS) && !o.inFlight);
   // Newest first: the later order of a crossing pair is the taker, so the resting order sets the price.
   const takers = (takerHashes === null ? book : book.filter((o) => takerHashes.includes(o.hash))).sort((a, b) => b.seq - a.seq);
   const nOptions = Number(getMeta(sql, 'n_options') ?? 0);
   if (takers.length === 0 || nOptions < 2) return { handedOff: 0 };
+  // A stopped market matches nothing until a person restarts it (plan 6.2).
+  if (getMeta(sql, 'stopped') !== null) return { handedOff: 0 };
 
   const chain = chainCtx(state, cfg, deps);
   const blocked = new Set<Hex>(); // refused roles and accounts refused for the day, found so far
@@ -221,7 +243,16 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
         }
         if (unchecked.some((a) => blocked.has(a))) continue; // propose again without the refused wallet
       }
-      await deps.settle(serialize(p)); // Phase A: the stub refuses and the order stays booked; one hand-off per pass either way
+      // Marked BEFORE the hand-off, so the settler's report cannot arrive ahead of the mark; released again if the
+      // settler does not take the proposal.
+      const hashes = [p.taker.hash, ...p.makers.map((m) => m.hash)];
+      markInFlight(sql, hashes);
+      let accepted = false;
+      try {
+        accepted = (await deps.settle(serialize(p))).accepted;
+      } finally {
+        if (!accepted) releaseInFlight(sql, hashes);
+      }
       return { handedOff: 1 };
     }
   }

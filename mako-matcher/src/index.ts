@@ -25,6 +25,15 @@ export function secretsEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/// Fails closed: with no secret configured, nothing guarded by it is accepted.
+function checkSecret(env: Env, req: Request): Response | null {
+  const secret = env.CANCEL_SECRET?.trim();
+  if (!secret) return json(503, { ok: false, code: 'cancel_not_configured' });
+  const given = req.headers.get('x-matcher-secret');
+  if (given === null || !secretsEqual(given, secret)) return json(401, { ok: false, code: 'unauthorized' });
+  return null;
+}
+
 function marketStub(env: Env, id: string) {
   return env.MARKET.get(env.MARKET.idFromName(id));
 }
@@ -74,6 +83,16 @@ export default {
       return serveBook(env, id, { cache: (caches as unknown as { default: Cache }).default, now: () => Date.now() });
     }
 
+    // A person restarts a market the settler stopped (plan 6.2). Same shared secret as the cancel.
+    if (parts[0] === 'market' && parts[2] === 'restart' && parts.length === 3) {
+      const id = parseMarketId(parts[1]);
+      if (id === null) return json(400, { ok: false, code: 'bad_market_id' });
+      if (req.method !== 'POST') return json(405, { ok: false, code: 'method_not_allowed' });
+      const denied = checkSecret(env, req);
+      if (denied) return denied;
+      return forward(env, id, '/restart', { method: 'POST' });
+    }
+
     if (parts[0] === 'market' && parts[2] === 'orders') {
       const id = parseMarketId(parts[1]);
       if (id === null) return json(400, { ok: false, code: 'bad_market_id' });
@@ -83,11 +102,8 @@ export default {
         return forward(env, id, '/orders', { method: 'POST', body: text, headers: { 'content-type': 'application/json' } });
       }
       if (parts.length === 4 && req.method === 'DELETE' && /^0x[0-9a-fA-F]{64}$/.test(parts[3])) {
-        // Fails closed: with no secret configured, no cancel is accepted.
-        const secret = env.CANCEL_SECRET?.trim();
-        if (!secret) return json(503, { ok: false, code: 'cancel_not_configured' });
-        const given = req.headers.get('x-matcher-secret');
-        if (given === null || !secretsEqual(given, secret)) return json(401, { ok: false, code: 'unauthorized' });
+        const denied = checkSecret(env, req);
+        if (denied) return denied;
         return forward(env, id, `/orders/${parts[3]}`, { method: 'DELETE' });
       }
       return json(parts.length === 3 || parts.length === 4 ? 405 : 404, { ok: false, code: 'not_found' });

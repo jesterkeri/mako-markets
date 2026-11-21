@@ -21,7 +21,8 @@ export const SCHEMA = [
      signature TEXT NOT NULL CHECK (length(signature) >= 4),
      fee TEXT NOT NULL,
      filled TEXT NOT NULL DEFAULT '0',
-     created_at INTEGER NOT NULL
+     created_at INTEGER NOT NULL,
+     in_flight INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
   `CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, code TEXT NOT NULL, detail TEXT NOT NULL)`,
@@ -41,6 +42,8 @@ export interface BookOrder extends OrderTuple {
   filled: bigint;
   remaining: bigint;
   createdAt: number;
+  /// In a proposal the settler accepted and has not yet reported on (survives a restart).
+  inFlight: boolean;
 }
 
 type Row = {
@@ -59,6 +62,7 @@ type Row = {
   fee: string;
   filled: string;
   created_at: number;
+  in_flight: number;
 };
 
 function fromRow(r: Row): BookOrder {
@@ -81,6 +85,7 @@ function fromRow(r: Row): BookOrder {
     filled,
     remaining: size - filled,
     createdAt: r.created_at,
+    inFlight: r.in_flight === 1,
   };
 }
 
@@ -175,4 +180,30 @@ export function setMeta(sql: SqlStorage, k: string, v: string): void {
 
 export function delMeta(sql: SqlStorage, k: string): void {
   sql.exec(`DELETE FROM meta WHERE k = ?`, k);
+}
+
+export function markInFlight(sql: SqlStorage, hashes: Hex[]): void {
+  for (const h of hashes) sql.exec(`UPDATE orders SET in_flight = 1 WHERE hash = ?`, h);
+}
+
+export function releaseInFlight(sql: SqlStorage, hashes: Hex[]): void {
+  for (const h of hashes) sql.exec(`UPDATE orders SET in_flight = 0 WHERE hash = ?`, h);
+}
+
+/// A settled fill. What is left stays booked and matchable, however small: it is dropped only when it is filled,
+/// expires, is cancelled or is refused (never for its size; intake's 10-share rule is for NEW orders only).
+export function applyFill(sql: SqlStorage, hash: Hex, fill: bigint): void {
+  const o = getOrder(sql, hash);
+  if (!o) return;
+  const filled = o.filled + fill;
+  if (filled >= o.size) sql.exec(`DELETE FROM orders WHERE hash = ?`, hash);
+  else sql.exec(`UPDATE orders SET filled = ? WHERE hash = ?`, filled.toString(), hash);
+}
+
+export function deleteByMaker(sql: SqlStorage, maker: Hex): number {
+  return sql.exec(`DELETE FROM orders WHERE maker = ?`, maker).rowsWritten;
+}
+
+export function deleteAll(sql: SqlStorage): number {
+  return sql.exec(`DELETE FROM orders`).rowsWritten;
 }

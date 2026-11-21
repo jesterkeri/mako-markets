@@ -19,6 +19,8 @@ export interface Harness {
   settleAccepts: boolean;
   settlerDown: boolean;
   stub: ReturnType<typeof env.MARKET.get>;
+  /// The object's state while a request runs (a nested runInDurableObject would not see the same view).
+  state: DurableObjectState | null;
   /// Calls the market object's request handler with the fake chain.
   call(method: string, path: string, init?: { body?: unknown; marketHeader?: string | null; env?: Partial<Env> }): Promise<Response>;
   place(o: VecOrder): Promise<{ status: number; json: Record<string, unknown> }>;
@@ -48,6 +50,7 @@ export async function fresh(id = '1'): Promise<Harness> {
     settleAccepts: false,
     settlerDown: false,
     stub,
+    state: null,
     deps: null as unknown as MarketDeps,
     async call(method, path, init = {}) {
       const headers = new Headers();
@@ -58,6 +61,7 @@ export async function fresh(id = '1'): Promise<Harness> {
       // The Request is built inside the object: a body made outside it belongs to another I/O context.
       const out = await runInDurableObject(stub, async (_i, state) => {
         const req = new Request(`https://market${path}`, { method, headers, body: text });
+        h.state = state;
         const res = await handleRequest(state, e, req, h.deps);
         return { status: res.status, text: await res.text() };
       });
