@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseTransaction, type Hex } from 'viem';
-import { decodeMatch } from '../src/encode';
 import { GAS_CEILING } from '../src/settle';
 import { DIRECT, drive, prop, rows, withSettler } from './settle-helpers';
-import { GWEI, OP, OP2, rig, SettleWorld } from './settle-world';
+import { GWEI, OP, OP2, rig } from './settle-world';
 import { vec } from './vectors';
 
 const sendsToday = (sql: SqlStorage) => rows<{ sends: number; mon_reserved: string }>(sql, 'SELECT sends, mon_reserved FROM counters')[0];
