@@ -25,6 +25,7 @@ export const SCHEMA = [
      in_flight INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
+  `CREATE TABLE IF NOT EXISTS outcomes_seen (id INTEGER PRIMARY KEY)`,
   `CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, code TEXT NOT NULL, detail TEXT NOT NULL)`,
 ];
 

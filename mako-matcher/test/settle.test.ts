@@ -185,7 +185,7 @@ describe('the gas limit and the wallet', () => {
       await drive(s, DIRECT());
       expect(r.w.sent).toEqual([]);
       expect(r.alerts.map((a) => a.code)).toContain('wallet_short');
-      expect(r.outcomes[0].body).toEqual({ release: [DIRECT().taker.hash, DIRECT().makers[0].hash] });
+      expect(r.outcomes[0].body).toEqual({ id: '1', release: [DIRECT().taker.hash, DIRECT().makers[0].hash] });
       expect(rows(sql, 'SELECT COUNT(*) AS n FROM failures')).toEqual([{ n: 0 }]);
       r.w.balance = need;
       await drive(s, DIRECT());

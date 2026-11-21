@@ -223,29 +223,35 @@ export class Settler {
   }
 
   // ------------------------------------------------------------------ reporting
-  private finish(p: WireProposal, o: Partial<Outcome>) {
-    const body: Outcome = { ...o, release: hexes(p) };
+  private finish(p: WireProposal, o: Partial<Omit<Outcome, 'id'>>) {
+    const body: Omit<Outcome, 'id'> = { ...o, release: hexes(p) };
     this.d.sql.exec(`INSERT INTO outbox (market_id, body) VALUES (?, ?)`, p.marketId, JSON.stringify(body));
     this.d.sql.exec(`DELETE FROM pending`);
     this.d.sql.exec(`DELETE FROM in_flight`);
   }
 
   private async flushOutbox() {
+    const failed = new Set<string>(); // a market that did not take one outcome gets none of its later ones this pass
     for (const r of this.d.sql.exec<{ id: number; market_id: string; body: string }>(`SELECT id, market_id, body FROM outbox ORDER BY id`).toArray()) {
+      if (failed.has(r.market_id)) continue;
       try {
-        await this.d.report(r.market_id, JSON.parse(r.body) as Outcome);
+        // The outbox id goes with the outcome: a retry after a lost answer carries the same id, and the market applies
+        // each id once.
+        await this.d.report(r.market_id, { ...(JSON.parse(r.body) as Outcome), id: String(r.id) });
         this.d.sql.exec(`DELETE FROM outbox WHERE id = ?`, r.id);
       } catch {
+        failed.add(r.market_id);
         this.alertOnce('report_failed', `market ${r.market_id} did not take the outcome; it is kept and retried`);
-        return;
       }
     }
   }
 
-  /// Nothing is sent and nothing is dropped or counted: the match goes back to the book.
-  private hold(p: WireProposal, reason: string, detail: string) {
+  /// Nothing is sent and nothing is counted: the match goes back to the book. The hold itself drops nothing; parties
+  /// already dropped for their own reason while the match was rebuilt (refused, unsupported wallet) are reported, so
+  /// the next proposal is built without them and no order the market marked is left unreported.
+  private hold(p: WireProposal, reason: string, detail: string, dropped: { hash: Hex; reason: string }[] = []) {
     this.alertOnce(reason, detail);
-    this.finish(p, {});
+    this.finish(p, dropped.length ? { dropped } : {});
   }
 
   // ------------------------------------------------------------------ building and simulating
@@ -269,8 +275,9 @@ export class Settler {
     const dropped: { hash: Hex; reason: string }[] = [];
     let data: Hex | null = null;
     let gasLimit = 0n;
-    for (let round = 0; round <= MAX_REBUILDS; round++) {
-      if (round === MAX_REBUILDS) return this.hold(p0, 'held_rebuild', 'a match kept losing parties; it is held');
+    for (let round = 0; ; round++) {
+      // Round 0 is the match as proposed; rounds 1 to MAX_REBUILDS are rebuilds. One more drop past that holds it.
+      if (round > MAX_REBUILDS) return this.hold(p0, 'held_rebuild', 'a match kept losing parties; it is held', dropped);
       // An account refused for the rest of the UTC day is in no settlement (plan 6.2: refused accounts).
       const refusedParty = allRecs(p).find((r) => this.isRefusedToday(r.order.maker));
       if (refusedParty) {
@@ -310,7 +317,7 @@ export class Settler {
 
       // The simulation: debug_traceCall, only now that the previous transaction has its receipt.
       const trace = parseTrace(await traceCall(d.chain, sender, data));
-      if (!trace) return this.hold(p0, 'simulation_unavailable', 'no call trace could be read for the simulation; the match is held');
+      if (!trace) return this.hold(p0, 'simulation_unavailable', 'no call trace could be read for the simulation; the match is held', dropped);
       const rev = topRevert(trace);
       if (rev) return this.onRevert(p, rev, { sent: false, data, dropped });
       this.d.sql.exec(`DELETE FROM meta WHERE k = 'insufficient_gas_streak'`); // "in a row": a clean simulation ends it
@@ -320,7 +327,7 @@ export class Settler {
       let bad: Rec | null = null;
       for (const r of contract) {
         const f = frames.get(r.order.maker);
-        if (!f) return this.hold(p0, 'check_frame_missing', `the trace shows no signature check for ${r.order.maker}; the match is held`);
+        if (!f) return this.hold(p0, 'check_frame_missing', `the trace shows no signature check for ${r.order.maker}; the match is held`, dropped);
         if (outsiders(f, r.order.maker).length > 0) {
           bad = r;
           break;
@@ -335,7 +342,7 @@ export class Settler {
       }
 
       const est = await estimateGas(d.chain, sender, data);
-      if (!est.ok) return this.hold(p0, 'estimate_failed', 'eth_estimateGas failed after a clean simulation; the match is held');
+      if (!est.ok) return this.hold(p0, 'estimate_failed', 'eth_estimateGas failed after a clean simulation; the match is held', dropped);
       gasLimit = (((est.gas * 11n + 9n) / 10n + 999n) / 1000n) * 1000n;
       break;
     }
@@ -352,11 +359,11 @@ export class Settler {
     const reserve = gasLimit * maxFee;
 
     // Wallet short: below the worst charge, send nothing, hold every market, drop and count nothing.
-    if ((await getBalance(d.chain, sender)) < reserve) return this.hold(p0, 'wallet_short', 'the operator balance is below the worst charge; nothing is sent until it is funded');
+    if ((await getBalance(d.chain, sender)) < reserve) return this.hold(p0, 'wallet_short', 'the operator balance is below the worst charge; nothing is sent until it is funded', dropped);
 
     // The daily caps (plan 6.3): a send that would pass either is not sent.
-    if (BigInt(day.sends) + 1n > d.K!) return this.hold(p0, 'cap_count', `today's count cap K = ${d.K} is reached`);
-    if (day.reserved + reserve > day.cap) return this.hold(p0, 'cap_mon', `today's MON cap would be passed (${day.reserved + reserve} > ${day.cap})`);
+    if (BigInt(day.sends) + 1n > d.K!) return this.hold(p0, 'cap_count', `today's count cap K = ${d.K} is reached`, dropped);
+    if (day.reserved + reserve > day.cap) return this.hold(p0, 'cap_mon', `today's MON cap would be passed (${day.reserved + reserve} > ${day.cap})`, dropped);
 
     // The nonce is the chain's plus the log's: never below a logged one.
     const chainNonce = await getNonce(d.chain, sender, 'pending');
@@ -368,7 +375,7 @@ export class Settler {
 
     // The caps above were checked against the counters of the UTC day read at the start. If midnight passed during
     // the reads since, nothing is sent: the orders go back and the next tick checks against the new day's row.
-    if (this.today() !== day.key) return this.finish(p0, {});
+    if (this.today() !== day.key) return this.finish(p0, dropped.length ? { dropped } : {});
     // Log first, broadcast second, in one synchronous block (reservation, counters, log, in-flight row).
     const dayKey = day.key;
     d.sql.exec(`INSERT INTO send_log (hash, sender, nonce, gas_limit, max_fee, reserved, charge, utc_day, market_id, status, at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'sent', ?)`, hash, sender, tx.nonce, gasLimit.toString(), maxFee.toString(), reserve.toString(), dayKey, p.marketId, d.now());
@@ -541,7 +548,7 @@ export class Settler {
         const n = Number(this.meta('insufficient_gas_streak') ?? 0) + 1;
         this.setMeta('insufficient_gas_streak', String(n));
         if (n >= 3) this.d.alert('insufficient_gas_streak', `${n} simulations in a row ended in InsufficientGas`);
-        return this.finish(p, {});
+        return this.finish(p, dropped.length ? { dropped } : {});
       }
       case 'NonceMismatch':
         drop(hash, 'nonce');

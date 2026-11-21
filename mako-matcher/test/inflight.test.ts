@@ -21,7 +21,10 @@ async function put(names: string[]) {
   return out;
 }
 const flags = async () => (await h.sql<{ hash: string; in_flight: number }>('SELECT hash, in_flight FROM orders ORDER BY seq')).map((r) => r.in_flight);
+let nextId = 1;
+/// Each call is a new settlement (a fresh outbox id) unless the body names its own id.
 async function outcome(body: unknown) {
+  if (typeof body === 'object' && body !== null && !Array.isArray(body) && !('id' in body)) body = { id: String(nextId++), ...body };
   const res = await h.call('POST', '/outcome', { body });
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
 }
@@ -107,6 +110,22 @@ describe('what is left after a fill stays booked', () => {
     expect(p.fills).toEqual(['5000000']);
   });
 
+  it('a redelivered outcome (same id, its answer lost) is applied once: no fill twice, no newer mark released', async () => {
+    await put(['directMakerSell', 'directTakerBuy']);
+    const sell = vec('directMakerSell');
+    const buy = vec('directTakerBuy');
+    const once = { id: '41', applied: [{ hash: sell.hash, fill: '40000000' }, { hash: buy.hash, fill: '40000000' }], release: [sell.hash, buy.hash] };
+    expect((await outcome(once)).status).toBe(200);
+    // the remainders are proposed again and the settler takes the new proposal: both marked in flight
+    h.settleAccepts = true;
+    await h.tick();
+    expect(await flags()).toEqual([1, 1]);
+    // the first outcome arrives a second time, byte for byte
+    expect(await outcome(once)).toEqual({ status: 200, json: { ok: true } });
+    expect((await h.sql<{ filled: string }>('SELECT filled FROM orders ORDER BY seq')).map((r) => r.filled)).toEqual(['40000000', '40000000']);
+    expect(await flags()).toEqual([1, 1]);
+  });
+
   it('a fully filled order leaves the book', async () => {
     await put(['directMakerSell']);
     const sell = vec('directMakerSell');
@@ -155,7 +174,7 @@ describe('the settler\'s report to a market', () => {
   });
 
   it('refuses a malformed report whole', async () => {
-    for (const b of [null, {}, { release: ['0x12'] }, { release: [], applied: [{ hash: `0x${'a'.repeat(64)}`, fill: '0' }] }, { release: [], dropped: [{ hash: 'x', reason: 'a' }] }, { release: [], refusedMakers: ['0x1'] }]) {
+    for (const b of [null, {}, { release: ['0x12'] }, { release: [], applied: [{ hash: `0x${'a'.repeat(64)}`, fill: '0' }] }, { release: [], dropped: [{ hash: 'x', reason: 'a' }] }, { release: [], refusedMakers: ['0x1'] }, { id: '0', release: [] }, { id: 7, release: [] }, { id: 'x', release: [] }, { id: '1'.repeat(16), release: [] }]) {
       expect((await outcome(b)).status, JSON.stringify(b)).toBe(400);
     }
     void ('' as Hex);

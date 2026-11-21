@@ -117,7 +117,7 @@ describe('records from another market', () => {
       expect(r.w.sent).toEqual([]);
       expect(r.w.calls.some((c) => c.method === 'debug_traceCall' || c.method === 'eth_estimateGas')).toBe(false);
       expect(r.alerts.map((a) => a.code)).toContain('market_mismatch');
-      expect(r.outcomes[0].body).toEqual({ release: [p.taker.hash, p.makers[0].hash] });
+      expect(r.outcomes[0].body).toEqual({ id: '1', release: [p.taker.hash, p.makers[0].hash] });
       expect(failures(sql)).toEqual([]);
     });
   });
