@@ -12,7 +12,13 @@ describe('the daily count cap K (plan 6.3)', () => {
       // sends 2 and 4 revert with an error that drops nothing and counts against no one
       r.w.onSend = (_s, n) => (n % 2 === 0 ? { revert: { name: 'Paused' } } : { status: 1 });
       const s = mk(sql);
-      for (let i = 0; i < 12; i++) await drive(s, DIRECT());
+      const seen70: number[] = [];
+      for (let i = 0; i < 12; i++) {
+        await drive(s, DIRECT());
+        seen70.push(r.alerts.filter((a) => a.code === 'cap_70_count').length);
+      }
+      // 70% of 5 is 3.5: no alert after 3 sends, one from the 4th on, never a second
+      expect(seen70.slice(0, 5)).toEqual([0, 0, 0, 1, 1]);
       expect(r.w.sent).toHaveLength(5);
       expect(counters(sql).sends).toBe(5);
       expect(r.outcomes).toHaveLength(12);

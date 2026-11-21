@@ -4,10 +4,10 @@ The off-chain order matcher for Mako Market's own markets: a Cloudflare Worker w
 Design: `.claude/design/OFFCHAIN_MATCHING_PLAN.md` r31 draft 7 (slice 2). It talks to `MakoOutcomeExchangeV1`
 (`mako-contracts` branch `feat/outcome-exchange-v1`, commit `e386bf4`).
 
-**Status: phase A. Nothing is deployed, no key is funded, no user trades.** The settler is a stub that sends
-nothing.
+**Status: phases A and B built. Nothing is deployed, no key is funded, no user trades.** With `K`, the funder
+address and the operator key unset (as committed) the settler sends nothing.
 
-## What is built (phase A)
+## What is built (phases A and B)
 
 - **Order model** (`src/order.ts`): the plan 4.1 typed data, the order hash, and local signature recovery with
   exactly the contract's step-1 rules (65 bytes, low `s`, `v` 27 or 28). viem's own recovery is more lenient, so it
@@ -28,7 +28,8 @@ nothing.
   mint or merge whose maker prices sum above 100, a match across markets, a party in the contract's refused roles
   (read from the contract), or more than 10 makers.
 - **Hand-off** (`src/market.ts`): a proposal goes to the settler only through `env.SETTLER.idFromName("settler")`.
-  In phase A the stub refuses it and the order stays booked. At most one hand-off per pass.
+  At most one hand-off per pass; the later order of a crossing pair is the taker, so a trade is at the resting
+  price; orders in an accepted proposal are marked in flight (in SQLite) until the settler reports.
 - **Cancels and expiry**: `DELETE /market/:id/orders/:hash` with the shared secret in `x-matcher-secret`; on every
   alarm tick `Cancelled` and `NonceIncremented` logs are read (100-block chunks, at most 5 per tick) and the affected
   orders dropped; expired orders are dropped.
@@ -36,6 +37,19 @@ nothing.
 - **Vendored inputs** (`data/`, `scripts/vendor.mjs`): the exchange ABI, `order-abi.json` and the Safe v1.4.1
   factory code, each with a sha256 sidecar; `--check` fails on drift from the `mako-contracts` checkout at the
   recorded commit. `SafeProxy.runtime.hex` is derived (how, in `scripts/vendor.mjs`).
+- **The settler** (`src/settle.ts` logic, `src/settler.ts` the one module with the key): one proposal and one
+  transaction at a time. It builds `matchOrders` from the records only, re-checks every contract party's Safe slots,
+  simulates with `debug_traceCall` and checks each party's check frame against the allowlist, takes the gas limit
+  from `eth_estimateGas` x 1.10 (ceiling 4,026,000), sends type 2 at twice the base fee, writes the send log before
+  broadcasting, keeps the daily count and MON counters by UTC day (K from `[vars]`, C from the funder `cap()` at the
+  start of each UTC day), holds when the wallet is short, reads a sent revert from the mined transaction's trace,
+  applies the whole plan 6.2 revert table (BadSignature by byte comparison; out of gas by rules 1 to 5, rule 4 only
+  with `GATE_GT_PASSED = "true"`), refuses accounts at N = 1 / N = 3, recovers from a crash without a second send,
+  and waits for the old key's transaction after a key change. Its outcomes go to the market objects through an
+  outbox that is retried until delivered.
+- **Real-node test** (`integration/`, `pnpm test:integration`): the settler's own code against anvil in Monad mode
+  with the exchange deployed from the `mako-contracts` checkout; skips, saying why, when anvil or the checkout is
+  missing. CI does not run it.
 - `RUNBOOK.md`: plan 6.5, copied verbatim.
 
 ## HTTP surface
@@ -45,6 +59,7 @@ nothing.
 | `POST /market/:id/orders` | body `{ order: {...}, signature }`; large integers are canonical decimal strings |
 | `DELETE /market/:id/orders/:hash` | off-chain cancel; `x-matcher-secret`; 503 with no secret configured |
 | `GET /book/:id` | the feed |
+| `POST /market/:id/restart` | a person restarts a market the settler stopped; `x-matcher-secret` |
 
 Refusal codes: `bad_request`, `wrong_market`, `bad_expiration`, `expired`, `bad_price`, `bad_size`,
 `size_below_minimum`, `bad_signature`, `signature_too_long` (copy C5), `signature_check_failed` (C5),
@@ -65,12 +80,24 @@ approved. These are left out on purpose:
 `wrangler.toml` therefore leaves `EXCHANGE_ADDRESS`, `K` and `FUNDER_ADDRESS` unset and has
 `GATE_GT_PASSED = "false"`; `scripts/assert-bundle.mjs` fails if any of them is set.
 
-## Not built yet (phase B, the settler)
+## Choices where the plan is silent (each fails closed)
 
-Encoding from records, traced simulation, the 4,026,000 ceiling, send and receipt, trace read, the full plan 6.2
-revert table and blame rules, N = 1 / N = 3 (the settler's `refused_accounts` table exists and is read at intake;
-nothing writes it yet), daily counters, wallet short, send log, single in-flight with crash recovery and key-change
-wait, the one-send-path check on the real send code, and dropping a market's orders when trading closes.
+- The settler is given a proposal and answers `accepted` at once; it settles from its alarm and always reports back
+  (fills, drops, marks released), also when it only holds a match.
+- A refused account's booked orders are dropped in the market that learns of the refusal (the report names the
+  account), and in any other market when that market next tries to match them (it asks the settler's list).
+- A held match (config, pause, wallet short, cap, unreadable funder or trace) drops and counts nothing and goes back
+  to the book; an unrecognised revert, a gas limit above the ceiling, and a sent revert with no readable trace stop
+  that market until a person restarts it.
+- The nonce is the larger of the node's pending count and the log's next nonce. A transaction whose nonce is passed
+  with no receipt is "stranded": its whole reservation stays counted and its orders go back to the book.
+- A party whose check frame is missing from the simulation trace holds the match (it cannot be verified).
+- The settler needs `PRIMARY_RPC_URL` (traces); the public RPC alone is not enough for it.
+
+## Not built yet (phase B leftovers)
+
+Dropping a market's orders at trading close when no settlement ever reported `TradingClosed` (the matcher learns it
+only from a simulation), and a person's tool to release an in-flight mark the settler never reported on.
 
 ## Registered order signer (plan 4.5): not built
 
@@ -97,6 +124,7 @@ pnpm install --frozen-lockfile --ignore-workspace
 pnpm typecheck          # src and test
 pnpm test               # vitest in workerd (the real Durable Objects, a fake chain, no network)
 pnpm test:scripts       # node --test for scripts/vendor.mjs and scripts/assert-bundle.mjs
+pnpm test:integration   # optional: real anvil node, needs the mako-contracts checkout (not run in CI)
 pnpm check:vendored     # vendored inputs vs sidecars (and vs the mako-contracts checkout where present)
 pnpm bundle && pnpm assert-bundle
 ```

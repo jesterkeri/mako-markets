@@ -508,7 +508,8 @@ export class Settler {
     const name = rev.name;
 
     // Out of gas, or InsufficientGas, in a SENT transaction: rules 1 to 5 (plan 6.2).
-    if (ctx.sent && rev.outOfGas) return this.onOutOfGas(p, dropped, ctx.trace);
+    // (a sent revert always has its trace here: with none, onReceipt has already stopped the market)
+    if (ctx.sent && rev.outOfGas && ctx.trace) return this.onOutOfGas(p, dropped, ctx.trace);
 
     switch (name) {
       case 'NotOperator':
@@ -574,12 +575,11 @@ export class Settler {
 
   /// Plan 6.2 rules 1 to 5. Only a party whose sent check frame ran code outside the allowlist is blamed, and only
   /// once gate G-T has passed; anything else stops the market and nothing is dropped, counted or re-sent.
-  private onOutOfGas(p: WireProposal, dropped: { hash: Hex; reason: string }[], trace: CallFrame | undefined) {
+  private onOutOfGas(p: WireProposal, dropped: { hash: Hex; reason: string }[], trace: CallFrame) {
     const stop = (why: string) => {
       this.d.alert('out_of_gas_unattributed', why);
       return this.finish(p, { stopMarket: why, dropped });
     };
-    if (!trace) return stop('a sent transaction ran out of gas and no trace was readable');
     if (!this.d.gateGt) return stop('a sent transaction ran out of gas; gate G-T has not passed, so no party is blamed automatically');
     return this.blame(p, dropped, trace, stop);
   }
