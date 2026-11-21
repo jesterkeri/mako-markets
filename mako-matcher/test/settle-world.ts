@@ -22,7 +22,7 @@ export const OP = privateKeyToAccount(OP_KEY);
 export const OP2 = privateKeyToAccount(OP2_KEY);
 export const GWEI = 10n ** 9n;
 
-export type Sim = { revert?: { name: string; args?: unknown[] }; oog?: boolean; extraRan?: Hex[]; /** only this party's check frame runs the extra code */ extraFor?: Hex; noTrace?: boolean };
+export type Sim = { revert?: { name: string; args?: unknown[] }; oog?: boolean; extraRan?: Hex[]; /** only this party's check frame runs the extra code */ extraFor?: Hex; noTrace?: boolean; /** the trace shows no signature-check frames */ noFrames?: boolean };
 export interface Sent {
   hash: Hex;
   from: Hex;
@@ -77,7 +77,7 @@ export class SettleWorld extends World {
     const parties: OrderTuple[] = [d.taker, ...d.makers];
     const calls: unknown[] = [];
     for (const o of parties) {
-      const code = this.code.get(o.maker.toLowerCase() as Hex);
+      const code = s.noFrames ? undefined : this.code.get(o.maker.toLowerCase() as Hex);
       if (!code || code === '0x' || code.startsWith('0xef0100')) continue;
       const inner: unknown[] = [
         { type: 'CALL', from: o.maker, to: SAFE_4337_MODULE, input: IS_VALID_SIGNATURE, calls: [{ type: 'STATICCALL', from: SAFE_4337_MODULE, to: ECRECOVER, input: '0x' }] },
