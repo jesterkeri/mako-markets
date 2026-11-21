@@ -85,6 +85,24 @@ describe('found in the simulation: nothing is sent, nothing is counted', () => {
   });
 });
 
+describe('the InsufficientGas streak', () => {
+  it('a clean simulation ends the streak: two, a clean one, two more never alert', async () => {
+    await withSettler(async (sql, r, mk) => {
+      let ig = true;
+      r.w.sim = () => (ig ? { revert: { name: 'InsufficientGas' } } : {});
+      const s = mk(sql);
+      await drive(s, DIRECT());
+      await drive(s, DIRECT());
+      ig = false;
+      await drive(s, DIRECT());
+      ig = true;
+      await drive(s, DIRECT());
+      await drive(s, DIRECT());
+      expect(r.alerts.map((a) => a.code)).not.toContain('insufficient_gas_streak');
+    });
+  });
+});
+
 describe('found in a SENT transaction: read from its own trace', () => {
   for (const row of TABLE) {
     it(row.name, async () => {

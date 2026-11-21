@@ -313,6 +313,7 @@ export class Settler {
       if (!trace) return this.hold(p0, 'simulation_unavailable', 'no call trace could be read for the simulation; the match is held');
       const rev = topRevert(trace);
       if (rev) return this.onRevert(p, rev, { sent: false, data, dropped });
+      this.d.sql.exec(`DELETE FROM meta WHERE k = 'insufficient_gas_streak'`); // "in a row": a clean simulation ends it
 
       // Every frame inside each contract party's check frame ran only allowlisted code.
       const frames = checkFrames(trace, d.chain.exchange, contract.map((r) => r.order.maker));
@@ -439,7 +440,11 @@ export class Settler {
 
   /// The transaction will never mine as logged. Its reservation stays counted (the charge is unknown, so the
   /// whole reservation is kept), and its orders go back to the book.
-  private strand(row: NonNullable<ReturnType<Settler['inFlight']>>, p: WireProposal, why: string) {
+  private async strand(row: NonNullable<ReturnType<Settler['inFlight']>>, p: WireProposal, why: string) {
+    // The receipt is read again AFTER the nonce: a transaction mined between the first receipt read and the nonce
+    // read passed its own nonce, and stranding it would hand settled orders back to the book.
+    const late = await getReceipt(this.d.chain, row.hash);
+    if (late) return this.onReceipt(row, late);
     this.d.sql.exec(`UPDATE send_log SET status = 'stranded', charge = reserved WHERE hash = ?`, row.hash);
     this.d.alert('stranded_transaction', `${row.hash}: ${why}; its orders go back to the book`);
     this.finish(p, {});

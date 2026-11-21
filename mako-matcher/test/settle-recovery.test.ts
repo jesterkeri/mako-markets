@@ -70,6 +70,30 @@ describe('a crash between send and receipt', () => {
     });
   });
 
+  it('mined between the receipt read and the nonce read: it is settled, never stranded', async () => {
+    await withSettler(async (sql, r, mk) => {
+      r.w.onSend = () => ({ pending: true });
+      await drive(mk(sql), DIRECT(), 1);
+      const hash = r.w.sent[0].hash;
+      // The first receipt read answers "none"; the transaction mines right after it, before the nonce is read.
+      const inner = r.w.hooks!;
+      let receiptReads = 0;
+      r.w.hooks = async (m, p) => {
+        const a = await inner(m, p);
+        if (m === 'eth_getTransactionReceipt' && ++receiptReads === 1) {
+          r.w.receipts.set(hash, { status: 1, effectiveGasPrice: r.w.baseFeePerGas + r.w.prio });
+          r.w.confirmedNonce.set(op, 1n);
+        }
+        return a;
+      };
+      await mk(sql).run();
+      expect(rows(sql, 'SELECT status FROM send_log')).toEqual([{ status: 'settled' }]);
+      expect(r.alerts.map((a) => a.code)).not.toContain('stranded_transaction');
+      expect(r.outcomes).toHaveLength(1);
+      expect(r.outcomes[0].body.applied).toHaveLength(2);
+    });
+  });
+
   it('with the same key, a nonce that has passed the logged one with no receipt strands the transaction: its orders go back to the book and its whole reservation stays counted', async () => {
     await withSettler(async (sql, r, mk) => {
       r.w.onSend = () => ({ pending: true });
