@@ -79,6 +79,16 @@ The contract at `e386bf4` has no `setOrderSigner` (plan Q10: only if S1's fallba
 refuses any signature the contract would not accept today: a Safe-form signature is accepted only for a supported
 wallet, and a plain `v` 27 or 28 signature must recover the maker.
 
+## Before any deploy
+
+- **The 2-second book feed needs a custom-domain route.** `GET /book/:id` is served from the Cache API. Cloudflare's
+  page https://developers.cloudflare.com/workers/runtime-apis/cache/ says: "Workers deployed to custom domains have
+  access to functional `cache` operations." It says nothing for `*.workers.dev`, and the platform limits page and
+  the workers.dev page do not mention the Cache API at all (read 2026-11-21). So treat the Cache API as a no-op on
+  workers.dev: every feed request would reach the market object, and the "at most one object request per 2 seconds
+  per market per location" bound would not hold. The bound needs a route on a zone the owner controls. The code is
+  not changed for this (nothing here depends on it for correctness; only load does). Not tested on a real deploy.
+
 ## Running the gates
 
 ```
