@@ -103,6 +103,26 @@ describe('hand-off to the settler', () => {
     }
   });
 
+  it('reads the roles of the parties of a proposal only, not of everybody on the book', async () => {
+    await put(['mintMakerBuy1', 'mintMakerBuy2', 'direct3Maker2Sell', 'direct3Maker3Sell']);
+    h.w.inner.length = 0;
+    const r = await put(['directTakerBuy']);
+    expect(r[0]).toMatchObject({ handedOff: 1 });
+    // the best deal for the taker is the mint (it pays 40 against 55): its three parties are read, one isOperator
+    // each, and the two sellers on the book who are not in the proposal are not
+    expect((h.settled.at(-1) as Handed).kind).toBe('mint');
+    expect(h.w.inner.filter((n) => n === 'isOperator')).toHaveLength(3);
+  });
+
+  it('proposes again without a refused wallet: the next-best maker is used', async () => {
+    h.w.operators.add(vec('direct3Maker1Sell').order.maker); // the best price (50) belongs to an operator
+    await put(['direct3Maker1Sell', 'direct3Maker2Sell']);
+    const r = await put(['directTakerBuy']);
+    expect(r[0]).toMatchObject({ handedOff: 1 });
+    const d = h.settled.at(-1) as Handed;
+    expect(d.makers.map((m) => m.hash)).toEqual([vec('direct3Maker2Sell').hash]);
+  });
+
   it('a wallet on the daily refusal list is never put in a match', async () => {
     await put(['directMakerSell']);
     h.refused.add(vec('directMakerSell').order.maker);

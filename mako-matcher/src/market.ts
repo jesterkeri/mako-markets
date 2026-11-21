@@ -5,7 +5,7 @@ import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
 import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, migrate, setMeta, countOrders } from './book';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
-import { LOG_CHUNK_BLOCKS, MAX_BODY_BYTES, MAX_LOG_CHUNKS_PER_TICK, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
+import { LOG_CHUNK_BLOCKS, MAX_BODY_BYTES, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
 import { intakeOrder } from './intake';
@@ -187,8 +187,9 @@ function serialize(p: Proposal) {
 }
 
 /// Tries each given order as a taker, oldest first. At most ONE proposal is handed to the settler per pass (one
-/// match at a time; the book changes only when a settlement is reported back). Everything fails closed: if the
-/// refused roles or the daily refusal list cannot be read, nothing is proposed.
+/// match at a time; the book changes only when a settlement is reported back). Only the parties of a proposal are
+/// checked against the contract's refused roles and the daily refusal list; a refused party is left out and the
+/// match is proposed again without it. Everything fails closed: if either cannot be read, nothing is proposed.
 export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null): Promise<{ handedOff: number }> {
   const sql = state.storage.sql;
   const nowS = Math.floor(deps.now() / 1000);
@@ -198,22 +199,30 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
   if (takers.length === 0 || nOptions < 2) return { handedOff: 0 };
 
   const chain = chainCtx(state, cfg, deps);
-  let blockedSet: Set<Hex>;
-  try {
-    await chain.verify();
-    const makers = [...new Set(book.map((o) => o.maker))];
-    blockedSet = await readRefusedRoles(chain, makers);
-    for (const m of makers) if (!blockedSet.has(m) && (await deps.refusedToday(m))) blockedSet.add(m);
-  } catch (err) {
-    alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
-    return { handedOff: 0 };
-  }
+  const blocked = new Set<Hex>(); // refused roles and accounts refused for the day, found so far
+  const clear = new Set<Hex>(); // checked and fine
   for (const taker of takers) {
-    const p = propose(taker, book, { nOptions, nowSeconds: nowS, blocked: (m) => blockedSet.has(m) });
-    if (!p) continue;
-    const r = await deps.settle(serialize(p));
-    void r; // Phase A: the stub refuses and the order stays booked; either way, one handoff per pass.
-    return { handedOff: 1 };
+    for (let round = 0; round < MAX_PARTY_CHECK_ROUNDS; round++) {
+      const p = propose(taker, book, { nOptions, nowSeconds: nowS, blocked: (m) => blocked.has(m) });
+      if (!p) break;
+      const unchecked = [...new Set([p.taker.maker, ...p.makers.map((m) => m.maker)])].filter((a) => !clear.has(a));
+      if (unchecked.length > 0) {
+        try {
+          await chain.verify();
+          const roles = await readRefusedRoles(chain, unchecked);
+          for (const a of unchecked) {
+            if (roles.has(a) || (await deps.refusedToday(a))) blocked.add(a);
+            else clear.add(a);
+          }
+        } catch (err) {
+          alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
+          return { handedOff: 0 };
+        }
+        if (unchecked.some((a) => blocked.has(a))) continue; // propose again without the refused wallet
+      }
+      await deps.settle(serialize(p)); // Phase A: the stub refuses and the order stays booked; one hand-off per pass either way
+      return { handedOff: 1 };
+    }
   }
   return { handedOff: 0 };
 }

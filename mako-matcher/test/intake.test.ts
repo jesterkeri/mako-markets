@@ -51,13 +51,13 @@ describe('a valid order is booked', () => {
     expect(await rows(h)).toEqual([{ hash: o.hash, signature: o.signature }]);
     // block number (log cursor), then ONE multicall; nothing else, and never a JSON-RPC array
     // (eth_chainId is asked once per object lifetime, so it is left out of exact lists)
-    expect(callList(h)).toEqual(['eth_blockNumber', 'eth_call:aggregate3', 'eth_call:aggregate3']);
+    expect(callList(h)).toEqual(['eth_blockNumber', 'eth_call:aggregate3']);
     expect(h.w.inner.slice(0, 5)).toEqual(['marketOf', 'nonces', 'orders', 'cash', 'feeOf']);
     noBatch(h);
     expect(await h.sql('SELECT v FROM meta WHERE k = ?', 'log_cursor')).toEqual([{ v: '5000' }]);
     expect(await h.sql('SELECT v FROM meta WHERE k = ?', 'n_options')).toEqual([{ v: '3' }]);
     expect(await h.sql('SELECT v FROM meta WHERE k = ?', 'market_id')).toEqual([{ v: '1' }]);
-    // the second aggregate3 is the matcher's read of the refused roles before it looks for a counterparty
+    // no counterparty, so no proposal, so no read of anybody's roles
   });
 
   it('a record cannot exist without its signature', async () => {

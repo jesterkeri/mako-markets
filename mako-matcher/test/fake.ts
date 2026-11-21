@@ -79,6 +79,8 @@ export class World {
   fail: ((method: string, name: string | undefined) => 'down' | 'rate' | 'garbage' | null) | null = null;
   /// Overrides for what eth_call answers for a given exchange function (to model another answer).
   override: ((name: string) => Hex | null) | null = null;
+  /// Make an exchange function revert with a named custom error (function name to error name).
+  revert: Record<string, string> = {};
 
   setCash(a: Hex, v: bigint) {
     this.cash.set(a.toLowerCase() as Hex, v);
@@ -166,6 +168,7 @@ async function exchangeCall(w: World, data: Hex): Promise<{ name: string; result
   const name = functionName as string;
   const a = (args ?? []) as readonly unknown[];
   const enc = (result: unknown) => encodeFunctionResult({ abi: EXCHANGE_ABI, functionName: name, result } as never);
+  if (w.revert[name]) throw new Revert(errData(w.revert[name]));
   if (w.override) {
     const o = w.override(name);
     if (o) return { name, result: o };

@@ -31,6 +31,8 @@ export const FETCH_TIMEOUT_MS = 10_000;
 export const MAX_BODY_BYTES = 8_192;
 /// A whole request (all its chain reads) is cut off after this long.
 export const REQUEST_BUDGET_MS = 25_000;
+/// How many times one taker's match is proposed again after a refused wallet is found in it.
+export const MAX_PARTY_CHECK_ROUNDS = 5;
 /// Alerts kept in the Durable Object's own table (newest).
 export const MAX_ALERT_ROWS = 200;
 
