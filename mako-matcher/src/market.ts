@@ -6,7 +6,8 @@ import { makeAlert, type Alert } from './alerts';
 import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, markInFlight, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
-import { LOG_CHUNK_BLOCKS, MAX_BODY_BYTES, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
+import { readBody } from './body';
+import { LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
 import { intakeOrder } from './intake';
@@ -124,8 +125,9 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
   }
 
   if (req.method === 'POST' && url.pathname === '/orders') {
-    const text = await req.text();
-    if (text.length > MAX_BODY_BYTES) return json(400, { ok: false, code: 'bad_request' });
+    const rb = await readBody(req);
+    if (!rb.ok) return json(413, { ok: false, code: 'bad_request' });
+    const text = rb.text;
     let body: unknown;
     try {
       body = JSON.parse(text);
@@ -149,7 +151,9 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
   }
 
   if (req.method === 'POST' && url.pathname === '/outcome') {
-    const text = await req.text();
+    const rb = await readBody(req);
+    if (!rb.ok) return json(413, { ok: false, code: 'bad_request' });
+    const text = rb.text;
     let parsed: ReturnType<typeof parseOutcome> = null;
     try {
       parsed = parseOutcome(JSON.parse(text));

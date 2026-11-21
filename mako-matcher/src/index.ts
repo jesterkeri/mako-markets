@@ -6,7 +6,8 @@
 //                                      Next.js side that sends it is slice 3)
 //   GET    /book/:id                   the book feed, aggregated levels, at most 2 seconds old
 import type { Env } from './env';
-import { FEED_MAX_AGE_MS, MAX_BODY_BYTES } from './config';
+import { readBody } from './body';
+import { FEED_MAX_AGE_MS } from './config';
 import { parseMarketId } from './routing';
 
 export { MatcherMarket } from './market';
@@ -97,9 +98,9 @@ export default {
       const id = parseMarketId(parts[1]);
       if (id === null) return json(400, { ok: false, code: 'bad_market_id' });
       if (parts.length === 3 && req.method === 'POST') {
-        const text = await req.text();
-        if (text.length > MAX_BODY_BYTES) return json(413, { ok: false, code: 'bad_request' });
-        return forward(env, id, '/orders', { method: 'POST', body: text, headers: { 'content-type': 'application/json' } });
+        const b = await readBody(req);
+        if (!b.ok) return json(413, { ok: false, code: 'bad_request' });
+        return forward(env, id, '/orders', { method: 'POST', body: b.text, headers: { 'content-type': 'application/json' } });
       }
       if (parts.length === 4 && req.method === 'DELETE' && /^0x[0-9a-fA-F]{64}$/.test(parts[3])) {
         const denied = checkSecret(env, req);
