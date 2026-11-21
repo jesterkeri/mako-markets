@@ -194,7 +194,8 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
   const sql = state.storage.sql;
   const nowS = Math.floor(deps.now() / 1000);
   const book = allOrders(sql).filter((o) => o.expiration > BigInt(nowS));
-  const takers = takerHashes === null ? book : book.filter((o) => takerHashes.includes(o.hash));
+  // Newest first: the later order of a crossing pair is the taker, so the resting order sets the price.
+  const takers = (takerHashes === null ? book : book.filter((o) => takerHashes.includes(o.hash))).sort((a, b) => b.seq - a.seq);
   const nOptions = Number(getMeta(sql, 'n_options') ?? 0);
   if (takers.length === 0 || nOptions < 2) return { handedOff: 0 };
 

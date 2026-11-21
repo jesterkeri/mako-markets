@@ -59,6 +59,15 @@ describe('hand-off to the settler', () => {
     expect(await h.sql('SELECT COUNT(*) AS n FROM orders')).toEqual([{ n: 2 }]);
   });
 
+  it('on a tick the newer order of a crossed pair is the taker, so the trade is at the resting price', async () => {
+    await put(['directMakerSell', 'directTakerBuy']); // the sell (55) rests; the buy (60) arrives later
+    h.settled.length = 0;
+    await h.tick();
+    const s = h.settled[0] as Handed;
+    expect(s.taker.hash).toBe(vec('directTakerBuy').hash);
+    expect(s.makers.map((m) => m.hash)).toEqual([vec('directMakerSell').hash]);
+  });
+
   it('a three-maker direct match, a mint and a merge come out as the vectors say', async () => {
     await put(['direct3Maker3Sell', 'direct3Maker1Sell', 'direct3Maker2Sell', 'direct3TakerBuy']);
     const d = h.settled.at(-1) as Handed;

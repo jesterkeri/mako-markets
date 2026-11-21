@@ -73,7 +73,7 @@ describe('the contract model agrees with the real vectors', () => {
 describe('direct matches (plan 3.2 kind 1)', () => {
   it('three makers by price then time against the 300-share taker of the vectors', () => {
     const makers = ['direct3Maker3Sell', 'direct3Maker1Sell', 'direct3Maker2Sell'].map((n) => fromVec(n));
-    const taker = fromVec('direct3TakerBuy');
+    const taker = fromVec('direct3TakerBuy', { seq: 10_000 });
     const p = propose(taker, [taker, ...makers], opts())!;
     expect(p.kind).toBe('direct');
     expect(p.makers.map((m) => m.price)).toEqual([50, 55, 58]);
@@ -83,7 +83,7 @@ describe('direct matches (plan 3.2 kind 1)', () => {
   });
 
   it('price-time priority: equal prices fill the older order first, and a partial fill ends the list', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60, size: 150n * SHARE });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60, size: 150n * SHARE });
     const late = bo({ maker: W(2), option: 0, isBuy: false, price: 50, seq: 20 });
     const early = bo({ maker: W(3), option: 0, isBuy: false, price: 50, seq: 10 });
     const dearer = bo({ maker: W(4), option: 0, isBuy: false, price: 55, seq: 5 });
@@ -95,7 +95,7 @@ describe('direct matches (plan 3.2 kind 1)', () => {
   });
 
   it('a sell taker takes the highest bids first', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: false, price: 40 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: false, price: 40 });
     const lo = bo({ maker: W(2), option: 0, isBuy: true, price: 45 });
     const hi = bo({ maker: W(3), option: 0, isBuy: true, price: 52 });
     const none = bo({ maker: W(4), option: 0, isBuy: true, price: 39 });
@@ -107,7 +107,7 @@ describe('direct matches (plan 3.2 kind 1)', () => {
 
   it('never proposes more than 10 makers', () => {
     const makers = Array.from({ length: 12 }, (_, i) => bo({ maker: W(10 + i), option: 0, isBuy: false, price: 50, size: 10n * SHARE }));
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60, size: 120n * SHARE });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60, size: 120n * SHARE });
     const p = proposeDirect(taker, makers, opts())!;
     expect(p.makers).toHaveLength(10);
     expect(p.takerFill).toBe(100n * SHARE);
@@ -116,7 +116,7 @@ describe('direct matches (plan 3.2 kind 1)', () => {
   });
 
   it('skips the taker\'s own wallet (self-trade skipping) and uses the next maker', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60 });
     const own = bo({ maker: W(1), option: 0, isBuy: false, price: 40 });
     const other = bo({ maker: W(2), option: 0, isBuy: false, price: 55 });
     const p = proposeDirect(taker, [own, other], opts())!;
@@ -125,7 +125,7 @@ describe('direct matches (plan 3.2 kind 1)', () => {
   });
 
   it('skips other options, the same side, uncrossed prices, empty and expired orders', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 50 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 50 });
     const book = [
       bo({ maker: W(2), option: 1, isBuy: false, price: 10 }),
       bo({ maker: W(3), option: 0, isBuy: true, price: 10 }),
@@ -137,9 +137,28 @@ describe('direct matches (plan 3.2 kind 1)', () => {
   });
 });
 
+describe('the later order is the taker (price-time priority)', () => {
+  it('a resting ask at 40 and a newer bid at 60 trade at 40, whichever order is tried first', () => {
+    const ask = bo({ maker: W(1), option: 0, isBuy: false, price: 40, seq: 1 });
+    const bid = bo({ maker: W(2), option: 0, isBuy: true, price: 60, seq: 2 });
+    const asTaker = propose(bid, [ask, bid], opts())!;
+    expect(asTaker.taker).toBe(bid);
+    expect(asTaker.makers).toEqual([ask]);
+    // the older order is never the taker of a newer one: it would give the newcomer's price to the resting order
+    expect(propose(ask, [ask, bid], opts())).toBeNull();
+  });
+  it('a set match also uses only older makers', () => {
+    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60, seq: 5 });
+    const older = bo({ maker: W(2), option: 1, isBuy: true, price: 30, seq: 1 });
+    const newer = bo({ maker: W(3), option: 2, isBuy: true, price: 30, seq: 9 });
+    expect(proposeSet(taker, [older, newer], opts())).toBeNull();
+    expect(proposeSet(taker, [older, { ...newer, seq: 2 }], opts())).not.toBeNull();
+  });
+});
+
 describe('set matches (plan 3.2 kinds 2 and 3)', () => {
   it('a mint from the vectors: N - 1 buys, one on each other option, every fill equals takerFill', () => {
-    const taker = fromVec('mintTakerBuy0');
+    const taker = fromVec('mintTakerBuy0', { seq: 10_000 });
     const makers = [fromVec('mintMakerBuy1'), fromVec('mintMakerBuy2')];
     const p = propose(taker, [...makers], opts())!;
     expect(p.kind).toBe('mint');
@@ -150,7 +169,7 @@ describe('set matches (plan 3.2 kinds 2 and 3)', () => {
   });
 
   it('a merge from the vectors', () => {
-    const taker = fromVec('mergeTakerSell0');
+    const taker = fromVec('mergeTakerSell0', { seq: 10_000 });
     const p = propose(taker, [fromVec('mergeMakerSell1'), fromVec('mergeMakerSell2')], opts())!;
     expect(p.kind).toBe('merge');
     expect(p.takerPrice).toBe(35);
@@ -158,17 +177,17 @@ describe('set matches (plan 3.2 kinds 2 and 3)', () => {
   });
 
   it('maker prices summing to exactly 100 settle, the taker paying 0', () => {
-    const p = propose(fromVec('sum100TakerBuy0'), [fromVec('sum100MakerBuy1'), fromVec('sum100MakerBuy2')], opts())!;
+    const p = propose(fromVec('sum100TakerBuy0', { seq: 10_000 }), [fromVec('sum100MakerBuy1'), fromVec('sum100MakerBuy2')], opts())!;
     expect(p.kind).toBe('mint');
     expect(p.takerPrice).toBe(0);
     expect(judge(p)).toBeNull();
   });
 
   it('NEVER proposes a mint or a merge whose maker prices sum above 100 (SetPriceSum)', () => {
-    expect(propose(fromVec('sumMintTakerBuy0'), [fromVec('sumMintMakerBuy1'), fromVec('sumMintMakerBuy2')], opts())).toBeNull();
-    expect(propose(fromVec('sumMergeTakerSell0'), [fromVec('sumMergeMakerSell1'), fromVec('sumMergeMakerSell2')], opts())).toBeNull();
+    expect(propose(fromVec('sumMintTakerBuy0', { seq: 10_000 }), [fromVec('sumMintMakerBuy1'), fromVec('sumMintMakerBuy2')], opts())).toBeNull();
+    expect(propose(fromVec('sumMergeTakerSell0', { seq: 10_000 }), [fromVec('sumMergeMakerSell1'), fromVec('sumMergeMakerSell2')], opts())).toBeNull();
     // 60 + 50 = 110 with a taker willing to pay anything, and with 101, 150, 198: still never
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 99 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 99 });
     for (const [a, b] of [[60, 41], [75, 75], [99, 99]]) {
       const book = [bo({ maker: W(2), option: 1, isBuy: true, price: a }), bo({ maker: W(3), option: 2, isBuy: true, price: b })];
       expect(proposeSet(taker, book, opts()), `${a}+${b}`).toBeNull();
@@ -178,16 +197,16 @@ describe('set matches (plan 3.2 kinds 2 and 3)', () => {
   });
 
   it('does not mint when the taker\'s limit is below what it would pay, nor merge below its limit', () => {
-    const mintTaker = bo({ maker: W(1), option: 0, isBuy: true, price: 39 });
+    const mintTaker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 39 });
     const buys = [bo({ maker: W(2), option: 1, isBuy: true, price: 30 }), bo({ maker: W(3), option: 2, isBuy: true, price: 30 })];
     expect(proposeSet(mintTaker, buys, opts())).toBeNull(); // would pay 40
-    const mergeTaker = bo({ maker: W(1), option: 0, isBuy: false, price: 36 });
+    const mergeTaker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: false, price: 36 });
     const sells = [bo({ maker: W(2), option: 1, isBuy: false, price: 30 }), bo({ maker: W(3), option: 2, isBuy: false, price: 35 })];
     expect(proposeSet(mergeTaker, sells, opts())).toBeNull(); // would receive 35
   });
 
   it('needs a maker on EVERY other option, and uses the best (highest bid, then oldest) per option', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 50 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 50 });
     expect(proposeSet(taker, [bo({ maker: W(2), option: 1, isBuy: true, price: 30 })], opts())).toBeNull();
     const book = [
       bo({ maker: W(2), option: 1, isBuy: true, price: 30, seq: 9 }),
@@ -201,7 +220,7 @@ describe('set matches (plan 3.2 kinds 2 and 3)', () => {
   });
 
   it('fills the smallest remaining of the taker and every maker', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 50, size: 100n * SHARE });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 50, size: 100n * SHARE });
     const book = [bo({ maker: W(2), option: 1, isBuy: true, price: 30, size: 40n * SHARE }), bo({ maker: W(3), option: 2, isBuy: true, price: 30 })];
     const p = proposeSet(taker, book, opts())!;
     expect(p.takerFill).toBe(40n * SHARE);
@@ -210,20 +229,20 @@ describe('set matches (plan 3.2 kinds 2 and 3)', () => {
   });
 
   it('works for a two-option market (one maker) and refuses a market too wide for 10 makers', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60 });
     const p = proposeSet(taker, [bo({ maker: W(2), option: 1, isBuy: true, price: 40 })], opts({ nOptions: 2 }))!;
     expect(p.kind).toBe('mint');
     expect(judge(p, 2)).toBeNull();
     expect(proposeSet(taker, [], opts({ nOptions: 12 }))).toBeNull();
     // 11 options means 10 makers: allowed (each pays 5, so the taker pays 50)
     const book = Array.from({ length: 10 }, (_, i) => bo({ maker: W(10 + i), option: i + 1, isBuy: true, price: 5 }));
-    const wide = proposeSet(bo({ maker: W(1), option: 0, isBuy: true, price: 60 }), book, opts({ nOptions: 11 }))!;
+    const wide = proposeSet(bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60 }), book, opts({ nOptions: 11 }))!;
     expect(wide.makers).toHaveLength(10);
     expect(judge(wide, 11)).toBeNull();
   });
 
   it('picks the better of a direct and a set match for the taker, and the direct one on a tie', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60 });
     const buys = [bo({ maker: W(2), option: 1, isBuy: true, price: 30 }), bo({ maker: W(3), option: 2, isBuy: true, price: 30 })]; // mint at 40
     const dearAsk = bo({ maker: W(4), option: 0, isBuy: false, price: 45 });
     expect(propose(taker, [...buys, dearAsk], opts())!.kind).toBe('mint');
@@ -236,7 +255,7 @@ describe('set matches (plan 3.2 kinds 2 and 3)', () => {
 
 describe('what the matcher never proposes', () => {
   it('a match mixing markets', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60 });
     const other = bo({ maker: W(2), option: 0, isBuy: false, price: 10, marketId: 2n });
     expect(propose(taker, [other], opts())).toBeNull();
     // a set whose one leg is another market's
@@ -249,13 +268,13 @@ describe('what the matcher never proposes', () => {
   });
 
   it('a party in the contract\'s refused roles, as maker or as taker', () => {
-    const taker = bo({ maker: W(1), option: 0, isBuy: true, price: 60 });
+    const taker = bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60 });
     const refusedMaker = bo({ maker: W(9), option: 0, isBuy: false, price: 10 });
     const ok = bo({ maker: W(2), option: 0, isBuy: false, price: 55 });
     const o = opts({ blocked: (m) => m === W(9) });
     expect(propose(taker, [refusedMaker, ok], o)!.makers).toEqual([ok]);
     expect(propose(taker, [refusedMaker], o)).toBeNull();
-    expect(propose(bo({ maker: W(9), option: 0, isBuy: true, price: 60 }), [ok], o)).toBeNull();
+    expect(propose(bo({ seq: 10_000, maker: W(9), option: 0, isBuy: true, price: 60 }), [ok], o)).toBeNull();
     // a refused wallet on one leg of a set
     const legs = [bo({ maker: W(2), option: 1, isBuy: true, price: 30 }), bo({ maker: W(9), option: 2, isBuy: true, price: 30 })];
     expect(proposeSet(taker, legs, o)).toBeNull();
@@ -263,8 +282,8 @@ describe('what the matcher never proposes', () => {
 
   it('an expired or exhausted taker', () => {
     const maker = bo({ maker: W(2), option: 0, isBuy: false, price: 50 });
-    expect(propose(bo({ maker: W(1), option: 0, isBuy: true, price: 60, expiration: BigInt(NOW_S) }), [maker], opts())).toBeNull();
-    expect(propose(bo({ maker: W(1), option: 0, isBuy: true, price: 60, filled: 100n * SHARE }), [maker], opts())).toBeNull();
+    expect(propose(bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60, expiration: BigInt(NOW_S) }), [maker], opts())).toBeNull();
+    expect(propose(bo({ seq: 10_000, maker: W(1), option: 0, isBuy: true, price: 60, filled: 100n * SHARE }), [maker], opts())).toBeNull();
   });
 });
 
@@ -314,7 +333,7 @@ describe('fuzz: every proposal passes the contract model, on random books', () =
             // if any direct counterparty exists, a proposal must exist
             const any = book.some(
               (m) =>
-                m.hash !== taker.hash && m.marketId === 1n && m.option === taker.option && m.isBuy !== taker.isBuy && m.remaining > 0n && m.expiration > BigInt(NOW_S) &&
+                m.hash !== taker.hash && m.seq < taker.seq && m.marketId === 1n && m.option === taker.option && m.isBuy !== taker.isBuy && m.remaining > 0n && m.expiration > BigInt(NOW_S) &&
                 m.maker !== taker.maker && !blockedSet.has(m.maker) && (taker.isBuy ? m.price <= taker.price : m.price >= taker.price),
             );
             expect(any, `seed ${seed}: a direct counterparty exists but nothing was proposed`).toBe(false);

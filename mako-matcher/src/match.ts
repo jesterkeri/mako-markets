@@ -6,7 +6,8 @@
 //   - a match mixing markets (MarketMismatch);
 //   - a party in the contract's refused roles (PartyRefused, plan 3.4), which the caller passes in as `blocked`;
 //   - more than 10 makers (BadMakerCount);
-//   - a maker who is the taker's own wallet (SelfMatch).
+//   - a maker who is the taker's own wallet (SelfMatch);
+//   - a maker that arrived after the taker (the later order of a crossing pair is the taker).
 import type { Hex } from 'viem';
 import type { BookOrder } from './book';
 import { MAX_MAKERS } from './config';
@@ -39,6 +40,9 @@ export interface MatchOpts {
 function usable(o: BookOrder, taker: BookOrder, opts: MatchOpts): boolean {
   return (
     o.hash !== taker.hash &&
+    // price-time priority: only an order that was already resting when the taker arrived is a maker, so the trade
+    // is at the resting order's price, never at the newcomer's
+    o.seq < taker.seq &&
     o.marketId === taker.marketId &&
     o.remaining > 0n &&
     o.expiration > BigInt(opts.nowSeconds) &&
