@@ -1,5 +1,5 @@
 // MatcherSettler (plan 6.1): the ONE object that holds the operator key and sends a transaction. It is reached
-// only through env.SETTLER.idFromName("settler"). The logic is in src/settle.ts; this file adds what only it may
+// only through its one fixed name, from src/market.ts. The logic is in src/settle.ts; this file adds what only it may
 // have: reading OPERATOR_PRIVATE_KEY, signing, and broadcasting. The bundle assertion fails the build if any
 // other module does either.
 import { DurableObject } from 'cloudflare:workers';

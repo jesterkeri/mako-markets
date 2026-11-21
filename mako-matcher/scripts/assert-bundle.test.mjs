@@ -17,7 +17,8 @@ function pkg() {
   cpSync(join(real, 'src'), join(dir, 'src'), { recursive: true });
   for (const f of ['package.json', 'wrangler.toml']) cpSync(join(real, f), join(dir, f));
   mkdirSync(join(dir, 'dist'));
-  writeFileSync(join(dir, 'dist/index.js'), 'export default { fetch() { return new Response("x"); } };\n');
+  // the one send method and the one key read the settler has, once each
+  writeFileSync(join(dir, 'dist/index.js'), 'export default { fetch() { return new Response("x"); } };\nconst a = "eth_sendRawTransaction"; const b = "OPERATOR_PRIVATE_KEY";\n');
   const run = () => spawnSync('node', [script, 'dist', '--root', dir], { encoding: 'utf8' });
   const edit = (rel, fn) => writeFileSync(join(dir, rel), fn(readFileSync(join(dir, rel), 'utf8')));
   return { dir, run, edit };
@@ -37,11 +38,19 @@ test('passes on the real source and configuration', () => {
   rmSync(p.dir, { recursive: true });
 });
 
-test('fails when the bundle can send or sign', () => {
-  for (const tok of ['eth_sendRawTransaction', 'sendTransaction', 'privateKeyToAccount', 'signTypedData', 'OPERATOR_PRIVATE_KEY']) {
+test('fails when the bundle can send or sign beyond the settler\'s one send and one key read', () => {
+  for (const tok of ['eth_sendTransaction', 'sendTransaction', 'createWalletClient', 'writeContract', 'mnemonicToAccount', 'personal_sign']) {
     const p = pkg();
     p.edit('dist/index.js', (t) => t + `\nconst x = "${tok}";\n`);
     expectFail(p, /bundle dist\/index\.js contains/);
+  }
+  for (const tok of ['eth_sendRawTransaction', 'OPERATOR_PRIVATE_KEY']) {
+    const p = pkg();
+    p.edit('dist/index.js', (t) => t + `\nconst x = "${tok}";\n`);
+    expectFail(p, new RegExp(`${tok} 2 times, not exactly 1`));
+    const q = pkg();
+    q.edit('dist/index.js', (t) => t.replace(`"${tok}"`, '"x"'));
+    expectFail(q, new RegExp(`${tok} 0 times, not exactly 1`));
   }
 });
 
@@ -57,16 +66,33 @@ test('fails when any module other than the settler reads the operator key', () =
   expectFail(p, /src\/market\.ts: reads OPERATOR_PRIVATE_KEY/);
 });
 
-test('allows the settler module to read it (phase B) but nothing else in it that can send', () => {
+test('the settler module may read the key, send and sign, but not use a wallet client or a mnemonic', () => {
   const p = pkg();
-  p.edit('src/settler.ts', (t) => t + '\nexport const k = (e: { OPERATOR_PRIVATE_KEY?: string }) => e.OPERATOR_PRIVATE_KEY;\n');
+  p.edit('src/settler.ts', (t) => t + '\nexport const s = "sendRawTransaction signTransaction";\n');
   const r = p.run();
   assert.equal(r.status, 0, r.stderr);
-  p.edit('src/settler.ts', (t) => t + '\nexport const s = "sendRawTransaction";\n');
+  p.edit('src/settler.ts', (t) => t + '\nexport const w = "createWalletClient";\n');
   const r2 = p.run();
   assert.equal(r2.status, 1);
   assert.match(r2.stderr, /src\/settler\.ts: contains/);
   rmSync(p.dir, { recursive: true });
+});
+
+test('fails when any other module, the settlement logic included, can send or sign', () => {
+  for (const [file, tok] of [['src/settle.ts', 'sendRawTransaction'], ['src/market.ts', 'signTransaction'], ['src/chain.ts', 'privateKeyToAccount'], ['src/index.ts', 'signTypedData']]) {
+    const p = pkg();
+    p.edit(file, (t) => t + `\nexport const leak = "${tok}";\n`);
+    expectFail(p, new RegExp(`${file.replace('.', '\\.')}: contains .*which only src/settler\\.ts may`));
+  }
+});
+
+test('only the settler may import viem/accounts, and only privateKeyToAccount from it', () => {
+  let p = pkg();
+  p.edit('src/chain.ts', (t) => `import { privateKeyToAccount } from 'viem/accounts';\n${t}`);
+  expectFail(p, /only src\/settler\.ts may import viem\/accounts/);
+  p = pkg();
+  p.edit('src/settler.ts', (t) => `import { generatePrivateKey } from 'viem/accounts';\n${t}`);
+  expectFail(p, /viem\/accounts import generatePrivateKey is not allowed/);
 });
 
 test('fails when env.ts does more than declare the key', () => {
@@ -75,10 +101,12 @@ test('fails when env.ts does more than declare the key', () => {
   expectFail(p, /may only be declared in the Env interface/);
 });
 
-test('fails on a signing or sending name in source', () => {
-  const p = pkg();
-  p.edit('src/chain.ts', (t) => t + '\nconst bad = "writeContract";\n');
-  expectFail(p, /src\/chain\.ts: contains/);
+test('fails on a wallet-client or mnemonic name in any source file', () => {
+  for (const file of ['src/chain.ts', 'src/settler.ts']) {
+    const p = pkg();
+    p.edit(file, (t) => t + '\nconst bad = "writeContract";\n');
+    expectFail(p, new RegExp(`${file.replace('.', '\\.')}: contains`));
+  }
 });
 
 test('fails on an extra dependency, a foreign import, a dynamic import and a viem import off the list', () => {

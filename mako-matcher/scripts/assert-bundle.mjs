@@ -1,10 +1,15 @@
 // Dependency and send-path assertion for the mako-matcher bundle (plan 6.1 "One path to send", 10.1 slice 2).
 // Fails unless every check below holds:
 //
-//  1. The built bundle contains no transaction-sending token. Phase A sends nothing, so none may appear at all.
-//     (Phase B's settler will need them, and changes this list in a reviewed commit, naming the one module.)
-//  2. No module reads OPERATOR_PRIVATE_KEY except src/settler.ts, and src/env.ts only DECLARES it. Phase A reads
-//     it nowhere.
+//  1. The built bundle contains no wallet-client, transaction-sending or mnemonic token, except what the one
+//     settler module needs: `eth_sendRawTransaction` and `OPERATOR_PRIVATE_KEY` each appear EXACTLY ONCE. (viem's
+//     account code, pulled in by the settler's `privateKeyToAccount`, carries the names signTransaction,
+//     signMessage and signTypedData; they cannot be told from the settler's in a single bundle, so the SOURCE
+//     check below is what pins who may use them.)
+//  2. In the source, only src/settler.ts may contain a send or signing token, read OPERATOR_PRIVATE_KEY or import
+//     `viem/accounts` (only `privateKeyToAccount`); src/env.ts only DECLARES the key. Every other module, the
+//     settlement logic in src/settle.ts included, is handed a `signRaw` and a `broadcast` function and holds
+//     neither the key nor a send method.
 //  3. package.json has exactly the allowed runtime dependencies.
 //  4. Every import in src/ is relative, `viem` (named imports from the allowlist), `viem/...` is refused, or
 //     `cloudflare:workers` (only DurableObject). No require() and no dynamic import().
@@ -22,27 +27,24 @@ import { join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
-export const SEND_TOKENS = [
-  /eth_sendRawTransaction/i,
+/// Always forbidden: in the bundle and in every source file, the settler included.
+export const NEVER_TOKENS = [
   /eth_sendTransaction/i,
-  /sendRawTransaction/i,
-  /sendTransaction/i,
-  /signTransaction/i,
-  /privateKeyToAccount/i,
+  /\bsendTransaction\b/,
   /mnemonicToAccount/i,
   /hdKeyToAccount/i,
   /createWalletClient/i,
   /writeContract/i,
   /eth_sign\b/i,
   /personal_sign/i,
-  /signMessage/i,
-  /signTypedData/i,
-  /signAuthorization/i,
   /mnemonic/i,
   /seed_?phrase/i,
   /keystore/i,
-  /OPERATOR_PRIVATE_KEY/,
 ];
+/// Forbidden in every source file except src/settler.ts.
+export const SETTLER_ONLY_TOKENS = [/sendRawTransaction/i, /signTransaction/i, /signMessage/i, /signTypedData/i, /signAuthorization/i, /privateKeyToAccount/i];
+/// Tokens that must appear exactly this many times in the bundle.
+export const BUNDLE_EXACTLY = { eth_sendRawTransaction: 1, OPERATOR_PRIVATE_KEY: 1 };
 
 export const ALLOWED_DEPENDENCIES = ['viem'];
 export const ALLOWED_VIEM_IMPORTS = [
@@ -101,7 +103,11 @@ else {
   if (files.length === 0) fail('the bundle directory has no JavaScript');
   for (const f of files) {
     const text = readFileSync(f, 'utf8');
-    for (const re of SEND_TOKENS) if (re.test(text)) fail(`bundle ${relative(root, f)} contains ${re}`);
+    for (const re of NEVER_TOKENS) if (re.test(text)) fail(`bundle ${relative(root, f)} contains ${re}`);
+    for (const [tok, want] of Object.entries(BUNDLE_EXACTLY)) {
+      const n = text.split(tok).length - 1;
+      if (n !== want) fail(`bundle ${relative(root, f)} contains ${tok} ${n} times, not exactly ${want}`);
+    }
   }
 }
 
@@ -134,6 +140,11 @@ for (const f of srcFiles) {
             if (!ALLOWED_VIEM_IMPORTS.includes(nm) && !/^[A-Z]/.test(nm)) fail(`${rel}: viem import ${nm} is not on the allowlist`);
           }
         }
+      } else if (spec === 'viem/accounts') {
+        const b = n.importClause?.namedBindings;
+        const names = b && ts.isNamedImports(b) ? b.elements.map((e) => (e.propertyName ?? e.name).text) : ['*'];
+        if (rel !== 'src/settler.ts') fail(`${rel}: only src/settler.ts may import viem/accounts`);
+        else if (names.some((x) => x !== 'privateKeyToAccount')) fail(`${rel}: viem/accounts import ${names.join(',')} is not allowed`);
       } else if (spec === 'cloudflare:workers') {
         const b = n.importClause?.namedBindings;
         const names = b && ts.isNamedImports(b) ? b.elements.map((e) => (e.propertyName ?? e.name).text) : ['*'];
@@ -149,10 +160,8 @@ for (const f of srcFiles) {
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  for (const re of SEND_TOKENS) {
-    if (re.source === 'OPERATOR_PRIVATE_KEY') continue;
-    if (re.test(text)) fail(`${rel}: contains ${re}`);
-  }
+  for (const re of NEVER_TOKENS) if (re.test(text)) fail(`${rel}: contains ${re}`);
+  if (rel !== 'src/settler.ts') for (const re of SETTLER_ONLY_TOKENS) if (re.test(text)) fail(`${rel}: contains ${re}, which only src/settler.ts may`);
   // the operator key: declared in env.ts, read nowhere (phase A)
   if (/OPERATOR_PRIVATE_KEY/.test(text)) {
     if (KEY_DECLARERS.includes(rel)) {
@@ -189,4 +198,4 @@ if (failures.length) {
   for (const m of failures) console.error(`assert-bundle: FAIL ${m}`);
   process.exit(1);
 }
-console.log('assert-bundle: ok (bundle sends nothing; no module reads the operator key; imports, bindings and the wrangler name and exports are as pinned)');
+console.log('assert-bundle: ok (one send path in the settler; no other module reads the operator key or signs; imports, bindings and the wrangler name and exports are as pinned)');
