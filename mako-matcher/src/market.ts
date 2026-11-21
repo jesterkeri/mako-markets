@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, markInFlight, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
@@ -250,6 +250,14 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
       // Marked BEFORE the hand-off, so the settler's report cannot arrive ahead of the mark; released again if the
       // settler does not take the proposal.
       const hashes = [p.taker.hash, ...p.makers.map((m) => m.hash)];
+      // The book was read before the chain reads above, and a fetch or another pass can run during them. Checked
+      // again here with no await before the mark: every order still booked, not in flight, and unfilled since the
+      // read. Otherwise this pass hands off nothing and the next one proposes from the book as it now is.
+      const snap = new Map(book.map((o) => [o.hash, o.filled]));
+      if (hashes.some((h) => {
+        const now = getOrder(sql, h);
+        return !now || now.inFlight || now.filled !== snap.get(h);
+      })) return { handedOff: 0 };
       markInFlight(sql, hashes);
       let accepted = false;
       try {

@@ -137,7 +137,7 @@ export class Settler {
   }
 
   /// A counter's row for today. Created on the first use of the UTC day, reading `cap` from the funder then.
-  private async dayRow(): Promise<{ sends: number; reserved: bigint; cap: bigint } | null> {
+  private async dayRow(): Promise<{ key: string; sends: number; reserved: bigint; cap: bigint } | null> {
     const day = this.today();
     const get = () => this.d.sql.exec<{ sends: number; mon_reserved: string; cap_wei: string }>(`SELECT sends, mon_reserved, cap_wei FROM counters WHERE utc_day = ?`, day).toArray()[0];
     let r = get();
@@ -148,7 +148,7 @@ export class Settler {
       this.d.sql.exec(`INSERT OR IGNORE INTO counters (utc_day, sends, mon_reserved, cap_wei) VALUES (?, 0, '0', ?)`, day, cap.toString());
       r = get();
     }
-    return { sends: Number(r.sends), reserved: BigInt(r.mon_reserved), cap: BigInt(r.cap_wei) };
+    return { key: day, sends: Number(r.sends), reserved: BigInt(r.mon_reserved), cap: BigInt(r.cap_wei) };
   }
 
   /// Status for people and for the release check (phase B's counters and what they are held to).
@@ -366,8 +366,11 @@ export class Settler {
     const raw = await d.signRaw(tx);
     const hash = keccak256(raw);
 
+    // The caps above were checked against the counters of the UTC day read at the start. If midnight passed during
+    // the reads since, nothing is sent: the orders go back and the next tick checks against the new day's row.
+    if (this.today() !== day.key) return this.finish(p0, {});
     // Log first, broadcast second, in one synchronous block (reservation, counters, log, in-flight row).
-    const dayKey = this.today();
+    const dayKey = day.key;
     d.sql.exec(`INSERT INTO send_log (hash, sender, nonce, gas_limit, max_fee, reserved, charge, utc_day, market_id, status, at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'sent', ?)`, hash, sender, tx.nonce, gasLimit.toString(), maxFee.toString(), reserve.toString(), dayKey, p.marketId, d.now());
     d.sql.exec(`INSERT INTO in_flight (id, hash, sender, nonce, gas_limit, max_fee, reserved, utc_day, raw, market_id, body) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, hash, sender, tx.nonce, gasLimit.toString(), maxFee.toString(), reserve.toString(), dayKey, raw, p.marketId, JSON.stringify(p));
     d.sql.exec(`UPDATE counters SET sends = sends + 1, mon_reserved = ? WHERE utc_day = ?`, (day.reserved + reserve).toString(), dayKey);
@@ -397,6 +400,12 @@ export class Settler {
     return this.d.sql
       .exec<{ hash: Hex; sender: Hex; nonce: number; gas_limit: string; max_fee: string; reserved: string; utc_day: string; raw: Hex; market_id: string; body: string }>(`SELECT * FROM in_flight`)
       .toArray()[0];
+  }
+
+  /// The parties dropped while the match in flight was being built (set at its send).
+  private carried(): { hash: Hex; reason: string }[] {
+    const v = this.meta('carry_dropped');
+    return v ? JSON.parse(v) : [];
   }
 
   private async awaitReceipt() {
@@ -447,7 +456,8 @@ export class Settler {
     if (late) return this.onReceipt(row, late);
     this.d.sql.exec(`UPDATE send_log SET status = 'stranded', charge = reserved WHERE hash = ?`, row.hash);
     this.d.alert('stranded_transaction', `${row.hash}: ${why}; its orders go back to the book`);
-    this.finish(p, {});
+    // Parties left out when the match was rebuilt are dropped here too: the market marked them in flight as well.
+    this.finish(p, { dropped: this.carried() });
   }
 
   private async onReceipt(row: NonNullable<ReturnType<Settler['inFlight']>>, r: Receipt) {
@@ -455,11 +465,12 @@ export class Settler {
     const p = parseProposal(JSON.parse(row.body))!;
     // Monad charges the gas limit: the charge replaces the reservation.
     const charge = BigInt(row.gas_limit) * (r.effectiveGasPrice ?? BigInt(row.max_fee));
-    d.sql.exec(`UPDATE send_log SET charge = ?, status = ? WHERE hash = ?`, charge.toString(), r.status === 1 ? 'settled' : 'reverted', row.hash);
+    // Once per transaction: a reverted one reads the chain again below, and a failed read retries this whole step
+    // next tick. Only the write that fills the charge moves the reservation to the charge.
+    const first = d.sql.exec(`UPDATE send_log SET charge = ?, status = ? WHERE hash = ? AND charge IS NULL`, charge.toString(), r.status === 1 ? 'settled' : 'reverted', row.hash).rowsWritten === 1;
     const c = d.sql.exec<{ mon_reserved: string }>(`SELECT mon_reserved FROM counters WHERE utc_day = ?`, row.utc_day).toArray()[0];
-    if (c) d.sql.exec(`UPDATE counters SET mon_reserved = ? WHERE utc_day = ?`, (BigInt(c.mon_reserved) - BigInt(row.reserved) + charge).toString(), row.utc_day);
-    const carried = this.meta('carry_dropped');
-    const dropped: { hash: Hex; reason: string }[] = carried ? JSON.parse(carried) : [];
+    if (first && c) d.sql.exec(`UPDATE counters SET mon_reserved = ? WHERE utc_day = ?`, (BigInt(c.mon_reserved) - BigInt(row.reserved) + charge).toString(), row.utc_day);
+    const dropped = this.carried();
     if (r.status === 1) {
       const applied = [{ hash: p.taker.hash, fill: p.takerFill }, ...p.makers.map((m, i) => ({ hash: m.hash, fill: p.fills[i] }))];
       return this.finish(p, { applied, dropped });
