@@ -15,6 +15,8 @@ export interface Harness {
   deps: MarketDeps;
   logs: string[];
   settled: unknown[];
+  /// Hand-offs the fake settler refused because a party was on the refusal list at that moment (Codex MATCHER R5 F1).
+  refusedHandoffs: unknown[];
   refused: Set<string>;
   settleAccepts: boolean;
   settlerDown: boolean;
@@ -48,6 +50,7 @@ export async function fresh(id = '1'): Promise<Harness> {
     w,
     logs,
     settled: [],
+    refusedHandoffs: [],
     refused: new Set(),
     settleAccepts: false,
     settlerDown: false,
@@ -106,6 +109,12 @@ export async function fresh(id = '1'): Promise<Harness> {
       return new Set([...h.refused].map((a) => a.toLowerCase() as Hex));
     },
     async settle(b) {
+      // as the real settler (settle.ts submit): a party on today's list at the moment of the hand-off is refused
+      const text = JSON.stringify(b).toLowerCase();
+      if ([...h.refused].some((a) => text.includes(`"maker":"${a.toLowerCase()}"`))) {
+        h.refusedHandoffs.push(b);
+        return { accepted: false };
+      }
       h.settled.push(b);
       return { accepted: h.settleAccepts };
     },

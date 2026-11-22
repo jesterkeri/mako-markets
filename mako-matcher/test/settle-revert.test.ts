@@ -220,9 +220,11 @@ describe('BadSignature: blame comes from bytes (plan 6.2)', () => {
       // the same maker's other order tried again the same day: nothing is sent
       r.w.sent.length = 0;
       r.w.onSend = () => ({ status: 1 });
-      await drive(s, prop('directTakerBuy', ['directMakerSell']));
+      const before = r.outcomes.length;
+      // since Codex MATCHER R5 F1 the settler does not accept it at all (before: accepted, then dropped as refused)
+      expect(await drive(s, prop('directTakerBuy', ['directMakerSell']))).toEqual({ accepted: false, reason: 'party_refused' });
       expect(r.w.sent).toEqual([]);
-      expect(r.outcomes.at(-1)!.body.dropped).toEqual([{ hash: M, reason: 'refused' }]);
+      expect(r.outcomes).toHaveLength(before);
     });
   });
 

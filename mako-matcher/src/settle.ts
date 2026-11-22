@@ -182,6 +182,10 @@ export class Settler {
     if (this.hasWorkInFlight()) return { accepted: false, reason: 'busy' };
     // An outcome this market has not taken yet: its book may not show those fills, so nothing new from it is settled.
     if (this.d.sql.exec(`SELECT 1 FROM outbox WHERE market_id = ?`, p.marketId).toArray().length > 0) return { accepted: false, reason: 'outcome_undelivered' };
+    // Codex MATCHER R5 F1: a market proposes from a refusal list it read earlier; an account refused since is not
+    // accepted. Checked here with no await before the insert, so no refusal this object writes can fall between the
+    // check and the acceptance. The market releases its marks on this answer and its next pass reads the new list.
+    if (allRecs(p).some((r) => this.isRefusedToday(r.order.maker))) return { accepted: false, reason: 'party_refused' };
     this.d.sql.exec(`INSERT INTO pending (id, market_id, body, at) VALUES (1, ?, ?, ?)`, p.marketId, JSON.stringify(p), this.d.now());
     return { accepted: true };
   }
