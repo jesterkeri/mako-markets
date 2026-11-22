@@ -2,7 +2,7 @@
 // parties found a few refused wallets per tick and kept them in a cache that expired as fast as the search refreshed
 // it, so the pair was never reached (Codex: 310 refused asks, 125 ticks, 0 hand-offs). A pass now reads every maker
 // on the book at once, so these books are handed over on the first tick, whatever the length of the queue, the time
-// that passes, or the UTC day.
+// that passes, or the UTC day (the day turn right after an idle book: adv12-attack.test.ts).
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runInDurableObject } from 'cloudflare:test';
 import type { Hex } from 'viem';
@@ -104,27 +104,6 @@ describe('Codex MATCHER R4 F1: a queue of refused wallets cannot hide a clean cr
     expect(h.settled, 'the blocked bid is searched once and the pass moves on to the older pair').toHaveLength(1);
     expect(pairOf(h.settled[0]).toLowerCase()).toContain(W(1).toLowerCase());
     expect(pairOf(h.settled[0]).toLowerCase()).toContain(W(2).toLowerCase());
-  });
-
-  it('UTC rollover: a pair blocked by a wallet refused for the day is handed over on the first tick of the next day', async () => {
-    // the clean bid crosses only the refused ask
-    const [refusedAsk] = await book([{ isBuy: false, price: 40 }]);
-    h.refused.add(refusedAsk.toLowerCase());
-    await book([{ isBuy: true, price: 50 }]);
-    // ticks through the day, the last one just before midnight: nothing
-    const midnight = (Math.floor(h.w.nowMs / 86_400_000) + 1) * 86_400_000;
-    for (let i = 0; i < 5; i++) {
-      await h.tick();
-      h.w.nowMs += TICK_MS;
-    }
-    h.w.nowMs = midnight - 1;
-    await h.tick();
-    expect(h.settled).toHaveLength(0);
-    // the new day: the settler's list for it does not name the wallet
-    h.w.nowMs = midnight + 1;
-    h.refused.clear();
-    await h.tick();
-    expect(h.settled, 'the UTC day is in the idle fingerprint, and the new pass reads the new list').toHaveLength(1);
   });
 
   it('fails closed: with the settler list unreadable nothing is proposed, and the next readable tick hands the pair over', async () => {
