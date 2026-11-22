@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 
-import type { ConfirmPhase } from '@/components/ConfirmSheet';
+import type { ConfirmPhase, ConfirmSpec } from '@/components/ConfirmSheet';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
 import { ROUNDS_ADDRESS } from './contract';
@@ -120,7 +120,11 @@ const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
   secondary: { label: 'Close' },
 });
 
-export function useRoundTx(onLanded?: () => void) {
+const REVIEW: ConfirmPhase = { step: 'review' };
+type RoundSlot = { tx: RoundTx; phase: ConfirmPhase; spec: ConfirmSpec | null };
+
+/// `onLanded` gets the account whose transaction landed, which may no longer be the one signed in.
+export function useRoundTx(onLanded?: (account: string) => void) {
   const { user } = useUser();
   const { address: connected } = useAccount();
   const connectedNow = useRef(connected);
@@ -129,41 +133,63 @@ export function useRoundTx(onLanded?: () => void) {
   const { writeContractAsync } = useWriteContract();
   const ensureChain = useEnsureMonadChain();
 
-  const [tx, setTx] = useState<RoundTx | null>(null);
-  const [phase, setPhase] = useState<ConfirmPhase>({ step: 'review' });
-  /// The account the sheet was opened for. Another account signing in before it is sent closes it, and it never confirms
-  /// for anyone else (Codex CLAIM_TILE R1 F1): a sheet, and the done step after it, belong to one account.
+  /// One sheet per account (Codex CLAIM_TILE R1 F1, ME_ROUNDS_DEGRADE R3 F1): the sheet shown is the signed-in
+  /// account's own. Another account signing in hides it; one still sending keeps going, comes back when its account
+  /// does, and never blocks the other account's own sheet. A sheet not sending is dropped once its account leaves, so
+  /// it never confirms for anyone else.
   const account = user ? accountAddress(user) : null;
-  const [owner, setOwner] = useState<string | null>(null);
+  const [slots, setSlots] = useState<ReadonlyMap<string, RoundSlot>>(() => new Map());
+  const slot = account ? slots.get(account) : undefined;
+  const tx = slot?.tx ?? null;
+  const phase: ConfirmPhase = slot?.phase ?? REVIEW;
+  /// The sheet's text, given when it was opened: always the signed-in account's own.
+  const spec = slot?.spec ?? null;
+  /// Writes one account's sheet, if it still has it.
+  const put = useCallback(
+    (a: string, patch: Partial<RoundSlot>) =>
+      setSlots((prev) => {
+        const s = prev.get(a);
+        return s ? new Map(prev).set(a, { ...s, ...patch }) : prev;
+      }),
+    [],
+  );
   /// The signed-in account as of the latest render, for the checks after an await, right before a send goes out
   /// (adversary on 36dfef4: a switch during the creator-fee pre-check read still sent the claim, under the new session).
   const accountNow = useRef(account);
   accountNow.current = account;
-  if (tx && owner !== account && phase.step !== 'pending') {
-    setTx(null);
-    setPhase({ step: 'review' });
-  }
-  const inFlight = useRef(false);
+  /// The accounts whose transaction is on its way.
+  const inFlight = useRef(new Set<string>());
+  /// Another account's sheet is kept unless it never left the review step (never sent): a send that is on its way,
+  /// done, failed or of unknown outcome comes back, with its own text and result, when its account does, so that
+  /// account is never offered the same send again without its warning (adversary on ece0abb and b93bbfe).
+  const keep = (a: string, s: { phase: ConfirmPhase }) => a === account || inFlight.current.has(a) || s.phase.step !== 'review';
+  if ([...slots].some(([a, s]) => !keep(a, s))) setSlots((prev) => new Map([...prev].filter(([a, s]) => keep(a, s))));
 
   const open = useCallback(
-    (next: RoundTx) => {
-      if (inFlight.current) return;
-      setOwner(account);
-      setTx(next);
-      setPhase(user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : { step: 'review' });
+    (next: RoundTx, sheet?: ConfirmSpec) => {
+      if (!account || inFlight.current.has(account)) return;
+      const first = user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : REVIEW;
+      setSlots((prev) => new Map(prev).set(account, { tx: next, phase: first, spec: sheet ?? null }));
     },
     [user, connected, account],
   );
 
   const close = useCallback(() => {
-    if (inFlight.current) return;
-    setTx(null);
-    setPhase({ step: 'review' });
-  }, []);
+    if (!account || inFlight.current.has(account)) return;
+    setSlots((prev) => {
+      if (!prev.has(account)) return prev;
+      const m = new Map(prev);
+      m.delete(account);
+      return m;
+    });
+  }, [account]);
 
   const run = useCallback(async () => {
-    if (!tx || !user || !publicClient || inFlight.current || accountAddress(user) !== owner) return;
-    inFlight.current = true;
+    if (!tx || !user || !publicClient || !account || inFlight.current.has(account) || accountAddress(user) !== account) return;
+    const owner = account;
+    inFlight.current.add(owner);
+    /// This run writes to its own account's sheet, whoever is signed in by then.
+    const setPhase = (p: ConfirmPhase) => put(owner, { phase: p });
     const words = WORDS[tx.kind];
     let next: ConfirmPhase;
     try {
@@ -175,10 +201,10 @@ export function useRoundTx(onLanded?: () => void) {
         ? { step: 'cancelled' }
         : { step: 'failed', title: words.failTitle, body: 'Something went wrong before it was sent. Check Me before you try again.', nothingMoved: false, primary: { label: 'Check Me', href: '/me' }, secondary: { label: 'Close' } };
     } finally {
-      inFlight.current = false;
+      inFlight.current.delete(owner);
     }
     setPhase(next);
-    if (next.step === 'done') onLanded?.();
+    if (next.step === 'done') onLanded?.(owner);
 
     async function runSponsored(t: RoundTx, u: Extract<AuthedUser, { authType: 'magic' }>, w: OutcomeWords, rounds: `0x${string}`): Promise<ConfirmPhase> {
       setPhase({ step: 'pending', stage: 'signing' });
@@ -274,7 +300,7 @@ export function useRoundTx(onLanded?: () => void) {
         }
       }
     }
-  }, [tx, user, owner, connected, publicClient, writeContractAsync, ensureChain, onLanded]);
+  }, [tx, user, account, put, connected, publicClient, writeContractAsync, ensureChain, onLanded]);
 
-  return { tx, phase, open, close, confirm: run, retry: run };
+  return { tx, phase, spec, open, close, confirm: run, retry: run };
 }

@@ -71,7 +71,6 @@ export function RoundClient({ id, initialSide }: { id: bigint; initialSide: Roun
   });
   const [side, setSide] = useState<RoundSide>(initialSide ?? 'up');
   const [amountText, setAmountText] = useState('5');
-  const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
 
   if (state.kind === 'missing') notFound();
   if (state.kind === 'off') {
@@ -111,8 +110,7 @@ export function RoundClient({ id, initialSide }: { id: bigint; initialSide: Roun
 
   const openTx = (t: RoundTx, spec: ConfirmSpec) => {
     if (tx.tx) return;
-    setSheetSpec(spec);
-    tx.open(t);
+    tx.open(t, spec);
   };
   const openEnter = () => {
     if (amount === null || why) return;
@@ -146,7 +144,7 @@ export function RoundClient({ id, initialSide }: { id: bigint; initialSide: Roun
     openMarkRefund,
   };
 
-  const spec = tx.tx ? sheetSpec : null;
+  const spec = tx.tx ? tx.spec : null;
   return (
     <>
       <div className="mk-desk mk-desk-frame">

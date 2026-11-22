@@ -8,9 +8,14 @@
 // describes another Rounds contract: the rounds part is unavailable, never `ready`. All-or-nothing reads (the Me retry
 // rule, 2026-10-12): one refused call fails the read so TanStack Query retries it, and a failed refetch keeps the last
 // complete data. A failed discovery is an error like a failed chain read: Me never shows pools-only totals for it.
+// That keep-the-last-read rule also holds when a new round changes which ids are read (a new query key, so TanStack
+// has no previous data for it): the last complete, bound read of this account stays until a new one is complete and
+// bound: a new read that is still loading or failed to arrive shows that last read instead, and nothing but a complete,
+// bound read replaces it (Codex ME_ROUNDS_DEGRADE R1 F1). Evidence against the read (a foreign head, an indexer too far
+// behind or ahead) is still unavailable at once, as before (Codex ME_ROUNDS R2): it is an answer, not a failure.
 // `off` when Rounds is not configured.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useReadContract, useReadContracts } from 'wagmi';
 
@@ -29,6 +34,8 @@ const POLL_MS = 10_000;
 export const ME_ROUNDS_DISCOVERY_POLL_MS = 120_000;
 /// roundOf, stakeOf, stakeClaimed, creatorFeeClaimed.
 const PER_ROUND = 4;
+/// Stable empty answer: `last` compares by reference, so a fresh [] or Map each render would set state every render.
+const NO_ROUNDS: { rounds: Round[]; stakes: Map<string, RoundStakeRead> } = { rounds: [], stakes: new Map() };
 
 export type MeRoundsRead =
   | { status: 'off' }
@@ -103,17 +110,43 @@ export function useMeRounds(account: `0x${string}`): MeRoundsRead & { refetch: (
     return { rounds, stakes, bound };
   }, [complete, data, ids, discovery]);
 
-  if (!roundsContract) return { status: 'off', refetch };
-  if (countQ.isError && countQ.data === undefined) return { status: 'error', refetch };
-  if (discoveryQ.isError && discoveryQ.data === undefined) return { status: 'error', refetch };
-  if (countQ.isPending || discoveryQ.isPending || !plan) return { status: 'loading', refetch };
-  // The indexer is too far behind to bound the reads, or ahead of the chain (not this contract's, or not checkable
-  // yet): unavailable, never a partial list.
-  if (!plan.ok) return { status: 'error', refetch };
-  if (ids.length === 0) return { status: 'ready', rounds: [], stakes: new Map(), refetch };
-  if (q.isError && q.data === undefined) return { status: 'error', refetch };
-  if (!parsed) return { status: 'loading', refetch };
-  // The discovery answer is for another Rounds contract (or its head round is missing from `ids`): unavailable.
-  if (!parsed.bound) return { status: 'error', refetch };
-  return { status: 'ready', rounds: parsed.rounds, stakes: parsed.stakes, refetch };
+  // 'failed' = no answer arrived (a refused call or discovery); the last complete read may stand in for it.
+  const read = ((): MeRoundsRead | { status: 'failed' } => {
+    if (!roundsContract) return { status: 'off' };
+    if (countQ.isError && countQ.data === undefined) return { status: 'failed' };
+    if (discoveryQ.isError && discoveryQ.data === undefined) return { status: 'failed' };
+    if (countQ.isPending || discoveryQ.isPending || !plan) return { status: 'loading' };
+    // The indexer is too far behind to bound the reads, or ahead of the chain (not this contract's, or not checkable
+    // yet): unavailable, never a partial list.
+    if (!plan.ok) return { status: 'error' };
+    if (ids.length === 0) return { status: 'ready', ...NO_ROUNDS };
+    if (q.isError && q.data === undefined) return { status: 'failed' };
+    if (!parsed) return { status: 'loading' };
+    // The discovery answer is for another Rounds contract (or its head round is missing from `ids`): unavailable.
+    if (!parsed.bound) return { status: 'error' };
+    return { status: 'ready', rounds: parsed.rounds, stakes: parsed.stakes };
+  })();
+
+  // The last complete, bound read, kept per account (React's "store information from previous renders" pattern).
+  const owner = account.toLowerCase();
+  const [last, setLast] = useState<{ owner: string; read: MeRoundsRead & { status: 'ready' } } | null>(null);
+  if (read.status === 'ready') {
+    if (last?.owner !== owner || last.read.rounds !== read.rounds || last.read.stakes !== read.stakes) setLast({ owner, read });
+    return { ...read, refetch };
+  }
+  // While a new read is missing, the indexer's head round may still be checked against the kept read's round of the same
+  // id (a round's openTime, startTime and creator never change): a mismatch is evidence too (adversary on b4a77ad).
+  const head = discovery?.head ?? null;
+  const keptHead = head !== null && last?.owner === owner ? last.read.rounds.find((r) => r.id === head.id) : undefined;
+  const foreign =
+    keptHead !== undefined &&
+    !headMatchesChain(head!, { creator: keptHead.creator, openTime: BigInt(keptHead.openTime), startTime: BigInt(keptHead.startTime) });
+  const evidence = read.status === 'error' || ((read.status === 'loading' || read.status === 'failed') && foreign);
+  // Evidence against the read also retires the kept one, so a later failure cannot bring it back.
+  if (evidence) {
+    if (last !== null) setLast(null);
+    return { status: 'error', refetch };
+  }
+  if ((read.status === 'loading' || read.status === 'failed') && last?.owner === owner) return { ...last.read, refetch };
+  return read.status === 'failed' ? { status: 'error', refetch } : { ...read, refetch };
 }

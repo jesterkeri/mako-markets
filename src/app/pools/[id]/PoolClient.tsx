@@ -119,20 +119,22 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const [myCardFor, setMyCardFor] = useState<string | null>(null);
   // A sign-out or account switch forgets the open sheet, so signing back in never reopens it unasked (adversary on
   // c5da33e). Reset during render, the repo's pattern for state that follows a value.
+  /// The bet confirmation's open bet card (declared here so an account switch can close it).
+  const [betCard, setBetCard] = useState<{ tx: string; log: number } | null>(null);
   const [cardAccount, setCardAccount] = useState(account);
   if (cardAccount !== account) {
     setCardAccount(account);
     setMyCardFor(null);
+    setBetCard(null); // a bet card is its account's own (adversary on 9f1c3dd)
   }
   /// The sheet's words, fixed when it opens: after a claim lands the refetch clears the claimable amount, and the
   /// sheet must still describe the action that was confirmed.
-  const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
-  /// The account a won claim was opened for: its done tile shares that account's win card, and no other's.
-  const [winFor, setWinFor] = useState<string | null>(null);
+  /// The accounts whose open claim is a won one: each done tile shares its own account's win card, and another
+  /// account's claim never takes the button away (adversary on 9f1c3dd).
+  const [winFor, setWinFor] = useState<ReadonlySet<string>>(() => new Set());
   /// The bet confirmation's Share: the bet a confirmed bet transaction placed, once its receipt names it.
   const betTx = tx.tx?.kind === 'bet' && tx.phase.step === 'done' ? tx.phase.txHash : undefined;
   const betLog = useBetLog(betTx, id, account);
-  const [betCard, setBetCard] = useState<{ tx: string; log: number } | null>(null);
 
   if (market && market.closeTime === 0n) notFound();
 
@@ -155,21 +157,27 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
   const myCard = account ? poolCardState(row.position, market.resolved) : null;
   const openBet = () => {
     if (amount === null || why || tx.tx) return;
-    setSheetSpec(confirmSpec('bet', market, row, labels, amount, side, estimate, claimAmount));
-    tx.open({ kind: 'bet', marketId: id, isYes: side === 'yes', amount });
+    tx.open({ kind: 'bet', marketId: id, isYes: side === 'yes', amount }, confirmSpec('bet', market, row, labels, amount, side, estimate, claimAmount));
   };
   const openClaim = () => {
     if (claimAmount === null || tx.tx) return;
-    setSheetSpec(confirmSpec('claim', market, row, labels, amount, side, estimate, claimAmount));
-    setWinFor(myCard === 'result' ? account : null);
-    tx.open({ kind: 'claim', marketId: id });
+    const sheet = confirmSpec('claim', market, row, labels, amount, side, estimate, claimAmount);
+    if (account) {
+      const a = account;
+      setWinFor((prev) => {
+        const next = new Set(prev);
+        if (myCard === 'result') next.add(a);
+        else next.delete(a);
+        return next;
+      });
+    }
+    tx.open({ kind: 'claim', marketId: id }, sheet);
   };
   // Creator earnings: only the pool's creator sees them, from the pool's own on-chain state.
   const creatorEarning = isPoolCreator(market, account) ? creatorEarningOf(market, claimHolds.has(id.toString())) : null;
   const openCreatorClaim = () => {
     if (creatorEarning?.state !== 'claimable' || tx.tx) return;
-    setSheetSpec(creatorFeeConfirmSpec(creatorEarning));
-    tx.open({ kind: 'creatorFee', marketId: id });
+    tx.open({ kind: 'creatorFee', marketId: id }, creatorFeeConfirmSpec(creatorEarning));
   };
 
   const view: ViewProps = {
@@ -206,7 +214,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
     },
   };
 
-  const spec = tx.tx ? sheetSpec : null;
+  const spec = tx.tx ? tx.spec : null;
 
   return (
     <>
@@ -253,7 +261,7 @@ export function PoolClient({ id, initialSide }: { id: bigint; initialSide: Side 
               >
                 {betLog.status === 'found' ? 'Share your call' : 'Finding your bet…'}
               </TileShareButton>
-            ) : tx.tx?.kind === 'claim' && tx.phase.step === 'done' && myCard === 'result' && account && winFor === account ? (
+            ) : tx.tx?.kind === 'claim' && tx.phase.step === 'done' && myCard === 'result' && account && winFor.has(account) ? (
               // A won pool's claim shares the win card (Joshua 2026-10-24); a refund has no card.
               <TileShareButton
                 onClick={() => {
