@@ -90,10 +90,10 @@ export function proposeDirect(taker: BookOrder, book: BookOrder[], opts: MatchOp
   return { kind: 'direct', marketId: taker.marketId, taker, makers: r.makers, fills: r.fills, takerFill: r.fills.reduce((a, b) => a + b, 0n), takerPrice: r.makers[0].price };
 }
 
-const SEARCH_WINDOW = 8;
+const SEARCH_WINDOW = MAX_MAKERS;
 
-/// Fallback when greedy has no legal fill. Over the first 8 candidates (price-time order) tries each maker as
-/// skipped, partial (1 lot to remaining - 10 shares) or full (all it has): at most 3^8 = 6561 cases, each O(8).
+/// Fallback when greedy has no legal fill. Over the first 10 candidates (MAX_MAKERS, price-time order) tries each maker as
+/// skipped, partial (1 lot to remaining - 10 shares) or full (all it has): at most 3^10 = 59049 cases, each O(10).
 /// Picks the largest taker fill that leaves the taker 0 or >= 10 shares, then the lexicographically largest fills in
 /// price-time order (earlier makers keep priority).
 function searchFill(cands: BookOrder[], takerRem: bigint): { makers: BookOrder[]; fills: bigint[] } | null {
@@ -171,20 +171,37 @@ function fillLevels(cands: BookOrder[], budget: bigint): { makers: BookOrder[]; 
 }
 
 /// Mint (taker buys) or merge (taker sells): one maker on each other option, all on the taker's side of the
-/// ledger (buys for a mint, sells for a merge). The best maker per option; if the prices do not work the match is
-/// not proposed (a different combination is not searched for).
+/// ledger (buys for a mint, sells for a merge). Combinations of the first 4 makers per option (price-time order) are
+/// tried best-first, so when the best maker per option already works it is the answer. Work: at most 1024 legal-checked
+/// combinations, each O(need).
 export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts): Proposal | null {
   const need = opts.nOptions - 1;
   if (need < 1 || need > MAX_MAKERS) return null;
-  const makers: BookOrder[] = [];
+  const perOpt: BookOrder[][] = [];
   for (let opt = 0; opt < opts.nOptions; opt++) {
     if (opt === taker.option) continue;
-    const best = book
+    const c = book
       .filter((o) => usable(o, taker, opts) && o.option === opt && o.isBuy === taker.isBuy)
-      .sort(byPriceTime(taker.isBuy))[0];
-    if (!best) return null;
-    makers.push(best);
+      .sort(byPriceTime(taker.isBuy))
+      .slice(0, 4);
+    if (c.length === 0) return null;
+    perOpt.push(c);
   }
+  let budget = 1024;
+  const pick: BookOrder[] = [];
+  const walk = (i: number): Proposal | null => {
+    if (i === perOpt.length) return budget-- > 0 ? setProposal(taker, pick) : null;
+    for (const m of perOpt[i]) {
+      pick[i] = m;
+      const r = walk(i + 1);
+      if (r || budget <= 0) return r;
+    }
+    return null;
+  };
+  return walk(0);
+}
+
+function setProposal(taker: BookOrder, makers: BookOrder[]): Proposal | null {
   let sum = 0;
   for (const m of makers) sum += m.price;
   // SetPriceSum: never propose a set whose maker prices sum above 100.
@@ -202,7 +219,7 @@ export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts)
     takerFill = next;
   }
   if (takerFill <= 0n) return null;
-  return { kind: taker.isBuy ? 'mint' : 'merge', marketId: taker.marketId, taker, makers, fills: makers.map(() => takerFill), takerFill, takerPrice };
+  return { kind: taker.isBuy ? 'mint' : 'merge', marketId: taker.marketId, taker, makers: [...makers], fills: makers.map(() => takerFill), takerFill, takerPrice };
 }
 
 /// The better of the direct and the set proposal for the taker (a lower price for a buy, a higher one for a sell);
