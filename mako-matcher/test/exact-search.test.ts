@@ -147,14 +147,16 @@ describe('direct: a legal fill needing a maker beyond the old 10-candidate windo
 // ---------------------------------------------------------------------------------------------------------------
 // Brute force, sets: every combination of one usable order per other option. The largest common fill is found by
 // stepping q down in half-share steps (every size here is a multiple of half a share), not by src's fixed point.
+// Ranking (Codex MATCHER R3 F1): best price, then time (makers' arrival compared option by option in option order),
+// then the larger fill.
 
-function bruteSet(taker: BookOrder, book: BookOrder[], n: number): { price: number; fill: bigint } | null {
+function bruteSet(taker: BookOrder, book: BookOrder[], n: number): { price: number; fill: bigint; seqs: number[] } | null {
   const per: BookOrder[][] = [];
   for (let opt = 0; opt < n; opt++) {
     if (opt === taker.option) continue;
     per.push(book.filter((o) => o.option === opt && o.isBuy === taker.isBuy && o.seq < taker.seq && o.maker !== taker.maker));
   }
-  let best: { price: number; fill: bigint } | null = null;
+  let best: { price: number; fill: bigint; seqs: number[] } | null = null;
   const pick: BookOrder[] = [];
   const walk = (i: number) => {
     if (i === per.length) {
@@ -166,8 +168,13 @@ function bruteSet(taker: BookOrder, book: BookOrder[], n: number): { price: numb
       let q = parties.reduce((m, o) => (o.remaining < m ? o.remaining : m), taker.remaining);
       while (q > 0n && !parties.every((o) => legalLeft(o.remaining, q))) q -= SH / 2n;
       if (q <= 0n) return;
-      const better = best === null || (taker.isBuy ? price < best.price : price > best.price) || (price === best.price && q > best.fill);
-      if (better) best = { price, fill: q };
+      const seqs = pick.map((o) => o.seq);
+      const cmp = best === null ? -1 : seqs.findIndex((x, k) => x !== best!.seqs[k]);
+      const earlier = best !== null && cmp >= 0 && seqs[cmp] < best.seqs[cmp];
+      const sameSet = best !== null && cmp < 0;
+      const better =
+        best === null || (taker.isBuy ? price < best.price : price > best.price) || (price === best.price && (earlier || (sameSet && q > best.fill)));
+      if (better) best = { price, fill: q, seqs };
       return;
     }
     for (const o of per[i]) {
@@ -186,7 +193,7 @@ describe('set fuzz against brute force', () => {
     [4, 6, 300],
   ] as const) {
     for (const isBuy of [true, false]) {
-      it(`${nOpt} options, up to ${perOpt} orders per option, ${isBuy ? 'mint' : 'merge'}: same best price and fill`, () => {
+      it(`${nOpt} options, up to ${perOpt} orders per option, ${isBuy ? 'mint' : 'merge'}: same best price, makers and fill`, () => {
         const r = rng(nOpt * 1000 + (isBuy ? 1 : 2));
         let found = 0;
         for (let round = 0; round < rounds; round++) {
@@ -208,7 +215,7 @@ describe('set fuzz against brute force', () => {
           found++;
           expect(got, `round ${round}: brute force finds price ${want.price} fill ${want.fill}`).not.toBeNull();
           sound(got!, nOpt);
-          expect([got!.takerPrice, got!.takerFill], `round ${round}`).toEqual([want.price, want.fill]);
+          expect([got!.takerPrice, got!.makers.map((m) => m.seq), got!.takerFill], `round ${round}`).toEqual([want.price, want.seqs, want.fill]);
         }
         expect(found).toBeGreaterThan(rounds / 10);
       });

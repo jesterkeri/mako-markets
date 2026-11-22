@@ -183,93 +183,128 @@ function fillLevels(cands: BookOrder[], budget: bigint): { makers: BookOrder[]; 
 /// (buys for a mint, sells for a merge), every party filling the same amount q. Exact over the whole book (Codex
 /// MATCHER R2 F1: a fixed window of makers per option starved legal sets and let a worse direct price win):
 ///   - the largest q a set of orders can all fill (leaving each 0 or at least 10 shares) is one party's remaining or
-///     remaining - 10 shares, so q is tried only at those values, largest first;
-///   - at a given q an order is usable when q leaves it 0 or at least 10 shares, and the options are independent: the
-///     best taker price is the best sum of one usable price per option (prices are whole cents): for a merge the
-///     lowest; for a mint the highest within SetPriceSum's 100 cap, by a subset-sum over 0..100 when the best prices
-///     overshoot;
-///   - the best taker price wins (lower for a mint, higher for a merge), then the larger fill; on each option the
-///     earliest order at the chosen price that q leaves legal.
-/// Work: O(n) to index the book, then for each of at most 2n + 2 values of q, O(options x 99), plus the subset-sum
-/// (options x 99 shifts of a 101-bit set) only when the best mint prices sum above 100.
+///     remaining - 10 shares, so q is tried only at those values;
+///   - at a given q an order is usable when q leaves it 0 or at least 10 shares; a price level's maker at q is its
+///     EARLIEST usable order, and the options are independent: the best taker price is the best sum of one usable
+///     price per option (prices are whole cents): for a merge the lowest; for a mint the highest within SetPriceSum's
+///     100 cap, by a subset-sum over 0..100 when the best prices overshoot.
+/// Ranking (Codex MATCHER R3 F1: price-time priority, never a larger fill ahead of an earlier order):
+///   1. the best taker price (a lower one for a mint, a higher one for a merge);
+///   2. time: the makers' arrival order compared option by option, in option order (the earlier maker on the first
+///      option where two sets differ wins), so at the same price an earlier usable order is never passed over for a
+///      later one because the later one allows a larger fill. There is no queue across options, so option order is the
+///      stated convention for sets whose first difference is on different options;
+///   3. the larger q.
+/// Work: O(n log n) to index the book, then for each of at most 2n + 2 values of q, O(options x 99 x log n), plus the
+/// subset-sum (options x 99 shifts of a 101-bit set) only when the best mint prices sum above 100.
 export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts): Proposal | null {
   const need = opts.nOptions - 1;
   if (need < 1 || need > MAX_MAKERS) return null;
   const mint = taker.isBuy;
-  // Per other option, its price levels: orders in time order, the largest remaining, and every remaining.
-  type Level = { price: number; orders: BookOrder[]; maxRem: bigint; rems: Set<bigint> };
   const levels: Level[][] = [];
   const qs = new Set<bigint>([taker.remaining, taker.remaining - MIN_RESTING_SIZE]);
   for (let opt = 0; opt < opts.nOptions; opt++) {
     if (opt === taker.option) continue;
-    const byPrice = new Map<number, Level>();
+    const byPrice = new Map<number, BookOrder[]>();
     for (const o of book) {
       if (!usable(o, taker, opts) || o.option !== opt || o.isBuy !== taker.isBuy) continue;
-      let l = byPrice.get(o.price);
-      if (!l) byPrice.set(o.price, (l = { price: o.price, orders: [], maxRem: 0n, rems: new Set() }));
-      l.orders.push(o);
-      if (o.remaining > l.maxRem) l.maxRem = o.remaining;
-      l.rems.add(o.remaining);
+      const l = byPrice.get(o.price);
+      if (l) l.push(o);
+      else byPrice.set(o.price, [o]);
       qs.add(o.remaining);
       qs.add(o.remaining - MIN_RESTING_SIZE);
     }
     if (byPrice.size === 0) return null;
-    const ls = [...byPrice.values()].sort((a, b) => a.price - b.price);
-    for (const l of ls) l.orders.sort((a, b) => a.seq - b.seq);
-    levels.push(ls);
+    levels.push([...byPrice.entries()].sort((a, b) => a[0] - b[0]).map(([price, os]) => level(price, os)));
   }
   const T = taker.remaining;
   const qList = [...qs].filter((q) => q >= LOT && q <= T && (q === T || q <= T - MIN_RESTING_SIZE)).sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
-  const legalAt = (l: Level, q: bigint) => l.maxRem - MIN_RESTING_SIZE >= q || l.rems.has(q);
-  // The best sum any q could reach, to stop early.
-  const cap = mint ? Math.min(100, levels.reduce((s, ls) => s + ls[ls.length - 1].price, 0)) : levels.reduce((s, ls) => s + ls[0].price, 0);
   // Mint: the taker pays 100 - sum, at most its limit. Merge: it receives 100 - sum, at least its limit.
   const lo = mint ? 100 - taker.price : need;
   const hi = mint ? 100 : 100 - taker.price;
-  let best: { sum: number; q: bigint; prices: number[] } | null = null;
+  let best: { sum: number; makers: BookOrder[] } | null = null;
   for (const q of qList) {
-    const avail = levels.map((ls) => ls.filter((l) => legalAt(l, q)).map((l) => l.price)); // ascending
+    // Per option, the levels usable at q (ascending price) with each one's earliest usable order.
+    const avail = levels.map((ls) => ls.map((l) => ({ price: l.price, o: earliestAt(l, q) })).filter((x): x is Pick => x.o !== null));
     if (avail.some((a) => a.length === 0)) continue;
-    const prices = mint ? bestMintPrices(avail) : avail.map((a) => a[0]);
-    if (!prices) continue;
-    const sum = prices.reduce((a, b) => a + b, 0);
+    const picks = mint ? bestMint(avail) : avail.map((a) => a[0]);
+    if (!picks) continue;
+    const sum = picks.reduce((a, x) => a + x.price, 0);
     if (sum < lo || sum > hi) continue;
-    if (best === null || (mint ? sum > best.sum : sum < best.sum)) best = { sum, q, prices };
-    if (sum === cap) break;
+    const makers = picks.map((x) => x.o);
+    // q descends, so a set equal on price and time keeps the larger q.
+    if (best === null || (mint ? sum > best.sum : sum < best.sum) || (sum === best.sum && earlierSet(makers, best.makers))) best = { sum, makers };
   }
-  if (best === null) return null;
-  const { q, prices } = best;
-  const makers = levels.map((ls, i) => {
-    const l = ls.find((x) => x.price === prices[i]) as Level;
-    return l.orders.find((o) => o.remaining === q || o.remaining - MIN_RESTING_SIZE >= q) as BookOrder;
-  });
-  return setProposal(taker, makers);
+  return best === null ? null : setProposal(taker, best.makers);
 }
 
-/// One price per option (each list ascending) with the highest sum at most 100; null when every choice is above 100.
-/// The highest prices when they fit; otherwise a subset-sum over sums 0..100 (bit s of a 4 x 32-bit set), then the
-/// highest usable price on each option, last option first, that keeps the sum reachable.
-function bestMintPrices(avail: number[][]): number[] | null {
+/// One price level of one option: `exact` maps a remaining to the earliest order with it; `atLeast` lists, by
+/// remaining descending, the earliest order among those with at least that remaining.
+type Level = { price: number; exact: Map<bigint, BookOrder>; atLeast: { rem: bigint; o: BookOrder }[] };
+type Pick = { price: number; o: BookOrder };
+
+function level(price: number, os: BookOrder[]): Level {
+  const exact = new Map<bigint, BookOrder>();
+  for (const o of os) {
+    const e = exact.get(o.remaining);
+    if (!e || o.seq < e.seq) exact.set(o.remaining, o);
+  }
+  const atLeast: { rem: bigint; o: BookOrder }[] = [];
+  for (const [rem, o] of [...exact.entries()].sort((a, b) => (a[0] > b[0] ? -1 : a[0] < b[0] ? 1 : 0))) {
+    const prev = atLeast[atLeast.length - 1];
+    atLeast.push({ rem, o: prev && prev.o.seq < o.seq ? prev.o : o });
+  }
+  return { price, exact, atLeast };
+}
+
+/// The level's earliest order that a fill of q leaves at 0 or at least 10 shares, or null.
+function earliestAt(l: Level, q: bigint): BookOrder | null {
+  const whole = l.exact.get(q) ?? null;
+  const t = q + MIN_RESTING_SIZE;
+  // last index with rem >= t (atLeast is descending by rem)
+  let a = 0;
+  let b = l.atLeast.length;
+  while (a < b) {
+    const m = (a + b) >>> 1;
+    if (l.atLeast[m].rem >= t) a = m + 1;
+    else b = m;
+  }
+  const part = a > 0 ? l.atLeast[a - 1].o : null;
+  if (!whole) return part;
+  if (!part) return whole;
+  return whole.seq < part.seq ? whole : part;
+}
+
+/// True when set `a` is earlier than set `b`: the earlier maker on the first option where they differ.
+function earlierSet(a: BookOrder[], b: BookOrder[]): boolean {
+  for (let i = 0; i < a.length; i++) if (a[i].seq !== b[i].seq) return a[i].seq < b[i].seq;
+  return false;
+}
+
+/// A mint's makers: one pick per option with the highest price sum at most 100, and among those sums' choices the
+/// earliest set (option by option). The top prices when they fit (the only choice with that sum); otherwise a
+/// subset-sum over sums 0..100 from the last option back (suf[i] = sums options i.. can make), then option by option
+/// the earliest maker whose price keeps the rest reachable. Null when every choice is above 100.
+function bestMint(avail: Pick[][]): Pick[] | null {
   const top = avail.map((a) => a[a.length - 1]);
-  if (top.reduce((a, b) => a + b, 0) <= 100) return top;
-  const reach: Uint32Array[] = [Uint32Array.of(1, 0, 0, 0)];
-  for (const a of avail) {
-    const prev = reach[reach.length - 1];
-    const next = new Uint32Array(4);
-    for (const p of a) shiftOr(next, prev, p);
-    reach.push(next);
+  if (top.reduce((s, x) => s + x.price, 0) <= 100) return top;
+  const n = avail.length;
+  const suf: Uint32Array[] = new Array(n + 1);
+  suf[n] = Uint32Array.of(1, 0, 0, 0);
+  for (let i = n - 1; i >= 0; i--) {
+    suf[i] = new Uint32Array(4);
+    for (const x of avail[i]) shiftOr(suf[i], suf[i + 1], x.price);
   }
   const bit = (b: Uint32Array, s: number) => s >= 0 && s <= 100 && ((b[s >>> 5] >>> (s & 31)) & 1) === 1;
   let s = 100;
-  while (s >= 0 && !bit(reach[avail.length], s)) s--;
+  while (s >= 0 && !bit(suf[0], s)) s--;
   if (s < 0) return null;
-  const out = new Array<number>(avail.length);
-  for (let i = avail.length - 1; i >= 0; i--) {
-    const a = avail[i];
-    let k = a.length - 1;
-    while (!bit(reach[i], s - a[k])) k--;
-    out[i] = a[k];
-    s -= a[k];
+  const out: Pick[] = [];
+  for (let i = 0; i < n; i++) {
+    let pick: Pick | null = null;
+    for (const x of avail[i]) if (bit(suf[i + 1], s - x.price) && (pick === null || x.o.seq < pick.o.seq)) pick = x;
+    out.push(pick as Pick);
+    s -= (pick as Pick).price;
   }
   return out;
 }
