@@ -113,8 +113,16 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   const claiming = useRef(new Map<string, MePosition>());
   const claimingRound = useRef(new Map<string, MeRound>());
   /// The pool whose claim is in the sheet, when it has a win card to share once the claim lands (Joshua 2026-10-24).
-  /// Only its own account ever gets it (adversary on ba2ddc0).
-  const [winCard, setWinCard] = useState<{ p: MePosition; open: boolean; account: string } | null>(null);
+  /// Kept per account: only its own account ever gets it (adversary on ba2ddc0), and another account's claim never
+  /// takes it away (adversary on 9f1c3dd).
+  const [winCards, setWinCards] = useState<ReadonlyMap<string, { p: MePosition; open: boolean }>>(() => new Map());
+  const setWinCard = (v: { p: MePosition; open: boolean } | null) =>
+    setWinCards((prev) => {
+      const next = new Map(prev);
+      if (v) next.set(account, v);
+      else next.delete(account);
+      return next;
+    });
   const tx = usePoolTx((owner) => {
     const p = claiming.current.get(owner);
     if (p) setLanded((prev) => addTo(prev, owner, p.market.id.toString(), p));
@@ -133,7 +141,7 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     if (c.kind === 'pool') {
       if (c.p.claim === null) return;
       claiming.current.set(account, c.p);
-      setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false, account } : null);
+      setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false } : null);
       tx.open({ kind: 'claim', marketId: c.p.market.id }, claimSpec(c.p));
     } else {
       if (c.r.claim === null) return;
@@ -211,7 +219,7 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
 
   const spec = tx.tx ? tx.spec : null;
   const roundSpec = roundTx.tx ? roundTx.spec : null;
-  const card = winCard?.account === account ? winCard : null;
+  const card = winCards.get(account) ?? null;
   return (
     <>
       <div className="mk-desk mk-desk-frame">

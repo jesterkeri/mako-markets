@@ -116,10 +116,12 @@ export function CreatePoolClient() {
   /// The creator's first bet card that is open: the new pool's bet placed card (Joshua 2026-10-26), for the BetPlaced
   /// log the create receipt holds for this account. Another account signing in closes it for good.
   const [betCard, setBetCard] = useState<{ pool: bigint; tx: string; log: number; question: string } | null>(null);
+  const [step, setStep] = useState<Step>(1);
   const [shareAccount, setShareAccount] = useState(account);
   if (shareAccount !== account) {
     setShareAccount(account);
     setBetCard(null);
+    setStep(1); // the done step is its account's own; a returning account's landed create brings it back (adversary on 9f1c3dd)
   }
   const closeShare = useCallback(() => setBetCard(null), []);
   const balanceQ = useUsdcBalance(account ?? undefined);
@@ -129,7 +131,6 @@ export function CreatePoolClient() {
   const createsLeft = createsQ.data ? (createsQ.data as readonly [bigint, bigint])[1] : null;
   const { markets } = useMarkets();
 
-  const [step, setStep] = useState<Step>(1);
   const [kind, setKind] = useState<CreateKind>('crypto');
   const [symbols, setSymbols] = useState<Record<PriceKind, string>>({ crypto: 'BTC', forex: 'EURUSD', commodities: 'XAUUSD', stocks: 'AAPL' });
   const [direction, setDirection] = useState<'above' | 'below'>('above');
