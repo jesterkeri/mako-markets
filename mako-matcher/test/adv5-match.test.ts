@@ -5,9 +5,11 @@ import type { Hex } from 'viem';
 import type { BookOrder } from '../src/book';
 import { propose, proposeDirect, proposeSet, type MatchOpts } from '../src/match';
 import { modelErrors, type MOrder } from './contract-model';
+import { pairTradable, validLeft } from './remainders';
 
 const NOW_S = 1_999_900_000;
-const LOT = 10_000n;
+// [rule fix] one size unit is 2.5 shares, so random orders straddle the 10-share minimum
+const LOT = 2_500_000n;
 const W = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Hex;
 
 let rs = 12345;
@@ -80,6 +82,8 @@ describe('adv5: repeated passes drain every crossing pair and terminate (no star
           o.remaining -= f;
           o.filled += f;
         };
+        expect(validLeft(q.taker.remaining - q.takerFill), 'taker left 1 to 9 shares ' + J(q)).toBe(true);
+        q.makers.forEach((m, i) => expect(validLeft(m.remaining - q.fills[i]), 'maker left 1 to 9 shares ' + J(q)).toBe(true));
         apply(q.taker, q.takerFill);
         q.makers.forEach((m, i) => apply(m, q.fills[i]));
         for (const o of book) expect(o.remaining >= 0n && o.filled <= o.size).toBe(true);
@@ -88,7 +92,7 @@ describe('adv5: repeated passes drain every crossing pair and terminate (no star
         if (t.remaining <= 0n) continue;
         for (const m of book) {
           if (m.remaining <= 0n || m.seq >= t.seq || m.maker === t.maker || m.option !== t.option || m.isBuy === t.isBuy) continue;
-          const crossed = t.isBuy ? m.price <= t.price : m.price >= t.price;
+          const crossed = (t.isBuy ? m.price <= t.price : m.price >= t.price) && pairTradable(t.remaining, m.remaining);
           expect(crossed, 'left crossed ' + J({ t, m })).toBe(false);
         }
       }

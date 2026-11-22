@@ -7,10 +7,12 @@
 //   - a party in the contract's refused roles (PartyRefused, plan 3.4), which the caller passes in as `blocked`;
 //   - more than 10 makers (BadMakerCount);
 //   - a maker who is the taker's own wallet (SelfMatch);
-//   - a maker that arrived after the taker (the later order of a crossing pair is the taker).
+//   - a maker that arrived after the taker (the later order of a crossing pair is the taker);
+//   - a fill that leaves any party (taker or maker) with 1 to 9 shares (plan 2 table, "no fill leaves 1 to 9 shares",
+//     an operator book rule). A remainder already under 10 shares can only fill whole.
 import type { Hex } from 'viem';
 import type { BookOrder } from './book';
-import { MAX_MAKERS } from './config';
+import { MAX_MAKERS, MIN_RESTING_SIZE } from './config';
 
 export type MatchKind = 'direct' | 'mint' | 'merge';
 
@@ -60,25 +62,47 @@ function minBig(a: bigint, b: bigint): bigint {
   return a < b ? a : b;
 }
 
-export function proposeDirect(taker: BookOrder, book: BookOrder[], opts: MatchOpts): Proposal | null {
+/// The largest fill of at most `cap` on an order with `remaining` left that leaves it 0 or at least 10 shares;
+/// 0n when there is none. All three amounts are lot multiples, so the answer is too.
+export function maxFill(remaining: bigint, cap: bigint): bigint {
+  if (cap >= remaining) return remaining;
+  const f = minBig(cap, remaining - MIN_RESTING_SIZE);
+  return f > 0n ? f : 0n;
+}
+
+/// `bound`, when given, is the worst maker price the taker may trade at (the set price, so a direct match never
+/// fills a level worse than the set).
+export function proposeDirect(taker: BookOrder, book: BookOrder[], opts: MatchOpts, bound?: number): Proposal | null {
+  const limit = bound === undefined ? taker.price : taker.isBuy ? Math.min(taker.price, bound) : Math.max(taker.price, bound);
   const cands = book
-    .filter((o) => usable(o, taker, opts) && o.option === taker.option && o.isBuy !== taker.isBuy && (taker.isBuy ? o.price <= taker.price : o.price >= taker.price))
+    .filter((o) => usable(o, taker, opts) && o.option === taker.option && o.isBuy !== taker.isBuy && (taker.isBuy ? o.price <= limit : o.price >= limit))
     // A buy taker takes the lowest asks first; a sell taker takes the highest bids first.
     .sort(byPriceTime(!taker.isBuy));
+  // Fill the whole taker if the levels allow it; otherwise leave it at least 10 shares.
+  const whole = fillLevels(cands, taker.remaining);
+  const takerFill = whole.fills.reduce((a, b) => a + b, 0n);
+  const left = taker.remaining - takerFill;
+  const r = left === 0n || left >= MIN_RESTING_SIZE ? whole : fillLevels(cands, taker.remaining - MIN_RESTING_SIZE);
+  if (r.makers.length === 0) return null;
+  // Direct: the fills sum to takerFill, each maker filling its own part (plan 3.2).
+  return { kind: 'direct', marketId: taker.marketId, taker, makers: r.makers, fills: r.fills, takerFill: r.fills.reduce((a, b) => a + b, 0n), takerPrice: r.makers[0].price };
+}
+
+/// Greedy price-time fill of up to `budget`. A maker that cannot take a fill leaving it 0 or at least 10 shares is
+/// passed over for this proposal (it keeps its place for the next).
+function fillLevels(cands: BookOrder[], budget: bigint): { makers: BookOrder[]; fills: bigint[] } {
   const makers: BookOrder[] = [];
   const fills: bigint[] = [];
-  let left = taker.remaining;
+  let left = budget;
   for (const m of cands) {
-    if (left === 0n || makers.length === MAX_MAKERS) break;
-    const f = minBig(m.remaining, left);
+    if (left <= 0n || makers.length === MAX_MAKERS) break;
+    const f = maxFill(m.remaining, left);
+    if (f === 0n) continue;
     makers.push(m);
     fills.push(f);
     left -= f;
   }
-  if (makers.length === 0) return null;
-  const takerFill = taker.remaining - left;
-  // Direct: the fills sum to takerFill, each maker filling its own part (plan 3.2).
-  return { kind: 'direct', marketId: taker.marketId, taker, makers, fills, takerFill, takerPrice: makers[0].price };
+  return { makers, fills };
 }
 
 /// Mint (taker buys) or merge (taker sells): one maker on each other option, all on the taker's side of the
@@ -103,25 +127,24 @@ export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts)
   const takerPrice = 100 - sum;
   // Mint: the taker pays 100 - sum and must not pay above its limit. Merge: it receives 100 - sum, at least its limit.
   if (taker.isBuy ? takerPrice > taker.price : takerPrice < taker.price) return null;
-  // Mint and merge: every maker fills exactly the taker's fill (plan 3.2, [r9]).
-  let takerFill = taker.remaining;
-  for (const m of makers) takerFill = minBig(takerFill, m.remaining);
+  // Mint and merge: every maker fills exactly the taker's fill (plan 3.2, [r9]). The largest fill that leaves every
+  // party 0 or at least 10 shares; it only ever shrinks, so the loop ends.
+  const parties = [taker, ...makers];
+  let takerFill = parties.reduce((f, o) => minBig(f, o.remaining), taker.remaining);
+  for (;;) {
+    const next = parties.reduce((f, o) => minBig(f, maxFill(o.remaining, f)), takerFill);
+    if (next === takerFill) break;
+    takerFill = next;
+  }
   if (takerFill <= 0n) return null;
   return { kind: taker.isBuy ? 'mint' : 'merge', marketId: taker.marketId, taker, makers, fills: makers.map(() => takerFill), takerFill, takerPrice };
 }
 
 /// The better of the direct and the set proposal for the taker (a lower price for a buy, a higher one for a sell);
-/// a tie goes to the direct match. Price priority holds at every level: a direct proposal keeps only the levels at
+/// a tie goes to the direct match. Price priority holds at every level: a direct proposal takes only the levels at
 /// least as good as the set price, and what is left of the taker is proposed again in the next pass.
 export function propose(taker: BookOrder, book: BookOrder[], opts: MatchOpts): Proposal | null {
   if (taker.remaining <= 0n || taker.expiration <= BigInt(opts.nowSeconds) || opts.blocked(taker.maker)) return null;
-  const d = proposeDirect(taker, book, opts);
   const s = proposeSet(taker, book, opts);
-  if (!d || !s) return d ?? s;
-  const worse = (price: number) => (taker.isBuy ? price > s.takerPrice : price < s.takerPrice);
-  if (worse(d.makers[0].price)) return s;
-  const k = d.makers.findIndex((m) => worse(m.price));
-  if (k < 0) return d;
-  const fills = d.fills.slice(0, k);
-  return { ...d, makers: d.makers.slice(0, k), fills, takerFill: fills.reduce((a, b) => a + b, 0n) };
+  return proposeDirect(taker, book, opts, s?.takerPrice) ?? s;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import type { BookOrder } from '../src/book';
 import { propose, proposeDirect, proposeSet, type MatchOpts, type Proposal } from '../src/match';
+import { pairTradable, validLeft } from './remainders';
 import { modelErrors, type MOrder } from './contract-model';
 import { V, vec, toTuple } from './vectors';
 
@@ -334,7 +335,8 @@ describe('fuzz: every proposal passes the contract model, on random books', () =
             const any = book.some(
               (m) =>
                 m.hash !== taker.hash && m.seq < taker.seq && m.marketId === 1n && m.option === taker.option && m.isBuy !== taker.isBuy && m.remaining > 0n && m.expiration > BigInt(NOW_S) &&
-                m.maker !== taker.maker && !blockedSet.has(m.maker) && (taker.isBuy ? m.price <= taker.price : m.price >= taker.price),
+                m.maker !== taker.maker && !blockedSet.has(m.maker) && (taker.isBuy ? m.price <= taker.price : m.price >= taker.price) &&
+                pairTradable(taker.remaining, m.remaining),
             );
             expect(any, `seed ${seed}: a direct counterparty exists but nothing was proposed`).toBe(false);
           }
@@ -342,6 +344,9 @@ describe('fuzz: every proposal passes the contract model, on random books', () =
         }
         proposals++;
         kinds[p.kind]++;
+        // no fill leaves any party with 1 to 9 shares
+        expect(validLeft(p.taker.remaining - p.takerFill), `seed ${seed}: taker left 1 to 9 shares`).toBe(true);
+        p.makers.forEach((m, i) => expect(validLeft(m.remaining - p.fills[i]), `seed ${seed}: maker left 1 to 9 shares`).toBe(true));
         // the contract refuses nothing about it
         expect(judge(p, nOptions, isRefused), `seed ${seed} ${p.kind}`).toBeNull();
         // and the matcher's own promises
@@ -405,5 +410,54 @@ describe('price priority at every level: a direct proposal never fills a level w
     const a60 = bo({ seq: 2, maker: W(3), option: 0, isBuy: false, price: 60, size: 10n * SHARE });
     const taker = bo({ seq: 9, maker: W(1), option: 0, isBuy: true, price: 70, size: 20n * SHARE });
     expect(propose(taker, [a30, a60], two)!.makers.map((m) => m.price)).toEqual([30, 60]);
+  });
+});
+
+describe('no fill leaves 1 to 9 shares (plan 2 table, operator book rule)', () => {
+  const S = (n: number) => BigInt(n) * SHARE;
+
+  it('a 15-share taker and a 10-share maker do not trade (the taker would keep 5)', () => {
+    const m = bo({ maker: W(1), option: 0, isBuy: false, price: 40, size: S(10) });
+    const t = bo({ maker: W(2), option: 0, isBuy: true, price: 50, size: S(15) });
+    expect(propose(t, [m, t], opts({ nOptions: 2 }))).toBeNull();
+  });
+
+  it('a 25-share taker against a 20-share maker fills 10, leaving 15 and 10 (not 20, which leaves the taker 5)', () => {
+    const m = bo({ maker: W(1), option: 0, isBuy: false, price: 40, size: S(20) });
+    const t = bo({ maker: W(2), option: 0, isBuy: true, price: 50, size: S(25) });
+    const p = propose(t, [m, t], opts({ nOptions: 2 }))!;
+    expect(p.kind).toBe('direct');
+    expect(p.fills).toEqual([S(10)]);
+    expect(p.takerFill).toBe(S(10));
+    expect(judge(p, 2)).toBeNull();
+  });
+
+  it('a maker that can only fill whole is passed over for this proposal, and the next level fills', () => {
+    const small = bo({ maker: W(1), option: 0, isBuy: false, price: 40, size: S(10) });
+    const next = bo({ maker: W(3), option: 0, isBuy: false, price: 45, size: S(50) });
+    // a remainder already under 10 shares (left by an earlier fill outside this rule) fills only whole
+    const t = bo({ maker: W(2), option: 0, isBuy: true, price: 50, size: S(20), filled: S(15) });
+    const p = propose(t, [small, next, t], opts({ nOptions: 2 }))!;
+    expect(p.makers.map((m) => m.hash)).toEqual([next.hash]);
+    expect(p.fills).toEqual([S(5)]);
+  });
+
+  it('a set fill shrinks until every party keeps 0 or at least 10 shares', () => {
+    // mint: taker buys option 0, makers buy options 1 and 2; 30 / 35 / 100 would leave the option-1 maker 5 at 30
+    const t = bo({ maker: W(9), option: 0, isBuy: true, price: 40, size: S(30), seq: 50 });
+    const m1 = bo({ maker: W(1), option: 1, isBuy: true, price: 30, size: S(35) });
+    const m2 = bo({ maker: W(2), option: 2, isBuy: true, price: 30, size: S(100) });
+    const p = propose(t, [m1, m2, t], opts())!;
+    expect(p.kind).toBe('mint');
+    expect(p.takerFill).toBe(S(20));
+    expect(p.fills).toEqual([S(20), S(20)]);
+    expect(judge(p)).toBeNull();
+  });
+
+  it('a whole fill of every party is always allowed, under 10 shares included', () => {
+    const m = bo({ maker: W(1), option: 0, isBuy: false, price: 40, size: S(20), filled: S(13) });
+    const t = bo({ maker: W(2), option: 0, isBuy: true, price: 50, size: S(20), filled: S(13) });
+    const p = propose(t, [m, t], opts({ nOptions: 2 }))!;
+    expect(p.fills).toEqual([S(7)]);
   });
 });
