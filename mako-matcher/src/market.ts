@@ -3,11 +3,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, cachedRefused, cacheRefused, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
-import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, type Config } from './config';
+import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, MATCH_READS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
 import { intakeOrder } from './intake';
@@ -254,9 +254,12 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
   if (getMeta(sql, 'stopped') !== null) return { handedOff: 0, resumeBelow: null, finished: false };
 
   const chain = chainCtx(state, cfg, deps);
-  const blocked = new Set<Hex>(); // refused roles and accounts refused for the day, found so far
-  const clear = new Set<Hex>(); // checked and fine
+  // refused roles and accounts refused for the day: those a recent pass found (fail closed: a lifted role waits at
+  // most IDLE_RECHECK_MS), plus those found in this one
+  const blocked = cachedRefused(sql, deps.now());
+  const clear = new Set<Hex>(); // checked and fine, this pass only
   const work = { used: 0 };
+  let reads = 0;
   let tried = 0;
   for (const taker of takers) {
     // Spent: stop before this taker (never before the first), and the next tick starts with it.
@@ -267,13 +270,23 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
       if (!p) break;
       const unchecked = [...new Set([p.taker.maker, ...p.makers.map((m) => m.maker)])].filter((a) => !clear.has(a));
       if (unchecked.length > 0) {
+        // the multicall plus one refusal read per wallet; over the budget, stop and start here next tick (what this
+        // pass found refused is remembered, so that tick goes further)
+        const need = 1 + unchecked.length;
+        if (reads + need > MATCH_READS) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false, budgetStop: true, tried };
+        reads += need;
         try {
           await chain.verify();
           const roles = await readRefusedRoles(chain, unchecked);
+          const found: Hex[] = [];
           for (const a of unchecked) {
-            if (roles.has(a) || (await deps.refusedToday(a))) blocked.add(a);
+            if (roles.has(a) || (await deps.refusedToday(a))) found.push(a);
             else clear.add(a);
           }
+          for (const a of found) blocked.add(a);
+          // until the UTC day ends (the refusal list is per day) or IDLE_RECHECK_MS passes (a role may be lifted)
+          const nowMs = deps.now();
+          cacheRefused(sql, found, Math.min((Math.floor(nowMs / 86_400_000) + 1) * 86_400_000, nowMs + IDLE_RECHECK_MS));
         } catch (err) {
           alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
           return { handedOff: 0, resumeBelow: null, finished: false };

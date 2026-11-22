@@ -27,7 +27,20 @@ export const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
   `CREATE TABLE IF NOT EXISTS outcomes_seen (id TEXT PRIMARY KEY)`,
   `CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, code TEXT NOT NULL, detail TEXT NOT NULL)`,
+  // Wallets the party check found refused (a refused role, or refused for the UTC day), kept until `until` (ms) so a
+  // later pass does not read them again (adversary R10: re-reading them every tick spent the whole read budget).
+  `CREATE TABLE IF NOT EXISTS refused_cache (addr TEXT PRIMARY KEY, until INTEGER NOT NULL)`,
 ];
+
+/// The wallets still refused at `nowMs` (expired rows are deleted).
+export function cachedRefused(sql: SqlStorage, nowMs: number): Set<Hex> {
+  sql.exec(`DELETE FROM refused_cache WHERE until <= ?`, nowMs);
+  return new Set(sql.exec<{ addr: string }>(`SELECT addr FROM refused_cache`).toArray().map((r) => r.addr as Hex));
+}
+
+export function cacheRefused(sql: SqlStorage, addrs: Hex[], until: number): void {
+  for (const a of addrs) sql.exec(`INSERT INTO refused_cache (addr, until) VALUES (?, ?) ON CONFLICT (addr) DO UPDATE SET until = excluded.until`, a, until);
+}
 
 export function migrate(sql: SqlStorage): void {
   for (const s of SCHEMA) sql.exec(s);
