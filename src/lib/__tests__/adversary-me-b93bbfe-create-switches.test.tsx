@@ -155,7 +155,7 @@ describe('adversary: create page across account switches', () => {
     expect(poolLinks()).toEqual(['/pools/41']);
   });
 
-  it('A done, B (unreadable pool id) lands: B never shows A pool link', async () => {
+  it('A done (pool 41), B lands its own pool 52: B never shows A pool link', async () => {
     const r = render(<CreatePoolClient />);
     const switchTo = (acct: string) => {
       who = acct;
