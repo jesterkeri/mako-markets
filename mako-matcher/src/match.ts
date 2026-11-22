@@ -171,34 +171,41 @@ function fillLevels(cands: BookOrder[], budget: bigint): { makers: BookOrder[]; 
 }
 
 /// Mint (taker buys) or merge (taker sells): one maker on each other option, all on the taker's side of the
-/// ledger (buys for a mint, sells for a merge). Combinations of the first 4 makers per option (price-time order) are
-/// tried best-first, so when the best maker per option already works it is the answer. Work: at most 1024 legal-checked
-/// combinations, each O(need).
+/// ledger (buys for a mint, sells for a merge). A fixed budget of SET_BUDGET combinations is spread over the options:
+/// the first w = floor(SET_BUDGET^(1/need)) makers per option (price-time order; at least 1). Every combination in
+/// the window is legality-checked and the best taker price wins (lower for a mint, higher for a merge), a tie going to
+/// the earliest in price-time order. Work: at most SET_BUDGET combinations, each O(need).
+const SET_BUDGET = 1024;
 export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts): Proposal | null {
   const need = opts.nOptions - 1;
   if (need < 1 || need > MAX_MAKERS) return null;
+  let w = 1;
+  while ((w + 1) ** need <= SET_BUDGET) w++;
   const perOpt: BookOrder[][] = [];
   for (let opt = 0; opt < opts.nOptions; opt++) {
     if (opt === taker.option) continue;
     const c = book
       .filter((o) => usable(o, taker, opts) && o.option === opt && o.isBuy === taker.isBuy)
       .sort(byPriceTime(taker.isBuy))
-      .slice(0, 4);
+      .slice(0, w);
     if (c.length === 0) return null;
     perOpt.push(c);
   }
-  let budget = 1024;
+  let best: Proposal | null = null;
   const pick: BookOrder[] = [];
-  const walk = (i: number): Proposal | null => {
-    if (i === perOpt.length) return budget-- > 0 ? setProposal(taker, pick) : null;
+  const walk = (i: number) => {
+    if (i === perOpt.length) {
+      const r = setProposal(taker, pick);
+      if (r && (best === null || (taker.isBuy ? r.takerPrice < best.takerPrice : r.takerPrice > best.takerPrice))) best = r;
+      return;
+    }
     for (const m of perOpt[i]) {
       pick[i] = m;
-      const r = walk(i + 1);
-      if (r || budget <= 0) return r;
+      walk(i + 1);
     }
-    return null;
   };
-  return walk(0);
+  walk(0);
+  return best;
 }
 
 function setProposal(taker: BookOrder, makers: BookOrder[]): Proposal | null {
