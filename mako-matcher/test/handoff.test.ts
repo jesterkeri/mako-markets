@@ -49,9 +49,13 @@ describe('hand-off to the settler', () => {
     expect(await h.sql('SELECT COUNT(*) AS n FROM orders')).toEqual([{ n: 2 }]);
   });
 
-  it('every tick hands the crossed pair over again, until a settler takes it (at most one hand-off per pass)', async () => {
+  it('a refused pair is handed over again on every rotation, until a settler takes it (at most one hand-off per pass)', async () => {
+    // Codex MATCHER R3 F2: the full pass rotates below a cursor. After the hand-off at the newer order the next tick
+    // tries the orders below it (here the resting sell, which crosses nothing older), then the rotation starts again.
     await put(['directMakerSell', 'directTakerBuy']);
     expect(h.settled).toHaveLength(1);
+    await h.tick();
+    expect(h.settled).toHaveLength(2);
     await h.tick();
     expect(h.settled).toHaveLength(2);
     await h.tick();

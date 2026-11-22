@@ -8,7 +8,7 @@ import type { OrderTuple } from './abi';
 import { MARKET_STATUS_OPEN } from './abi';
 import { allOrders, buyCost, getMeta, insertOrder, reservations, setMeta, type BookOrder, getOrder } from './book';
 import { blockNumber, ChainError, getCode, getStorageAt, isValidOrderSignature, readIntake, type ChainCtx } from './chain';
-import { LOT, MAX_EXPIRY_AHEAD_S, MAX_OPEN_ORDERS, MAX_PRICE, MAX_SIG_LEN, MIN_PRICE, MIN_RESTING_SIZE, type Config } from './config';
+import { LOT, MAX_BOOK_ORDERS, MAX_EXPIRY_AHEAD_S, MAX_OPEN_ORDERS, MAX_PRICE, MAX_SIG_LEN, MIN_PRICE, MIN_RESTING_SIZE, type Config } from './config';
 import type { Alert } from './alerts';
 import { orderHash, parseOrderBody, recoverStrict, isSafeFormSignature } from './order';
 import { classifyCode, FALLBACK_HANDLER_SLOT, isSupportedSafe } from './wallets';
@@ -86,6 +86,8 @@ export async function intakeOrder(d: IntakeDeps, rawBody: unknown): Promise<Inta
     const live = allOrders(d.sql).filter((o) => o.expiration > BigInt(nowS));
     if (live.some((o) => o.hash === hash) || getOrder(d.sql, hash)) return refuse('duplicate_order');
     if (live.filter((o) => o.maker === order.maker).length >= MAX_OPEN_ORDERS) return refuse('too_many_orders');
+    // Codex MATCHER R3 F2: a market-wide cap, so the matcher's work per search and per tick has a bound.
+    if (live.length >= MAX_BOOK_ORDERS) return refuse('book_full', 409);
     const remaining = order.size - chain.filled;
     const res = reservations(live, order.maker, order.option);
     if (order.isBuy) {

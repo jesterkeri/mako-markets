@@ -16,6 +16,15 @@ export const MAX_SIG_LEN = 195;
 export const SIG_CHECK_CALL_GAS = 1_000_000n;
 /// Plan 5: 20 open orders per wallet per market.
 export const MAX_OPEN_ORDERS = 20;
+/// Codex MATCHER R3 F2 (owner, 2026-11-22): at most this many resting orders in one market, so one search and one
+/// tick have a bound. Intake refuses a new order while the market holds this many.
+export const MAX_BOOK_ORDERS = 1_000;
+/// About this many order visits (takers x book size) per alarm tick: a full pass over a full book takes
+/// ceil(1,000 / 250) = 4 ticks, a smaller book fewer.
+export const TICK_WORK = 250_000;
+/// An idle book (a whole pass found nothing and nothing changed) is still searched again at least this often, for
+/// what the book does not show (a refused role lifted on chain).
+export const IDLE_RECHECK_MS = 10 * 60_000;
 /// Plan 3.1: MAX_MAKERS.
 export const MAX_MAKERS = 10;
 /// The market Durable Object wakes this often while its book is not empty.

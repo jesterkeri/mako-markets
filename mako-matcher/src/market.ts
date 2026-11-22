@@ -7,7 +7,7 @@ import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getM
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
-import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
+import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
 import { intakeOrder } from './intake';
@@ -235,7 +235,11 @@ function serialize(p: Proposal) {
 /// match at a time; the book changes only when a settlement is reported back). Only the parties of a proposal are
 /// checked against the contract's refused roles and the daily refusal list; a refused party is left out and the
 /// match is proposed again without it. Everything fails closed: if either cannot be read, nothing is proposed.
-export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null): Promise<{ handedOff: number }> {
+/// The result: `handedOff`; `resumeBelow`, the cursor a spread full pass continues below (null: do not move it); and
+/// `finished`, true only when every given taker was tried and nothing stopped the pass early.
+export type PassResult = { handedOff: number; resumeBelow: number | null; finished: boolean };
+
+export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null): Promise<PassResult> {
   const sql = state.storage.sql;
   const nowS = Math.floor(deps.now() / 1000);
   // An order in a proposal the settler accepted is in flight until it reports: it is in no other proposal.
@@ -243,9 +247,9 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
   // Newest first: the later order of a crossing pair is the taker, so the resting order sets the price.
   const takers = (takerHashes === null ? book : book.filter((o) => takerHashes.includes(o.hash))).sort((a, b) => b.seq - a.seq);
   const nOptions = Number(getMeta(sql, 'n_options') ?? 0);
-  if (takers.length === 0 || nOptions < 2) return { handedOff: 0 };
+  if (takers.length === 0 || nOptions < 2) return { handedOff: 0, resumeBelow: null, finished: true };
   // A stopped market matches nothing until a person restarts it (plan 6.2).
-  if (getMeta(sql, 'stopped') !== null) return { handedOff: 0 };
+  if (getMeta(sql, 'stopped') !== null) return { handedOff: 0, resumeBelow: null, finished: false };
 
   const chain = chainCtx(state, cfg, deps);
   const blocked = new Set<Hex>(); // refused roles and accounts refused for the day, found so far
@@ -265,7 +269,7 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
           }
         } catch (err) {
           alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
-          return { handedOff: 0 };
+          return { handedOff: 0, resumeBelow: null, finished: false };
         }
         if (unchecked.some((a) => blocked.has(a))) continue; // propose again without the refused wallet
       }
@@ -279,7 +283,7 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
       if (hashes.some((h) => {
         const now = getOrder(sql, h);
         return !now || now.inFlight || now.filled !== snap.get(h);
-      })) return { handedOff: 0 };
+      })) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false }; // this taker again next time
       markInFlight(sql, hashes, deps.now());
       // Only the settler's explicit refusal releases the marks. A lost or unreadable answer may hide an acceptance
       // (the settler stores the proposal before it answers), so the marks stay until the settler reports, or until
@@ -291,10 +295,61 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
         alert('handoff_unconfirmed', 'the settler did not answer the hand-off; its orders stay marked until it is known');
       }
       if (refused) releaseInFlight(sql, hashes);
-      return { handedOff: 1 };
+      return { handedOff: 1, resumeBelow: taker.seq, finished: false };
     }
   }
-  return { handedOff: 0 };
+  return { handedOff: 0, resumeBelow: takers.length > 0 ? takers[takers.length - 1].seq : null, finished: true };
+}
+
+/// Codex MATCHER R3 F2: the alarm's full pass, spread over ticks with a bound per tick. Each tick tries at most
+/// TICK_WORK / (book size) takers, newest first, continuing below the stored cursor and wrapping back to the newest,
+/// so every booked order is tried at least once every ceil(book / per tick) + 1 ticks however often the book
+/// changes: no fixed prefix (R2). A whole rotation that saw the same book throughout and handed nothing off marks
+/// that book idle, and an idle book is not searched again until it changes (an order, a fill, an in-flight mark,
+/// the UTC day of the refusal list) or IDLE_RECHECK_MS passes.
+export async function spreadPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert): Promise<{ handedOff: number; tried: number; skipped: boolean }> {
+  const sql = state.storage.sql;
+  const nowMs = deps.now();
+  const all = allOrders(sql);
+  const print = await bookPrint(all, nowMs);
+  const idleAt = Number(getMeta(sql, 'idle_at') ?? '0');
+  if (getMeta(sql, 'idle_fp') === print && nowMs - idleAt < IDLE_RECHECK_MS) return { handedOff: 0, tried: 0, skipped: true };
+  delMeta(sql, 'idle_fp');
+  if (getMeta(sql, 'rot_fp') === null) startRotation(sql, print);
+  else if (getMeta(sql, 'rot_fp') !== print) setMeta(sql, 'rot_clean', '0');
+  const nowS = BigInt(Math.floor(nowMs / 1000));
+  const book = all.filter((o) => o.expiration > nowS && !o.inFlight).sort((a, b) => b.seq - a.seq);
+  const per = Math.max(1, Math.floor(TICK_WORK / Math.max(1, book.length)));
+  const cur = getMeta(sql, 'tick_cursor');
+  const below = cur === null ? book : book.filter((o) => o.seq < Number(cur));
+  const takers = below.slice(0, per);
+  const r = await matchPass(state, cfg, deps, alert, takers.map((o) => o.hash));
+  if (r.handedOff > 0 || !r.finished) setMeta(sql, 'rot_clean', '0');
+  if (r.finished && below.length <= per) {
+    // The rotation is complete: idle if it was clean, then start the next one from the newest order.
+    if (getMeta(sql, 'rot_clean') === '1' && getMeta(sql, 'rot_fp') === print) {
+      setMeta(sql, 'idle_fp', print);
+      setMeta(sql, 'idle_at', String(nowMs));
+    }
+    startRotation(sql, print);
+  } else if (r.resumeBelow !== null) {
+    setMeta(sql, 'tick_cursor', String(r.resumeBelow));
+  }
+  return { handedOff: r.handedOff, tried: takers.length, skipped: false };
+}
+
+function startRotation(sql: SqlStorage, print: string): void {
+  setMeta(sql, 'rot_fp', print);
+  setMeta(sql, 'rot_clean', '1');
+  delMeta(sql, 'tick_cursor');
+}
+
+/// What a search's answer depends on that the book shows: each order's hash, fill and in-flight mark, and the UTC
+/// day (the settler's refusal list is per day). SHA-256, hex.
+async function bookPrint(all: ReturnType<typeof allOrders>, nowMs: number): Promise<string> {
+  const text = `${Math.floor(nowMs / 86_400_000)}|` + all.map((o) => `${o.hash}:${o.filled}:${o.inFlight ? 1 : 0}`).join(',');
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /// The alarm tick: drop what expired, read cancels and nonce bumps from the chain, retry matching, and wake again
@@ -323,7 +378,7 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   await releaseStaleMarks(sql, deps, alert);
   if (countOrders(sql) > 0) {
     try {
-      await matchPass(state, cfg, deps, alert, null);
+      await spreadPass(state, cfg, deps, alert);
     } catch (err) {
       alert('match_failed', err instanceof Error ? err.name : 'error');
     }
