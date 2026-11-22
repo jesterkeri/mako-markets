@@ -152,9 +152,11 @@ export function CreatePoolClient() {
   // createMarket emits BetPlaced for the creator's seed, so the create receipt names the first bet, as a bet's does.
   const createTx = tx.tx?.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null ? tx.phase.txHash : undefined;
   const betLog = useBetLog(createTx, tx.createdId ?? 0n, account);
+  // Re-run on an account change too: two accounts can both be done, and done -> done is no phase change (Codex R4 F1).
+  // tx.phase is the signed-in account's own slot, so this never restores another account's result.
   useEffect(() => {
     if (tx.phase.step === 'done') setStep(4);
-  }, [tx.phase.step]);
+  }, [tx.phase.step, account]);
 
   const priceKind = kind === 'football' || kind === 'basketball' ? null : kind;
   const symbol = priceKind ? symbols[priceKind] : '';

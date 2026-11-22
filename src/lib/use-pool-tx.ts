@@ -168,7 +168,8 @@ const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
 });
 
 const REVIEW: ConfirmPhase = { step: 'review' };
-type PoolSlot = { tx: PoolTx; phase: ConfirmPhase; spec: ConfirmSpec | null; createdId: bigint | null };
+/// tx is null once a landed create's sheet is closed: the slot then only keeps the new pool's id for the page.
+type PoolSlot = { tx: PoolTx | null; phase: ConfirmPhase; spec: ConfirmSpec | null; createdId: bigint | null };
 
 /// `onLanded` gets the account whose transaction landed, which may no longer be the one signed in.
 export function usePoolTx(onLanded?: (account: string) => void) {
@@ -230,9 +231,13 @@ export function usePoolTx(onLanded?: (account: string) => void) {
   const close = useCallback(() => {
     if (!account || inFlight.current.has(account)) return;
     setSlots((prev) => {
-      if (!prev.has(account)) return prev;
+      const s = prev.get(account);
+      if (!s) return prev;
       const m = new Map(prev);
-      m.delete(account);
+      // A landed create keeps its pool id after the sheet closes, so the page's live step keeps its link (as before
+      // the per-account slots); the next open clears it.
+      if (s.phase.step === 'done' && s.createdId !== null) m.set(account, { tx: null, phase: REVIEW, spec: null, createdId: s.createdId });
+      else m.delete(account);
       return m;
     });
   }, [account]);
