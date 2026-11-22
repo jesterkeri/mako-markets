@@ -58,6 +58,11 @@ export function heldHashes(sql: SqlStorage): string[] {
       for (const m of p.makers) out.add(m.hash);
     }
   }
+  // Parties dropped while the match in flight was rebuilt are reported with its outcome; until then they stay held.
+  if (sql.exec(`SELECT 1 FROM in_flight`).toArray().length > 0) {
+    const c = sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'carry_dropped'`).toArray()[0];
+    for (const d of c ? (JSON.parse(c.v) as { hash: string }[]) : []) out.add(d.hash);
+  }
   for (const r of sql.exec<{ body: string }>(`SELECT body FROM outbox`).toArray()) {
     const o = JSON.parse(r.body) as { release?: string[]; dropped?: { hash: string }[] };
     for (const h of o.release ?? []) out.add(h);

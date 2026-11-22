@@ -353,6 +353,10 @@ async function readCancels(state: DurableObjectState, cfg: Config, deps: MarketD
       if (l.kind === 'cancelled') deleteByHash(sql, l.orderHash);
       else deleteBelowNonce(sql, l.account, l.nonce);
     }
+    // An intake booked during the read may have moved the cursor back (or the cursor is gone): that value stands and
+    // the next tick reads from it. Writing `to` over it would skip that order's cancels.
+    const nowRaw = getMeta(sql, 'log_cursor');
+    if (nowRaw === null || BigInt(nowRaw) !== cursor) return;
     cursor = to;
     setMeta(sql, 'log_cursor', cursor.toString());
   }
