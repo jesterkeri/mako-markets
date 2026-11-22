@@ -1,0 +1,238 @@
+{
+  "startedAt": "2026-10-16T20:06:30.079Z",
+  "results": {
+    "now-BAC": {
+      "latest": {
+        "status": 401,
+        "error": "{\"error\":\"feeds not authorized\"}",
+        "count": 0
+      },
+      "page": {
+        "status": 401,
+        "error": "{\"error\":\"feeds not authorized\"}",
+        "count": 0
+      }
+    },
+    "now-MA": {
+      "latest": {
+        "status": 401,
+        "error": "{\"error\":\"feeds not authorized\"}",
+        "count": 0
+      },
+      "page": {
+        "status": 401,
+        "error": "{\"error\":\"feeds not authorized\"}",
+        "count": 0
+      }
+    },
+    "now-AAPL": {
+      "status": 200,
+      "error": null
+    },
+    "bulk-BTC": {
+      "label": "BTC",
+      "S": 1792181192,
+      "status": 200,
+      "error": null,
+      "asked": 1,
+      "present": 1,
+      "exact": 1,
+      "offsets": [
+        0
+      ]
+    },
+    "bulk-BTC+BAC": {
+      "label": "BTC+BAC",
+      "S": 1792181192,
+      "status": 401,
+      "error": "{\"error\":\"feeds not authorized\"}",
+      "asked": 2,
+      "present": 0,
+      "exact": 0,
+      "offsets": []
+    },
+    "bulk-32 good": {
+      "label": "32 good",
+      "S": 1792181192,
+      "status": 200,
+      "error": null,
+      "asked": 32,
+      "present": 32,
+      "exact": 32,
+      "offsets": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "bulkSeries": [
+      {
+        "S": 1792181193,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181198,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181202,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181207,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181211,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181223,
+        "status": 400,
+        "present": 0,
+        "exact": 0,
+        "offsets": []
+      },
+      {
+        "S": 1792181227,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181232,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181236,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181241,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181246,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      },
+      {
+        "S": 1792181251,
+        "status": 200,
+        "present": 32,
+        "exact": 32,
+        "offsets": [
+          0
+        ]
+      }
+    ],
+    "limit-101": {
+      "status": 400,
+      "count": 0,
+      "error": "{\"error\":\"Limit value of 101 larger than the max value of 100\"}"
+    },
+    "limit-200": {
+      "status": 400,
+      "count": 0,
+      "error": "{\"error\":\"Limit value of 200 larger than the max value of 100\"}"
+    },
+    "limit-250": {
+      "status": 400,
+      "count": 0,
+      "error": "{\"error\":\"Limit value of 250 larger than the max value of 100\"}"
+    },
+    "limit-300": {
+      "status": 400,
+      "count": 0,
+      "error": "{\"error\":\"Limit value of 300 larger than the max value of 100\"}"
+    },
+    "limit-400": {
+      "status": 400,
+      "count": 0,
+      "error": "{\"error\":\"Limit value of 400 larger than the max value of 100\"}"
+    },
+    "limit-499": {
+      "status": 400,
+      "count": 0,
+      "error": "{\"error\":\"Limit value of 499 larger than the max value of 100\"}"
+    }
+  },
+  "calls": 26,
+  "finishedAt": "2026-10-16T20:07:41.432Z"
+}
