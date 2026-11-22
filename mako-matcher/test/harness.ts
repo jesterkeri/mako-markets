@@ -39,7 +39,6 @@ export async function fresh(id = '1'): Promise<Harness> {
     state.storage.sql.exec('DROP TABLE IF EXISTS orders');
     state.storage.sql.exec('DROP TABLE IF EXISTS meta');
     state.storage.sql.exec('DROP TABLE IF EXISTS alerts');
-    state.storage.sql.exec('DROP TABLE IF EXISTS refused_cache');
     migrate(state.storage.sql);
   });
   const w = new World();
@@ -101,6 +100,10 @@ export async function fresh(id = '1'): Promise<Harness> {
     async refusedToday(m) {
       if (h.settlerDown) throw new Error('down');
       return h.refused.has(m.toLowerCase());
+    },
+    async refusedList() {
+      if (h.settlerDown) throw new Error('down');
+      return new Set([...h.refused].map((a) => a.toLowerCase() as Hex));
     },
     async settle(b) {
       h.settled.push(b);

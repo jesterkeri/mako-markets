@@ -3,11 +3,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, cachedRefused, cacheRefused, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
-import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, MATCH_READS, type Config } from './config';
+import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, ConfigError, readConfig, REQUEST_BUDGET_MS, ROLE_CHUNK, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
 import { intakeOrder } from './intake';
@@ -20,6 +20,8 @@ export interface MarketDeps {
   log(line: string): void;
   /// The settler's daily refusal list. Throws when it cannot be read (the caller fails closed).
   refusedToday(maker: Hex): Promise<boolean>;
+  /// The settler's whole refusal list for the day, lowercase. Throws when it cannot be read (the caller fails closed).
+  refusedList(): Promise<Set<Hex>>;
   /// Hands a proposal to the settler. `accepted: false` only for the settler's explicit refusal; throws when the
   /// answer is lost or unreadable (the proposal may have been taken).
   settle(body: unknown): Promise<{ accepted: boolean }>;
@@ -44,6 +46,13 @@ export function realDeps(env: Env): MarketDeps {
       const b = (await res.json()) as { refused?: unknown };
       if (typeof b.refused !== 'boolean') throw new Error('refusal list unreadable');
       return b.refused;
+    },
+    async refusedList() {
+      const res = await settler().fetch(new Request('https://settler/refused'));
+      if (!res.ok) throw new Error('refusal list unreadable');
+      const b = (await res.json().catch(() => null)) as { makers?: unknown } | null;
+      if (!Array.isArray(b?.makers) || !b.makers.every((x) => typeof x === 'string' && /^0x[0-9a-fA-F]{40}$/.test(x))) throw new Error('refusal list unreadable');
+      return new Set((b.makers as string[]).map((x) => x.toLowerCase() as Hex));
     },
     async settle(body) {
       const res = await settler().fetch(new Request('https://settler/settle', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
@@ -232,9 +241,11 @@ function serialize(p: Proposal) {
 }
 
 /// Tries each given order as a taker, oldest first. At most ONE proposal is handed to the settler per pass (one
-/// match at a time; the book changes only when a settlement is reported back). Only the parties of a proposal are
-/// checked against the contract's refused roles and the daily refusal list; a refused party is left out and the
-/// match is proposed again without it. Everything fails closed: if either cannot be read, nothing is proposed.
+/// match at a time; the book changes only when a settlement is reported back). The first proposal of a pass reads
+/// every maker on the book against the contract's refused roles and the settler's daily refusal list at once (Codex
+/// MATCHER R4 F1: checking only a proposal's parties found refused wallets a few per tick and needed a cache whose
+/// expiry undid the progress); a refused wallet is left out of every search in the pass. Nothing is carried to the
+/// next pass. Everything fails closed: if either cannot be read, nothing is proposed.
 /// The result: `handedOff`; `resumeBelow`, the cursor a spread full pass continues below (null: do not move it); and
 /// `finished`, true only when every given taker was tried and nothing stopped the pass early.
 /// `budgetStop`: the pass stopped before a taker because the work budget was spent (not a failure: the next tick
@@ -254,73 +265,60 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
   if (getMeta(sql, 'stopped') !== null) return { handedOff: 0, resumeBelow: null, finished: false };
 
   const chain = chainCtx(state, cfg, deps);
-  // refused roles and accounts refused for the day: those a recent pass found (fail closed: a lifted role waits at
-  // most IDLE_RECHECK_MS), plus those found in this one
-  const blocked = cachedRefused(sql, deps.now());
-  const clear = new Set<Hex>(); // checked and fine, this pass only
-  const work = { used: 0 };
-  let reads = 0;
+  // refused roles and accounts refused for the day, lowercase; read at the first proposal of this pass (below)
+  const blocked = new Set<Hex>();
+  let checked = false;
+  const lc = (a: Hex) => a.toLowerCase() as Hex;
+  const opts = { nOptions, nowSeconds: nowS, blocked: (m: Hex) => blocked.has(lc(m)), work: { used: 0 } };
+  const work = opts.work;
   let tried = 0;
   for (const taker of takers) {
     // Spent: stop before this taker (never before the first), and the next tick starts with it.
     if (budget !== undefined && tried > 0 && work.used >= budget) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false, budgetStop: true, tried };
     tried++;
-    let round = 0;
-    for (; round < MAX_PARTY_CHECK_ROUNDS; round++) {
-      const p = propose(taker, book, { nOptions, nowSeconds: nowS, blocked: (m) => blocked.has(m), work });
-      if (!p) break;
-      const unchecked = [...new Set([p.taker.maker, ...p.makers.map((m) => m.maker)])].filter((a) => !clear.has(a));
-      if (unchecked.length > 0) {
-        // the multicall plus one refusal read per wallet; over the budget, stop and start here next tick (what this
-        // pass found refused is remembered, so that tick goes further)
-        const need = 1 + unchecked.length;
-        if (reads + need > MATCH_READS) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false, budgetStop: true, tried };
-        reads += need;
-        try {
-          await chain.verify();
-          const roles = await readRefusedRoles(chain, unchecked);
-          const found: Hex[] = [];
-          for (const a of unchecked) {
-            if (roles.has(a) || (await deps.refusedToday(a))) found.push(a);
-            else clear.add(a);
-          }
-          for (const a of found) blocked.add(a);
-          // until the UTC day ends (the refusal list is per day) or IDLE_RECHECK_MS passes (a role may be lifted)
-          const nowMs = deps.now();
-          cacheRefused(sql, found, Math.min((Math.floor(nowMs / 86_400_000) + 1) * 86_400_000, nowMs + IDLE_RECHECK_MS));
-        } catch (err) {
-          alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
-          return { handedOff: 0, resumeBelow: null, finished: false };
-        }
-        if (unchecked.some((a) => blocked.has(a))) continue; // propose again without the refused wallet
-      }
-      // Marked BEFORE the hand-off, so the settler's report cannot arrive ahead of the mark; released again if the
-      // settler does not take the proposal.
-      const hashes = [p.taker.hash, ...p.makers.map((m) => m.hash)];
-      // The book was read before the chain reads above, and a fetch or another pass can run during them. Checked
-      // again here with no await before the mark: every order still booked, not in flight, and unfilled since the
-      // read. Otherwise this pass hands off nothing and the next one proposes from the book as it now is.
-      const snap = new Map(book.map((o) => [o.hash, o.filled]));
-      if (hashes.some((h) => {
-        const now = getOrder(sql, h);
-        return !now || now.inFlight || now.filled !== snap.get(h);
-      })) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false }; // this taker again next time
-      markInFlight(sql, hashes, deps.now());
-      // Only the settler's explicit refusal releases the marks. A lost or unreadable answer may hide an acceptance
-      // (the settler stores the proposal before it answers), so the marks stay until the settler reports, or until
-      // the stale-mark check finds the settler does not hold them.
-      let refused = false;
+    let p = propose(taker, book, opts);
+    if (!p) continue;
+    if (!checked) {
+      // every maker this pass can propose, in at most ceil(MAX_BOOK_ORDERS / ROLE_CHUNK) multicalls plus one read
       try {
-        refused = !(await deps.settle(serialize(p))).accepted;
-      } catch {
-        alert('handoff_unconfirmed', 'the settler did not answer the hand-off; its orders stay marked until it is known');
+        await chain.verify();
+        const makers = [...new Set(book.map((o) => lc(o.maker)))];
+        for (let i = 0; i < makers.length; i += ROLE_CHUNK) {
+          for (const a of await readRefusedRoles(chain, makers.slice(i, i + ROLE_CHUNK))) blocked.add(lc(a));
+        }
+        for (const a of await deps.refusedList()) blocked.add(lc(a));
+      } catch (err) {
+        alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
+        return { handedOff: 0, resumeBelow: null, finished: false };
       }
-      if (refused) releaseInFlight(sql, hashes);
-      return { handedOff: 1, resumeBelow: taker.seq, finished: false };
+      checked = true;
+      // every party of every proposal from here on is a checked maker of `book`; search again without the refused
+      if ([p.taker.maker, ...p.makers.map((m) => m.maker)].some((a) => blocked.has(lc(a)))) p = propose(taker, book, opts);
+      if (!p) continue;
     }
-    // Every round found a refused wallet (each now remembered) and this taker is not fully searched: start here next
-    // tick, where those wallets are skipped (adversary R11: counting it as searched let a quiet book go idle).
-    if (round === MAX_PARTY_CHECK_ROUNDS) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false, budgetStop: true, tried };
+    // Marked BEFORE the hand-off, so the settler's report cannot arrive ahead of the mark; released again if the
+    // settler does not take the proposal.
+    const hashes = [p.taker.hash, ...p.makers.map((m) => m.hash)];
+    // The book was read before the chain reads above, and a fetch or another pass can run during them. Checked
+    // again here with no await before the mark: every order still booked, not in flight, and unfilled since the
+    // read. Otherwise this pass hands off nothing and the next one proposes from the book as it now is.
+    const snap = new Map(book.map((o) => [o.hash, o.filled]));
+    if (hashes.some((h) => {
+      const now = getOrder(sql, h);
+      return !now || now.inFlight || now.filled !== snap.get(h);
+    })) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false }; // this taker again next time
+    markInFlight(sql, hashes, deps.now());
+    // Only the settler's explicit refusal releases the marks. A lost or unreadable answer may hide an acceptance
+    // (the settler stores the proposal before it answers), so the marks stay until the settler reports, or until
+    // the stale-mark check finds the settler does not hold them.
+    let refused = false;
+    try {
+      refused = !(await deps.settle(serialize(p))).accepted;
+    } catch {
+      alert('handoff_unconfirmed', 'the settler did not answer the hand-off; its orders stay marked until it is known');
+    }
+    if (refused) releaseInFlight(sql, hashes);
+    return { handedOff: 1, resumeBelow: taker.seq, finished: false };
   }
   return { handedOff: 0, resumeBelow: takers.length > 0 ? takers[takers.length - 1].seq : null, finished: true, tried };
 }

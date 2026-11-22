@@ -116,15 +116,18 @@ describe('hand-off to the settler', () => {
     }
   });
 
-  it('reads the roles of the parties of a proposal only, not of everybody on the book', async () => {
-    await put(['mintMakerBuy1', 'mintMakerBuy2', 'direct3Maker2Sell', 'direct3Maker3Sell']);
+  it('reads the roles of every maker on the book once, in one multicall, when the pass first has a proposal (Codex MATCHER R4 F1)', async () => {
+    const names = ['mintMakerBuy1', 'mintMakerBuy2', 'direct3Maker2Sell', 'direct3Maker3Sell'];
+    await put(names);
     h.w.inner.length = 0;
+    const before = h.w.exchangeCalls('aggregate3');
     const r = await put(['directTakerBuy']);
     expect(r[0]).toMatchObject({ handedOff: 1 });
-    // the best deal for the taker is the mint (it pays 40 against 55): its three parties are read, one isOperator
-    // each, and the two sellers on the book who are not in the proposal are not
+    // the best deal for the taker is the mint (it pays 40 against 55); every distinct wallet on the book is read
     expect((h.settled.at(-1) as Handed).kind).toBe('mint');
-    expect(h.w.inner.filter((n) => n === 'isOperator')).toHaveLength(3);
+    const wallets = new Set([...names, 'directTakerBuy'].map((n) => vec(n).order.maker.toLowerCase()));
+    expect(h.w.inner.filter((n) => n === 'isOperator')).toHaveLength(wallets.size);
+    expect(h.w.exchangeCalls('aggregate3') - before, 'intake reads the new order in one multicall, the roles take one more').toBe(2);
   });
 
   it('proposes again without a refused wallet: the next-best maker is used', async () => {
@@ -190,7 +193,7 @@ describe('the settler object (real class, real storage)', () => {
     expect((await call('/settle', 'POST', { nonsense: true })).body).toMatchObject({ accepted: false, error: 'bad_proposal' });
     expect((await call('/', 'GET')).status).toBe(404);
     expect((await call('/anything', 'DELETE')).status).toBe(404);
-    expect((await call('/refused', 'GET')).status).toBe(404);
+    expect((await call('/refused', 'POST')).status).toBe(404);
     const noRpc = await call('/settle', 'POST', {}, { PRIMARY_RPC_URL: undefined });
     expect(noRpc.status).toBe(503);
     expect(noRpc.body).toMatchObject({ error: 'held_no_primary_rpc' });
@@ -217,6 +220,8 @@ describe('the settler object (real class, real storage)', () => {
     });
     expect((await call(`/refused/${m}`)).body).toEqual({ refused: true });
     expect((await call('/refused/not-an-address')).status).toBe(404);
+    // the whole list for today (Codex MATCHER R4 F1): today's row only, lowercase
+    expect((await call('/refused')).body).toEqual({ makers: [m] });
     void NOW_MS;
   });
 

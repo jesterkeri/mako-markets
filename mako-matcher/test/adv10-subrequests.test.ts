@@ -4,6 +4,8 @@
 // makers each), and "at least one taker per tick" means the budget never stops it. So one tick on a legal book issues
 // far more reads than the invocation may make, and in production the 51st read throws, the pass fails closed with the
 // cursor unmoved (`resumeBelow: null`), and the same newest orders are retried every tick.
+// Since Codex MATCHER R4 F1 a pass reads every maker at once (roles in multicalls of ROLE_CHUNK, the settler's list in
+// one read), so these scenarios now cost a few reads; the tests keep the limit and the hand-over.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runInDurableObject } from 'cloudflare:test';
 import type { Hex } from 'viem';
@@ -50,10 +52,10 @@ describe('one alarm tick stays inside the invocation subrequest limit', () => {
     // then ONE clean taker: a 100-share bid that crosses them, so each round proposes 10 refused makers
     await book([{ option: 0, isBuy: true, price: 50, size: 100n * SH }], 3);
     let refusalReads = 0;
-    const inner = h.deps.refusedToday;
-    h.deps.refusedToday = async (m) => {
+    const inner = h.deps.refusedList;
+    h.deps.refusedList = async () => {
       refusalReads++;
-      return inner(m);
+      return inner();
     };
     const before = h.w.calls.length;
     await h.tick();
@@ -78,10 +80,10 @@ describe('one alarm tick stays inside the invocation subrequest limit', () => {
       spend();
       return innerFetch(i, x);
     }) as typeof fetch;
-    const innerRefused = h.deps.refusedToday;
-    h.deps.refusedToday = async (m) => {
+    const innerRefused = h.deps.refusedList;
+    h.deps.refusedList = async () => {
       spend();
-      return innerRefused(m);
+      return innerRefused();
     };
     let handedAt = -1;
     for (let i = 0; i < 40 && handedAt < 0; i++) {
@@ -94,37 +96,33 @@ describe('one alarm tick stays inside the invocation subrequest limit', () => {
     expect(handedAt, 'the oldest pair was handed over within 40 ticks').toBeGreaterThan(0);
   });
 
-  it('control: the same book with no subrequest limit hands the oldest pair over (in a few ticks: the read budget spreads the checks)', async () => {
+  it('control: the same book with no subrequest limit hands the oldest pair over on the first tick', async () => {
     await book([{ option: 0, isBuy: false, price: 60, size: 20n * SH }, { option: 0, isBuy: true, price: 70, size: 20n * SH }], 3);
     await book(Array.from({ length: 60 }, () => ({ option: 0, isBuy: false, price: 40, size: 10n * SH })), 3);
     for (let n = 3; n <= 62; n++) h.refused.add(W(n).toLowerCase());
     await book([{ option: 0, isBuy: true, price: 50, size: 100n * SH }], 3);
-    for (let i = 0; i < 40 && h.settled.length === 0; i++) await h.tick();
+    await h.tick();
     expect(h.settled).toHaveLength(1);
   });
 
-  it('refused wallets found by a pass are remembered until the UTC day ends or 10 minutes pass, then read again', async () => {
+  it('each pass reads the refusal list once and remembers nothing for the next pass', async () => {
     await book(Array.from({ length: 10 }, () => ({ option: 0, isBuy: false, price: 40, size: 10n * SH })), 3);
     for (let n = 1; n <= 10; n++) h.refused.add(W(n).toLowerCase());
     await book([{ option: 0, isBuy: true, price: 50, size: 100n * SH }], 3);
     let reads = 0;
-    const inner = h.deps.refusedToday;
-    h.deps.refusedToday = async (m) => {
+    const inner = h.deps.refusedList;
+    h.deps.refusedList = async () => {
       reads++;
-      return inner(m);
+      return inner();
     };
     await h.tick();
-    const first = reads;
-    expect(first, 'the taker and the 10 makers read once').toBe(11);
-    expect((await h.sql<{ n: number }>(`SELECT count(*) AS n FROM refused_cache`))[0].n).toBe(10);
-    h.w.nowMs += 9 * 60_000; // inside the window, and the book changed (no idle skip)
-    await book([{ option: 1, isBuy: true, price: 5, size: 10n * SH }], 3);
+    expect(reads, 'one list read for the whole pass').toBe(1);
+    expect(h.settled).toHaveLength(0);
+    // a wallet taken off the list is matched by the next pass: nothing was cached
+    h.refused.delete(W(1).toLowerCase());
+    await book([{ option: 1, isBuy: true, price: 5, size: 10n * SH }], 3); // the book changed (no idle skip)
     await h.tick();
-    expect(reads - first, 'the remembered makers are not read again (only the new and the clean taker)').toBeLessThanOrEqual(2);
-    const second = reads;
-    h.w.nowMs += 2 * 60_000; // past 10 minutes
-    await book([{ option: 1, isBuy: true, price: 5, size: 10n * SH }], 3);
-    await h.tick();
-    expect(reads - second, 'expired: the makers are read again').toBeGreaterThanOrEqual(10);
+    expect(reads).toBe(2);
+    expect(h.settled).toHaveLength(1);
   });
 });

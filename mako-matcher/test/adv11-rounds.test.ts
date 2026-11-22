@@ -5,11 +5,13 @@
 // refused_cache rows (kept at most IDLE_RECHECK_MS from when found) are gone, so the next rotation spends its rounds
 // on the same refused wallets again. The read-budget stop returns budgetStop so it continues next tick; this path
 // does not.
+// Since Codex MATCHER R4 F1 there are no rounds and no cache: a pass reads every maker at once, so this book is handed
+// over on the first tick. The scenario is kept as a regression test.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runInDurableObject } from 'cloudflare:test';
 import type { Hex } from 'viem';
 import { insertOrder, setMeta } from '../src/book';
-import { IDLE_RECHECK_MS, MAX_PARTY_CHECK_ROUNDS, TICK_MS } from '../src/config';
+import { IDLE_RECHECK_MS, TICK_MS } from '../src/config';
 import type { OrderTuple } from '../src/abi';
 import { fresh, type Harness } from './harness';
 import { NOW_MS } from './fake';
@@ -41,11 +43,11 @@ async function book(orders: Partial<OrderTuple>[], nOptions: number) {
   });
 }
 
-/// MAX_PARTY_CHECK_ROUNDS refused asks at 40 cents ahead of one clean ask at 45, and the same number of refused bids at
+/// Five (the old round limit) refused asks at 40 cents ahead of one clean ask at 45, and the same number of refused bids at
 /// 60 ahead of one clean bid at 50. The clean bid and the clean ask cross, and each is the only clean counterparty of
 /// the other, so whichever is tried as the taker gives up after its rounds. Nothing is refused but the ten wallets.
 async function stuckBook() {
-  const n = MAX_PARTY_CHECK_ROUNDS;
+  const n = 5;
   await book(Array.from({ length: n }, () => ({ isBuy: true, price: 60 })), 3); // refused bids
   await book(Array.from({ length: n }, () => ({ isBuy: false, price: 40 })), 3); // refused asks
   await book([{ isBuy: false, price: 45 }], 3); // the clean ask
@@ -54,15 +56,10 @@ async function stuckBook() {
 }
 
 describe('a taker that spends its party-check rounds on refused wallets is not written off as searched', () => {
-  it('the clean crossing pair behind refused wallets is handed over within a few ticks, inside the cache window', async () => {
+  it('the clean crossing pair behind refused wallets is handed over on the first tick', async () => {
     await stuckBook();
-    let ticks = 0;
-    for (; ticks < 6 && h.settled.length === 0; ticks++) {
-      await h.tick();
-      h.w.nowMs += TICK_MS;
-    }
-    console.log(`handed over: ${h.settled.length} after ${ticks} ticks`);
-    expect(h.settled, 'the clean bid and ask cross; the 10 refused wallets are cached after the first tick').toHaveLength(1);
+    await h.tick();
+    expect(h.settled, 'the clean bid and ask cross; every refused wallet is known before the search').toHaveLength(1);
   });
 
   it('control: with nobody refused the same book hands the pair over on the first tick', async () => {
@@ -70,17 +67,6 @@ describe('a taker that spends its party-check rounds on refused wallets is not w
     h.refused.clear();
     await h.tick();
     expect(h.settled).toHaveLength(1);
-  });
-
-  it('after one tick the book is not idle: the taker that ran out of rounds keeps the cursor, and its 5 refused wallets are cached', async () => {
-    await stuckBook();
-    await h.tick();
-    const meta = Object.fromEntries((await h.sql<{ k: string; v: string }>(`SELECT k, v FROM meta`)).map((m) => [m.k, m.v]));
-    const cached = (await h.sql<{ n: number }>(`SELECT count(*) AS n FROM refused_cache`))[0].n;
-    console.log(`idle_fp set: ${'idle_fp' in meta}; tick_cursor: ${meta.tick_cursor ?? 'none'}; cached: ${cached}`);
-    expect(cached).toBe(5);
-    expect(meta.tick_cursor, 'the next tick starts again at the taker that ran out of rounds').toBeDefined();
-    expect(meta.idle_fp, 'the book was declared idle although the pair behind the refused wallets was never reached').toBeUndefined();
   });
 
   it('the book is never declared idle before the pair is handed over (so it never waits for an idle recheck)', async () => {

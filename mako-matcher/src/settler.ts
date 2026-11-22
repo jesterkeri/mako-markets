@@ -20,6 +20,12 @@ export function isRefused(sql: SqlStorage, maker: string, nowMs: number): boolea
   return sql.exec(`SELECT 1 FROM refused_accounts WHERE maker = ? AND utc_day = ?`, maker.toLowerCase(), utcDay(nowMs)).toArray().length > 0;
 }
 
+/// Every account refused for the UTC day of `nowMs`, lowercase (Codex MATCHER R4 F1: a matching pass reads the whole
+/// list once instead of one read per wallet). It grows only when a settlement fails.
+export function refusedList(sql: SqlStorage, nowMs: number): string[] {
+  return sql.exec<{ maker: string }>(`SELECT maker FROM refused_accounts WHERE utc_day = ?`, utcDay(nowMs)).toArray().map((r) => r.maker.toLowerCase());
+}
+
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 const TICK_MS = 1_000;
@@ -128,6 +134,7 @@ export class MatcherSettler extends DurableObject<Env> {
     const url = new URL(req.url);
     const m = /^\/refused\/(0x[0-9a-fA-F]{40})$/.exec(url.pathname);
     if (req.method === 'GET' && m) return json(200, { refused: isRefused(this.ctx.storage.sql, m[1], Date.now()) });
+    if (req.method === 'GET' && url.pathname === '/refused') return json(200, { makers: refusedList(this.ctx.storage.sql, Date.now()) });
     if (req.method === 'GET' && url.pathname === '/held') return json(200, { hashes: heldHashes(this.ctx.storage.sql) });
     if (req.method === 'GET' && url.pathname === '/status') {
       const c = this.core();

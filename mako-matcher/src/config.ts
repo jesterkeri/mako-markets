@@ -25,13 +25,12 @@ export const MAX_BOOK_ORDERS = 1_000;
 /// (always trying at least one), and the next tick continues below it. Calibrated in workerd so the slowest tick on
 /// the worst books found (test/adv9-cpu.test.ts, test/tick-budget.test.ts) stays near 1 s.
 export const TICK_WORK = 40_000_000;
-/// Adversary R10 on 4b7d002: the chain and settler reads one matching pass may make for its party checks (one
-/// refused-roles multicall plus one refusal read per wallet, per round). A pass stops before a round that would go
-/// over, and the next tick continues from that taker; wallets found refused are remembered (`refused_cache`), so each
-/// tick makes progress. With the alarm's other reads (chain id 1, block number 1, up to MAX_LOG_CHUNKS_PER_TICK log
-/// chunks, the settler's held list 1, the hand-off 1) or intake's (at most 9), an invocation stays under wrangler.toml's
-/// `subrequests = 50`.
-export const MATCH_READS = 30;
+/// Codex MATCHER R4 F1: the first proposal of a matching pass checks every maker on the book at once, the refused
+/// roles in multicalls of this many wallets and the settler's refusal list for the day in one read. With
+/// MAX_BOOK_ORDERS that is at most 4 + 1 reads per pass; with the alarm's other reads (chain id 1, block number 1, up
+/// to MAX_LOG_CHUNKS_PER_TICK log chunks, the settler's held list 1, the hand-off 1) or intake's (at most 9), an
+/// invocation stays well under wrangler.toml's `subrequests = 50`.
+export const ROLE_CHUNK = 250;
 /// An idle book (a whole pass found nothing and nothing changed) is still searched again at least this often, for
 /// what the book does not show (a refused role lifted on chain).
 export const IDLE_RECHECK_MS = 10 * 60_000;
@@ -50,8 +49,6 @@ export const FETCH_TIMEOUT_MS = 10_000;
 export const MAX_BODY_BYTES = 8_192;
 /// A whole request (all its chain reads) is cut off after this long.
 export const REQUEST_BUDGET_MS = 25_000;
-/// How many times one taker's match is proposed again after a refused wallet is found in it.
-export const MAX_PARTY_CHECK_ROUNDS = 5;
 /// Alerts kept in the Durable Object's own table (newest).
 export const MAX_ALERT_ROWS = 200;
 
