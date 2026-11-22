@@ -12,7 +12,7 @@
 //     an operator book rule). A remainder already under 10 shares can only fill whole.
 import type { Hex } from 'viem';
 import type { BookOrder } from './book';
-import { MAX_MAKERS, MIN_RESTING_SIZE } from './config';
+import { LOT, MAX_MAKERS, MIN_RESTING_SIZE } from './config';
 
 export type MatchKind = 'direct' | 'mint' | 'merge';
 
@@ -82,10 +82,75 @@ export function proposeDirect(taker: BookOrder, book: BookOrder[], opts: MatchOp
   const whole = fillLevels(cands, taker.remaining);
   const takerFill = whole.fills.reduce((a, b) => a + b, 0n);
   const left = taker.remaining - takerFill;
-  const r = left === 0n || left >= MIN_RESTING_SIZE ? whole : fillLevels(cands, taker.remaining - MIN_RESTING_SIZE);
+  let r = left === 0n || left >= MIN_RESTING_SIZE ? whole : fillLevels(cands, taker.remaining - MIN_RESTING_SIZE);
+  // Greedy found nothing legal (an earlier maker used the budget so someone is left with 1 to 9 shares): search.
+  if (r.makers.length === 0) r = searchFill(cands.slice(0, SEARCH_WINDOW), taker.remaining) ?? r;
   if (r.makers.length === 0) return null;
   // Direct: the fills sum to takerFill, each maker filling its own part (plan 3.2).
   return { kind: 'direct', marketId: taker.marketId, taker, makers: r.makers, fills: r.fills, takerFill: r.fills.reduce((a, b) => a + b, 0n), takerPrice: r.makers[0].price };
+}
+
+const SEARCH_WINDOW = 8;
+
+/// Fallback when greedy has no legal fill. Over the first 8 candidates (price-time order) tries each maker as
+/// skipped, partial (1 lot to remaining - 10 shares) or full (all it has): at most 3^8 = 6561 cases, each O(8).
+/// Picks the largest taker fill that leaves the taker 0 or >= 10 shares, then the lexicographically largest fills in
+/// price-time order (earlier makers keep priority).
+function searchFill(cands: BookOrder[], takerRem: bigint): { makers: BookOrder[]; fills: bigint[] } | null {
+  const n = cands.length;
+  const room = cands.map((m) => m.remaining - MIN_RESTING_SIZE); // top of the partial range; <= 0 means full only
+  let best: bigint[] | null = null;
+  let bestSum = 0n;
+  const st = new Array<number>(n).fill(0); // 0 skip, 1 partial, 2 full
+  const tryCase = () => {
+    let full = 0n;
+    let cap = 0n;
+    let np = 0n;
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      if (st[i] === 0) continue;
+      count++;
+      if (st[i] === 2) full += cands[i].remaining;
+      else {
+        if (room[i] <= 0n) return;
+        cap += room[i];
+        np += LOT;
+      }
+    }
+    if (count === 0 || count > MAX_MAKERS) return;
+    // total fill S in [full + np, full + cap], with S = takerRem or takerRem - S >= 10 shares
+    let s = minBig(takerRem, full + cap);
+    if (s < takerRem && takerRem - s < MIN_RESTING_SIZE) s = takerRem - MIN_RESTING_SIZE;
+    if (s < full + np || s <= 0n || s < bestSum) return;
+    let extra = s - full - np;
+    const fills = cands.map((_, i) => {
+      if (st[i] === 0) return 0n;
+      if (st[i] === 2) return cands[i].remaining;
+      const add = minBig(extra, room[i] - LOT);
+      extra -= add;
+      return LOT + add;
+    });
+    if (best === null || s > bestSum || lexGreater(fills, best)) {
+      best = fills;
+      bestSum = s;
+    }
+  };
+  const walk = (i: number) => {
+    if (i === n) return tryCase();
+    for (let v = 0; v < 3; v++) {
+      st[i] = v;
+      walk(i + 1);
+    }
+  };
+  walk(0);
+  if (best === null) return null;
+  const idx = (best as bigint[]).map((f, i) => (f > 0n ? i : -1)).filter((i) => i >= 0);
+  return { makers: idx.map((i) => cands[i]), fills: idx.map((i) => (best as bigint[])[i]) };
+}
+
+function lexGreater(a: bigint[], b: bigint[]): boolean {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return false;
 }
 
 /// Greedy price-time fill of up to `budget`. A maker that cannot take a fill leaving it 0 or at least 10 shares is
