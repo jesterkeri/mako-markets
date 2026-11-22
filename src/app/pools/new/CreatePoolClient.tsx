@@ -153,10 +153,12 @@ export function CreatePoolClient() {
   const createTx = tx.tx?.kind === 'create' && tx.phase.step === 'done' && tx.createdId !== null ? tx.phase.txHash : undefined;
   const betLog = useBetLog(createTx, tx.createdId ?? 0n, account);
   // Re-run on an account change too: two accounts can both be done, and done -> done is no phase change (Codex R4 F1).
-  // tx.phase is the signed-in account's own slot, so this never restores another account's result.
+  // A landed create whose sheet was closed (no sheet, pool id kept) is the live step too. tx is the signed-in
+  // account's own slot, so this never restores another account's result.
+  const landed = tx.phase.step === 'done' || (tx.tx === null && tx.createdId !== null);
   useEffect(() => {
-    if (tx.phase.step === 'done') setStep(4);
-  }, [tx.phase.step, account]);
+    if (landed) setStep(4);
+  }, [landed, account]);
 
   const priceKind = kind === 'football' || kind === 'basketball' ? null : kind;
   const symbol = priceKind ? symbols[priceKind] : '';

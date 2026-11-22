@@ -159,9 +159,10 @@ export function useRoundTx(onLanded?: (account: string) => void) {
   accountNow.current = account;
   /// The accounts whose transaction is on its way.
   const inFlight = useRef(new Set<string>());
-  /// Another account's sheet is kept while its transaction is on its way or once it went out (pending, done), so it
-  /// comes back, with its own text, when its account does; one never sent is dropped (adversary on ece0abb).
-  const keep = (a: string, s: { phase: ConfirmPhase }) => a === account || inFlight.current.has(a) || s.phase.step === 'pending' || s.phase.step === 'done';
+  /// Another account's sheet is kept unless it never left the review step (never sent): a send that is on its way,
+  /// done, failed or of unknown outcome comes back, with its own text and result, when its account does, so that
+  /// account is never offered the same send again without its warning (adversary on ece0abb and b93bbfe).
+  const keep = (a: string, s: { phase: ConfirmPhase }) => a === account || inFlight.current.has(a) || s.phase.step !== 'review';
   if ([...slots].some(([a, s]) => !keep(a, s))) setSlots((prev) => new Map([...prev].filter(([a, s]) => keep(a, s))));
 
   const open = useCallback(
