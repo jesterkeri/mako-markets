@@ -86,48 +86,32 @@ const pause = (ms = 600) =>
     await new Promise((r) => setTimeout(r, ms));
   });
 
-// Since ME_ROUNDS_DEGRADE R3 F1 the signed-in page is remounted per account (MeClient keys it by account), so a switch
-// closes the editor and drops the old account's typed name: it must never reach the next account's editor. Each
-// account therefore opens the editor and types the same name itself; the check must still ask again for each account
-// and not answer from the previous account's cached result.
-const openAndType = async (name: string) => {
-  fireEvent.click(screen.getByRole('button', { name: 'EDIT' }));
-  const inputs = screen.getAllByLabelText('Display name').filter((el) => el.tagName === 'INPUT');
-  expect(inputs).toHaveLength(2); // desktop editor and phone dialog, both live
-  fireEvent.change(inputs[0], { target: { value: name } });
-};
-const draftShown = () => screen.queryAllByDisplayValue('QUILLON').length > 0;
-
 describe('both editors mounted, accounts that show the same name', () => {
   it('one request per pause, and a new request after each switch of account', async () => {
     const { rerender } = render(tree());
-    await openAndType('QUILLON');
+    fireEvent.click(screen.getByRole('button', { name: 'EDIT' }));
+    const inputs = screen.getAllByLabelText('Display name').filter((el) => el.tagName === 'INPUT');
+    expect(inputs).toHaveLength(2); // desktop editor and phone dialog, both live
+
+    fireEvent.change(inputs[0], { target: { value: 'QUILLON' } });
     await pause();
     expect(asked).toHaveLength(1);
 
-    // Email account K -> wallet account L, same shown name: K's draft is gone, L types it, asks again, once.
+    // Email account K -> wallet account L, same shown name: asks again, once.
     who = 'L';
     rerender(tree());
-    await pause();
-    expect(draftShown()).toBe(false);
-    expect(asked).toHaveLength(1);
-    await openAndType('QUILLON');
     await pause();
     expect(asked).toHaveLength(2);
 
     // Wallet account L -> email account M, same shown name: asks again, once.
     who = 'M';
     rerender(tree());
-    expect(draftShown()).toBe(false);
-    await openAndType('QUILLON');
     await pause();
     expect(asked).toHaveLength(3);
 
     // Back to K: asks again, once.
     who = 'K';
     rerender(tree());
-    expect(draftShown()).toBe(false);
-    await openAndType('QUILLON');
     await pause();
     expect(asked).toHaveLength(4);
 

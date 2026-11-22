@@ -75,12 +75,16 @@ function claimSpec(p: MePosition): ConfirmSpec {
   };
 }
 
+const EMPTY_LANDED: ReadonlyMap<string, MePosition> = new Map();
+const EMPTY_LANDED_ROUNDS: ReadonlyMap<string, MeRound> = new Map();
+/// One account's landed claims with one more added.
+function addTo<T>(all: ReadonlyMap<string, ReadonlyMap<string, T>>, account: string, id: string, v: T): ReadonlyMap<string, ReadonlyMap<string, T>> {
+  return new Map(all).set(account, new Map(all.get(account)).set(id, v));
+}
+
 export function MeClient() {
   const { user, isLoading, isError, refetch } = useUser();
-  // One page instance per account (Codex ME_ROUNDS_DEGRADE R2 F1, R3 F1): another account signing in on this tab gets
-  // fresh claim state and its own transaction hooks, so nothing landed, open or still sending for one account reaches
-  // or blocks the next. An unmounted sheet never sends (the hooks' mounted check).
-  if (user) return <MeSignedIn key={accountAddress(user)} user={user} />;
+  if (user) return <MeSignedIn user={user} />;
   if (isLoading) return <MeGate kind="loading" />;
   // Never the signed-out prompt when the sign-in check itself failed: the account may well be signed in.
   if (isError) return <MeGate kind="error" onRetry={() => void refetch()} />;
@@ -100,45 +104,44 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   const [photoOpen, setPhotoOpen] = useState(false);
 
   /// Claims that landed from this page, kept as they were when confirmed, so each row reads "Claimed" rather than
-  /// vanishing when the refetch drops it from the claimable list.
-  const [landed, setLanded] = useState<ReadonlyMap<string, MePosition>>(() => new Map());
-  const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
-  const claiming = useRef<MePosition | null>(null);
+  /// vanishing when the refetch drops it from the claimable list. Everything about a claim is kept per account: a
+  /// claim A sent that is still on its way when B signs in on this tab stays A's, lands as A's, and is there again
+  /// when A returns; B never sees it and is never blocked by it (Codex ME_ROUNDS_DEGRADE R2 F1, R3 F1).
+  const [landed, setLanded] = useState<ReadonlyMap<string, ReadonlyMap<string, MePosition>>>(() => new Map());
+  const [landedRounds, setLandedRounds] = useState<ReadonlyMap<string, ReadonlyMap<string, MeRound>>>(() => new Map());
+  /// The claim each account's sheet holds, and its sheet text.
+  const claiming = useRef(new Map<string, MePosition>());
+  const claimingRound = useRef(new Map<string, MeRound>());
+  const [sheetSpecs, setSheetSpecs] = useState<ReadonlyMap<string, ConfirmSpec>>(() => new Map());
+  const [roundSheetSpecs, setRoundSheetSpecs] = useState<ReadonlyMap<string, ConfirmSpec>>(() => new Map());
   /// The pool whose claim is in the sheet, when it has a win card to share once the claim lands (Joshua 2026-10-24).
-  const [winCard, setWinCard] = useState<{ p: MePosition; open: boolean } | null>(null);
-  // Another account signing in on this tab forgets it, so that account never gets this one's card (adversary on
-  // ba2ddc0). Reset during render, as the pool page does.
-  const [cardAccount, setCardAccount] = useState(account);
-  if (cardAccount !== account) {
-    setCardAccount(account);
-    setWinCard(null);
-  }
-  const tx = usePoolTx(() => {
-    const p = claiming.current;
-    if (p) setLanded((prev) => new Map(prev).set(p.market.id.toString(), p));
+  /// Only its own account ever gets it (adversary on ba2ddc0).
+  const [winCard, setWinCard] = useState<{ p: MePosition; open: boolean; account: string } | null>(null);
+  const tx = usePoolTx((owner) => {
+    const p = claiming.current.get(owner);
+    if (p) setLanded((prev) => addTo(prev, owner, p.market.id.toString(), p));
     data.refetch();
   });
   // Rounds claim from Me too (2026-10-13), through the round's own sponsored transaction, one sheet at a time.
-  const [landedRounds, setLandedRounds] = useState<ReadonlyMap<string, MeRound>>(() => new Map());
-  const [roundSheetSpec, setRoundSheetSpec] = useState<ConfirmSpec | null>(null);
-  const claimingRound = useRef<MeRound | null>(null);
-  const roundTx = useRoundTx(() => {
-    const r = claimingRound.current;
-    if (r) setLandedRounds((prev) => new Map(prev).set(r.round.id.toString(), r));
+  const roundTx = useRoundTx((owner) => {
+    const r = claimingRound.current.get(owner);
+    if (r) setLandedRounds((prev) => addTo(prev, owner, r.round.id.toString(), r));
     data.refetch();
   });
+  const mine = landed.get(account) ?? EMPTY_LANDED;
+  const mineRounds = landedRounds.get(account) ?? EMPTY_LANDED_ROUNDS;
   const openClaim = (c: ClaimItem) => {
     if (tx.tx || roundTx.tx) return;
     if (c.kind === 'pool') {
       if (c.p.claim === null) return;
-      claiming.current = c.p;
-      setSheetSpec(claimSpec(c.p));
-      setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false } : null);
+      claiming.current.set(account, c.p);
+      setSheetSpecs((prev) => new Map(prev).set(account, claimSpec(c.p)));
+      setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false, account } : null);
       tx.open({ kind: 'claim', marketId: c.p.market.id });
     } else {
       if (c.r.claim === null) return;
-      claimingRound.current = c.r;
-      setRoundSheetSpec(roundClaimSpec(c.r));
+      claimingRound.current.set(account, c.r);
+      setRoundSheetSpecs((prev) => new Map(prev).set(account, roundClaimSpec(c.r)));
       roundTx.open({ kind: 'claim', roundId: c.r.round.id });
     }
   };
@@ -146,13 +149,13 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   const name = user.displayName?.trim() || null;
   const label = name ?? formatAddress(account);
   const chain = data.chain;
-  const pending = chain.status === 'ready' ? chain.stats.claims.filter((p) => !landed.has(p.market.id.toString())) : [];
-  const pendingRounds = chain.status === 'ready' ? chain.roundClaims.filter((r) => !landedRounds.has(r.round.id.toString())) : [];
+  const pending = chain.status === 'ready' ? chain.stats.claims.filter((p) => !mine.has(p.market.id.toString())) : [];
+  const pendingRounds = chain.status === 'ready' ? chain.roundClaims.filter((r) => !mineRounds.has(r.round.id.toString())) : [];
   const claimItems: ClaimItem[] = [
     ...pending.map((p): ClaimItem => ({ kind: 'pool', p, landed: false })),
     ...pendingRounds.map((r): ClaimItem => ({ kind: 'round', r, landed: false })),
-    ...[...landed.values()].map((p): ClaimItem => ({ kind: 'pool', p, landed: true })),
-    ...[...landedRounds.values()].map((r): ClaimItem => ({ kind: 'round', r, landed: true })),
+    ...[...mine.values()].map((p): ClaimItem => ({ kind: 'pool', p, landed: true })),
+    ...[...mineRounds.values()].map((r): ClaimItem => ({ kind: 'round', r, landed: true })),
   ];
   // Rounds not read: their claims are unknown, so the total is Unavailable and nothing is called all claimed.
   const noRounds = roundsUnavailable(chain);
@@ -171,7 +174,7 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     ready,
     claimItems,
     pendingClaims: pending.length + pendingRounds.length,
-    allClaimed: !noRounds && pending.length + pendingRounds.length === 0 && (landed.size + landedRounds.size > 0 || (chain.status === 'ready' && chain.stats.claimedBefore)),
+    allClaimed: !noRounds && pending.length + pendingRounds.length === 0 && (mine.size + mineRounds.size > 0 || (chain.status === 'ready' && chain.stats.claimedBefore)),
     series: chain.status === 'ready' && now !== null ? profitSeries(chain.positions, now, range) : null,
     now,
     labelsOf: data.labelsOf,
@@ -210,8 +213,9 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     },
   };
 
-  const spec = tx.tx ? sheetSpec : null;
-  const roundSpec = roundTx.tx ? roundSheetSpec : null;
+  const spec = tx.tx ? (sheetSpecs.get(account) ?? null) : null;
+  const roundSpec = roundTx.tx ? (roundSheetSpecs.get(account) ?? null) : null;
+  const card = winCard?.account === account ? winCard : null;
   return (
     <>
       <div className="mk-desk mk-desk-frame">
@@ -230,10 +234,10 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
           onRetry={tx.retry}
           onClose={tx.close}
           doneExtra={
-            tx.phase.step === 'done' && winCard ? (
+            tx.phase.step === 'done' && card ? (
               <TileShareButton
                 onClick={() => {
-                  setWinCard({ p: winCard.p, open: true });
+                  setWinCard({ ...card, open: true });
                   tx.close();
                 }}
               >
@@ -243,14 +247,14 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
           }
         />
       )}
-      {winCard?.open && (
+      {card?.open && (
         <PnlShareSheet
-          poolId={winCard.p.market.id}
-          question={winCard.p.market.question}
-          stake={winCard.p.bet}
+          poolId={card.p.market.id}
+          question={card.p.market.question}
+          stake={card.p.bet}
           state="result"
           account={account}
-          labels={data.labelsOf(winCard.p)}
+          labels={data.labelsOf(card.p)}
           onClose={() => setWinCard(null)}
         />
       )}

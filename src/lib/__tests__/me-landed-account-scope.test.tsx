@@ -23,7 +23,8 @@ const A = '0x00000000000000000000000000000000000000a5';
 const B = '0x00000000000000000000000000000000000000b6';
 
 // The transaction hooks: open records the sheet; landers[kind]() lands every instance whose sheet is open (fires its
-// latest onLanded, as a mined claim does). Other components on the page use the same hooks with no sheet open.
+// latest onLanded with the account that opened the sheet, as the real hooks do when a claim is mined). Other components
+// on the page use the same hooks with no sheet open.
 const open = { pool: new Map<object, () => void>(), round: new Map<object, () => void>() };
 const landers: Record<'pool' | 'round', () => void> = {
   pool: () => [...open.pool.values()].forEach((f) => f()),
@@ -32,8 +33,9 @@ const landers: Record<'pool' | 'round', () => void> = {
 function fakeTx(kind: 'pool' | 'round') {
   return async () => {
     const R = await import('react');
-    return (onLanded?: () => void) => {
+    return (onLanded?: (account: string) => void) => {
       const [tx, setTx] = R.useState<unknown>(null);
+      const opener = R.useRef('');
       const latest = R.useRef(onLanded);
       R.useEffect(() => {
         latest.current = onLanded;
@@ -42,12 +44,12 @@ function fakeTx(kind: 'pool' | 'round') {
       R.useEffect(() => {
         if (tx === null) return;
         open[kind].set(self, () => {
-          latest.current?.();
+          latest.current?.(opener.current);
           setTx(null);
         });
         return () => void open[kind].delete(self);
       }, [tx, self]);
-      return { tx, phase: { step: 'pending' }, createdId: undefined, open: setTx, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
+      return { tx, phase: { step: 'pending' }, createdId: undefined, open: (t: unknown) => { opener.current = who; setTx(t); }, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
     };
   };
 }
