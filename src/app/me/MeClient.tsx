@@ -101,7 +101,9 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   const [landed, setLanded] = useState<ReadonlyMap<string, MePosition>>(() => new Map());
   /// Rounds claimed from Me (2026-10-13), kept the same way.
   const [landedRounds, setLandedRounds] = useState<ReadonlyMap<string, MeRound>>(() => new Map());
-  const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
+  /// Each sheet keeps the account that opened it: a claim still sending when another account signs in stays that
+  /// account's, and is not shown over the next account's page (adversary on 81d2060).
+  const [sheetSpec, setSheetSpec] = useState<{ spec: ConfirmSpec; account: string } | null>(null);
   const claiming = useRef<{ p: MePosition; account: string } | null>(null);
   /// The signed-in account as of the latest render: a claim that lands after another account signed in on this tab
   /// is never shown to that account (Codex ME_ROUNDS_DEGRADE R2 F1).
@@ -124,7 +126,7 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     data.refetch();
   });
   // Rounds claim from Me too (2026-10-13), through the round's own sponsored transaction, one sheet at a time.
-  const [roundSheetSpec, setRoundSheetSpec] = useState<ConfirmSpec | null>(null);
+  const [roundSheetSpec, setRoundSheetSpec] = useState<{ spec: ConfirmSpec; account: string } | null>(null);
   const claimingRound = useRef<{ r: MeRound; account: string } | null>(null);
   const roundTx = useRoundTx(() => {
     const c = claimingRound.current;
@@ -136,13 +138,13 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     if (c.kind === 'pool') {
       if (c.p.claim === null) return;
       claiming.current = { p: c.p, account };
-      setSheetSpec(claimSpec(c.p));
+      setSheetSpec({ spec: claimSpec(c.p), account });
       setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false } : null);
       tx.open({ kind: 'claim', marketId: c.p.market.id });
     } else {
       if (c.r.claim === null) return;
       claimingRound.current = { r: c.r, account };
-      setRoundSheetSpec(roundClaimSpec(c.r));
+      setRoundSheetSpec({ spec: roundClaimSpec(c.r), account });
       roundTx.open({ kind: 'claim', roundId: c.r.round.id });
     }
   };
@@ -214,8 +216,8 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     },
   };
 
-  const spec = tx.tx ? sheetSpec : null;
-  const roundSpec = roundTx.tx ? roundSheetSpec : null;
+  const spec = tx.tx && sheetSpec?.account === account ? sheetSpec.spec : null;
+  const roundSpec = roundTx.tx && roundSheetSpec?.account === account ? roundSheetSpec.spec : null;
   return (
     <>
       <div className="mk-desk mk-desk-frame">
