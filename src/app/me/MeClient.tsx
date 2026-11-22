@@ -109,11 +109,9 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   /// when A returns; B never sees it and is never blocked by it (Codex ME_ROUNDS_DEGRADE R2 F1, R3 F1).
   const [landed, setLanded] = useState<ReadonlyMap<string, ReadonlyMap<string, MePosition>>>(() => new Map());
   const [landedRounds, setLandedRounds] = useState<ReadonlyMap<string, ReadonlyMap<string, MeRound>>>(() => new Map());
-  /// The claim each account's sheet holds, and its sheet text.
+  /// The claim each account's sheet holds (its text lives with the hook's per-account sheet).
   const claiming = useRef(new Map<string, MePosition>());
   const claimingRound = useRef(new Map<string, MeRound>());
-  const [sheetSpecs, setSheetSpecs] = useState<ReadonlyMap<string, ConfirmSpec>>(() => new Map());
-  const [roundSheetSpecs, setRoundSheetSpecs] = useState<ReadonlyMap<string, ConfirmSpec>>(() => new Map());
   /// The pool whose claim is in the sheet, when it has a win card to share once the claim lands (Joshua 2026-10-24).
   /// Only its own account ever gets it (adversary on ba2ddc0).
   const [winCard, setWinCard] = useState<{ p: MePosition; open: boolean; account: string } | null>(null);
@@ -135,14 +133,12 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     if (c.kind === 'pool') {
       if (c.p.claim === null) return;
       claiming.current.set(account, c.p);
-      setSheetSpecs((prev) => new Map(prev).set(account, claimSpec(c.p)));
       setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false, account } : null);
-      tx.open({ kind: 'claim', marketId: c.p.market.id });
+      tx.open({ kind: 'claim', marketId: c.p.market.id }, claimSpec(c.p));
     } else {
       if (c.r.claim === null) return;
       claimingRound.current.set(account, c.r);
-      setRoundSheetSpecs((prev) => new Map(prev).set(account, roundClaimSpec(c.r)));
-      roundTx.open({ kind: 'claim', roundId: c.r.round.id });
+      roundTx.open({ kind: 'claim', roundId: c.r.round.id }, roundClaimSpec(c.r));
     }
   };
 
@@ -213,8 +209,8 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
     },
   };
 
-  const spec = tx.tx ? (sheetSpecs.get(account) ?? null) : null;
-  const roundSpec = roundTx.tx ? (roundSheetSpecs.get(account) ?? null) : null;
+  const spec = tx.tx ? tx.spec : null;
+  const roundSpec = roundTx.tx ? roundTx.spec : null;
   const card = winCard?.account === account ? winCard : null;
   return (
     <>

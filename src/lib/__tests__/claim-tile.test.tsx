@@ -13,7 +13,8 @@ vi.mock('@/lib/use-pool-tx', async () => {
   return {
     usePoolTx: () => {
       const [tx, setTx] = R.useState<unknown>(null);
-      return { tx, phase: { step: 'done', txHash: `0x${'c'.repeat(64)}` }, createdId: undefined, open: setTx, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
+      const [spec, setSpec] = R.useState<unknown>(null);
+      return { tx, spec, phase: { step: 'done', txHash: `0x${'c'.repeat(64)}` }, createdId: undefined, open: (t: unknown, s?: unknown) => { setSpec(s ?? null); setTx(t); }, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
     },
   };
 });

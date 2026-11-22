@@ -31,7 +31,8 @@ vi.mock('@/lib/use-round-tx', async () => {
   return {
     useRoundTx: () => {
       const [tx, setTx] = R.useState<unknown>(null);
-      return { tx, phase: { step: 'done', txHash: TX }, open: setTx, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
+      const [spec, setSpec] = R.useState<unknown>(null);
+      return { tx, spec, phase: { step: 'done', txHash: TX }, open: (t: unknown, s?: unknown) => { setSpec(s ?? null); setTx(t); }, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
     },
   };
 });
@@ -40,7 +41,8 @@ vi.mock('@/lib/use-pool-tx', async () => {
   return {
     usePoolTx: () => {
       const [tx, setTx] = R.useState<unknown>(null);
-      return { tx, phase: { step: 'done', txHash: TX }, createdId: undefined, open: setTx, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
+      const [spec, setSpec] = R.useState<unknown>(null);
+      return { tx, spec, phase: { step: 'done', txHash: TX }, createdId: undefined, open: (t: unknown, s?: unknown) => { setSpec(s ?? null); setTx(t); }, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
     },
   };
 });

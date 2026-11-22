@@ -37,7 +37,6 @@ export function ScheduleClient() {
   /// The shared strict parser refuses a time inside a spring-forward gap rather than moving it an hour (Codex RELEASE_R5 F3).
   const why =
     now === null ? 'Pick a start time.' : start === null ? (value ? localInputProblem(value) : 'Pick a start time.') : scheduleBlocker(start, now);
-  const [spec, setSpec] = useState<ConfirmSpec | null>(null);
 
   const frame = (child: React.ReactNode) => (
     <div className="mk-desk-frame" style={{ padding: '14px 4px 32px', maxWidth: 640 }}>
@@ -68,7 +67,7 @@ export function ScheduleClient() {
 
   const openSchedule = () => {
     if (why || start === null || tx.tx) return;
-    setSpec({
+    const sheet: ConfirmSpec = {
       glyph: '+',
       glyphColor: 'var(--mako-teal)',
       title: `Schedule · ${when(start)}`,
@@ -83,8 +82,8 @@ export function ScheduleClient() {
       doneTitle: 'Round scheduled',
       doneBody: `It starts ${when(start)}. It is on the Rounds tab now.`,
       doneSecondary: { label: 'Go to Rounds', href: '/rounds' },
-    });
-    tx.open({ kind: 'schedule', startTime: BigInt(start) });
+    };
+    tx.open({ kind: 'schedule', startTime: BigInt(start) }, sheet);
   };
 
   return (
@@ -115,7 +114,7 @@ export function ScheduleClient() {
           </button>
         </div>,
       )}
-      {tx.tx && spec && <ConfirmSheet spec={spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} />}
+      {tx.tx && tx.spec && <ConfirmSheet spec={tx.spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} />}
     </>
   );
 }

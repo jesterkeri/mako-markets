@@ -68,11 +68,14 @@ vi.mock('@/lib/use-pool-tx', () => ({
   usePoolTx: () => {
     const [tx, setTx] = React.useState<unknown>(null);
     const [hash, setHash] = React.useState('');
+    const [spec, setSpec] = React.useState<unknown>(null);
     return {
       tx,
+      spec,
       phase: tx ? { step: 'done', txHash: hash } : { step: 'review' },
       createdId: tx ? mocks.createdId : null,
-      open: (t: unknown) => {
+      open: (t: unknown, s?: unknown) => {
+        setSpec(s ?? null);
         setHash(mocks.txHash);
         setTx(t);
       },

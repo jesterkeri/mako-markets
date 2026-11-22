@@ -49,7 +49,8 @@ function fakeTx(kind: 'pool' | 'round') {
         });
         return () => void open[kind].delete(self);
       }, [tx, self]);
-      return { tx, phase: { step: 'pending' }, createdId: undefined, open: (t: unknown) => { opener.current = who; setTx(t); }, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
+      const [spec, setSpec] = R.useState<unknown>(null);
+      return { tx, phase: { step: 'pending' }, spec, createdId: undefined, open: (t: unknown, sheet?: unknown) => { opener.current = who; setSpec(sheet ?? null); setTx(t); }, close: () => setTx(null), confirm: vi.fn(), retry: vi.fn() };
     };
   };
 }

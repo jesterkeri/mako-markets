@@ -50,11 +50,16 @@ vi.mock('@/components/PnlShareSheet', () => ({
 vi.mock('@/lib/use-pool-tx', () => ({
   usePoolTx: () => {
     const [tx, setTx] = React.useState<unknown>(null);
+    const [spec, setSpec] = React.useState<unknown>(null);
     return {
       tx,
+      spec,
       phase: tx ? { step: 'done', txHash: TX } : { step: 'review' },
       createdId: tx ? mocks.createdId : null,
-      open: setTx,
+      open: (t: unknown, s?: unknown) => {
+        setSpec(s ?? null);
+        setTx(t);
+      },
       close: () => {
         mocks.closed += 1;
         setTx(null);

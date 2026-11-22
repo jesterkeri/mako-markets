@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 
-import type { ConfirmPhase } from '@/components/ConfirmSheet';
+import type { ConfirmPhase, ConfirmSpec } from '@/components/ConfirmSheet';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
 import { ROUNDS_ADDRESS } from './contract';
@@ -121,7 +121,7 @@ const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
 });
 
 const REVIEW: ConfirmPhase = { step: 'review' };
-type RoundSlot = { tx: RoundTx; phase: ConfirmPhase };
+type RoundSlot = { tx: RoundTx; phase: ConfirmPhase; spec: ConfirmSpec | null };
 
 /// `onLanded` gets the account whose transaction landed, which may no longer be the one signed in.
 export function useRoundTx(onLanded?: (account: string) => void) {
@@ -142,9 +142,8 @@ export function useRoundTx(onLanded?: (account: string) => void) {
   const slot = account ? slots.get(account) : undefined;
   const tx = slot?.tx ?? null;
   const phase: ConfirmPhase = slot?.phase ?? REVIEW;
-  if ([...slots].some(([a, s]) => a !== account && s.phase.step !== 'pending')) {
-    setSlots((prev) => new Map([...prev].filter(([a, s]) => a === account || s.phase.step === 'pending')));
-  }
+  /// The sheet's text, given when it was opened: always the signed-in account's own.
+  const spec = slot?.spec ?? null;
   /// Writes one account's sheet, if it still has it.
   const put = useCallback(
     (a: string, patch: Partial<RoundSlot>) =>
@@ -160,12 +159,16 @@ export function useRoundTx(onLanded?: (account: string) => void) {
   accountNow.current = account;
   /// The accounts whose transaction is on its way.
   const inFlight = useRef(new Set<string>());
+  /// Another account's sheet is kept while its transaction is on its way or once it went out (pending, done), so it
+  /// comes back, with its own text, when its account does; one never sent is dropped (adversary on ece0abb).
+  const keep = (a: string, s: { phase: ConfirmPhase }) => a === account || inFlight.current.has(a) || s.phase.step === 'pending' || s.phase.step === 'done';
+  if ([...slots].some(([a, s]) => !keep(a, s))) setSlots((prev) => new Map([...prev].filter(([a, s]) => keep(a, s))));
 
   const open = useCallback(
-    (next: RoundTx) => {
+    (next: RoundTx, sheet?: ConfirmSpec) => {
       if (!account || inFlight.current.has(account)) return;
       const first = user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : REVIEW;
-      setSlots((prev) => new Map(prev).set(account, { tx: next, phase: first }));
+      setSlots((prev) => new Map(prev).set(account, { tx: next, phase: first, spec: sheet ?? null }));
     },
     [user, connected, account],
   );
@@ -298,5 +301,5 @@ export function useRoundTx(onLanded?: (account: string) => void) {
     }
   }, [tx, user, account, put, connected, publicClient, writeContractAsync, ensureChain, onLanded]);
 
-  return { tx, phase, open, close, confirm: run, retry: run };
+  return { tx, phase, spec, open, close, confirm: run, retry: run };
 }

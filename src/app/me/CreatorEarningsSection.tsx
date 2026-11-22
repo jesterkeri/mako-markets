@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 
-import { ConfirmSheet, type ConfirmSpec } from '@/components/ConfirmSheet';
+import { ConfirmSheet } from '@/components/ConfirmSheet';
 import { CREATOR_EARNING_LABEL, creatorEarningAmount, creatorEarningPill, creatorFeeConfirmSpec } from '@/components/CreatorEarnings';
 import { useCreatorClaimHolds } from '@/lib/creator-claim-pending';
 import { creatorEarningNote, creatorEarningsFor, type CreatorEarning } from '@/lib/creator-earnings';
@@ -31,7 +31,6 @@ function walletOf(user: AuthedUser): { kind: 'mako' | 'external'; address: strin
 export function CreatorEarningsSection({ user, account, variant }: { user: AuthedUser; account: `0x${string}`; variant: 'desktop' | 'mobile' }) {
   const marketsQ = useAllMarkets();
   const holds = useCreatorClaimHolds();
-  const [spec, setSpec] = useState<ConfirmSpec | null>(null);
   /// After a claim lands, the refetch flips the pool's creatorFeeClaimed on chain and its row moves to Claimed.
   const tx = usePoolTx(() => marketsQ.refetch());
   // Claimed and forfeited earnings are history: hidden until asked for, so a long-time creator's Me does not scroll on
@@ -39,10 +38,9 @@ export function CreatorEarningsSection({ user, account, variant }: { user: Authe
   const [showSettled, setShowSettled] = useState(false);
   const openClaim = (e: CreatorEarning) => {
     if (e.state !== 'claimable' || tx.tx) return;
-    setSpec(creatorFeeConfirmSpec(e));
-    tx.open({ kind: 'creatorFee', marketId: e.market.id });
+    tx.open({ kind: 'creatorFee', marketId: e.market.id }, creatorFeeConfirmSpec(e));
   };
-  const sheet = tx.tx && spec ? <ConfirmSheet spec={spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} /> : null;
+  const sheet = tx.tx && tx.spec ? <ConfirmSheet spec={tx.spec} phase={tx.phase} wallet={walletOf(user)} onConfirm={tx.confirm} onCancel={tx.close} onRetry={tx.retry} onClose={tx.close} /> : null;
 
   const mobile = variant === 'mobile';
   const frame = (children: React.ReactNode) =>

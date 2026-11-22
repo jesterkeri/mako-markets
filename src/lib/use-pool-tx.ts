@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { BaseError, ContractFunctionRevertedError, maxUint256 } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 
-import type { ConfirmPhase } from '@/components/ConfirmSheet';
+import type { ConfirmPhase, ConfirmSpec } from '@/components/ConfirmSheet';
 import { buildBetBody, buildClaimBody, buildClaimCreatorFeeBody, buildCreateBody, runSponsoredRequest } from './aa-client';
 import { monadTestnet, MONAD_TESTNET_ID } from './chain';
 import { phaseFromOutcome, refusalPhase, type OutcomeWords } from './confirm-outcome';
@@ -168,7 +168,7 @@ const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
 });
 
 const REVIEW: ConfirmPhase = { step: 'review' };
-type PoolSlot = { tx: PoolTx; phase: ConfirmPhase; createdId: bigint | null };
+type PoolSlot = { tx: PoolTx; phase: ConfirmPhase; spec: ConfirmSpec | null; createdId: bigint | null };
 
 /// `onLanded` gets the account whose transaction landed, which may no longer be the one signed in.
 export function usePoolTx(onLanded?: (account: string) => void) {
@@ -191,11 +191,10 @@ export function usePoolTx(onLanded?: (account: string) => void) {
   const slot = account ? slots.get(account) : undefined;
   const tx = slot?.tx ?? null;
   const phase: ConfirmPhase = slot?.phase ?? REVIEW;
+  /// The sheet's text, given when it was opened: always the signed-in account's own.
+  const spec = slot?.spec ?? null;
   /// The id of the pool a landed create made, read from its receipt (null until then, or if it could not be read).
   const createdId = slot?.createdId ?? null;
-  if ([...slots].some(([a, s]) => a !== account && s.phase.step !== 'pending')) {
-    setSlots((prev) => new Map([...prev].filter(([a, s]) => a === account || s.phase.step === 'pending')));
-  }
   /// Writes one account's sheet, if it still has it.
   const put = useCallback(
     (a: string, patch: Partial<PoolSlot>) =>
@@ -211,14 +210,18 @@ export function usePoolTx(onLanded?: (account: string) => void) {
   accountNow.current = account;
   /// The accounts whose transaction is on its way.
   const inFlight = useRef(new Set<string>());
+  /// Another account's sheet is kept while its transaction is on its way or once it went out (pending, done), so it
+  /// comes back, with its own text, when its account does; one never sent is dropped (adversary on ece0abb).
+  const keep = (a: string, s: { phase: ConfirmPhase }) => a === account || inFlight.current.has(a) || s.phase.step === 'pending' || s.phase.step === 'done';
+  if ([...slots].some(([a, s]) => !keep(a, s))) setSlots((prev) => new Map([...prev].filter(([a, s]) => keep(a, s))));
 
   /// Opens the sheet on the review step.
   const open = useCallback(
-    (next: PoolTx) => {
+    (next: PoolTx, sheet?: ConfirmSpec) => {
       if (!account || inFlight.current.has(account)) return;
       // A drifted wallet session never reaches the review step's Confirm button.
       const first = user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : REVIEW;
-      setSlots((prev) => new Map(prev).set(account, { tx: next, phase: first, createdId: null }));
+      setSlots((prev) => new Map(prev).set(account, { tx: next, phase: first, spec: sheet ?? null, createdId: null }));
     },
     [user, connected, account],
   );
@@ -463,5 +466,5 @@ export function usePoolTx(onLanded?: (account: string) => void) {
     }
   }, [tx, user, account, put, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
 
-  return { tx, phase, createdId, open, close, confirm: run, retry: run };
+  return { tx, phase, spec, createdId, open, close, confirm: run, retry: run };
 }

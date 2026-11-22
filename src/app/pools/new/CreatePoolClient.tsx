@@ -142,7 +142,6 @@ export function CreatePoolClient() {
   const [totalText, setTotalText] = useState('');
   const [seedText, setSeedText] = useState('1');
   const [seedYes, setSeedYes] = useState(true);
-  const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
 
   const football = useDiscover<{ fixtures: Fixture[] }>(kind === 'football' ? '/api/discover/football' : null);
   const nba = useDiscover<{ games: Game[] }>(kind === 'basketball' ? '/api/discover/basketball' : null);
@@ -190,7 +189,7 @@ export function CreatePoolClient() {
     if (!pool || !draft || now === null || seed === null || seedProblem || tx.tx) return;
     setBetCard(null); // a card from an earlier create never outlives the next one
     const side = seedYes ? 'YES' : 'NO';
-    setSheetSpec({
+    const sheet: ConfirmSpec = {
       glyph: '+',
       glyphColor: 'var(--mako-signal)',
       title: 'Create pool',
@@ -207,9 +206,9 @@ export function CreatePoolClient() {
       // The black tile, as for a placed bet (Joshua 2026-10-26): the creator's first bet is a bet.
       doneTile: { big: side, small: `${usdcExact(seed)} USDC, your first bet` },
       doneSecondary: { label: 'View in Pools', href: '/pools' },
-    });
+    };
     // The same `now` the sheet's pool was built from, so the chain gets exactly the title and times shown.
-    tx.open({ kind: 'create', draft, nowSec: now, openedAtMs: performance.now(), seed, seedYes });
+    tx.open({ kind: 'create', draft, nowSec: now, openedAtMs: performance.now(), seed, seedYes }, sheet);
   };
 
   const v: ViewProps = {
@@ -276,9 +275,9 @@ export function CreatePoolClient() {
       <div className="mk-mob mk-m">
         <CreateView {...v} variant="mobile" />
       </div>
-      {tx.tx && sheetSpec && user && (
+      {tx.tx && tx.spec && user && (
         <ConfirmSheet
-          spec={sheetSpec}
+          spec={tx.spec}
           phase={tx.phase}
           wallet={user.authType === 'magic' ? { kind: 'mako', address: user.safeAddress } : { kind: 'external', address: user.walletAddress }}
           onConfirm={tx.confirm}
@@ -290,8 +289,8 @@ export function CreatePoolClient() {
               <TileShareButton
                 disabled={betLog.status !== 'found'}
                 onClick={() => {
-                  if (betLog.status !== 'found' || tx.createdId === null) return;
-                  setBetCard({ pool: tx.createdId, tx: createTx, log: betLog.log, question: sheetSpec.doneBody });
+                  if (betLog.status !== 'found' || tx.createdId === null || !tx.spec) return;
+                  setBetCard({ pool: tx.createdId, tx: createTx, log: betLog.log, question: tx.spec.doneBody });
                   tx.close();
                 }}
               >
