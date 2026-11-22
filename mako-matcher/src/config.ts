@@ -19,9 +19,12 @@ export const MAX_OPEN_ORDERS = 20;
 /// Codex MATCHER R3 F2 (owner, 2026-11-22): at most this many resting orders in one market, so one search and one
 /// tick have a bound. Intake refuses a new order while the market holds this many.
 export const MAX_BOOK_ORDERS = 1_000;
-/// About this many order visits (takers x book size) per alarm tick: a full pass over a full book takes
-/// ceil(1,000 / 250) = 4 ticks, a smaller book fewer.
-export const TICK_WORK = 250_000;
+/// Adversary R9 on 32f230f: the work one alarm tick may spend searching, in the units `MatchOpts.work` counts (one per
+/// order scanned per option, per price level read per candidate fill, per subset-sum shift; see match.ts). Counted, not
+/// timed: a Worker's clock does not advance during computation. A tick stops before the next taker once this is spent
+/// (always trying at least one), and the next tick continues below it. Calibrated in workerd so the slowest tick on
+/// the worst books found (test/adv9-cpu.test.ts, test/tick-budget.test.ts) stays near 1 s.
+export const TICK_WORK = 40_000_000;
 /// An idle book (a whole pass found nothing and nothing changed) is still searched again at least this often, for
 /// what the book does not show (a refused role lifted on chain).
 export const IDLE_RECHECK_MS = 10 * 60_000;

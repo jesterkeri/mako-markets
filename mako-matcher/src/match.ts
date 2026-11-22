@@ -37,6 +37,12 @@ export interface MatchOpts {
   /// True for a wallet the matcher must not put in a match: the contract's refused roles, and an account refused
   /// for the UTC day.
   blocked: (maker: Hex) => boolean;
+  /// When given, the search adds the work it does here (TICK_WORK's units), so a caller can bound a tick.
+  work?: { used: number };
+}
+
+function charge(opts: MatchOpts, units: number): void {
+  if (opts.work) opts.work.used += units;
 }
 
 function usable(o: BookOrder, taker: BookOrder, opts: MatchOpts): boolean {
@@ -74,6 +80,7 @@ export function maxFill(remaining: bigint, cap: bigint): bigint {
 /// fills a level worse than the set).
 export function proposeDirect(taker: BookOrder, book: BookOrder[], opts: MatchOpts, bound?: number): Proposal | null {
   const limit = bound === undefined ? taker.price : taker.isBuy ? Math.min(taker.price, bound) : Math.max(taker.price, bound);
+  charge(opts, book.length);
   const cands = book
     .filter((o) => usable(o, taker, opts) && o.option === taker.option && o.isBuy !== taker.isBuy && (taker.isBuy ? o.price <= limit : o.price >= limit))
     // A buy taker takes the lowest asks first; a sell taker takes the highest bids first.
@@ -85,7 +92,10 @@ export function proposeDirect(taker: BookOrder, book: BookOrder[], opts: MatchOp
   let r = left === 0n || left >= MIN_RESTING_SIZE ? whole : fillLevels(cands, taker.remaining - MIN_RESTING_SIZE);
   // Greedy found nothing legal (an earlier maker used the budget so someone is left with 1 to 9 shares): search the
   // whole book exactly.
-  if (r.makers.length === 0) r = exactFill(cands, taker.remaining) ?? r;
+  if (r.makers.length === 0) {
+    charge(opts, cands.length * MAX_MAKERS * 8); // bit sets of at most 2,000 bits
+    r = exactFill(cands, taker.remaining) ?? r;
+  }
   if (r.makers.length === 0) return null;
   // Direct: the fills sum to takerFill, each maker filling its own part (plan 3.2).
   return { kind: 'direct', marketId: taker.marketId, taker, makers: r.makers, fills: r.fills, takerFill: r.fills.reduce((a, b) => a + b, 0n), takerPrice: r.makers[0].price };
@@ -203,6 +213,7 @@ export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts)
   const mint = taker.isBuy;
   const levels: Level[][] = [];
   const qs = new Set<bigint>([taker.remaining, taker.remaining - MIN_RESTING_SIZE]);
+  charge(opts, opts.nOptions * book.length);
   for (let opt = 0; opt < opts.nOptions; opt++) {
     if (opt === taker.option) continue;
     const byPrice = new Map<number, BookOrder[]>();
@@ -223,7 +234,10 @@ export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts)
   const lo = mint ? 100 - taker.price : need;
   const hi = mint ? 100 : 100 - taker.price;
   let best: { sum: number; makers: BookOrder[] } | null = null;
+  // per q: one binary search per level, and for a mint the subset-sum may shift once per level
+  const perQ = levels.reduce((a, ls) => a + ls.length, 0) * (mint ? 2 : 1);
   for (const q of qList) {
+    charge(opts, perQ);
     // Per option, the levels usable at q (ascending price) with each one's earliest usable order.
     const avail = levels.map((ls) => ls.map((l) => ({ price: l.price, o: earliestAt(l, q) })).filter((x): x is Pick => x.o !== null));
     if (avail.some((a) => a.length === 0)) continue;

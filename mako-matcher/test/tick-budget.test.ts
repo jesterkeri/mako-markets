@@ -1,13 +1,14 @@
 // Codex MATCHER_SLICE2 R3 F2: every alarm tick searched with every booked order as a taker over the whole book, and
 // a market's book had no size limit, so the work per tick had no bound. Now: at most MAX_BOOK_ORDERS (1,000) resting
-// orders per market (intake refuses more), at most TICK_WORK order visits per tick from a rotating cursor, and an idle
+// orders per market (intake refuses more), at most TICK_WORK units of counted search work per tick from a rotating
+// cursor (adversary R9: a count of order visits did not bound the work), and an idle
 // book (a whole rotation found nothing and nothing changed) is not searched again until it changes, the UTC day turns
 // or IDLE_RECHECK_MS passes. These run in workerd (the real Durable Object) with a full worst-case book.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runInDurableObject } from 'cloudflare:test';
 import type { Hex } from 'viem';
 import { insertOrder, setMeta } from '../src/book';
-import { IDLE_RECHECK_MS, MAX_BOOK_ORDERS, TICK_WORK } from '../src/config';
+import { IDLE_RECHECK_MS, MAX_BOOK_ORDERS } from '../src/config';
 import { orderHash } from '../src/order';
 import type { OrderTuple } from '../src/abi';
 import { fresh, fund, type Harness } from './harness';
@@ -48,6 +49,13 @@ function deadBook(n: number): Partial<OrderTuple>[] {
   return Array.from({ length: n }, (_, i) => ({ option: i % 10, isBuy: true, price: 1 + (i % 3), size: 10n * SH + BigInt(i + Number(seqSalt)) * 10_000n }));
 }
 
+/// Adversary R9's heavy shape, kept below 56 cents so a pair above it crosses only itself: 10 options, bids at 12 to
+/// 55 cents (any 9 options sum to 108 or more, so no mint is legal), sizes growing with arrival. Each taker's search
+/// costs far more than a dead-book taker's, so a rotation spans many ticks.
+function heavyBook(n: number): Partial<OrderTuple>[] {
+  return Array.from({ length: n }, (_, i) => ({ option: i % 10, isBuy: true, price: 12 + (Math.floor(i / 10) % 44), size: (10n + BigInt(i)) * SH + BigInt(i) * 10_000n }));
+}
+
 async function timedTick(): Promise<number> {
   const t0 = performance.now();
   await h.tick();
@@ -75,28 +83,26 @@ describe('a market-wide cap at intake', () => {
 describe('the alarm tick has a bound and a full pass rotates', () => {
   it('worst case: a full 1,000-order, 10-option book that never crosses; every tick stays bounded, the rotation ends, then idle ticks skip', async () => {
     await book(deadBook(MAX_BOOK_ORDERS), 10);
-    const per = Math.floor(TICK_WORK / MAX_BOOK_ORDERS);
-    const ticks = Math.ceil(MAX_BOOK_ORDERS / per);
+    const idle = async () => (await h.sql<{ k: string }>(`SELECT k FROM meta WHERE k = 'idle_fp'`)).length;
     const ms: number[] = [];
-    for (let i = 0; i < ticks; i++) ms.push(await timedTick());
+    // at least one taker per tick, so a rotation ends within one tick per order
+    while ((await idle()) === 0 && ms.length < MAX_BOOK_ORDERS + 1) ms.push(await timedTick());
     const worst = Math.max(...ms);
-    console.log(`full-book ticks (workerd): ${ms.map((x) => x.toFixed(0)).join(', ')} ms; ${per} takers per tick`);
+    console.log(`full-book ticks (workerd): ${ms.map((x) => x.toFixed(0)).join(', ')} ms`);
     expect(worst, `slowest tick ${worst.toFixed(0)} ms`).toBeLessThan(5_000);
     expect(h.settled).toHaveLength(0);
-    const idle = (await h.sql<{ k: string }>(`SELECT k FROM meta WHERE k = 'idle_fp'`)).length;
-    expect(idle, 'a whole clean rotation marks the book idle').toBe(1);
+    expect(await idle(), 'a whole clean rotation marks the book idle, budget stops included').toBe(1);
     const skipped = await timedTick();
     console.log(`idle tick: ${skipped.toFixed(0)} ms`);
     expect(skipped).toBeLessThan(worst);
   });
 
   it('no fixed prefix: the only crossing pair is the OLDEST, and a new order lands every tick; the pair is still handed over within one rotation', async () => {
-    // the pair first (oldest seqs): a resting ask at 40, then a bid at 60 on option 0 (as if its match had been
-    // blocked when it arrived), then 998 orders that never cross
-    await book([{ option: 0, isBuy: false, price: 40, size: 20n * SH }, { option: 0, isBuy: true, price: 60, size: 20n * SH }], 10);
-    await book(deadBook(MAX_BOOK_ORDERS - 2), 10);
-    const per = Math.floor(TICK_WORK / MAX_BOOK_ORDERS);
-    const limit = Math.ceil(MAX_BOOK_ORDERS / per) + 2;
+    // the pair first (oldest seqs): a resting ask at 60, then a bid at 70 on option 0 (as if its match had been
+    // blocked when it arrived), then 998 heavy orders that never cross (all bids at 55 or less)
+    await book([{ option: 0, isBuy: false, price: 60, size: 20n * SH }, { option: 0, isBuy: true, price: 70, size: 20n * SH }], 10);
+    await book(heavyBook(MAX_BOOK_ORDERS - 2), 10);
+    const limit = MAX_BOOK_ORDERS + 2; // at least one taker per tick
     let handed = -1;
     for (let i = 0; i < limit && handed < 0; i++) {
       await h.tick();
@@ -105,6 +111,8 @@ describe('the alarm tick has a bound and a full pass rotates', () => {
       await h.sql(`DELETE FROM orders WHERE seq = (SELECT MAX(seq) FROM orders)`);
       await book(deadBook(1), 10);
     }
+    console.log(`heavy book: the oldest pair handed over at tick ${handed + 1}`);
+    expect(handed, 'the budget split the rotation over more than one tick').toBeGreaterThan(0);
     expect(handed, `handed over by tick ${limit}`).toBeGreaterThanOrEqual(0);
   });
 });

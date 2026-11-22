@@ -237,9 +237,11 @@ function serialize(p: Proposal) {
 /// match is proposed again without it. Everything fails closed: if either cannot be read, nothing is proposed.
 /// The result: `handedOff`; `resumeBelow`, the cursor a spread full pass continues below (null: do not move it); and
 /// `finished`, true only when every given taker was tried and nothing stopped the pass early.
-export type PassResult = { handedOff: number; resumeBelow: number | null; finished: boolean };
+/// `budgetStop`: the pass stopped before a taker because the work budget was spent (not a failure: the next tick
+/// continues from that taker); `tried`: how many takers it searched.
+export type PassResult = { handedOff: number; resumeBelow: number | null; finished: boolean; budgetStop?: boolean; tried?: number };
 
-export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null): Promise<PassResult> {
+export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null, budget?: number): Promise<PassResult> {
   const sql = state.storage.sql;
   const nowS = Math.floor(deps.now() / 1000);
   // An order in a proposal the settler accepted is in flight until it reports: it is in no other proposal.
@@ -254,9 +256,14 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
   const chain = chainCtx(state, cfg, deps);
   const blocked = new Set<Hex>(); // refused roles and accounts refused for the day, found so far
   const clear = new Set<Hex>(); // checked and fine
+  const work = { used: 0 };
+  let tried = 0;
   for (const taker of takers) {
+    // Spent: stop before this taker (never before the first), and the next tick starts with it.
+    if (budget !== undefined && tried > 0 && work.used >= budget) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false, budgetStop: true, tried };
+    tried++;
     for (let round = 0; round < MAX_PARTY_CHECK_ROUNDS; round++) {
-      const p = propose(taker, book, { nOptions, nowSeconds: nowS, blocked: (m) => blocked.has(m) });
+      const p = propose(taker, book, { nOptions, nowSeconds: nowS, blocked: (m) => blocked.has(m), work });
       if (!p) break;
       const unchecked = [...new Set([p.taker.maker, ...p.makers.map((m) => m.maker)])].filter((a) => !clear.has(a));
       if (unchecked.length > 0) {
@@ -298,13 +305,14 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
       return { handedOff: 1, resumeBelow: taker.seq, finished: false };
     }
   }
-  return { handedOff: 0, resumeBelow: takers.length > 0 ? takers[takers.length - 1].seq : null, finished: true };
+  return { handedOff: 0, resumeBelow: takers.length > 0 ? takers[takers.length - 1].seq : null, finished: true, tried };
 }
 
-/// Codex MATCHER R3 F2: the alarm's full pass, spread over ticks with a bound per tick. Each tick tries at most
-/// TICK_WORK / (book size) takers, newest first, continuing below the stored cursor and wrapping back to the newest,
-/// so every booked order is tried at least once every ceil(book / per tick) + 1 ticks however often the book
-/// changes: no fixed prefix (R2). A whole rotation that saw the same book throughout and handed nothing off marks
+/// Codex MATCHER R3 F2: the alarm's full pass, spread over ticks with a bound per tick. Each tick searches takers
+/// newest first, continuing below the stored cursor and wrapping back to the newest, until TICK_WORK units of search
+/// work are spent (counted by the search itself, adversary R9: a count of takers did not bound the work), and always
+/// at least one taker, so every booked order is tried at least once per rotation however often the book changes: no
+/// fixed prefix (R2). A rotation takes at most one tick per order, and on the worst book found about 80. A whole rotation that saw the same book throughout and handed nothing off marks
 /// that book idle, and an idle book is not searched again until it changes (an order, a fill, an in-flight mark,
 /// the UTC day of the refusal list) or IDLE_RECHECK_MS passes.
 export async function spreadPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert): Promise<{ handedOff: number; tried: number; skipped: boolean }> {
@@ -319,13 +327,12 @@ export async function spreadPass(state: DurableObjectState, cfg: Config, deps: M
   else if (getMeta(sql, 'rot_fp') !== print) setMeta(sql, 'rot_clean', '0');
   const nowS = BigInt(Math.floor(nowMs / 1000));
   const book = all.filter((o) => o.expiration > nowS && !o.inFlight).sort((a, b) => b.seq - a.seq);
-  const per = Math.max(1, Math.floor(TICK_WORK / Math.max(1, book.length)));
   const cur = getMeta(sql, 'tick_cursor');
   const below = cur === null ? book : book.filter((o) => o.seq < Number(cur));
-  const takers = below.slice(0, per);
-  const r = await matchPass(state, cfg, deps, alert, takers.map((o) => o.hash));
-  if (r.handedOff > 0 || !r.finished) setMeta(sql, 'rot_clean', '0');
-  if (r.finished && below.length <= per) {
+  const r = await matchPass(state, cfg, deps, alert, below.map((o) => o.hash), TICK_WORK);
+  // Stopping for the budget is not a failure: the rotation can still end clean.
+  if (r.handedOff > 0 || (!r.finished && !r.budgetStop)) setMeta(sql, 'rot_clean', '0');
+  if (r.finished) {
     // The rotation is complete: idle if it was clean, then start the next one from the newest order.
     if (getMeta(sql, 'rot_clean') === '1' && getMeta(sql, 'rot_fp') === print) {
       setMeta(sql, 'idle_fp', print);
@@ -335,7 +342,7 @@ export async function spreadPass(state: DurableObjectState, cfg: Config, deps: M
   } else if (r.resumeBelow !== null) {
     setMeta(sql, 'tick_cursor', String(r.resumeBelow));
   }
-  return { handedOff: r.handedOff, tried: takers.length, skipped: false };
+  return { handedOff: r.handedOff, tried: r.tried ?? 0, skipped: false };
 }
 
 function startRotation(sql: SqlStorage, print: string): void {
