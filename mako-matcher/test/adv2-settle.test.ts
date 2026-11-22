@@ -63,7 +63,9 @@ describe('adversary 2: a report whose acknowledgement is lost (plan 6.2 Report b
       await drive(s, prop('directTakerBuy', ['directMakerSell']), 3);
       await s.run();
       await drive(s, prop('directTakerBuy', ['directMakerSell']), 3);
-      expect(delivered.map((d) => d.id)).toEqual(['1', '1', '2']);
+      // <storage epoch>-<outbox id>: one epoch for this storage, the retry keeps its id, the next settlement a new one
+      expect(new Set(delivered.map((d) => d.id.split('-')[0])).size).toBe(1);
+      expect(delivered.map((d) => d.id.split('-')[1])).toEqual(['1', '1', '2']);
     });
   });
 });
@@ -75,7 +77,7 @@ describe('one market refusing its outcomes does not hold up the others (plan 6.2
       for (const m of ['7', '8', '7']) sql.exec(`INSERT INTO outbox (market_id, body) VALUES (?, ?)`, m, JSON.stringify({ release: [z] }));
       const got: string[] = [];
       r.over.report = async (m, body) => {
-        got.push(`${m}:${(body as { id: string }).id}`);
+        got.push(`${m}:${(body as { id: string }).id.split('-')[1]}`);
         if (m === '7') throw new Error('market 7 refuses');
       };
       await mk(sql).run();

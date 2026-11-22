@@ -5,7 +5,7 @@ import { applyFill, deleteAll, deleteBelowNonce, deleteByHash, deleteByMaker, ge
 import type { Alert } from './alerts';
 
 export interface Outcome {
-  /// The settler's outbox id. A retried delivery carries the same id; the market applies each id once.
+  /// `<settler storage epoch>-<outbox id>`. A retried delivery carries the same id; the market applies each id once.
   id: string;
   /// Fills that settled on chain.
   applied?: { hash: Hex; fill: string }[];
@@ -30,7 +30,7 @@ export function parseOutcome(b: unknown): Outcome | null {
   const hashes = (v: unknown): Hex[] | null => (Array.isArray(v) && v.every((x) => typeof x === 'string' && HEX32.test(x)) ? (v as Hex[]) : null);
   const release = hashes(o.release);
   if (!release) return null;
-  if (typeof o.id !== 'string' || !/^[1-9][0-9]{0,14}$/.test(o.id)) return null;
+  if (typeof o.id !== 'string' || !/^[0-9a-f]{32}-[1-9][0-9]{0,14}$/.test(o.id)) return null;
   const out: Outcome = { id: o.id, release };
   if (o.applied !== undefined) {
     if (!Array.isArray(o.applied)) return null;
@@ -60,7 +60,7 @@ export function parseOutcome(b: unknown): Outcome | null {
 export function applyOutcome(sql: SqlStorage, o: Outcome, alert: Alert): void {
   // Applied once per id, in the same synchronous block as the changes (shortcut: one row per settlement is kept for
   // good; prune old ids if a market ever holds millions).
-  if (sql.exec(`INSERT OR IGNORE INTO outcomes_seen (id) VALUES (?)`, Number(o.id)).rowsWritten === 0) return;
+  if (sql.exec(`INSERT OR IGNORE INTO outcomes_seen (id) VALUES (?)`, o.id).rowsWritten === 0) return;
   for (const a of o.applied ?? []) applyFill(sql, a.hash, BigInt(a.fill));
   for (const d of o.dropped ?? []) {
     const ord = getOrder(sql, d.hash);

@@ -218,3 +218,30 @@ describe('what the markets are told', () => {
     void (env as Env);
   });
 });
+
+describe('what the settler tells a market it still holds (GET /held)', () => {
+  it('names every order in the pending proposal, the transaction in flight, and every undelivered outcome; nothing once reported', async () => {
+    const { heldHashes } = await import('../src/settler');
+    await withSettler(async (sql, r, mk) => {
+      const p = DIRECT();
+      const all = [p.taker.hash, ...p.makers.map((m) => m.hash)].sort();
+      r.w.onSend = () => ({ pending: true });
+      const s = mk(sql);
+      await s.submit(p);
+      expect(heldHashes(sql).sort()).toEqual(all); // pending
+      await s.run();
+      expect(rows(sql, 'SELECT COUNT(*) AS n FROM in_flight')[0]).toEqual({ n: 1 });
+      expect(heldHashes(sql).sort()).toEqual(all); // in flight
+      r.over.report = async () => {
+        throw new Error('market unreachable');
+      };
+      r.w.receipts.set(r.w.sent[0].hash, { status: 1, effectiveGasPrice: r.w.baseFeePerGas + r.w.prio });
+      await mk(sql).run(); // a settler reads its dependencies when built
+      expect(rows(sql, 'SELECT COUNT(*) AS n FROM outbox')[0]).toEqual({ n: 1 });
+      expect(heldHashes(sql).sort()).toEqual(all); // reported to no one yet
+      r.over.report = async () => undefined;
+      await mk(sql).run();
+      expect(heldHashes(sql)).toEqual([]);
+    });
+  });
+});

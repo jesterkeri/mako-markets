@@ -20,11 +20,11 @@ async function put(names: string[]) {
   }
   return out;
 }
-const flags = async () => (await h.sql<{ hash: string; in_flight: number }>('SELECT hash, in_flight FROM orders ORDER BY seq')).map((r) => r.in_flight);
+const flags = async () => (await h.sql<{ hash: string; in_flight: number }>('SELECT hash, in_flight FROM orders ORDER BY seq')).map((r) => (r.in_flight > 0 ? 1 : 0)); // a mark holds the time it was set
 let nextId = 1;
 /// Each call is a new settlement (a fresh outbox id) unless the body names its own id.
 async function outcome(body: unknown) {
-  if (typeof body === 'object' && body !== null && !Array.isArray(body) && !('id' in body)) body = { id: String(nextId++), ...body };
+  if (typeof body === 'object' && body !== null && !Array.isArray(body) && !('id' in body)) body = { id: `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-${nextId++}`, ...body };
   const res = await h.call('POST', '/outcome', { body });
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
 }
@@ -70,12 +70,39 @@ describe('in-flight orders (plan 6.2: one match at a time)', () => {
     let calls = 0;
     h.deps.settle = async () => {
       calls++;
-      seen = h.state!.storage.sql.exec<{ in_flight: number }>('SELECT in_flight FROM orders ORDER BY seq').toArray().map((r) => r.in_flight);
+      seen = h.state!.storage.sql.exec<{ in_flight: number }>('SELECT in_flight FROM orders ORDER BY seq').toArray().map((r) => (r.in_flight > 0 ? 1 : 0));
       return { accepted: true };
     };
     await put(['directMakerSell', 'directTakerBuy']);
     expect(calls).toBe(1);
     expect(seen).toEqual([1, 1]);
+  });
+
+  it('a stale mark is kept while the settler holds its orders, or while the settler cannot be read; released otherwise', async () => {
+    h.settleAccepts = true;
+    await put(['directMakerSell', 'directTakerBuy']);
+    expect(await flags()).toEqual([1, 1]);
+    const hashes = [vec('directMakerSell').hash, vec('directTakerBuy').hash];
+    // fresh: not looked at
+    h.held = [];
+    await h.tick();
+    expect(await flags()).toEqual([1, 1]);
+    // old, and the settler holds them (a transaction still in flight): kept
+    h.w.nowMs += 10 * 60 * 1000;
+    h.held = hashes;
+    await h.tick();
+    expect(await flags()).toEqual([1, 1]);
+    // old, settler unreadable: kept
+    h.held = [];
+    h.settlerDown = true;
+    await h.tick();
+    expect(await flags()).toEqual([1, 1]);
+    // old, settler readable and holds nothing: released, with an alert
+    h.settlerDown = false;
+    h.settleAccepts = false;
+    await h.tick();
+    expect((await h.alerts()).map((a) => a.code)).toContain('stale_mark_released');
+    expect((await h.sql<{ n: number }>('SELECT COUNT(*) AS n FROM orders WHERE in_flight = 0'))[0].n).toBe(2);
   });
 
   it('a report releases the marks and the orders can match again', async () => {
@@ -114,7 +141,7 @@ describe('what is left after a fill stays booked', () => {
     await put(['directMakerSell', 'directTakerBuy']);
     const sell = vec('directMakerSell');
     const buy = vec('directTakerBuy');
-    const once = { id: '41', applied: [{ hash: sell.hash, fill: '40000000' }, { hash: buy.hash, fill: '40000000' }], release: [sell.hash, buy.hash] };
+    const once = { id: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-41', applied: [{ hash: sell.hash, fill: '40000000' }, { hash: buy.hash, fill: '40000000' }], release: [sell.hash, buy.hash] };
     expect((await outcome(once)).status).toBe(200);
     // the remainders are proposed again and the settler takes the new proposal: both marked in flight
     h.settleAccepts = true;

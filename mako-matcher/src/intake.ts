@@ -58,7 +58,9 @@ export async function intakeOrder(d: IntakeDeps, rawBody: unknown): Promise<Inta
     await d.verifyChain();
 
     // The log cursor must start no later than the state this order is judged on (plan 6.2: cancels made on chain).
-    const cursorStart = getMeta(d.sql, 'log_cursor') === null ? await blockNumber(d.chain) : null;
+    // Read for every order, not only when no cursor exists: another intake or the alarm can move or clear the cursor
+    // while this one awaits the chain.
+    const judgedFrom = await blockNumber(d.chain);
 
     // Step 3: one multicall: market, nonce, the order's own state, the maker's cash or shares.
     const chain = await readIntake(d.chain, order, hash);
@@ -95,7 +97,10 @@ export async function intakeOrder(d: IntakeDeps, rawBody: unknown): Promise<Inta
     insertOrder(d.sql, order, hash, signature, chain.fee, chain.filled, d.now());
     // The option count never changes after creation; the matcher needs it for set matches.
     setMeta(d.sql, 'n_options', String(chain.market.nOptions));
-    if (cursorStart !== null && getMeta(d.sql, 'log_cursor') === null) setMeta(d.sql, 'log_cursor', cursorStart.toString());
+    // Moved back, never forward: re-reading a block's cancels is harmless (a cancelled hash is refused at intake, and a
+    // live order's nonce is at least any logged one), skipping one is not.
+    const cur = getMeta(d.sql, 'log_cursor');
+    if (cur === null || BigInt(cur) > judgedFrom) setMeta(d.sql, 'log_cursor', judgedFrom.toString());
     return { ok: true, hash, order: getOrder(d.sql, hash)! };
   } catch (err) {
     if (err instanceof ChainError) {

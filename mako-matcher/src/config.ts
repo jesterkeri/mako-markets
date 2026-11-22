@@ -70,3 +70,7 @@ export function readConfig(env: Pick<Env, 'EXCHANGE_ADDRESS' | 'CHAIN_ID' | 'PUB
     cancelSecret: env.CANCEL_SECRET?.trim() || null,
   };
 }
+
+/// A market's in-flight mark older than this, for orders the settler holds nothing for, is released (the hand-off
+/// that set it never reached the settler). The hand-off itself is one subrequest; this is far above it.
+export const STALE_MARK_MS = 120_000;

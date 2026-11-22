@@ -18,6 +18,8 @@ export interface Harness {
   refused: Set<string>;
   settleAccepts: boolean;
   settlerDown: boolean;
+  /// What the settler reports it holds (hashes).
+  held: string[];
   stub: ReturnType<typeof env.MARKET.get>;
   /// The object's state while a request runs (a nested runInDurableObject would not see the same view).
   state: DurableObjectState | null;
@@ -49,6 +51,7 @@ export async function fresh(id = '1'): Promise<Harness> {
     refused: new Set(),
     settleAccepts: false,
     settlerDown: false,
+    held: [],
     stub,
     state: null,
     deps: null as unknown as MarketDeps,
@@ -101,6 +104,10 @@ export async function fresh(id = '1'): Promise<Harness> {
     async settle(b) {
       h.settled.push(b);
       return { accepted: h.settleAccepts };
+    },
+    async held() {
+      if (h.settlerDown) throw new Error('down');
+      return new Set(h.held);
     },
   };
   void CHAIN_ID;

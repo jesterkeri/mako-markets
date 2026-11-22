@@ -230,6 +230,17 @@ export class Settler {
     this.d.sql.exec(`DELETE FROM in_flight`);
   }
 
+  /// Set once, when this storage first reports. Outbox ids restart at 1 if the settler's storage is ever lost; a
+  /// random epoch per storage keeps a new outcome from reusing an id a market already applied.
+  private epoch(): string {
+    let e = this.meta('outbox_epoch');
+    if (e === null) {
+      e = crypto.randomUUID().replaceAll('-', '');
+      this.setMeta('outbox_epoch', e);
+    }
+    return e;
+  }
+
   private async flushOutbox() {
     const failed = new Set<string>(); // a market that did not take one outcome gets none of its later ones this pass
     for (const r of this.d.sql.exec<{ id: number; market_id: string; body: string }>(`SELECT id, market_id, body FROM outbox ORDER BY id`).toArray()) {
@@ -237,7 +248,7 @@ export class Settler {
       try {
         // The outbox id goes with the outcome: a retry after a lost answer carries the same id, and the market applies
         // each id once.
-        await this.d.report(r.market_id, { ...(JSON.parse(r.body) as Outcome), id: String(r.id) });
+        await this.d.report(r.market_id, { ...(JSON.parse(r.body) as Outcome), id: `${this.epoch()}-${r.id}` });
         this.d.sql.exec(`DELETE FROM outbox WHERE id = ?`, r.id);
       } catch {
         failed.add(r.market_id);

@@ -25,7 +25,7 @@ export const SCHEMA = [
      in_flight INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
-  `CREATE TABLE IF NOT EXISTS outcomes_seen (id INTEGER PRIMARY KEY)`,
+  `CREATE TABLE IF NOT EXISTS outcomes_seen (id TEXT PRIMARY KEY)`,
   `CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, code TEXT NOT NULL, detail TEXT NOT NULL)`,
 ];
 
@@ -86,7 +86,7 @@ function fromRow(r: Row): BookOrder {
     filled,
     remaining: size - filled,
     createdAt: r.created_at,
-    inFlight: r.in_flight === 1,
+    inFlight: r.in_flight !== 0,
   };
 }
 
@@ -183,8 +183,13 @@ export function delMeta(sql: SqlStorage, k: string): void {
   sql.exec(`DELETE FROM meta WHERE k = ?`, k);
 }
 
-export function markInFlight(sql: SqlStorage, hashes: Hex[]): void {
-  for (const h of hashes) sql.exec(`UPDATE orders SET in_flight = 1 WHERE hash = ?`, h);
+/// The mark holds the time it was set (ms), so a mark the settler never heard of can be found and released.
+export function markInFlight(sql: SqlStorage, hashes: Hex[], nowMs: number): void {
+  for (const h of hashes) sql.exec(`UPDATE orders SET in_flight = ? WHERE hash = ?`, Math.max(1, nowMs), h);
+}
+
+export function marksOlderThan(sql: SqlStorage, beforeMs: number): Hex[] {
+  return sql.exec<{ hash: Hex }>(`SELECT hash FROM orders WHERE in_flight > 0 AND in_flight < ?`, beforeMs).toArray().map((r) => r.hash);
 }
 
 export function releaseInFlight(sql: SqlStorage, hashes: Hex[]): void {

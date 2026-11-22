@@ -47,6 +47,25 @@ export function parseFunder(raw: string | undefined): Hex | null {
   return v && isAddress(v, { strict: false }) ? (v.toLowerCase() as Hex) : null;
 }
 
+/// Every order hash in the proposal waiting, the transaction in flight, and every outcome not yet delivered: a market
+/// keeps these marked.
+export function heldHashes(sql: SqlStorage): string[] {
+  const out = new Set<string>();
+  for (const t of ['pending', 'in_flight']) {
+    for (const r of sql.exec<{ body: string }>(`SELECT body FROM ${t}`).toArray()) {
+      const p = JSON.parse(r.body) as { taker: { hash: string }; makers: { hash: string }[] };
+      out.add(p.taker.hash);
+      for (const m of p.makers) out.add(m.hash);
+    }
+  }
+  for (const r of sql.exec<{ body: string }>(`SELECT body FROM outbox`).toArray()) {
+    const o = JSON.parse(r.body) as { release?: string[]; dropped?: { hash: string }[] };
+    for (const h of o.release ?? []) out.add(h);
+    for (const d of o.dropped ?? []) out.add(d.hash);
+  }
+  return [...out];
+}
+
 export class MatcherSettler extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -104,6 +123,7 @@ export class MatcherSettler extends DurableObject<Env> {
     const url = new URL(req.url);
     const m = /^\/refused\/(0x[0-9a-fA-F]{40})$/.exec(url.pathname);
     if (req.method === 'GET' && m) return json(200, { refused: isRefused(this.ctx.storage.sql, m[1], Date.now()) });
+    if (req.method === 'GET' && url.pathname === '/held') return json(200, { hashes: heldHashes(this.ctx.storage.sql) });
     if (req.method === 'GET' && url.pathname === '/status') {
       const c = this.core();
       return c.ok ? json(200, await c.settler.status()) : json(503, { ok: false, reason: c.reason });

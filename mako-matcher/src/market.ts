@@ -3,11 +3,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
-import { LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
+import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, MAX_PARTY_CHECK_ROUNDS, ConfigError, readConfig, REQUEST_BUDGET_MS, TICK_MS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
 import { intakeOrder } from './intake';
@@ -22,6 +22,8 @@ export interface MarketDeps {
   refusedToday(maker: Hex): Promise<boolean>;
   /// Hands a proposal to the settler. `accepted` is false when the settler refuses (the Phase A stub always does).
   settle(body: unknown): Promise<{ accepted: boolean }>;
+  /// Every order hash the settler still holds a proposal or an undelivered outcome for. Throws when unreadable.
+  held(): Promise<Set<string>>;
 }
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -47,6 +49,13 @@ export function realDeps(env: Env): MarketDeps {
       if (!res.ok) return { accepted: false };
       const b = (await res.json().catch(() => null)) as { accepted?: unknown } | null;
       return { accepted: b?.accepted === true };
+    },
+    async held() {
+      const res = await settler().fetch(new Request('https://settler/held'));
+      if (!res.ok) throw new Error('settler holds unreadable');
+      const b = (await res.json().catch(() => null)) as { hashes?: unknown } | null;
+      if (!Array.isArray(b?.hashes) || !b.hashes.every((x) => typeof x === 'string')) throw new Error('settler holds unreadable');
+      return new Set(b.hashes as string[]);
     },
   };
 }
@@ -258,7 +267,7 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
         const now = getOrder(sql, h);
         return !now || now.inFlight || now.filled !== snap.get(h);
       })) return { handedOff: 0 };
-      markInFlight(sql, hashes);
+      markInFlight(sql, hashes, deps.now());
       let accepted = false;
       try {
         accepted = (await deps.settle(serialize(p))).accepted;
@@ -294,6 +303,7 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   } catch (err) {
     alert('log_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'error');
   }
+  await releaseStaleMarks(sql, deps, alert);
   if (countOrders(sql) > 0) {
     try {
       await matchPass(state, cfg, deps, alert, null);
@@ -304,6 +314,24 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   } else {
     delMeta(sql, 'log_cursor');
   }
+}
+
+/// A mark set for a hand-off the settler never received (this object was replaced during the hand-off) would keep
+/// its orders out of every proposal for good. A mark older than STALE_MARK_MS that the settler does not hold is
+/// released. Unreadable settler: every mark is kept.
+async function releaseStaleMarks(sql: SqlStorage, deps: MarketDeps, alert: Alert): Promise<void> {
+  if (marksOlderThan(sql, deps.now() - STALE_MARK_MS).length === 0) return;
+  let held: Set<string>;
+  try {
+    held = await deps.held();
+  } catch {
+    return;
+  }
+  // Read again after the await: a mark set or released meanwhile is judged on its current state.
+  const free = marksOlderThan(sql, deps.now() - STALE_MARK_MS).filter((h) => !held.has(h));
+  if (free.length === 0) return;
+  releaseInFlight(sql, free);
+  alert('stale_mark_released', `${free.length} order(s) marked for a hand-off the settler does not hold`);
 }
 
 /// Plan 6.2 "Cancels made on chain": `Cancelled` drops that order, `NonceIncremented` drops every order of that
