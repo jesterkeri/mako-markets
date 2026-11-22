@@ -19,6 +19,7 @@ const W = (n: number) => `0x${(0xe000_0000 + n).toString(16).padStart(40, '0')}`
 let h: Harness;
 beforeEach(async () => {
   h = await fresh('1');
+  h.settlerChecksRefusals = true; // the fake settler applies settle.ts submit's rule
 });
 
 /// The list is read, and before the read returns, the settler refuses `who` (the snapshot the market gets does not

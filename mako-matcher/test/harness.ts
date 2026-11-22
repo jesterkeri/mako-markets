@@ -17,6 +17,8 @@ export interface Harness {
   settled: unknown[];
   /// Hand-offs the fake settler refused because a party was on the refusal list at that moment (Codex MATCHER R5 F1).
   refusedHandoffs: unknown[];
+  /// Off by default, so every other test still sees a hand-off naming a refused account in `settled` (adversary R13).
+  settlerChecksRefusals: boolean;
   refused: Set<string>;
   settleAccepts: boolean;
   settlerDown: boolean;
@@ -51,6 +53,7 @@ export async function fresh(id = '1'): Promise<Harness> {
     logs,
     settled: [],
     refusedHandoffs: [],
+    settlerChecksRefusals: false,
     refused: new Set(),
     settleAccepts: false,
     settlerDown: false,
@@ -111,7 +114,7 @@ export async function fresh(id = '1'): Promise<Harness> {
     async settle(b) {
       // as the real settler (settle.ts submit): a party on today's list at the moment of the hand-off is refused
       const text = JSON.stringify(b).toLowerCase();
-      if ([...h.refused].some((a) => text.includes(`"maker":"${a.toLowerCase()}"`))) {
+      if (h.settlerChecksRefusals && [...h.refused].some((a) => text.includes(`"maker":"${a.toLowerCase()}"`))) {
         h.refusedHandoffs.push(b);
         return { accepted: false };
       }
