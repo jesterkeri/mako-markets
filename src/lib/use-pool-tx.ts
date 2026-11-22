@@ -168,8 +168,9 @@ const switchedAccount = (w: OutcomeWords): ConfirmPhase => ({
 });
 
 const REVIEW: ConfirmPhase = { step: 'review' };
-/// tx is null once a landed create's sheet is closed: the slot then only keeps the new pool's id for the page.
-type PoolSlot = { tx: PoolTx | null; phase: ConfirmPhase; spec: ConfirmSpec | null; createdId: bigint | null };
+/// tx is null once a landed create's sheet is closed: the slot then only keeps `closedLanded` and the new pool's id
+/// (null when the receipt could not be read) for the page.
+type PoolSlot = { tx: PoolTx | null; phase: ConfirmPhase; spec: ConfirmSpec | null; createdId: bigint | null; closedLanded: boolean };
 
 /// `onLanded` gets the account whose transaction landed, which may no longer be the one signed in.
 export function usePoolTx(onLanded?: (account: string) => void) {
@@ -196,6 +197,9 @@ export function usePoolTx(onLanded?: (account: string) => void) {
   const spec = slot?.spec ?? null;
   /// The id of the pool a landed create made, read from its receipt (null until then, or if it could not be read).
   const createdId = slot?.createdId ?? null;
+  /// A landed create whose sheet was closed, kept with or without its pool id (adversary on c8bfdfe: a receipt read
+  /// that timed out lost the landed create on an account round trip, so the same pool could be created again).
+  const closedLanded = slot?.closedLanded ?? false;
   /// Writes one account's sheet, if it still has it.
   const put = useCallback(
     (a: string, patch: Partial<PoolSlot>) =>
@@ -214,8 +218,8 @@ export function usePoolTx(onLanded?: (account: string) => void) {
   /// Another account's sheet is kept unless it never left the review step (never sent): a send that is on its way,
   /// done, failed or of unknown outcome comes back, with its own text and result, when its account does, so that
   /// account is never offered the same send again without its warning (adversary on ece0abb and b93bbfe).
-  /// A closed landed create keeps its pool id for the page's live step.
-  const keep = (a: string, s: { phase: ConfirmPhase; createdId: bigint | null }) => a === account || inFlight.current.has(a) || s.phase.step !== 'review' || s.createdId !== null;
+  /// A closed landed create is kept for the page's live step.
+  const keep = (a: string, s: PoolSlot) => a === account || inFlight.current.has(a) || s.phase.step !== 'review' || s.closedLanded;
   if ([...slots].some(([a, s]) => !keep(a, s))) setSlots((prev) => new Map([...prev].filter(([a, s]) => keep(a, s))));
 
   /// Opens the sheet on the review step.
@@ -224,7 +228,7 @@ export function usePoolTx(onLanded?: (account: string) => void) {
       if (!account || inFlight.current.has(account)) return;
       // A drifted wallet session never reaches the review step's Confirm button.
       const first = user && user.authType === 'wallet' && connected && isWalletDrifted(user, connected) ? wrongWallet(user, connected) : REVIEW;
-      setSlots((prev) => new Map(prev).set(account, { tx: next, phase: first, spec: sheet ?? null, createdId: null }));
+      setSlots((prev) => new Map(prev).set(account, { tx: next, phase: first, spec: sheet ?? null, createdId: null, closedLanded: false }));
     },
     [user, connected, account],
   );
@@ -236,9 +240,9 @@ export function usePoolTx(onLanded?: (account: string) => void) {
       const s = prev.get(account);
       if (!s) return prev;
       const m = new Map(prev);
-      // A landed create keeps its pool id after the sheet closes, so the page's live step keeps its link (as before
+      // A landed create stays landed after the sheet closes, so the page's live step keeps its link (as before
       // the per-account slots); the next open clears it.
-      if (s.phase.step === 'done' && s.createdId !== null) m.set(account, { tx: null, phase: REVIEW, spec: null, createdId: s.createdId });
+      if (s.phase.step === 'done' && s.tx?.kind === 'create') m.set(account, { tx: null, phase: REVIEW, spec: null, createdId: s.createdId, closedLanded: true });
       else m.delete(account);
       return m;
     });
@@ -473,5 +477,5 @@ export function usePoolTx(onLanded?: (account: string) => void) {
     }
   }, [tx, user, account, put, connected, publicClient, writeContractAsync, ensureChain, onLanded, createdIdFrom]);
 
-  return { tx, phase, spec, createdId, open, close, confirm: run, retry: run };
+  return { tx, phase, spec, createdId, closedLanded, open, close, confirm: run, retry: run };
 }
