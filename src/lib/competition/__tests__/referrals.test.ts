@@ -3,7 +3,7 @@
 // the link. Plus the copy guard for every word the competition shows.
 
 import { getAddress } from 'viem';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }));
 vi.mock('@/lib/aa-public-client', () => ({ getAaPublicClient: () => ({ multicall: async () => [] }) }));
@@ -16,7 +16,15 @@ import type { TestDb } from '@/lib/leaderboard/__tests__/test-db';
 import { account, addr, at, codeOf, competitionDb, event } from './db';
 
 let t: TestDb | null = null;
+// These cases describe the competition while it runs. referrals.ts reads Date.now() (lateCode), so without a fixed clock
+// they changed meaning on 2026-11-14 12:00 UTC and failed on every tree; the after-the-end rule has its own tests
+// (adversary-referrals-open-63a2710, adversary-extend-6ee8748).
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(COMPETITION_END.getTime() - 60 * 60 * 1000);
+});
 afterEach(async () => {
+  vi.useRealTimers();
   await t?.close();
   t = null;
 });
