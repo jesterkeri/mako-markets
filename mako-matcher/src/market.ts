@@ -265,7 +265,8 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
     // Spent: stop before this taker (never before the first), and the next tick starts with it.
     if (budget !== undefined && tried > 0 && work.used >= budget) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false, budgetStop: true, tried };
     tried++;
-    for (let round = 0; round < MAX_PARTY_CHECK_ROUNDS; round++) {
+    let round = 0;
+    for (; round < MAX_PARTY_CHECK_ROUNDS; round++) {
       const p = propose(taker, book, { nOptions, nowSeconds: nowS, blocked: (m) => blocked.has(m), work });
       if (!p) break;
       const unchecked = [...new Set([p.taker.maker, ...p.makers.map((m) => m.maker)])].filter((a) => !clear.has(a));
@@ -317,6 +318,9 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
       if (refused) releaseInFlight(sql, hashes);
       return { handedOff: 1, resumeBelow: taker.seq, finished: false };
     }
+    // Every round found a refused wallet (each now remembered) and this taker is not fully searched: start here next
+    // tick, where those wallets are skipped (adversary R11: counting it as searched let a quiet book go idle).
+    if (round === MAX_PARTY_CHECK_ROUNDS) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false, budgetStop: true, tried };
   }
   return { handedOff: 0, resumeBelow: takers.length > 0 ? takers[takers.length - 1].seq : null, finished: true, tried };
 }
