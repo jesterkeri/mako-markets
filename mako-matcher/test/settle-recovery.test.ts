@@ -245,3 +245,16 @@ describe('what the settler tells a market it still holds (GET /held)', () => {
     });
   });
 });
+
+describe('an outcome a market has not taken yet (Codex R1 F2)', () => {
+  it('blocks new proposals from that market only', async () => {
+    await withSettler(async (sql, _r, mk) => {
+      const p = DIRECT();
+      sql.exec(`INSERT INTO outbox (market_id, body) VALUES (?, ?)`, p.marketId, JSON.stringify({ release: [p.taker.hash] }));
+      const s = mk(sql);
+      expect(await s.submit(p)).toEqual({ accepted: false, reason: 'outcome_undelivered' });
+      sql.exec(`UPDATE outbox SET market_id = ?`, `${p.marketId}9`);
+      expect(await s.submit(p)).toEqual({ accepted: true });
+    });
+  });
+});

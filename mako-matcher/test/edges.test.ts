@@ -107,10 +107,13 @@ describe('the settler dependencies when the settler misbehaves', () => {
     await expect(withStub(async () => new Response('{"refused":true}', { status: 200 })).refusedToday(addr)).resolves.toBe(true);
   });
 
-  it('a settle answer counts as accepted only when it says so', async () => {
+  it('a settle answer is the boolean `accepted` the settler wrote; anything else is no answer (throws), never a refusal', async () => {
     expect(await withStub(async () => new Response('{"accepted":true}', { status: 200 })).settle({})).toEqual({ accepted: true });
-    expect(await withStub(async () => new Response('{"accepted":"yes"}', { status: 200 })).settle({})).toEqual({ accepted: false });
-    expect(await withStub(async () => new Response('not json', { status: 200 })).settle({})).toEqual({ accepted: false });
-    expect(await withStub(async () => new Response('{"accepted":true}', { status: 503 })).settle({})).toEqual({ accepted: false });
+    expect(await withStub(async () => new Response('{"ok":false,"accepted":false,"error":"busy"}', { status: 503 })).settle({})).toEqual({ accepted: false });
+    // the body decides, not the status: a settler that wrote accepted:true took the proposal
+    expect(await withStub(async () => new Response('{"accepted":true}', { status: 503 })).settle({})).toEqual({ accepted: true });
+    await expect(withStub(async () => new Response('{"accepted":"yes"}', { status: 200 })).settle({})).rejects.toThrow();
+    await expect(withStub(async () => new Response('not json', { status: 200 })).settle({})).rejects.toThrow();
+    await expect(withStub(async () => new Response('Internal Server Error', { status: 500 })).settle({})).rejects.toThrow();
   });
 });

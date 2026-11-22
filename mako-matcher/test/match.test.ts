@@ -361,3 +361,49 @@ describe('fuzz: every proposal passes the contract model, on random books', () =
     expect(kinds.merge).toBeGreaterThan(5);
   });
 });
+
+describe('price priority at every level: a direct proposal never fills a level worse than the set price (Codex R1 F1)', () => {
+  const two = opts({ nOptions: 2 });
+  it('buy: asks at 30 and 60 with a mint at 40 available takes only the 30 ask; the rest goes to the set next', () => {
+    const a30 = bo({ seq: 1, maker: W(2), option: 0, isBuy: false, price: 30, size: 10n * SHARE });
+    const a60 = bo({ seq: 2, maker: W(3), option: 0, isBuy: false, price: 60, size: 10n * SHARE });
+    const b60 = bo({ seq: 3, maker: W(4), option: 1, isBuy: true, price: 60, size: 10n * SHARE }); // mints option 0 at 40
+    const taker = bo({ seq: 9, maker: W(1), option: 0, isBuy: true, price: 70, size: 20n * SHARE });
+    const p = propose(taker, [a30, a60, b60], two)!;
+    expect(p.kind).toBe('direct');
+    expect(p.makers.map((m) => m.price)).toEqual([30]);
+    expect(p.takerFill).toBe(10n * SHARE);
+    expect(judge(p, 2)).toBeNull();
+    // after that fill, the next pass mints at 40 rather than taking the 60 ask
+    const rest = { ...taker, filled: 10n * SHARE, remaining: 10n * SHARE };
+    const q = propose(rest, [a60, b60], two)!;
+    expect(q.kind).toBe('mint');
+    expect(q.takerPrice).toBe(40);
+  });
+  it('sell: bids at 70 and 40 with a merge paying 60 available takes only the 70 bid', () => {
+    const b70 = bo({ seq: 1, maker: W(2), option: 0, isBuy: true, price: 70, size: 10n * SHARE });
+    const b40 = bo({ seq: 2, maker: W(3), option: 0, isBuy: true, price: 40, size: 10n * SHARE });
+    const s40 = bo({ seq: 3, maker: W(4), option: 1, isBuy: false, price: 40, size: 10n * SHARE }); // merge pays the taker 60
+    const taker = bo({ seq: 9, maker: W(1), option: 0, isBuy: false, price: 30, size: 20n * SHARE });
+    const p = propose(taker, [b70, b40, s40], two)!;
+    expect(p.kind).toBe('direct');
+    expect(p.makers.map((m) => m.price)).toEqual([70]);
+    expect(p.takerFill).toBe(10n * SHARE);
+  });
+  it('a level that ties the set price stays in the direct proposal (a tie goes to direct)', () => {
+    const a30 = bo({ seq: 1, maker: W(2), option: 0, isBuy: false, price: 30, size: 10n * SHARE });
+    const a40 = bo({ seq: 2, maker: W(3), option: 0, isBuy: false, price: 40, size: 10n * SHARE });
+    const b60 = bo({ seq: 3, maker: W(4), option: 1, isBuy: true, price: 60, size: 10n * SHARE });
+    const taker = bo({ seq: 9, maker: W(1), option: 0, isBuy: true, price: 70, size: 20n * SHARE });
+    const p = propose(taker, [a30, a40, b60], two)!;
+    expect(p.kind).toBe('direct');
+    expect(p.makers.map((m) => m.price)).toEqual([30, 40]);
+    expect(p.takerFill).toBe(20n * SHARE);
+  });
+  it('with no set available every crossing level stays (unchanged)', () => {
+    const a30 = bo({ seq: 1, maker: W(2), option: 0, isBuy: false, price: 30, size: 10n * SHARE });
+    const a60 = bo({ seq: 2, maker: W(3), option: 0, isBuy: false, price: 60, size: 10n * SHARE });
+    const taker = bo({ seq: 9, maker: W(1), option: 0, isBuy: true, price: 70, size: 20n * SHARE });
+    expect(propose(taker, [a30, a60], two)!.makers.map((m) => m.price)).toEqual([30, 60]);
+  });
+});

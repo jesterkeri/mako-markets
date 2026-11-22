@@ -111,11 +111,17 @@ export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts)
 }
 
 /// The better of the direct and the set proposal for the taker (a lower price for a buy, a higher one for a sell);
-/// a tie goes to the direct match.
+/// a tie goes to the direct match. Price priority holds at every level: a direct proposal keeps only the levels at
+/// least as good as the set price, and what is left of the taker is proposed again in the next pass.
 export function propose(taker: BookOrder, book: BookOrder[], opts: MatchOpts): Proposal | null {
   if (taker.remaining <= 0n || taker.expiration <= BigInt(opts.nowSeconds) || opts.blocked(taker.maker)) return null;
   const d = proposeDirect(taker, book, opts);
   const s = proposeSet(taker, book, opts);
-  if (d && s) return (taker.isBuy ? s.takerPrice < d.takerPrice : s.takerPrice > d.takerPrice) ? s : d;
-  return d ?? s;
+  if (!d || !s) return d ?? s;
+  const worse = (price: number) => (taker.isBuy ? price > s.takerPrice : price < s.takerPrice);
+  if (worse(d.makers[0].price)) return s;
+  const k = d.makers.findIndex((m) => worse(m.price));
+  if (k < 0) return d;
+  const fills = d.fills.slice(0, k);
+  return { ...d, makers: d.makers.slice(0, k), fills, takerFill: fills.reduce((a, b) => a + b, 0n) };
 }

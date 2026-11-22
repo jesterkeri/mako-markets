@@ -55,14 +55,14 @@ describe('in-flight orders (plan 6.2: one match at a time)', () => {
     expect((await h.place(again)).json).toMatchObject({ code: 'insufficient_shares' });
   });
 
-  it('a proposal the settler refuses, or a settler that fails, leaves nothing marked', async () => {
+  it('a proposal the settler refuses leaves nothing marked; a settler that does not answer leaves the marks (it may have taken it)', async () => {
     await put(['directMakerSell', 'directTakerBuy']);
     expect(await flags()).toEqual([0, 0]);
     h.deps.settle = async () => {
       throw new Error('settler down');
     };
     await h.tick().catch(() => undefined);
-    expect(await flags()).toEqual([0, 0]);
+    expect(await flags()).toEqual([1, 1]);
   });
 
   it('the mark is made before the hand-off, so the settler\'s report cannot arrive ahead of it', async () => {
@@ -205,5 +205,57 @@ describe('the settler\'s report to a market', () => {
       expect((await outcome(b)).status, JSON.stringify(b)).toBe(400);
     }
     void ('' as Hex);
+  });
+});
+
+describe('a hand-off whose answer is lost (Codex R1 F2)', () => {
+  it('keeps the marks; no second proposal of those orders while the settler holds them or owes their outcome; a partial fill then applies once', async () => {
+    const sell = vec('directMakerSell');
+    const buy = vec('directTakerBuy');
+    // the settler takes the proposal, but its answer never arrives
+    h.deps.settle = async (b) => {
+      h.settled.push(b);
+      throw new Error('answer lost in transit');
+    };
+    await put(['directMakerSell', 'directTakerBuy']);
+    expect(h.settled).toHaveLength(1);
+    expect(await flags()).toEqual([1, 1]);
+    expect((await h.alerts()).map((a) => a.code)).toContain('handoff_unconfirmed');
+    // within 2 minutes: nothing is proposed again
+    await h.tick();
+    expect(h.settled).toHaveLength(1);
+    // after 2 minutes the settler still owes the outcome (its report to this market failed): still held, still marked
+    h.w.nowMs += 10 * 60 * 1000;
+    h.held = [sell.hash, buy.hash];
+    await h.tick();
+    expect(await flags()).toEqual([1, 1]);
+    expect(h.settled).toHaveLength(1);
+    // the outcome finally arrives: 40 of 100 shares settled; the remainders are released and proposed with 60 left
+    h.held = [];
+    h.deps.settle = async (b) => {
+      h.settled.push(b);
+      return { accepted: true };
+    };
+    expect((await outcome({ applied: [{ hash: sell.hash, fill: '40000000' }, { hash: buy.hash, fill: '40000000' }], release: [sell.hash, buy.hash] })).status).toBe(200);
+    await h.tick();
+    expect(h.settled).toHaveLength(2);
+    expect((h.settled[1] as { takerFill: string }).takerFill).toBe('60000000');
+  });
+
+  it('an explicit refusal releases the marks at once', async () => {
+    h.settleAccepts = false;
+    await put(['directMakerSell', 'directTakerBuy']);
+    expect(await flags()).toEqual([0, 0]);
+  });
+});
+
+describe('reading the settler\'s answer to a hand-off', () => {
+  it('a JSON boolean `accepted` is an answer; anything else throws (not a refusal)', async () => {
+    const { handoffAnswer } = await import('../src/market');
+    expect(handoffAnswer('{"ok":true,"accepted":true}')).toEqual({ accepted: true });
+    expect(handoffAnswer('{"ok":false,"accepted":false,"error":"busy"}')).toEqual({ accepted: false });
+    for (const t of ['', '<html>Internal Server Error</html>', '{"ok":true}', '{"accepted":"false"}', 'null', '{"accepted":1}', '{"accepted":tr']) {
+      expect(() => handoffAnswer(t), JSON.stringify(t)).toThrow();
+    }
   });
 });

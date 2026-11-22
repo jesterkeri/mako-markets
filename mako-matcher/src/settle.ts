@@ -180,6 +180,8 @@ export class Settler {
       return { accepted: false, reason: gate.reason };
     }
     if (this.hasWorkInFlight()) return { accepted: false, reason: 'busy' };
+    // An outcome this market has not taken yet: its book may not show those fills, so nothing new from it is settled.
+    if (this.d.sql.exec(`SELECT 1 FROM outbox WHERE market_id = ?`, p.marketId).toArray().length > 0) return { accepted: false, reason: 'outcome_undelivered' };
     this.d.sql.exec(`INSERT INTO pending (id, market_id, body, at) VALUES (1, ?, ?, ?)`, p.marketId, JSON.stringify(p), this.d.now());
     return { accepted: true };
   }

@@ -20,7 +20,8 @@ export interface MarketDeps {
   log(line: string): void;
   /// The settler's daily refusal list. Throws when it cannot be read (the caller fails closed).
   refusedToday(maker: Hex): Promise<boolean>;
-  /// Hands a proposal to the settler. `accepted` is false when the settler refuses (the Phase A stub always does).
+  /// Hands a proposal to the settler. `accepted: false` only for the settler's explicit refusal; throws when the
+  /// answer is lost or unreadable (the proposal may have been taken).
   settle(body: unknown): Promise<{ accepted: boolean }>;
   /// Every order hash the settler still holds a proposal or an undelivered outcome for. Throws when unreadable.
   held(): Promise<Set<string>>;
@@ -46,9 +47,7 @@ export function realDeps(env: Env): MarketDeps {
     },
     async settle(body) {
       const res = await settler().fetch(new Request('https://settler/settle', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
-      if (!res.ok) return { accepted: false };
-      const b = (await res.json().catch(() => null)) as { accepted?: unknown } | null;
-      return { accepted: b?.accepted === true };
+      return handoffAnswer(await res.text());
     },
     async held() {
       const res = await settler().fetch(new Request('https://settler/held'));
@@ -58,6 +57,20 @@ export function realDeps(env: Env): MarketDeps {
       return new Set(b.hashes as string[]);
     },
   };
+}
+
+/// The settler's answer to a hand-off. Its handler answers every outcome, refusals included, as JSON with a boolean
+/// `accepted`; anything else (a runtime error page, a cut body) is not an answer, whatever the status.
+export function handoffAnswer(text: string): { accepted: boolean } {
+  let b: unknown;
+  try {
+    b = JSON.parse(text);
+  } catch {
+    throw new Error('hand-off answer unreadable');
+  }
+  const a = (b as { accepted?: unknown } | null)?.accepted;
+  if (typeof a !== 'boolean') throw new Error('hand-off answer unreadable');
+  return { accepted: a };
 }
 
 export class MatcherMarket extends DurableObject<Env> {
@@ -268,12 +281,16 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
         return !now || now.inFlight || now.filled !== snap.get(h);
       })) return { handedOff: 0 };
       markInFlight(sql, hashes, deps.now());
-      let accepted = false;
+      // Only the settler's explicit refusal releases the marks. A lost or unreadable answer may hide an acceptance
+      // (the settler stores the proposal before it answers), so the marks stay until the settler reports, or until
+      // the stale-mark check finds the settler does not hold them.
+      let refused = false;
       try {
-        accepted = (await deps.settle(serialize(p))).accepted;
-      } finally {
-        if (!accepted) releaseInFlight(sql, hashes);
+        refused = !(await deps.settle(serialize(p))).accepted;
+      } catch {
+        alert('handoff_unconfirmed', 'the settler did not answer the hand-off; its orders stay marked until it is known');
       }
+      if (refused) releaseInFlight(sql, hashes);
       return { handedOff: 1 };
     }
   }
