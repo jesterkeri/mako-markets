@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BaseError, ContractFunctionRevertedError, maxUint256 } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 
@@ -188,6 +188,15 @@ export function usePoolTx(onLanded?: () => void) {
   /// (adversary on 36dfef4: a switch during the creator-fee pre-check read still sent the claim, under the new session).
   const accountNow = useRef(account);
   accountNow.current = account;
+  /// False once this sheet's component has unmounted (Me remounts per account): a send part way through its awaits
+  /// stops instead of going out for an account no longer on the page.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   if (tx && owner !== account && phase.step !== 'pending') {
     setTx(null);
     setPhase({ step: 'review' });
@@ -295,7 +304,7 @@ export function usePoolTx(onLanded?: () => void) {
       } else {
         body = buildClaimCreatorFeeBody({ chainId: MONAD_TESTNET_ID, makoAddress: MAKO_ADDRESS, marketId: t.marketId });
       }
-      if (accountNow.current !== accountAddress(u)) return switchedAccount(w);
+      if (!mounted.current || accountNow.current !== accountAddress(u)) return switchedAccount(w);
       const outcome = await runSponsoredRequest(body, u.magicEoa as `0x${string}`, onStage);
       if (t.kind === 'create' && outcome.kind === 'sent') setCreatedId(await createdIdFrom(outcome.txHash, u.safeAddress));
       // A creator-fee claim is held from the moment it is sent (src/lib/creator-claim-pending.ts): no Claim button and
@@ -339,7 +348,7 @@ export function usePoolTx(onLanded?: () => void) {
       async function write(request: Parameters<typeof writeContractAsync>[0]): Promise<`0x${string}`> {
         // Another account signed in on the tab since Confirm (adversary on a3ac5a7): the wallet may still be connected,
         // but this sheet is no longer that account's to send.
-        if (accountNow.current !== accountAddress(u)) throw new WalletSwitched();
+        if (!mounted.current || accountNow.current !== accountAddress(u)) throw new WalletSwitched();
         if (!connectedNow.current || isWalletDrifted(u, connectedNow.current)) throw new WalletSwitched();
         return writeContractAsync({ ...request, account: account! } as Parameters<typeof writeContractAsync>[0]);
       }
