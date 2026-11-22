@@ -67,8 +67,8 @@ describe('adv7: fuzz, direct fills against up to 14 makers', () => {
 });
 
 describe('adv7: direct, legal fill only beyond the 10-candidate window (makers under 10 shares; cannot rest via intake today)', () => {
-  // Skipped: makers under 10 shares cannot rest via intake, so this book is unreachable.
-  it.skip('taker 15, ten 6-share asks then a 9-share ask: 6 + 9 fills the taker whole', () => {
+  // Unreachable through intake (no order rests under 10 shares), kept since the exact search covers it (Codex R2).
+  it('taker 15, ten 6-share asks then a 9-share ask: 6 + 9 fills the taker whole', () => {
     const book = Array.from({ length: 10 }, (_, i) => mk(i + 1, i + 2, false, 50, 6));
     const nine = mk(11, 20, false, 50, 9);
     const taker = mk(100, 1, true, 60, 15);

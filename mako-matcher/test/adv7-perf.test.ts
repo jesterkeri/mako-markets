@@ -20,7 +20,7 @@ function mk(seq: number, maker: number, isBuy: boolean, price: number, shares: n
 
 describe('adv7: worst-case CPU of one propose() call', () => {
   it('a 10-share buy against ten 7-share asks (no legal fill, 3^10 search) answers in well under 50 ms', () => {
-    // Asks of 7 shares fill whole only; 7k never equals 10, so greedy fails and searchFill walks all 3^10 cases (asks under 10 shares cannot rest via intake today, so this is a bound, not a live case).
+    // Asks of 7 shares fill whole only; 7k never equals 10, so greedy fails and the exact search runs (asks under 10 shares cannot rest via intake today, so this is a bound, not a live case).
     const book = Array.from({ length: 10 }, (_, i) => mk(i + 1, i + 2, false, 50, 7));
     const taker = mk(100, 1, true, 60, 10);
     const all = [...book, taker];

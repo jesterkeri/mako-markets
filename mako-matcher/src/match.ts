@@ -83,74 +83,83 @@ export function proposeDirect(taker: BookOrder, book: BookOrder[], opts: MatchOp
   const takerFill = whole.fills.reduce((a, b) => a + b, 0n);
   const left = taker.remaining - takerFill;
   let r = left === 0n || left >= MIN_RESTING_SIZE ? whole : fillLevels(cands, taker.remaining - MIN_RESTING_SIZE);
-  // Greedy found nothing legal (an earlier maker used the budget so someone is left with 1 to 9 shares): search.
-  if (r.makers.length === 0) r = searchFill(cands.slice(0, SEARCH_WINDOW), taker.remaining) ?? r;
+  // Greedy found nothing legal (an earlier maker used the budget so someone is left with 1 to 9 shares): search the
+  // whole book exactly.
+  if (r.makers.length === 0) r = exactFill(cands, taker.remaining) ?? r;
   if (r.makers.length === 0) return null;
   // Direct: the fills sum to takerFill, each maker filling its own part (plan 3.2).
   return { kind: 'direct', marketId: taker.marketId, taker, makers: r.makers, fills: r.fills, takerFill: r.fills.reduce((a, b) => a + b, 0n), takerPrice: r.makers[0].price };
 }
 
-const SEARCH_WINDOW = MAX_MAKERS;
-
-/// Fallback when greedy has no legal fill. Over the first 10 candidates (MAX_MAKERS, price-time order) tries each maker as
-/// skipped, partial (1 lot to remaining - 10 shares) or full (all it has): at most 3^10 = 59049 cases, each O(10).
-/// Picks the largest taker fill that leaves the taker 0 or >= 10 shares, then the lexicographically largest fills in
-/// price-time order (earlier makers keep priority).
-function searchFill(cands: BookOrder[], takerRem: bigint): { makers: BookOrder[]; fills: bigint[] } | null {
+/// Fallback when both greedy passes have no legal fill. Then every legal direct match fills the WHOLE taker, and the
+/// taker is under 20 shares: the second pass (budget = taker - 10 shares) takes the first candidate that can give
+/// anything, so it finds nothing only when no candidate can fill 10 shares short of the taker or less (the taker is at
+/// most 10 shares, or every candidate fills whole only and has more than taker - 10 shares, while a whole-only order
+/// has at most 10). Exact over all candidates (Codex MATCHER R2: a 10-candidate window starved legal fills): each
+/// maker fills nothing, whole, or 1 lot to remaining - 10 shares; at most MAX_MAKERS makers; fills sum to the taker.
+/// Picks the lexicographically largest fills in price-time order (earlier makers keep priority). Work: O(n x 11)
+/// operations on bit sets of at most 2,000 bits (the taker in lots), and memory for (n + 1) x 11 of them.
+function exactFill(cands: BookOrder[], takerRem: bigint): { makers: BookOrder[]; fills: bigint[] } | null {
+  // Unreachable with candidates present (see above); guards the bit-set width.
+  if (cands.length === 0 || takerRem >= 2n * MIN_RESTING_SIZE) return null;
+  const T = Number(takerRem / LOT);
+  const mask = (1n << BigInt(T + 1)) - 1n;
+  const full = cands.map((m) => (m.remaining <= takerRem ? Number(m.remaining / LOT) : 0)); // 0: cannot fill whole
+  const room = cands.map((m) => (m.remaining - MIN_RESTING_SIZE >= LOT ? Number((m.remaining - MIN_RESTING_SIZE) / LOT) : 0)); // partial up to
+  // feas[j][k]: the sums (bit s = s lots) candidates j.. can make with at most k makers.
   const n = cands.length;
-  const room = cands.map((m) => m.remaining - MIN_RESTING_SIZE); // top of the partial range; <= 0 means full only
-  let best: bigint[] | null = null;
-  let bestSum = 0n;
-  const st = new Array<number>(n).fill(0); // 0 skip, 1 partial, 2 full
-  const tryCase = () => {
-    let full = 0n;
-    let cap = 0n;
-    let np = 0n;
-    let count = 0;
-    for (let i = 0; i < n; i++) {
-      if (st[i] === 0) continue;
-      count++;
-      if (st[i] === 2) full += cands[i].remaining;
-      else {
-        if (room[i] <= 0n) return;
-        cap += room[i];
-        np += LOT;
+  const feas: bigint[][] = new Array(n + 1);
+  feas[n] = new Array<bigint>(MAX_MAKERS + 1).fill(1n);
+  for (let j = n - 1; j >= 0; j--) {
+    const next = feas[j + 1];
+    const row = new Array<bigint>(MAX_MAKERS + 1);
+    row[0] = 1n;
+    for (let k = 1; k <= MAX_MAKERS; k++) {
+      let v = next[k];
+      if (full[j] > 0) v |= next[k - 1] << BigInt(full[j]);
+      if (room[j] > 0) v |= smear(next[k - 1] << 1n, Math.min(room[j], T) - 1);
+      row[k] = v & mask;
+    }
+    feas[j] = row;
+  }
+  const has = (bits: bigint, i: number) => i >= 0 && ((bits >> BigInt(i)) & 1n) === 1n;
+  if (!has(feas[0][MAX_MAKERS], T)) return null;
+  const makers: BookOrder[] = [];
+  const fills: bigint[] = [];
+  let need = T;
+  let k = MAX_MAKERS;
+  for (let j = 0; j < n && need > 0; j++) {
+    const rest = feas[j + 1][k - 1];
+    let f = 0;
+    if (full[j] > 0 && full[j] <= need && has(rest, need - full[j])) f = full[j];
+    else if (room[j] > 0) {
+      // the largest partial fill whose remainder the later candidates can make
+      for (let x = Math.min(room[j], need); x >= 1; x--) {
+        if (has(rest, need - x)) {
+          f = x;
+          break;
+        }
       }
     }
-    if (count === 0 || count > MAX_MAKERS) return;
-    // total fill S in [full + np, full + cap], with S = takerRem or takerRem - S >= 10 shares
-    let s = minBig(takerRem, full + cap);
-    if (s < takerRem && takerRem - s < MIN_RESTING_SIZE) s = takerRem - MIN_RESTING_SIZE;
-    if (s < full + np || s <= 0n || s < bestSum) return;
-    let extra = s - full - np;
-    const fills = cands.map((_, i) => {
-      if (st[i] === 0) return 0n;
-      if (st[i] === 2) return cands[i].remaining;
-      const add = minBig(extra, room[i] - LOT);
-      extra -= add;
-      return LOT + add;
-    });
-    if (best === null || s > bestSum || lexGreater(fills, best)) {
-      best = fills;
-      bestSum = s;
-    }
-  };
-  const walk = (i: number) => {
-    if (i === n) return tryCase();
-    for (let v = 0; v < 3; v++) {
-      st[i] = v;
-      walk(i + 1);
-    }
-  };
-  walk(0);
-  if (best === null) return null;
-  const idx = (best as bigint[]).map((f, i) => (f > 0n ? i : -1)).filter((i) => i >= 0);
-  return { makers: idx.map((i) => cands[i]), fills: idx.map((i) => (best as bigint[])[i]) };
+    if (f === 0) continue; // skipping keeps it feasible: feas[j][k] had `need` and this maker adds nothing
+    makers.push(cands[j]);
+    fills.push(BigInt(f) * LOT);
+    need -= f;
+    k--;
+  }
+  return { makers, fills };
 }
 
-function lexGreater(a: bigint[], b: bigint[]): boolean {
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i];
-  return false;
+/// Every shift of `bits` by 0 to `len` places, OR-ed together.
+function smear(bits: bigint, len: number): bigint {
+  let acc = bits;
+  let covered = 1; // acc holds the shifts 0 .. covered - 1
+  while (covered * 2 <= len + 1) {
+    acc |= acc << BigInt(covered);
+    covered *= 2;
+  }
+  if (covered < len + 1) acc |= acc << BigInt(len + 1 - covered);
+  return acc;
 }
 
 /// Greedy price-time fill of up to `budget`. A maker that cannot take a fill leaving it 0 or at least 10 shares is
@@ -170,42 +179,110 @@ function fillLevels(cands: BookOrder[], budget: bigint): { makers: BookOrder[]; 
   return { makers, fills };
 }
 
-/// Mint (taker buys) or merge (taker sells): one maker on each other option, all on the taker's side of the
-/// ledger (buys for a mint, sells for a merge). A fixed budget of SET_BUDGET combinations is spread over the options:
-/// the first w = floor(SET_BUDGET^(1/need)) makers per option (price-time order; at least 1). Every combination in
-/// the window is legality-checked and the best taker price wins (lower for a mint, higher for a merge), a tie going to
-/// the earliest in price-time order. Work: at most SET_BUDGET combinations, each O(need).
-const SET_BUDGET = 1024;
+/// Mint (taker buys) or merge (taker sells): one maker on each other option, all on the taker's side of the ledger
+/// (buys for a mint, sells for a merge), every party filling the same amount q. Exact over the whole book (Codex
+/// MATCHER R2 F1: a fixed window of makers per option starved legal sets and let a worse direct price win):
+///   - the largest q a set of orders can all fill (leaving each 0 or at least 10 shares) is one party's remaining or
+///     remaining - 10 shares, so q is tried only at those values, largest first;
+///   - at a given q an order is usable when q leaves it 0 or at least 10 shares, and the options are independent: the
+///     best taker price is the best sum of one usable price per option (prices are whole cents): for a merge the
+///     lowest; for a mint the highest within SetPriceSum's 100 cap, by a subset-sum over 0..100 when the best prices
+///     overshoot;
+///   - the best taker price wins (lower for a mint, higher for a merge), then the larger fill; on each option the
+///     earliest order at the chosen price that q leaves legal.
+/// Work: O(n) to index the book, then for each of at most 2n + 2 values of q, O(options x 99), plus the subset-sum
+/// (options x 99 shifts of a 101-bit set) only when the best mint prices sum above 100.
 export function proposeSet(taker: BookOrder, book: BookOrder[], opts: MatchOpts): Proposal | null {
   const need = opts.nOptions - 1;
   if (need < 1 || need > MAX_MAKERS) return null;
-  let w = 1;
-  while ((w + 1) ** need <= SET_BUDGET) w++;
-  const perOpt: BookOrder[][] = [];
+  const mint = taker.isBuy;
+  // Per other option, its price levels: orders in time order, the largest remaining, and every remaining.
+  type Level = { price: number; orders: BookOrder[]; maxRem: bigint; rems: Set<bigint> };
+  const levels: Level[][] = [];
+  const qs = new Set<bigint>([taker.remaining, taker.remaining - MIN_RESTING_SIZE]);
   for (let opt = 0; opt < opts.nOptions; opt++) {
     if (opt === taker.option) continue;
-    const c = book
-      .filter((o) => usable(o, taker, opts) && o.option === opt && o.isBuy === taker.isBuy)
-      .sort(byPriceTime(taker.isBuy))
-      .slice(0, w);
-    if (c.length === 0) return null;
-    perOpt.push(c);
+    const byPrice = new Map<number, Level>();
+    for (const o of book) {
+      if (!usable(o, taker, opts) || o.option !== opt || o.isBuy !== taker.isBuy) continue;
+      let l = byPrice.get(o.price);
+      if (!l) byPrice.set(o.price, (l = { price: o.price, orders: [], maxRem: 0n, rems: new Set() }));
+      l.orders.push(o);
+      if (o.remaining > l.maxRem) l.maxRem = o.remaining;
+      l.rems.add(o.remaining);
+      qs.add(o.remaining);
+      qs.add(o.remaining - MIN_RESTING_SIZE);
+    }
+    if (byPrice.size === 0) return null;
+    const ls = [...byPrice.values()].sort((a, b) => a.price - b.price);
+    for (const l of ls) l.orders.sort((a, b) => a.seq - b.seq);
+    levels.push(ls);
   }
-  let best: Proposal | null = null;
-  const pick: BookOrder[] = [];
-  const walk = (i: number) => {
-    if (i === perOpt.length) {
-      const r = setProposal(taker, pick);
-      if (r && (best === null || (taker.isBuy ? r.takerPrice < best.takerPrice : r.takerPrice > best.takerPrice))) best = r;
-      return;
-    }
-    for (const m of perOpt[i]) {
-      pick[i] = m;
-      walk(i + 1);
-    }
-  };
-  walk(0);
-  return best;
+  const T = taker.remaining;
+  const qList = [...qs].filter((q) => q >= LOT && q <= T && (q === T || q <= T - MIN_RESTING_SIZE)).sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  const legalAt = (l: Level, q: bigint) => l.maxRem - MIN_RESTING_SIZE >= q || l.rems.has(q);
+  // The best sum any q could reach, to stop early.
+  const cap = mint ? Math.min(100, levels.reduce((s, ls) => s + ls[ls.length - 1].price, 0)) : levels.reduce((s, ls) => s + ls[0].price, 0);
+  // Mint: the taker pays 100 - sum, at most its limit. Merge: it receives 100 - sum, at least its limit.
+  const lo = mint ? 100 - taker.price : need;
+  const hi = mint ? 100 : 100 - taker.price;
+  let best: { sum: number; q: bigint; prices: number[] } | null = null;
+  for (const q of qList) {
+    const avail = levels.map((ls) => ls.filter((l) => legalAt(l, q)).map((l) => l.price)); // ascending
+    if (avail.some((a) => a.length === 0)) continue;
+    const prices = mint ? bestMintPrices(avail) : avail.map((a) => a[0]);
+    if (!prices) continue;
+    const sum = prices.reduce((a, b) => a + b, 0);
+    if (sum < lo || sum > hi) continue;
+    if (best === null || (mint ? sum > best.sum : sum < best.sum)) best = { sum, q, prices };
+    if (sum === cap) break;
+  }
+  if (best === null) return null;
+  const { q, prices } = best;
+  const makers = levels.map((ls, i) => {
+    const l = ls.find((x) => x.price === prices[i]) as Level;
+    return l.orders.find((o) => o.remaining === q || o.remaining - MIN_RESTING_SIZE >= q) as BookOrder;
+  });
+  return setProposal(taker, makers);
+}
+
+/// One price per option (each list ascending) with the highest sum at most 100; null when every choice is above 100.
+/// The highest prices when they fit; otherwise a subset-sum over sums 0..100 (bit s of a 4 x 32-bit set), then the
+/// highest usable price on each option, last option first, that keeps the sum reachable.
+function bestMintPrices(avail: number[][]): number[] | null {
+  const top = avail.map((a) => a[a.length - 1]);
+  if (top.reduce((a, b) => a + b, 0) <= 100) return top;
+  const reach: Uint32Array[] = [Uint32Array.of(1, 0, 0, 0)];
+  for (const a of avail) {
+    const prev = reach[reach.length - 1];
+    const next = new Uint32Array(4);
+    for (const p of a) shiftOr(next, prev, p);
+    reach.push(next);
+  }
+  const bit = (b: Uint32Array, s: number) => s >= 0 && s <= 100 && ((b[s >>> 5] >>> (s & 31)) & 1) === 1;
+  let s = 100;
+  while (s >= 0 && !bit(reach[avail.length], s)) s--;
+  if (s < 0) return null;
+  const out = new Array<number>(avail.length);
+  for (let i = avail.length - 1; i >= 0; i--) {
+    const a = avail[i];
+    let k = a.length - 1;
+    while (!bit(reach[i], s - a[k])) k--;
+    out[i] = a[k];
+    s -= a[k];
+  }
+  return out;
+}
+
+/// dst |= src << p, on 128-bit sets held as four 32-bit words (bits past 127 drop; only sums up to 100 are read).
+function shiftOr(dst: Uint32Array, src: Uint32Array, p: number): void {
+  const w = p >>> 5;
+  const b = p & 31;
+  for (let i = 3; i >= w; i--) {
+    let v = src[i - w] << b;
+    if (b !== 0 && i - w - 1 >= 0) v |= src[i - w - 1] >>> (32 - b);
+    dst[i] |= v >>> 0;
+  }
 }
 
 function setProposal(taker: BookOrder, makers: BookOrder[]): Proposal | null {
