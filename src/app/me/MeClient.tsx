@@ -99,42 +99,49 @@ function MeSignedIn({ user }: { user: AuthedUser }) {
   /// Claims that landed from this page, kept as they were when confirmed, so each row reads "Claimed" rather than
   /// vanishing when the refetch drops it from the claimable list.
   const [landed, setLanded] = useState<ReadonlyMap<string, MePosition>>(() => new Map());
+  /// Rounds claimed from Me (2026-10-13), kept the same way.
+  const [landedRounds, setLandedRounds] = useState<ReadonlyMap<string, MeRound>>(() => new Map());
   const [sheetSpec, setSheetSpec] = useState<ConfirmSpec | null>(null);
-  const claiming = useRef<MePosition | null>(null);
+  const claiming = useRef<{ p: MePosition; account: string } | null>(null);
+  /// The signed-in account as of the latest render: a claim that lands after another account signed in on this tab
+  /// is never shown to that account (Codex ME_ROUNDS_DEGRADE R2 F1).
+  const accountNow = useRef(account);
+  accountNow.current = account;
   /// The pool whose claim is in the sheet, when it has a win card to share once the claim lands (Joshua 2026-10-24).
   const [winCard, setWinCard] = useState<{ p: MePosition; open: boolean } | null>(null);
   // Another account signing in on this tab forgets it, so that account never gets this one's card (adversary on
-  // ba2ddc0). Reset during render, as the pool page does.
+  // ba2ddc0), nor this one's landed claims (Codex ME_ROUNDS_DEGRADE R2 F1). Reset during render, as the pool page does.
   const [cardAccount, setCardAccount] = useState(account);
   if (cardAccount !== account) {
     setCardAccount(account);
     setWinCard(null);
+    setLanded(new Map());
+    setLandedRounds(new Map());
   }
   const tx = usePoolTx(() => {
-    const p = claiming.current;
-    if (p) setLanded((prev) => new Map(prev).set(p.market.id.toString(), p));
+    const c = claiming.current;
+    if (c && c.account === accountNow.current) setLanded((prev) => new Map(prev).set(c.p.market.id.toString(), c.p));
     data.refetch();
   });
   // Rounds claim from Me too (2026-10-13), through the round's own sponsored transaction, one sheet at a time.
-  const [landedRounds, setLandedRounds] = useState<ReadonlyMap<string, MeRound>>(() => new Map());
   const [roundSheetSpec, setRoundSheetSpec] = useState<ConfirmSpec | null>(null);
-  const claimingRound = useRef<MeRound | null>(null);
+  const claimingRound = useRef<{ r: MeRound; account: string } | null>(null);
   const roundTx = useRoundTx(() => {
-    const r = claimingRound.current;
-    if (r) setLandedRounds((prev) => new Map(prev).set(r.round.id.toString(), r));
+    const c = claimingRound.current;
+    if (c && c.account === accountNow.current) setLandedRounds((prev) => new Map(prev).set(c.r.round.id.toString(), c.r));
     data.refetch();
   });
   const openClaim = (c: ClaimItem) => {
     if (tx.tx || roundTx.tx) return;
     if (c.kind === 'pool') {
       if (c.p.claim === null) return;
-      claiming.current = c.p;
+      claiming.current = { p: c.p, account };
       setSheetSpec(claimSpec(c.p));
       setWinCard(cardStateOf(c.p) === 'result' ? { p: c.p, open: false } : null);
       tx.open({ kind: 'claim', marketId: c.p.market.id });
     } else {
       if (c.r.claim === null) return;
-      claimingRound.current = c.r;
+      claimingRound.current = { r: c.r, account };
       setRoundSheetSpec(roundClaimSpec(c.r));
       roundTx.open({ kind: 'claim', roundId: c.r.round.id });
     }
