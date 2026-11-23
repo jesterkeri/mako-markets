@@ -24,11 +24,13 @@ beforeEach(async () => {
 
 /// The list is read, and before the read returns, the settler refuses `who` (the snapshot the market gets does not
 /// name it).
+/// `nth`: which read is the matching pass's (an alarm tick reads once itself, then the pass reads; intake's pass is the
+/// first read).
 function refuseAfterSnapshot(who: Hex, nth = 1) {
-  const inner = h.deps.refusedList;
+  const inner = h.deps.refusalsSince;
   let reads = 0;
-  h.deps.refusedList = async () => {
-    const snap = await inner();
+  h.deps.refusalsSince = async (d) => {
+    const snap = await inner(d);
     if (++reads === nth) h.refused.add(who.toLowerCase());
     return snap;
   };
@@ -48,7 +50,7 @@ describe('Codex MATCHER R5 F1: an account refused after the market read the list
         insertOrder(state.storage.sql, t, `0x${n.toString(16).padStart(64, '0')}` as Hex, '0x11', 0n, 0n, NOW_MS);
       }
     });
-    refuseAfterSnapshot(W(1)); // the best ask's account, refused right after the pass read the list
+    refuseAfterSnapshot(W(1), 2); // the best ask's account, refused right after the pass read the list
     await h.tick();
     expect(h.settled, 'nothing accepted').toHaveLength(0);
     expect(h.refusedHandoffs).toHaveLength(1);

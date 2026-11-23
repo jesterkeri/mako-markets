@@ -107,18 +107,6 @@ describe('the settler dependencies when the settler misbehaves', () => {
     await expect(withStub(async () => new Response('{"refused":true}', { status: 200 })).refusedToday(addr)).resolves.toBe(true);
   });
 
-  it('an unreadable whole refusal list throws, so a matching pass fails closed (Codex MATCHER R4 F1)', async () => {
-    const list = (body: string, status = 200) => withStub(async () => new Response(body, { status })).refusedList();
-    await expect(list('x', 503)).rejects.toThrow();
-    await expect(list('not json')).rejects.toThrow();
-    await expect(list('{"makers":"0xab"}')).rejects.toThrow();
-    await expect(list('{"makers":[1]}')).rejects.toThrow();
-    await expect(list('{"makers":["0x12"]}')).rejects.toThrow();
-    await expect(list('{}')).rejects.toThrow();
-    expect([...(await list(`{"makers":["${addr.toUpperCase().replace('0X', '0x')}"]}`))]).toEqual([addr]);
-    expect((await list('{"makers":[]}')).size).toBe(0);
-  });
-
   it('a settle answer is the boolean `accepted` the settler wrote; anything else is no answer (throws), never a refusal', async () => {
     expect(await withStub(async () => new Response('{"accepted":true}', { status: 200 })).settle({})).toEqual({ accepted: true });
     expect(await withStub(async () => new Response('{"ok":false,"accepted":false,"error":"busy"}', { status: 503 })).settle({})).toEqual({ accepted: false });

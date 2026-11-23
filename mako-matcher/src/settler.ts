@@ -20,14 +20,9 @@ export function isRefused(sql: SqlStorage, maker: string, nowMs: number): boolea
   return sql.exec(`SELECT 1 FROM refused_accounts WHERE maker = ? AND utc_day = ?`, maker.toLowerCase(), utcDay(nowMs)).toArray().length > 0;
 }
 
-/// Every account refused for the UTC day of `nowMs`, lowercase (Codex MATCHER R4 F1: a matching pass reads the whole
-/// list once instead of one read per wallet). It grows only when a settlement fails.
-export function refusedList(sql: SqlStorage, nowMs: number): string[] {
-  return sql.exec<{ maker: string }>(`SELECT maker FROM refused_accounts WHERE utc_day = ?`, utcDay(nowMs)).toArray().map((r) => r.maker.toLowerCase());
-}
-
-/// Every refusal row from `since` (a UTC day, YYYY-MM-DD) through today, lowercase: a market that missed reads (its
-/// settler unreadable across a day turn) still learns who was refused on the days it missed (adversary R14).
+/// Every refusal row from `since` (a UTC day, YYYY-MM-DD) through today, lowercase: a matching pass reads them all at
+/// once (Codex MATCHER R4 F1), and a market that missed reads (its settler unreadable across a day turn) still learns
+/// who was refused on the days it missed (adversary R14). It grows only when a settlement fails.
 export function refusalsSince(sql: SqlStorage, since: string, nowMs: number): { maker: string; day: string }[] {
   return sql
     .exec<{ maker: string; utc_day: string }>(`SELECT maker, utc_day FROM refused_accounts WHERE utc_day >= ? AND utc_day <= ?`, since, utcDay(nowMs))
@@ -146,8 +141,7 @@ export class MatcherSettler extends DurableObject<Env> {
     if (req.method === 'GET' && m) return json(200, { refused: isRefused(this.ctx.storage.sql, m[1], Date.now()) });
     if (req.method === 'GET' && url.pathname === '/refused') {
       const since = url.searchParams.get('since');
-      if (since === null) return json(200, { makers: refusedList(this.ctx.storage.sql, Date.now()) });
-      if (!DAY.test(since)) return json(400, { ok: false, error: 'bad_request' });
+      if (since === null || !DAY.test(since)) return json(400, { ok: false, error: 'bad_request' });
       return json(200, { refusals: refusalsSince(this.ctx.storage.sql, since, Date.now()) });
     }
     if (req.method === 'GET' && url.pathname === '/held') return json(200, { hashes: heldHashes(this.ctx.storage.sql) });

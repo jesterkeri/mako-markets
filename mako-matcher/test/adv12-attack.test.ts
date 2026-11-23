@@ -101,10 +101,10 @@ describe('adversary R12: whole-book party check', () => {
       n++;
       return innerFetch(i, x);
     }) as typeof fetch;
-    const innerList = h.deps.refusedList;
-    h.deps.refusedList = async () => {
+    const innerList = h.deps.refusalsSince;
+    h.deps.refusalsSince = async (d) => {
       n++;
-      return innerList();
+      return innerList(d);
     };
     const innerHeld = h.deps.held;
     h.deps.held = async () => {

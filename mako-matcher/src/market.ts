@@ -21,8 +21,6 @@ export interface MarketDeps {
   log(line: string): void;
   /// The settler's daily refusal list. Throws when it cannot be read (the caller fails closed).
   refusedToday(maker: Hex): Promise<boolean>;
-  /// The settler's whole refusal list for the day, lowercase. Throws when it cannot be read (the caller fails closed).
-  refusedList(): Promise<Set<Hex>>;
   /// The settler's refusal rows from UTC day `since` (YYYY-MM-DD) through today, lowercase. Throws when unreadable.
   refusalsSince(since: string): Promise<{ maker: Hex; day: string }[]>;
   /// Hands a proposal to the settler. `accepted: false` only for the settler's explicit refusal; throws when the
@@ -49,13 +47,6 @@ export function realDeps(env: Env): MarketDeps {
       const b = (await res.json()) as { refused?: unknown };
       if (typeof b.refused !== 'boolean') throw new Error('refusal list unreadable');
       return b.refused;
-    },
-    async refusedList() {
-      const res = await settler().fetch(new Request('https://settler/refused'));
-      if (!res.ok) throw new Error('refusal list unreadable');
-      const b = (await res.json().catch(() => null)) as { makers?: unknown } | null;
-      if (!Array.isArray(b?.makers) || !b.makers.every((x) => typeof x === 'string' && /^0x[0-9a-fA-F]{40}$/.test(x))) throw new Error('refusal list unreadable');
-      return new Set((b.makers as string[]).map((x) => x.toLowerCase() as Hex));
     },
     async refusalsSince(since) {
       const res = await settler().fetch(new Request(`https://settler/refused?since=${since}`));
@@ -307,7 +298,7 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
         for (let i = 0; i < makers.length; i += ROLE_CHUNK) {
           for (const a of await readRefusedRoles(chain, makers.slice(i, i + ROLE_CHUNK))) blocked.add(lc(a));
         }
-        for (const a of await deps.refusedList()) blocked.add(lc(a));
+        for (const a of await syncRefusals(sql, deps)) blocked.add(a);
       } catch (err) {
         alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
         return { handedOff: 0, resumeBelow: null, finished: false };
@@ -421,15 +412,10 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   }
   await releaseStaleMarks(sql, deps, alert);
   // Every tick, idle or not, so each market drops a refused account's orders within one tick of the refusal, whether or
-  // not it ever proposes that account (Codex MATCHER R6 F1, plan 6.2). One settler read of every refusal since the
-  // last good read (adversary R14: a day turn while unreadable loses nothing); unreadable: kept, alerted, read from
-  // the same day next tick (the matching pass reads today's list again and proposes nothing without it).
-  const today = utcDay(deps.now());
+  // not it ever proposes that account (Codex MATCHER R6 F1, plan 6.2). Unreadable: kept and alerted; the matching pass
+  // reads again and proposes nothing without it.
   try {
-    // no good read yet for this book: from the day its oldest order was booked (nothing older can name one)
-    const oldest = sql.exec<{ t: number }>(`SELECT MIN(created_at) AS t FROM orders`).one().t;
-    dropRefused(sql, await deps.refusalsSince(getMeta(sql, 'refusals_since') ?? utcDay(Math.min(oldest, deps.now()))));
-    setMeta(sql, 'refusals_since', today);
+    await syncRefusals(sql, deps);
   } catch {
     alert('refusal_list_unreadable', 'the settler refusal list could not be read; refused accounts are not dropped this tick');
   }
@@ -443,6 +429,21 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   } else {
     delMeta(sql, 'log_cursor');
   }
+}
+
+/// Plan 6.2: reads every settler refusal since this book's last good read (or, with none, since the day its oldest order
+/// was booked), drops the orders each one covers (dropRefused), and returns the accounts refused today, lowercase.
+/// Throws when the settler cannot be read; callers match nothing then. The tick and every matching pass (intake too)
+/// call it, so no order booked on a refused day is proposed after that day turns (adversary R14, R15). The next read
+/// starts a day back, so a row the settler stamps with a day the market's clock has just left is read again.
+async function syncRefusals(sql: SqlStorage, deps: MarketDeps): Promise<Set<Hex>> {
+  const now = deps.now();
+  const oldest = sql.exec<{ t: number | null }>(`SELECT MIN(created_at) AS t FROM orders`).one().t ?? now;
+  const rows = await deps.refusalsSince(getMeta(sql, 'refusals_since') ?? utcDay(Math.min(oldest, now)));
+  dropRefused(sql, rows);
+  setMeta(sql, 'refusals_since', utcDay(now - 86_400_000));
+  const today = utcDay(now);
+  return new Set(rows.filter((r) => r.day >= today).map((r) => r.maker));
 }
 
 /// A mark set for a hand-off the settler never received (this object was replaced during the hand-off) would keep

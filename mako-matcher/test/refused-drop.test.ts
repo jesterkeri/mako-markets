@@ -148,10 +148,10 @@ describe('Codex MATCHER R6 F1: a refused account loses its booked orders in ever
     h.settlerChecksRefusals = true;
     await place(h, 'directMakerSell'); // M, ask 55, older
     await place(h, 'direct3Maker2Sell'); // Y, ask 55
-    const inner = h.deps.refusedList;
+    const inner = h.deps.refusalsSince;
     let reads = 0;
-    h.deps.refusedList = async () => {
-      const snap = await inner();
+    h.deps.refusalsSince = async (d) => {
+      const snap = await inner(d);
       if (++reads === 1) h.refused.add(M); // refused just after the intake pass read the list
       return snap;
     };

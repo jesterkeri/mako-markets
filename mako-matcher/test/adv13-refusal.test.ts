@@ -67,10 +67,10 @@ describe('adv13: market side', () => {
     h.settlerChecksRefusals = true; // the fake settler applies settle.ts submit's rule
     fund(h.w, vec('direct3Maker1Sell').order, 500_000_000n);
     await h.place(vec('direct3Maker1Sell'));
-    const inner = h.deps.refusedList;
+    const inner = h.deps.refusalsSince;
     let done = false;
-    h.deps.refusedList = async () => {
-      const s = await inner();
+    h.deps.refusalsSince = async (d) => {
+      const s = await inner(d);
       if (!done) {
         done = true;
         h.refused.add(vec('directTakerBuy').order.maker.toLowerCase());
@@ -89,7 +89,7 @@ describe('adv13: market side', () => {
     fund(h.w, vec('directMakerSell').order, 500_000_000n);
     await h.place(vec('directMakerSell'));
     h.refused.add(vec('directMakerSell').order.maker.toLowerCase());
-    h.deps.refusedList = async () => new Set();
+    h.deps.refusalsSince = async () => [];
     fund(h.w, vec('directTakerBuy').order, 500_000_000n);
     await h.place(vec('directTakerBuy'));
     // adversary R13: when the fake diverted every refused hand-off, a test asserting only `settled` empty passed though the

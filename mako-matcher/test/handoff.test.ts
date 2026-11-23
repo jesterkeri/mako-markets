@@ -220,8 +220,7 @@ describe('the settler object (real class, real storage)', () => {
     });
     expect((await call(`/refused/${m}`)).body).toEqual({ refused: true });
     expect((await call('/refused/not-an-address')).status).toBe(404);
-    // the whole list for today (Codex MATCHER R4 F1): today's row only, lowercase
-    expect((await call('/refused')).body).toEqual({ makers: [m] });
+    expect((await call('/refused')).status, 'the dated read only').toBe(400);
     // every row from a day through today (adversary R14: a market that missed reads across a day turn)
     expect((await call('/refused?since=2001-01-01')).body).toEqual({ refusals: expect.arrayContaining([{ maker: m, day: utcDay(Date.now()) }, { maker: '0x' + 'cd'.repeat(20), day: '2001-01-01' }]) });
     expect(((await call(`/refused?since=${utcDay(Date.now())}`)).body as { refusals: unknown[] }).refusals).toEqual([{ maker: m, day: utcDay(Date.now()) }]);

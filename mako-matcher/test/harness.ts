@@ -120,10 +120,6 @@ export async function fresh(id = '1'): Promise<Harness> {
       if (h.settlerDown) throw new Error('down');
       return h.refused.has(m.toLowerCase());
     },
-    async refusedList() {
-      if (h.settlerDown) throw new Error('down');
-      return new Set([...h.refused].map((a) => a.toLowerCase() as Hex));
-    },
     async refusalsSince(since) {
       if (h.settlerDown) throw new Error('down');
       const today = utcDay(w.nowMs);
