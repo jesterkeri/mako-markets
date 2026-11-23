@@ -87,6 +87,12 @@ export function readConfig(env: Pick<Env, 'EXCHANGE_ADDRESS' | 'CHAIN_ID' | 'PUB
   };
 }
 
+/// A refusal for UTC day D drops the orders booked before the end of D plus this. The market stamps an order with its own
+/// clock and the settler stamps a refusal with its own day; a few seconds' difference at midnight must not let an order
+/// booked "after" the refused day by one clock and "on" it by the other survive (adversary R17). Cost: a refused
+/// account's orders booked in the first minute of the next day are dropped too.
+export const DAY_EDGE_SLACK_MS = 60_000;
+
 /// A market's in-flight mark older than this, for orders the settler holds nothing for, is released (the hand-off
 /// that set it never reached the settler). The hand-off itself is one subrequest; this is far above it.
 export const STALE_MARK_MS = 120_000;

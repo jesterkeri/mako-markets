@@ -11,9 +11,10 @@ export interface Outcome {
   applied?: { hash: Hex; fill: string }[];
   /// Orders to remove, with the reason (`nonce` also removes the maker's older-nonce orders).
   dropped?: { hash: Hex; reason: string }[];
-  /// Accounts the settlement refused for the UTC day. Parsed, not applied: every market drops refused accounts' orders
+  /// Accounts the settlement refused for the UTC day. Reported by the settler; the market neither parses nor applies it: every market drops refused accounts' orders
   /// from the settler's dated rows (syncRefusals), scoped to the refusal's day. Applying it here would also delete an
-  /// order booked after that day when the outcome is delivered late (adversary R16).
+  /// order booked after that day when the outcome is delivered late (adversary R16), and a malformed value would block
+  /// the outcome's delivery (adversary R17).
   refusedMakers?: Hex[];
   /// TradingClosed: every order of this market is removed as closed.
   closed?: boolean;
@@ -49,10 +50,6 @@ export function parseOutcome(b: unknown): Outcome | null {
       if (typeof d?.hash !== 'string' || !HEX32.test(d.hash) || typeof d.reason !== 'string') return null;
       out.dropped.push({ hash: d.hash as Hex, reason: d.reason.slice(0, 60) });
     }
-  }
-  if (o.refusedMakers !== undefined) {
-    if (!Array.isArray(o.refusedMakers) || !o.refusedMakers.every((m) => typeof m === 'string' && /^0x[0-9a-f]{40}$/.test(m))) return null;
-    out.refusedMakers = o.refusedMakers as Hex[];
   }
   if (o.closed !== undefined) out.closed = o.closed === true;
   if (typeof o.stopMarket === 'string') out.stopMarket = o.stopMarket.slice(0, 120);

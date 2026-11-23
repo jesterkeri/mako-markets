@@ -201,7 +201,7 @@ describe('the settler\'s report to a market', () => {
   });
 
   it('refuses a malformed report whole', async () => {
-    for (const b of [null, {}, { release: ['0x12'] }, { release: [], applied: [{ hash: `0x${'a'.repeat(64)}`, fill: '0' }] }, { release: [], dropped: [{ hash: 'x', reason: 'a' }] }, { release: [], refusedMakers: ['0x1'] }, { id: '0', release: [] }, { id: 7, release: [] }, { id: 'x', release: [] }, { id: '1'.repeat(16), release: [] }]) {
+    for (const b of [null, {}, { release: ['0x12'] }, { release: [], applied: [{ hash: `0x${'a'.repeat(64)}`, fill: '0' }] }, { release: [], dropped: [{ hash: 'x', reason: 'a' }] }, { id: '0', release: [] }, { id: 7, release: [] }, { id: 'x', release: [] }, { id: '1'.repeat(16), release: [] }]) {
       expect((await outcome(b)).status, JSON.stringify(b)).toBe(400);
     }
     void ('' as Hex);

@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import { fresh, fund, type Harness } from './harness';
+import { DAY_EDGE_SLACK_MS } from '../src/config';
 import { vec } from './vectors';
 
 const M = vec('directMakerSell').order.maker;
@@ -31,7 +32,7 @@ describe('adversary R16: a late outcome naming a refused account', () => {
     const pair = [vec('directMakerSell').hash, vec('directTakerBuy').hash];
     h.held = pair;
     h.refused.add(M); // the settlement fails and the settler refuses M for day D; its outcome is stuck in the outbox
-    h.turnDay(nextDay() + 1_000); // day D+1: the list is empty again (M's row stays as an earlier day)
+    h.turnDay(nextDay() + DAY_EDGE_SLACK_MS + 1_000); // day D+1, past the day-edge slack: the list is empty again (M's row stays as an earlier day)
     // M books a fresh order on D+1: it is not refused today, and it was booked after the refused day ended
     const r = await place('mintMakerBuy1');
     expect(r.status).toBe(200);

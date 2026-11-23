@@ -2,6 +2,7 @@
 // (plan 6.2 step 4: "stored as one record and never separately"); the signature column is NOT NULL and has a
 // length check, so a row without one cannot exist.
 import type { Hex } from 'viem';
+import { DAY_EDGE_SLACK_MS } from './config';
 import type { OrderTuple } from './abi';
 
 export const SCHEMA = [
@@ -218,7 +219,7 @@ export function applyFill(sql: SqlStorage, hash: Hex, fill: bigint): void {
 export function dropRefused(sql: SqlStorage, refusals: { maker: Hex; day: string }[]): number {
   let n = 0;
   for (const { maker, day } of refusals) {
-    const end = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
+    const end = Date.parse(`${day}T00:00:00Z`) + 86_400_000 + DAY_EDGE_SLACK_MS;
     const m = maker.toLowerCase();
     n += sql.exec(`DELETE FROM orders WHERE maker = ? AND created_at < ? AND in_flight = 0`, m, end).rowsWritten;
     sql.exec(`UPDATE orders SET refused = 1 WHERE maker = ? AND created_at < ? AND in_flight > 0`, m, end);

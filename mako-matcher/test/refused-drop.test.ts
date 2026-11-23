@@ -7,6 +7,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import type { Hex } from 'viem';
 import { insertOrder } from '../src/book';
 import { fresh, fund, type Harness } from './harness';
+import { DAY_EDGE_SLACK_MS } from '../src/config';
 import { vec } from './vectors';
 
 const M = vec('directMakerSell').order.maker; // the account refused in these tests (orders in markets 1 and 2)
@@ -65,9 +66,15 @@ describe('Codex MATCHER R6 F1: a refused account loses its booked orders in ever
     h.refused.add(M);
     await h.tick();
     expect(await ordersOf(h, M)).toBe(0);
-    h.turnDay((Math.floor(h.w.nowMs / 86_400_000) + 1) * 86_400_000);
+    const midnight = (Math.floor(h.w.nowMs / 86_400_000) + 1) * 86_400_000;
+    h.turnDay(midnight + 1_000);
+    // inside the day-edge slack (clocks may differ by seconds): still covered by yesterday's refusal
     expect((await h.place(second)).json).toMatchObject({ ok: true, booked: true });
-    // booked after the refused day ended: yesterday's refusal (still read back) does not drop it
+    await h.tick();
+    expect(await ordersOf(h, M), 'booked within DAY_EDGE_SLACK_MS of the refused day: dropped').toBe(0);
+    // after the slack: yesterday's refusal (still read back) does not drop it
+    h.w.nowMs = midnight + DAY_EDGE_SLACK_MS + 1_000;
+    expect((await h.place(second)).json).toMatchObject({ ok: true, booked: true });
     await h.tick();
     expect(await ordersOf(h, M)).toBe(1);
   });
