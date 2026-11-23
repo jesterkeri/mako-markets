@@ -86,6 +86,7 @@ describe.skipIf(reason !== null)('the settler against a real node (anvil, Monad 
     return {
       hash: orderHash(o, { chainId: CHAIN_ID, exchange }),
       signature,
+      bookedAt: Date.now(),
       order: { salt: o.salt.toString(), maker: o.maker, marketId: '1', option: o.option, isBuy: o.isBuy, price: o.price, size: o.size.toString(), expiration: o.expiration.toString(), nonce: '0' },
     };
   }

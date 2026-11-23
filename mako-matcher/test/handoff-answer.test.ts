@@ -60,8 +60,8 @@ describe('Codex MATCHER R6 F3: the real settler route refuses a hand-off naming 
   it('503 party_refused through the HTTP route, read as an explicit refusal; the market releases its marks; nothing pending', async () => {
     const maker = vec('directMakerSell').order.maker;
     await runInDurableObject(settlerStub(), (_i, state) => {
-      // the settler's own clock decides "today"
-      state.storage.sql.exec('INSERT OR REPLACE INTO refused_accounts (maker, utc_day, reason, at) VALUES (?, ?, ?, ?)', maker, utcDay(Date.now()), 'bad_signature', 1);
+      // excluded on the day the market books the order (the settler checks each order's booking time, Codex R7 F2)
+      state.storage.sql.exec('INSERT OR REPLACE INTO refused_accounts (maker, utc_day, reason, at) VALUES (?, ?, ?, ?)', maker, utcDay(h.w.nowMs), 'bad_signature', 1);
     });
     const answers: { status: number; text: string }[] = [];
     // the market's settle dependency, as realDeps builds it, against the configured settler object

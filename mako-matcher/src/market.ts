@@ -180,13 +180,16 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
     // `handedOff`: proposals sent to the settler (0 or 1); `handoff`: its answer to that one (Codex MATCHER R6 F2).
     let handedOff = 0;
     let handoff: HandoffAnswer | null = null;
+    const dropped = new Set<Hex>();
     try {
-      const r = await matchPass(state, cfg, deps, alert, [result.hash]);
+      const r = await matchPass(state, cfg, deps, alert, [result.hash], undefined, dropped);
       handedOff = r.handedOff;
       handoff = r.answer ?? null;
     } catch (err) {
       alert('match_failed', err instanceof Error ? err.name : 'error');
     }
+    // its own pass dropped it: the account is refused for a day that covers this booking (Codex MATCHER R7 F3)
+    if (dropped.has(result.hash)) return json(400, { ok: false, code: 'account_refused', hash: result.hash });
     return json(200, { ok: true, hash: result.hash, booked: true, handedOff, handoff });
   }
 
@@ -227,6 +230,7 @@ function serialize(p: Proposal) {
   const rec = (o: Proposal['taker']) => ({
     hash: o.hash,
     signature: o.signature,
+    bookedAt: o.createdAt,
     order: {
       salt: o.salt.toString(),
       maker: o.maker,
@@ -264,7 +268,8 @@ function serialize(p: Proposal) {
 export type PassResult = { handedOff: number; resumeBelow: number | null; finished: boolean; budgetStop?: boolean; tried?: number; answer?: HandoffAnswer };
 export type HandoffAnswer = 'accepted' | 'refused' | 'unknown';
 
-export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null, budget?: number): Promise<PassResult> {
+/// `dropped`: filled with the hashes this pass's refusal read dropped (intake uses it to answer for its own order).
+export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null, budget?: number, dropped?: Set<Hex>): Promise<PassResult> {
   const sql = state.storage.sql;
   const nowS = Math.floor(deps.now() / 1000);
   // An order in a proposal the settler accepted is in flight until it reports: it is in no other proposal.
@@ -298,7 +303,7 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
         for (let i = 0; i < makers.length; i += ROLE_CHUNK) {
           for (const a of await readRefusedRoles(chain, makers.slice(i, i + ROLE_CHUNK))) blocked.add(lc(a));
         }
-        for (const a of await syncRefusals(sql, deps)) blocked.add(a);
+        for (const a of await syncRefusals(sql, deps, dropped)) blocked.add(a);
       } catch (err) {
         alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
         return { handedOff: 0, resumeBelow: null, finished: false };
@@ -432,15 +437,18 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
 }
 
 /// Plan 6.2: reads every settler refusal since this book's last good read (or, with none, since the day its oldest order
-/// was booked), drops the orders each one covers (dropRefused), and returns the accounts refused today, lowercase.
+/// was booked, a day back), drops the orders each one covers (dropRefused; their hashes go to `dropped`), and returns the
+/// accounts refused today, lowercase.
 /// Throws when the settler cannot be read; callers match nothing then. The tick and every matching pass (intake too)
 /// call it, so no order booked on a refused day is proposed after that day turns (adversary R14, R15). The next read
 /// starts a day back, so a row the settler stamps with a day the market's clock has just left is read again.
-async function syncRefusals(sql: SqlStorage, deps: MarketDeps): Promise<Set<Hex>> {
+async function syncRefusals(sql: SqlStorage, deps: MarketDeps, dropped?: Set<Hex>): Promise<Set<Hex>> {
   const now = deps.now();
   const oldest = sql.exec<{ t: number | null }>(`SELECT MIN(created_at) AS t FROM orders`).one().t ?? now;
-  const rows = await deps.refusalsSince(getMeta(sql, 'refusals_since') ?? utcDay(Math.min(oldest, now)));
-  dropRefused(sql, rows);
+  // a day before the oldest order's day: the settler may stamp a refusal covering it with the day before (its clock
+  // behind; DAY_EDGE_SLACK_MS), and the first read must see that row too (Codex MATCHER R7 F1)
+  const rows = await deps.refusalsSince(getMeta(sql, 'refusals_since') ?? utcDay(Math.min(oldest, now) - 86_400_000));
+  for (const h of dropRefused(sql, rows)) dropped?.add(h);
   setMeta(sql, 'refusals_since', utcDay(now - 86_400_000));
   const today = utcDay(now);
   return new Set(rows.filter((r) => r.day >= today).map((r) => r.maker));

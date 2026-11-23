@@ -9,6 +9,8 @@ import { canonicalUint } from './order';
 export interface Rec {
   hash: Hex;
   signature: Hex;
+  /// When the market booked the order (ms, the market's clock): the settler's exclusion rule is about booking time.
+  bookedAt: number;
   order: { salt: string; maker: Hex; marketId: string; option: number; isBuy: boolean; price: number; size: string; expiration: string; nonce: string };
 }
 
@@ -26,14 +28,15 @@ const HEX32 = /^0x[0-9a-f]{64}$/;
 
 function parseRec(r: unknown): Rec | null {
   if (typeof r !== 'object' || r === null) return null;
-  const x = r as { hash?: unknown; signature?: unknown; order?: Record<string, unknown> };
+  const x = r as { hash?: unknown; signature?: unknown; bookedAt?: unknown; order?: Record<string, unknown> };
+  if (typeof x.bookedAt !== 'number' || !Number.isSafeInteger(x.bookedAt) || x.bookedAt < 0) return null;
   if (typeof x.hash !== 'string' || !HEX32.test(x.hash)) return null;
   if (typeof x.signature !== 'string' || !/^0x([0-9a-f]{2})+$/.test(x.signature)) return null;
   const o = x.order;
   if (!o || typeof o.maker !== 'string' || !/^0x[0-9a-f]{40}$/.test(o.maker)) return null;
   for (const k of ['salt', 'marketId', 'size', 'expiration', 'nonce'] as const) if (canonicalUint(o[k], U256) === null) return null;
   if (typeof o.option !== 'number' || !Number.isInteger(o.option) || typeof o.price !== 'number' || !Number.isInteger(o.price) || typeof o.isBuy !== 'boolean') return null;
-  return { hash: x.hash as Hex, signature: x.signature as Hex, order: o as Rec['order'] };
+  return { hash: x.hash as Hex, signature: x.signature as Hex, bookedAt: x.bookedAt, order: o as Rec['order'] };
 }
 
 /// Strict parse of the body the market object sends to the settler.

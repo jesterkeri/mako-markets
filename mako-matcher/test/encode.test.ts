@@ -5,10 +5,11 @@ import { decodeMatch, encodeMatch, parseProposal, type Rec, type WireProposal } 
 import { allowedFor, checkFrames, ECRECOVER, outsiders, parseTrace, topRevert } from '../src/trace';
 import { SAFE_4337_MODULE, SAFE_SINGLETON } from '../src/wallets';
 import { V } from './vectors';
+import { NOW_MS } from './fake';
 
 function rec(name: string, sig: Hex): Rec {
   const f = V.orders[name].fields as Record<string, never>;
-  return { hash: `0x${'00'.repeat(32)}`, signature: sig, order: { ...(f as object), maker: String(f.maker).toLowerCase() } as Rec['order'] };
+  return { hash: `0x${'00'.repeat(32)}`, signature: sig, bookedAt: NOW_MS, order: { ...(f as object), maker: String(f.maker).toLowerCase() } as Rec['order'] };
 }
 
 type Call = { id: string; taker: string; makers: string[]; takerSig: Hex; makerSigs: Hex[]; fills: string[]; takerFill: string; calldata: Hex };
@@ -49,6 +50,7 @@ describe('the settlement call is built from records, byte for byte as the vector
     const makers: Rec[] = Array.from({ length: 10 }, (_, i) => ({
       hash: `0x${i.toString(16).padStart(64, '0')}` as Hex,
       signature: `0x${(0xa0 + i).toString(16)}${i.toString(16).padStart(2, '0')}` as Hex,
+      bookedAt: NOW_MS,
       order: { salt: String(100 + i), maker: `0x${(i + 1).toString(16).padStart(40, '0')}` as Hex, marketId: '1', option: 0, isBuy: false, price: 50, size: '10000000', expiration: '2000000000', nonce: '0' },
     }));
     const taker = rec('directTakerBuy', '0xabcd');
@@ -78,8 +80,8 @@ describe('the proposal the market object sends is parsed strictly', () => {
   const good = () => ({
     kind: 'direct',
     marketId: '1',
-    taker: { hash: `0x${'11'.repeat(32)}`, signature: '0xaa', order: { salt: '1', maker: `0x${'22'.repeat(20)}`, marketId: '1', option: 0, isBuy: true, price: 60, size: '10', expiration: '9', nonce: '0' } },
-    makers: [{ hash: `0x${'33'.repeat(32)}`, signature: '0xbb', order: { salt: '2', maker: `0x${'44'.repeat(20)}`, marketId: '1', option: 0, isBuy: false, price: 50, size: '10', expiration: '9', nonce: '0' } }],
+    taker: { hash: `0x${'11'.repeat(32)}`, signature: '0xaa', bookedAt: NOW_MS, order: { salt: '1', maker: `0x${'22'.repeat(20)}`, marketId: '1', option: 0, isBuy: true, price: 60, size: '10', expiration: '9', nonce: '0' } },
+    makers: [{ hash: `0x${'33'.repeat(32)}`, signature: '0xbb', bookedAt: NOW_MS, order: { salt: '2', maker: `0x${'44'.repeat(20)}`, marketId: '1', option: 0, isBuy: false, price: 50, size: '10', expiration: '9', nonce: '0' } }],
     fills: ['10'],
     takerFill: '10',
   });
@@ -96,6 +98,11 @@ describe('the proposal the market object sends is parsed strictly', () => {
       (p) => ({ ...p, taker: { ...p.taker, order: { ...p.taker.order, maker: 'x' } } }),
       (p) => ({ ...p, taker: { ...p.taker, order: { ...p.taker.order, size: '-1' } } }),
       (p) => ({ ...p, taker: { ...p.taker, order: { ...p.taker.order, price: 'x' } } }),
+      (p) => ({ ...p, taker: { ...p.taker, bookedAt: undefined } }),
+      (p) => ({ ...p, taker: { ...p.taker, bookedAt: '1' } }),
+      (p) => ({ ...p, makers: [{ ...p.makers[0], bookedAt: -1 }] }),
+      (p) => ({ ...p, makers: [{ ...p.makers[0], bookedAt: 1.5 }] }),
+      (p) => ({ ...p, makers: [{ ...p.makers[0], bookedAt: 2 ** 53 }] }),
     ];
     for (const b of bads) expect(parseProposal(b(good()))).toBeNull();
     expect(parseProposal(null)).toBeNull();

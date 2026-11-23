@@ -215,16 +215,16 @@ export function applyFill(sql: SqlStorage, hash: Hex, fill: bigint): void {
 /// Plan 6.2: an account refused for a UTC day has the orders it had booked by the end of that day dropped as refused,
 /// in every market (Codex MATCHER R6 F1). `refusals` are the settler's rows since the market's last good read (so a day
 /// turn while the settler is unreadable loses nothing, adversary R14). An order in flight is flagged instead and goes
-/// when its mark is released (releaseInFlight), whatever the day by then. Returns how many were dropped.
-export function dropRefused(sql: SqlStorage, refusals: { maker: Hex; day: string }[]): number {
-  let n = 0;
+/// when its mark is released (releaseInFlight), whatever the day by then. Returns the hashes dropped.
+export function dropRefused(sql: SqlStorage, refusals: { maker: Hex; day: string }[]): Hex[] {
+  const out: Hex[] = [];
   for (const { maker, day } of refusals) {
     const end = Date.parse(`${day}T00:00:00Z`) + 86_400_000 + DAY_EDGE_SLACK_MS;
     const m = maker.toLowerCase();
-    n += sql.exec(`DELETE FROM orders WHERE maker = ? AND created_at < ? AND in_flight = 0`, m, end).rowsWritten;
+    for (const r of sql.exec<{ hash: Hex }>(`DELETE FROM orders WHERE maker = ? AND created_at < ? AND in_flight = 0 RETURNING hash`, m, end).toArray()) out.push(r.hash);
     sql.exec(`UPDATE orders SET refused = 1 WHERE maker = ? AND created_at < ? AND in_flight > 0`, m, end);
   }
-  return n;
+  return out;
 }
 
 export function deleteAll(sql: SqlStorage): number {

@@ -5,6 +5,7 @@ import type { Rec, WireProposal } from '../src/encode';
 import type { Settler } from '../src/settle';
 import { SETTLER_SCHEMA } from '../src/settle';
 import { V } from './vectors';
+import { NOW_MS } from './fake';
 import { resetSettlerStorage, rig, SettleWorld, type Rig } from './settle-world';
 
 export function recOf(name: string, domain = 'testnet'): Rec {
@@ -13,6 +14,7 @@ export function recOf(name: string, domain = 'testnet'): Rec {
   return {
     hash: s.orderHash,
     signature: (s.eoaSignature ?? s.safeSignature) as Hex,
+    bookedAt: NOW_MS, // booked at the settle world's start time
     order: { salt: String(f.salt), maker: String(f.maker).toLowerCase() as Hex, marketId: String(f.marketId), option: Number(f.option), isBuy: Boolean(f.isBuy), price: Number(f.price), size: String(f.size), expiration: String(f.expiration), nonce: String(f.nonce) },
   };
 }

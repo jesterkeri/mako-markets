@@ -27,6 +27,7 @@ import {
   type ChainCtx,
   type Receipt,
 } from './chain';
+import { DAY_EDGE_SLACK_MS } from './config';
 import { decodeMatch, encodeMatch, parseProposal, toTuple, type Rec, type WireProposal } from './encode';
 import { orderHash, recoverStrict } from './order';
 import type { Outcome } from './outcome';
@@ -185,7 +186,7 @@ export class Settler {
     // Codex MATCHER R5 F1: a market proposes from a refusal list it read earlier; an account refused since is not
     // accepted. Checked here with no await before the insert, so no refusal this object writes can fall between the
     // check and the acceptance. The market releases its marks on this answer and its next pass reads the new list.
-    if (allRecs(p).some((r) => this.isRefusedToday(r.order.maker))) return { accepted: false, reason: 'party_refused' };
+    if (allRecs(p).some((r) => this.isExcluded(r))) return { accepted: false, reason: 'party_refused' };
     this.d.sql.exec(`INSERT INTO pending (id, market_id, body, at) VALUES (1, ?, ?, ?)`, p.marketId, JSON.stringify(p), this.d.now());
     return { accepted: true };
   }
@@ -296,7 +297,7 @@ export class Settler {
       // Round 0 is the match as proposed; rounds 1 to MAX_REBUILDS are rebuilds. One more drop past that holds it.
       if (round > MAX_REBUILDS) return this.hold(p0, 'held_rebuild', 'a match kept losing parties; it is held', dropped);
       // An account refused for the rest of the UTC day is in no settlement (plan 6.2: refused accounts).
-      const refusedParty = allRecs(p).find((r) => this.isRefusedToday(r.order.maker));
+      const refusedParty = allRecs(p).find((r) => this.isExcluded(r));
       if (refusedParty) {
         dropped.push({ hash: refusedParty.hash, reason: 'refused' });
         const next = without(p, refusedParty.hash);
@@ -515,8 +516,14 @@ export class Settler {
     return allRecs(p).find((r) => r.hash === hash);
   }
 
-  private isRefusedToday(maker: Hex): boolean {
-    return this.d.sql.exec(`SELECT 1 FROM refused_accounts WHERE maker = ? AND utc_day = ?`, maker, this.today()).toArray().length > 0;
+  /// Plan 6.2: an account refused for a UTC day has every order it booked by the end of that day (plus
+  /// DAY_EDGE_SLACK_MS) dropped. Decided here, where refusals are written and with no await before the caller acts, so no
+  /// market's read, clock or delay can let such an order through (Codex MATCHER R7 F2). Covers today's refusals too.
+  private isExcluded(r: Rec): boolean {
+    return this.d.sql
+      .exec<{ utc_day: string }>(`SELECT utc_day FROM refused_accounts WHERE maker = ?`, r.order.maker)
+      .toArray()
+      .some((x) => r.bookedAt < Date.parse(`${x.utc_day}T00:00:00Z`) + 86_400_000 + DAY_EDGE_SLACK_MS);
   }
 
   /// Counts one failure against `maker` for the UTC day; true when the account is now refused for the rest of it.

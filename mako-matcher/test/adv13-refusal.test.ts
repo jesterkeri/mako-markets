@@ -1,6 +1,7 @@
 // Adversary 13, attacks on Codex MATCHER R5 F1 (the settler's submit refuses a hand-off naming an account refused
 // today). Real settler Durable Object storage, the shared settle world; the market side uses the harness.
 import { beforeEach, describe, expect, it } from 'vitest';
+import { DAY_EDGE_SLACK_MS } from '../src/config';
 import { utcDay } from '../src/settle';
 import { handoffAnswer } from '../src/market';
 import { heldHashes } from '../src/settler';
@@ -23,16 +24,23 @@ describe('adv13: settler side', () => {
     });
   });
 
-  it('UTC day edge: refused at 23:59:59.999 of day D is refused; the same row is not a refusal at 00:00:00.000 of D+1', async () => {
+  it('UTC day edge: an exclusion for day D covers orders booked by the end of D plus the slack, on D+1 too; later orders are accepted (Codex R7 F2)', async () => {
     await withSettler(async (sql, r, mk) => {
-      const p = DIRECT();
       const dayStart = Math.floor(r.w.nowMs / 86_400_000) * 86_400_000;
-      r.w.nowMs = dayStart + 86_400_000 - 1;
+      const end = dayStart + 86_400_000;
+      const at = (bookedAt: number) => {
+        const p = DIRECT();
+        for (const x of [p.taker, ...p.makers]) x.bookedAt = bookedAt;
+        return p;
+      };
+      r.w.nowMs = end - 1;
       sql.exec('INSERT INTO refused_accounts (maker, utc_day, reason, at) VALUES (?, ?, ?, ?)', MAKER, utcDay(r.w.nowMs), 'x', 1);
       const s = mk(sql);
-      expect(await s.submit(p)).toEqual({ accepted: false, reason: 'party_refused' });
-      r.w.nowMs += 1;
-      expect(await s.submit(p)).toEqual({ accepted: true });
+      expect(await s.submit(at(end - 1))).toEqual({ accepted: false, reason: 'party_refused' });
+      r.w.nowMs = end + 5 * 60_000; // the settler's clock is on D+1: the D row still covers the D order
+      expect(await s.submit(at(end - 1))).toEqual({ accepted: false, reason: 'party_refused' });
+      expect(await s.submit(at(end + DAY_EDGE_SLACK_MS - 1))).toEqual({ accepted: false, reason: 'party_refused' });
+      expect(await s.submit(at(end + DAY_EDGE_SLACK_MS))).toEqual({ accepted: true });
     });
   });
 
