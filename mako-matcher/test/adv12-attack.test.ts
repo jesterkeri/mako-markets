@@ -81,8 +81,7 @@ describe('adversary R12: whole-book party check', () => {
     await h.tick();
     expect(h.settled).toHaveLength(0);
     expect((await h.sql<{ n: number }>(`SELECT count(*) AS n FROM orders WHERE maker = ?`, refusedAsk.toLowerCase()))[0].n, 'dropped as refused').toBe(0);
-    h.w.nowMs = midnight + 1_000;
-    h.refused.clear();
+    h.turnDay(midnight + 1_000);
     await h.tick();
     expect(h.settled, 'the dropped order does not come back on the new day').toHaveLength(0);
   });

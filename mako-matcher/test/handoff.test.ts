@@ -222,7 +222,24 @@ describe('the settler object (real class, real storage)', () => {
     expect((await call('/refused/not-an-address')).status).toBe(404);
     // the whole list for today (Codex MATCHER R4 F1): today's row only, lowercase
     expect((await call('/refused')).body).toEqual({ makers: [m] });
+    // every row from a day through today (adversary R14: a market that missed reads across a day turn)
+    expect((await call('/refused?since=2001-01-01')).body).toEqual({ refusals: expect.arrayContaining([{ maker: m, day: utcDay(Date.now()) }, { maker: '0x' + 'cd'.repeat(20), day: '2001-01-01' }]) });
+    expect(((await call(`/refused?since=${utcDay(Date.now())}`)).body as { refusals: unknown[] }).refusals).toEqual([{ maker: m, day: utcDay(Date.now()) }]);
+    expect((await call('/refused?since=9999-12-31')).body).toEqual({ refusals: [] });
+    expect((await call('/refused?since=yesterday')).status).toBe(400);
     void NOW_MS;
+  });
+
+  it("the market's dated refusal read refuses a malformed settler answer (the tick keeps the orders and alerts)", async () => {
+    const { realDeps } = await import('../src/market');
+    const answer = (body: unknown, status = 200) =>
+      realDeps({ SETTLER: { idFromName: (n: string) => n, get: () => ({ fetch: async () => new Response(JSON.stringify(body), { status }) }) } } as unknown as Env);
+    const m = '0x' + 'AB'.repeat(20);
+    expect(await answer({ refusals: [{ maker: m, day: '2026-11-23' }] }).refusalsSince('2026-11-22')).toEqual([{ maker: m.toLowerCase(), day: '2026-11-23' }]);
+    for (const bad of [{}, { refusals: [{ maker: 'x', day: '2026-11-23' }] }, { refusals: [{ maker: m, day: 'today' }] }, { makers: [m] }]) {
+      await expect(answer(bad).refusalsSince('2026-11-22'), JSON.stringify(bad)).rejects.toThrow('refusal list unreadable');
+    }
+    await expect(answer({ refusals: [] }, 503).refusalsSince('2026-11-22')).rejects.toThrow('refusal list unreadable');
   });
 
   it('the Worker names the settler only as idFromName("settler")', async () => {

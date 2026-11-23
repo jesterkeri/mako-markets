@@ -26,9 +26,19 @@ export function refusedList(sql: SqlStorage, nowMs: number): string[] {
   return sql.exec<{ maker: string }>(`SELECT maker FROM refused_accounts WHERE utc_day = ?`, utcDay(nowMs)).toArray().map((r) => r.maker.toLowerCase());
 }
 
+/// Every refusal row from `since` (a UTC day, YYYY-MM-DD) through today, lowercase: a market that missed reads (its
+/// settler unreadable across a day turn) still learns who was refused on the days it missed (adversary R14).
+export function refusalsSince(sql: SqlStorage, since: string, nowMs: number): { maker: string; day: string }[] {
+  return sql
+    .exec<{ maker: string; utc_day: string }>(`SELECT maker, utc_day FROM refused_accounts WHERE utc_day >= ? AND utc_day <= ?`, since, utcDay(nowMs))
+    .toArray()
+    .map((r) => ({ maker: r.maker.toLowerCase(), day: r.utc_day }));
+}
+
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 const TICK_MS = 1_000;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const chainVerified = new WeakSet<object>();
 
 /// The operator account, or null when the secret is missing or is not a 32-byte key. The value is never logged.
@@ -134,7 +144,12 @@ export class MatcherSettler extends DurableObject<Env> {
     const url = new URL(req.url);
     const m = /^\/refused\/(0x[0-9a-fA-F]{40})$/.exec(url.pathname);
     if (req.method === 'GET' && m) return json(200, { refused: isRefused(this.ctx.storage.sql, m[1], Date.now()) });
-    if (req.method === 'GET' && url.pathname === '/refused') return json(200, { makers: refusedList(this.ctx.storage.sql, Date.now()) });
+    if (req.method === 'GET' && url.pathname === '/refused') {
+      const since = url.searchParams.get('since');
+      if (since === null) return json(200, { makers: refusedList(this.ctx.storage.sql, Date.now()) });
+      if (!DAY.test(since)) return json(400, { ok: false, error: 'bad_request' });
+      return json(200, { refusals: refusalsSince(this.ctx.storage.sql, since, Date.now()) });
+    }
     if (req.method === 'GET' && url.pathname === '/held') return json(200, { hashes: heldHashes(this.ctx.storage.sql) });
     if (req.method === 'GET' && url.pathname === '/status') {
       const c = this.core();

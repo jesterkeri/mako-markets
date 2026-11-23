@@ -76,7 +76,7 @@ describe('Codex MATCHER R4 F1: a queue of refused wallets cannot hide a clean cr
     expect(h.settled).toHaveLength(1);
   });
 
-  it('a full book (MAX_BOOK_ORDERS, all but the pair excluded by role) costs at most ceil(n / ROLE_CHUNK) multicalls plus two list reads, and hands the pair over', async () => {
+  it('a full book (MAX_BOOK_ORDERS, all but the pair excluded by role) costs at most ceil(n / ROLE_CHUNK) multicalls plus one list read, and hands the pair over', async () => {
     const n = MAX_BOOK_ORDERS - 2;
     await backlog(n, (w) => h.w.operators.add(w.toLowerCase() as Hex));
     let listReads = 0;
@@ -90,7 +90,7 @@ describe('Codex MATCHER R4 F1: a queue of refused wallets cannot hide a clean cr
     const multicalls = h.w.exchangeCalls('aggregate3') - before;
     console.log(`full book: ${multicalls} multicalls + ${listReads} list read`);
     expect(multicalls).toBeLessThanOrEqual(Math.ceil(MAX_BOOK_ORDERS / ROLE_CHUNK));
-    expect(listReads, 'one to drop refused orders, one for the pass').toBe(2);
+    expect(listReads, 'one for the pass (the drop reads refusalsSince)').toBe(1);
     expect(h.settled).toHaveLength(1);
   });
 

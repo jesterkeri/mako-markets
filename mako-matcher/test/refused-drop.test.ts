@@ -32,6 +32,7 @@ describe('Codex MATCHER R6 F1: a refused account loses its booked orders in ever
     const h2 = await fresh('2');
     h2.w.markets.set('2', { nOptions: 3, status: 1, tradingClose: 4_000_000_000n, positionCap: 10n ** 12n, feeRate: 0n });
     h2.refused = h.refused; // one settler list for both markets
+    h2.refusedEarlier = h.refusedEarlier;
     for (const n of ['directMakerSell', 'mintMakerBuy1', 'mintMakerBuy2']) expect((await place(h, n)).status, n).toBe(200);
     for (const n of ['mmDirectMakerSellB', 'mmMintMakerBuy1B', 'mmMintMakerBuy2B']) expect((await place(h2, n)).status, n).toBe(200);
     expect([await ordersOf(h, M), await ordersOf(h2, M)]).toEqual([2, 2]);
@@ -48,9 +49,8 @@ describe('Codex MATCHER R6 F1: a refused account loses its booked orders in ever
 
     // the next UTC day: the list no longer names it, and nothing of it returns
     const nextDay = (Math.floor(h.w.nowMs / 86_400_000) + 1) * 86_400_000;
-    h.w.nowMs = nextDay;
+    h.turnDay(nextDay);
     h2.w.nowMs = nextDay;
-    h.refused.clear();
     await h.tick();
     await h2.tick();
     expect([await ordersOf(h, M), await ordersOf(h2, M)]).toEqual([0, 0]);
@@ -65,9 +65,11 @@ describe('Codex MATCHER R6 F1: a refused account loses its booked orders in ever
     h.refused.add(M);
     await h.tick();
     expect(await ordersOf(h, M)).toBe(0);
-    h.w.nowMs = (Math.floor(h.w.nowMs / 86_400_000) + 1) * 86_400_000;
-    h.refused.clear();
+    h.turnDay((Math.floor(h.w.nowMs / 86_400_000) + 1) * 86_400_000);
     expect((await h.place(second)).json).toMatchObject({ ok: true, booked: true });
+    // booked after the refused day ended: yesterday's refusal (still read back) does not drop it
+    await h.tick();
+    expect(await ordersOf(h, M)).toBe(1);
   });
 
   it('frees book capacity: a full book refuses a new order until the refused account is dropped', async () => {
@@ -129,11 +131,11 @@ describe('Codex MATCHER R6 F1: a refused account loses its booked orders in ever
   it('an unreadable list keeps the orders and alerts; the next readable tick drops them', async () => {
     await place(h, 'directMakerSell');
     h.refused.add(M);
-    const inner = h.deps.refusedList;
+    const inner = h.deps.refusalsSince;
     let reads = 0;
-    h.deps.refusedList = async () => {
+    h.deps.refusalsSince = async (d) => {
       if (++reads === 1) throw new Error('down');
-      return inner();
+      return inner(d);
     };
     await h.tick();
     expect(await ordersOf(h, M)).toBe(1);

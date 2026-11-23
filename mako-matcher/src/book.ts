@@ -22,7 +22,8 @@ export const SCHEMA = [
      fee TEXT NOT NULL,
      filled TEXT NOT NULL DEFAULT '0',
      created_at INTEGER NOT NULL,
-     in_flight INTEGER NOT NULL DEFAULT 0
+     in_flight INTEGER NOT NULL DEFAULT 0,
+     refused INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
   `CREATE TABLE IF NOT EXISTS outcomes_seen (id TEXT PRIMARY KEY)`,
@@ -193,7 +194,11 @@ export function marksOlderThan(sql: SqlStorage, beforeMs: number): Hex[] {
 }
 
 export function releaseInFlight(sql: SqlStorage, hashes: Hex[]): void {
-  for (const h of hashes) sql.exec(`UPDATE orders SET in_flight = 0 WHERE hash = ?`, h);
+  for (const h of hashes) {
+    // flagged by dropRefused while in flight: dropped as refused once released
+    sql.exec(`DELETE FROM orders WHERE hash = ? AND refused = 1`, h);
+    sql.exec(`UPDATE orders SET in_flight = 0 WHERE hash = ?`, h);
+  }
 }
 
 /// A settled fill. What is left stays booked and matchable, however small: it is dropped only when it is filled,
@@ -210,13 +215,17 @@ export function deleteByMaker(sql: SqlStorage, maker: Hex): number {
   return sql.exec(`DELETE FROM orders WHERE maker = ?`, maker).rowsWritten;
 }
 
-/// Plan 6.2: an account refused for the UTC day has its booked orders dropped as refused, in every market (Codex MATCHER
-/// R6 F1: only the market whose settlement failed got the outcome that drops them). Orders in flight stay until their
-/// outcome or release; a later call drops them. Returns how many were dropped.
-export function dropRefused(sql: SqlStorage, refused: Set<Hex>): number {
+/// Plan 6.2: an account refused for a UTC day has the orders it had booked by the end of that day dropped as refused,
+/// in every market (Codex MATCHER R6 F1). `refusals` are the settler's rows since the market's last good read (so a day
+/// turn while the settler is unreadable loses nothing, adversary R14). An order in flight is flagged instead and goes
+/// when its mark is released (releaseInFlight), whatever the day by then. Returns how many were dropped.
+export function dropRefused(sql: SqlStorage, refusals: { maker: Hex; day: string }[]): number {
   let n = 0;
-  for (const { maker } of sql.exec<{ maker: string }>(`SELECT DISTINCT maker FROM orders`).toArray()) {
-    if (refused.has(maker.toLowerCase() as Hex)) n += sql.exec(`DELETE FROM orders WHERE maker = ? AND in_flight = 0`, maker).rowsWritten;
+  for (const { maker, day } of refusals) {
+    const end = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
+    const m = maker.toLowerCase();
+    n += sql.exec(`DELETE FROM orders WHERE maker = ? AND created_at < ? AND in_flight = 0`, m, end).rowsWritten;
+    sql.exec(`UPDATE orders SET refused = 1 WHERE maker = ? AND created_at < ? AND in_flight > 0`, m, end);
   }
   return n;
 }

@@ -6,6 +6,7 @@ import type { Hex } from 'viem';
 import { migrate } from '../src/book';
 import type { Env } from '../src/env';
 import { handleAlarm, handleRequest, type MarketDeps } from '../src/market';
+import { utcDay } from '../src/settle';
 import { CHAIN_ID, EXCHANGE, makeFetch, World } from './fake';
 import { body, type VecOrder } from './vectors';
 
@@ -19,7 +20,12 @@ export interface Harness {
   refusedHandoffs: unknown[];
   /// Off by default, so every other test still sees a hand-off naming a refused account in `settled` (adversary R13).
   settlerChecksRefusals: boolean;
+  /// Today's refusal list (the settler's rows for the current UTC day of `w.nowMs`).
   refused: Set<string>;
+  /// Earlier days' rows, kept as the settler's table keeps them (turnDay moves today's here).
+  refusedEarlier: { maker: string; day: string }[];
+  /// Moves the clock to `ms` on a later UTC day: today's refusals become earlier rows, the new day's list is empty.
+  turnDay(ms: number): void;
   settleAccepts: boolean;
   settlerDown: boolean;
   /// What the settler reports it holds (hashes).
@@ -55,6 +61,13 @@ export async function fresh(id = '1'): Promise<Harness> {
     refusedHandoffs: [],
     settlerChecksRefusals: false,
     refused: new Set(),
+    refusedEarlier: [],
+    turnDay(ms) {
+      const day = utcDay(w.nowMs);
+      for (const m of h.refused) h.refusedEarlier.push({ maker: m.toLowerCase(), day });
+      h.refused.clear();
+      w.nowMs = ms;
+    },
     settleAccepts: false,
     settlerDown: false,
     held: [],
@@ -110,6 +123,12 @@ export async function fresh(id = '1'): Promise<Harness> {
     async refusedList() {
       if (h.settlerDown) throw new Error('down');
       return new Set([...h.refused].map((a) => a.toLowerCase() as Hex));
+    },
+    async refusalsSince(since) {
+      if (h.settlerDown) throw new Error('down');
+      const today = utcDay(w.nowMs);
+      const rows = [...h.refusedEarlier, ...[...h.refused].map((m) => ({ maker: m, day: today }))];
+      return rows.filter((r) => r.day >= since && r.day <= today).map((r) => ({ maker: r.maker.toLowerCase() as Hex, day: r.day }));
     },
     async settle(b) {
       // as the real settler (settle.ts submit): a party on today's list at the moment of the hand-off is refused

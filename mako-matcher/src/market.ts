@@ -10,6 +10,7 @@ import { readBody } from './body';
 import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, ConfigError, readConfig, REQUEST_BUDGET_MS, ROLE_CHUNK, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
+import { utcDay } from './settle';
 import { intakeOrder } from './intake';
 import { propose, type Proposal } from './match';
 import { parseMarketId } from './routing';
@@ -22,6 +23,8 @@ export interface MarketDeps {
   refusedToday(maker: Hex): Promise<boolean>;
   /// The settler's whole refusal list for the day, lowercase. Throws when it cannot be read (the caller fails closed).
   refusedList(): Promise<Set<Hex>>;
+  /// The settler's refusal rows from UTC day `since` (YYYY-MM-DD) through today, lowercase. Throws when unreadable.
+  refusalsSince(since: string): Promise<{ maker: Hex; day: string }[]>;
   /// Hands a proposal to the settler. `accepted: false` only for the settler's explicit refusal; throws when the
   /// answer is lost or unreadable (the proposal may have been taken).
   settle(body: unknown): Promise<{ accepted: boolean }>;
@@ -53,6 +56,17 @@ export function realDeps(env: Env): MarketDeps {
       const b = (await res.json().catch(() => null)) as { makers?: unknown } | null;
       if (!Array.isArray(b?.makers) || !b.makers.every((x) => typeof x === 'string' && /^0x[0-9a-fA-F]{40}$/.test(x))) throw new Error('refusal list unreadable');
       return new Set((b.makers as string[]).map((x) => x.toLowerCase() as Hex));
+    },
+    async refusalsSince(since) {
+      const res = await settler().fetch(new Request(`https://settler/refused?since=${since}`));
+      if (!res.ok) throw new Error('refusal list unreadable');
+      const b = (await res.json().catch(() => null)) as { refusals?: unknown } | null;
+      const ok = (r: unknown) => {
+        const x = r as { maker?: unknown; day?: unknown } | null;
+        return typeof x?.maker === 'string' && /^0x[0-9a-fA-F]{40}$/.test(x.maker) && typeof x.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x.day);
+      };
+      if (!Array.isArray(b?.refusals) || !b.refusals.every(ok)) throw new Error('refusal list unreadable');
+      return (b.refusals as { maker: string; day: string }[]).map((r) => ({ maker: r.maker.toLowerCase() as Hex, day: r.day }));
     },
     async settle(body) {
       const res = await settler().fetch(new Request('https://settler/settle', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
@@ -389,6 +403,7 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   deleteExpired(sql, Math.floor(deps.now() / 1000));
   if (countOrders(sql) === 0) {
     delMeta(sql, 'log_cursor');
+    delMeta(sql, 'refusals_since'); // an empty book has nothing to drop: the next read starts from its own day
     return;
   }
   let cfg: Config;
@@ -406,10 +421,15 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   }
   await releaseStaleMarks(sql, deps, alert);
   // Every tick, idle or not, so each market drops a refused account's orders within one tick of the refusal, whether or
-  // not it ever proposes that account (Codex MATCHER R6 F1, plan 6.2). One settler read; unreadable: kept, alerted (the
-  // matching pass reads the list again and proposes nothing without it).
+  // not it ever proposes that account (Codex MATCHER R6 F1, plan 6.2). One settler read of every refusal since the
+  // last good read (adversary R14: a day turn while unreadable loses nothing); unreadable: kept, alerted, read from
+  // the same day next tick (the matching pass reads today's list again and proposes nothing without it).
+  const today = utcDay(deps.now());
   try {
-    dropRefused(sql, await deps.refusedList());
+    // no good read yet for this book: from the day its oldest order was booked (nothing older can name one)
+    const oldest = sql.exec<{ t: number }>(`SELECT MIN(created_at) AS t FROM orders`).one().t;
+    dropRefused(sql, await deps.refusalsSince(getMeta(sql, 'refusals_since') ?? utcDay(Math.min(oldest, deps.now()))));
+    setMeta(sql, 'refusals_since', today);
   } catch {
     alert('refusal_list_unreadable', 'the settler refusal list could not be read; refused accounts are not dropped this tick');
   }
