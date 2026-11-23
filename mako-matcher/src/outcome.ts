@@ -1,7 +1,7 @@
 // What the settler reports back to a market object about a proposal it accepted (plan 6.2: "Report back").
 // Fills are applied, orders are dropped with a reason, in-flight marks are released, and a market may be stopped.
 import type { Hex } from 'viem';
-import { applyFill, deleteAll, deleteBelowNonce, deleteByHash, getOrder, releaseInFlight, setMeta } from './book';
+import { applyFill, deleteAll, deleteBelowNonce, deleteByHash, getOrder, recordRefused, releaseInFlight, setMeta } from './book';
 import type { Alert } from './alerts';
 
 export interface Outcome {
@@ -56,7 +56,7 @@ export function parseOutcome(b: unknown): Outcome | null {
   return out;
 }
 
-export function applyOutcome(sql: SqlStorage, o: Outcome, alert: Alert): void {
+export function applyOutcome(sql: SqlStorage, o: Outcome, alert: Alert, now: number): void {
   // Applied once per id, in the same synchronous block as the changes (shortcut: one row per settlement is kept for
   // good; prune old ids if a market ever holds millions).
   if (sql.exec(`INSERT OR IGNORE INTO outcomes_seen (id) VALUES (?)`, o.id).rowsWritten === 0) return;
@@ -64,6 +64,8 @@ export function applyOutcome(sql: SqlStorage, o: Outcome, alert: Alert): void {
   for (const d of o.dropped ?? []) {
     const ord = getOrder(sql, d.hash);
     deleteByHash(sql, d.hash);
+    // the settler dropped it because its account is excluded for a day covering its booking
+    if (d.reason === 'refused' && ord) recordRefused(sql, [{ seq: ord.seq }], now);
     // A nonce error means the chain's nonce is above this order's: every order of that maker at or below it is dead.
     if (d.reason === 'nonce' && ord) deleteBelowNonce(sql, ord.maker, ord.nonce + 1n);
   }
@@ -72,5 +74,5 @@ export function applyOutcome(sql: SqlStorage, o: Outcome, alert: Alert): void {
     setMeta(sql, 'stopped', o.stopMarket);
     alert('market_stopped', o.stopMarket);
   }
-  releaseInFlight(sql, o.release);
+  releaseInFlight(sql, o.release, now);
 }

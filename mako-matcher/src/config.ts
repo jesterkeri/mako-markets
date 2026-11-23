@@ -96,3 +96,7 @@ export const DAY_EDGE_SLACK_MS = 60_000;
 /// A market's in-flight mark older than this, for orders the settler holds nothing for, is released (the hand-off
 /// that set it never reached the settler). The hand-off itself is one subrequest; this is far above it.
 export const STALE_MARK_MS = 120_000;
+
+/// How long a refused_drops row is kept for an intake request still running (Codex MATCHER R8 F2/F3). Requests end far
+/// sooner (REQUEST_BUDGET_MS of chain reads plus one hand-off); the tick prunes older rows.
+export const REFUSED_DROP_KEEP_MS = 10 * 60_000;

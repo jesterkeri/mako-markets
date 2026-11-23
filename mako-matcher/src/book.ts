@@ -27,6 +27,9 @@ export const SCHEMA = [
      refused INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
+  // Bookings removed because their account is excluded, by `seq` (one booking; never reused). Intake answers from it
+  // whenever and however the removal happened while it ran (Codex MATCHER R8 F2, F3); pruned by age in the tick.
+  `CREATE TABLE IF NOT EXISTS refused_drops (seq INTEGER PRIMARY KEY, at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS outcomes_seen (id TEXT PRIMARY KEY)`,
   `CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, code TEXT NOT NULL, detail TEXT NOT NULL)`,
 ];
@@ -194,12 +197,17 @@ export function marksOlderThan(sql: SqlStorage, beforeMs: number): Hex[] {
   return sql.exec<{ hash: Hex }>(`SELECT hash FROM orders WHERE in_flight > 0 AND in_flight < ?`, beforeMs).toArray().map((r) => r.hash);
 }
 
-export function releaseInFlight(sql: SqlStorage, hashes: Hex[]): void {
+export function releaseInFlight(sql: SqlStorage, hashes: Hex[], now: number): void {
   for (const h of hashes) {
     // flagged by dropRefused while in flight: dropped as refused once released
-    sql.exec(`DELETE FROM orders WHERE hash = ? AND refused = 1`, h);
+    recordRefused(sql, sql.exec<{ seq: number }>(`DELETE FROM orders WHERE hash = ? AND refused = 1 RETURNING seq`, h).toArray(), now);
     sql.exec(`UPDATE orders SET in_flight = 0 WHERE hash = ?`, h);
   }
+}
+
+/// Records bookings removed as refused (see refused_drops).
+export function recordRefused(sql: SqlStorage, rows: { seq: number }[], now: number): void {
+  for (const r of rows) sql.exec(`INSERT OR REPLACE INTO refused_drops (seq, at) VALUES (?, ?)`, r.seq, now);
 }
 
 /// A settled fill. What is left stays booked and matchable, however small: it is dropped only when it is filled,
@@ -215,16 +223,14 @@ export function applyFill(sql: SqlStorage, hash: Hex, fill: bigint): void {
 /// Plan 6.2: an account refused for a UTC day has the orders it had booked by the end of that day dropped as refused,
 /// in every market (Codex MATCHER R6 F1). `refusals` are the settler's rows since the market's last good read (so a day
 /// turn while the settler is unreadable loses nothing, adversary R14). An order in flight is flagged instead and goes
-/// when its mark is released (releaseInFlight), whatever the day by then. Returns the hashes dropped.
-export function dropRefused(sql: SqlStorage, refusals: { maker: Hex; day: string }[]): Hex[] {
-  const out: Hex[] = [];
+/// when its mark is released (releaseInFlight), whatever the day by then. Every removal is recorded in refused_drops.
+export function dropRefused(sql: SqlStorage, refusals: { maker: Hex; day: string }[], now: number): void {
   for (const { maker, day } of refusals) {
     const end = Date.parse(`${day}T00:00:00Z`) + 86_400_000 + DAY_EDGE_SLACK_MS;
     const m = maker.toLowerCase();
-    for (const r of sql.exec<{ hash: Hex }>(`DELETE FROM orders WHERE maker = ? AND created_at < ? AND in_flight = 0 RETURNING hash`, m, end).toArray()) out.push(r.hash);
+    recordRefused(sql, sql.exec<{ seq: number }>(`DELETE FROM orders WHERE maker = ? AND created_at < ? AND in_flight = 0 RETURNING seq`, m, end).toArray(), now);
     sql.exec(`UPDATE orders SET refused = 1 WHERE maker = ? AND created_at < ? AND in_flight > 0`, m, end);
   }
-  return out;
 }
 
 export function deleteAll(sql: SqlStorage): number {

@@ -7,7 +7,7 @@ import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, dropRefused, 
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
-import { STALE_MARK_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, ConfigError, readConfig, REQUEST_BUDGET_MS, ROLE_CHUNK, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, type Config } from './config';
+import { STALE_MARK_MS, REFUSED_DROP_KEEP_MS, LOG_CHUNK_BLOCKS, MAX_LOG_CHUNKS_PER_TICK, ConfigError, readConfig, REQUEST_BUDGET_MS, ROLE_CHUNK, TICK_MS, TICK_WORK, IDLE_RECHECK_MS, type Config } from './config';
 import type { Env } from './env';
 import { buildFeed } from './feed';
 import { utcDay } from './settle';
@@ -180,25 +180,24 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
     // `handedOff`: proposals sent to the settler (0 or 1); `handoff`: its answer to that one (Codex MATCHER R6 F2).
     let handedOff = 0;
     let handoff: HandoffAnswer | null = null;
-    // this request's own token: a retry of the same order in flight holds another (adversary R19)
-    const token = { refused: false };
-    const tokens = watchOf(state.storage, result.hash);
-    tokens.add(token);
+    // this booking, not just this signed order: the same hash can be removed and booked again meanwhile (Codex R8 F1)
+    const seq = result.order.seq;
     try {
       const r = await matchPass(state, cfg, deps, alert, [result.hash]);
       handedOff = r.handedOff;
       handoff = r.answer ?? null;
     } catch (err) {
       alert('match_failed', err instanceof Error ? err.name : 'error');
-    } finally {
-      tokens.delete(token);
-      if (tokens.size === 0) watched.get(state.storage)?.delete(result.hash);
     }
-    // A refusal read dropped it while this request ran, its own pass's or the tick's: the account is refused for a day
-    // that covers this booking (Codex MATCHER R7 F3, adversary R18).
-    if (token.refused) return json(400, { ok: false, code: 'account_refused', hash: result.hash });
-    // `booked` says whether it is on the book now; gone for any other reason (a cancel or fill seen meanwhile): false.
-    return json(200, { ok: true, hash: result.hash, booked: getOrder(sql, result.hash) !== null, handedOff, handoff });
+    // Removed as refused while this request ran, by any path and at any point after the insert: the account is excluded
+    // for a day covering this booking (Codex MATCHER R7 F3, R8 F2/F3, adversary R18/R19). Read and cleared.
+    if (sql.exec(`DELETE FROM refused_drops WHERE seq = ? RETURNING seq`, seq).toArray().length > 0) {
+      return json(400, { ok: false, code: 'account_refused', hash: result.hash });
+    }
+    // `booked`: this booking is on the book now (resting or in flight); removed for another reason (a cancel, a fill,
+    // expiry) meanwhile: false.
+    const booked = sql.exec(`SELECT 1 FROM orders WHERE seq = ?`, seq).toArray().length > 0;
+    return json(200, { ok: true, hash: result.hash, booked, handedOff, handoff });
   }
 
   if (req.method === 'POST' && url.pathname === '/outcome') {
@@ -212,7 +211,7 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
       /* refused below */
     }
     if (!parsed) return json(400, { ok: false, code: 'bad_request' });
-    applyOutcome(sql, parsed, alert);
+    applyOutcome(sql, parsed, alert, deps.now());
     return json(200, { ok: true });
   }
 
@@ -310,7 +309,7 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
         for (let i = 0; i < makers.length; i += ROLE_CHUNK) {
           for (const a of await readRefusedRoles(chain, makers.slice(i, i + ROLE_CHUNK))) blocked.add(lc(a));
         }
-        for (const a of await syncRefusals(state.storage, deps)) blocked.add(a);
+        for (const a of await syncRefusals(sql, deps)) blocked.add(a);
       } catch (err) {
         alert('match_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'refusal list unreadable');
         return { handedOff: 0, resumeBelow: null, finished: false };
@@ -326,10 +325,13 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
     // The book was read before the chain reads above, and a fetch or another pass can run during them. Checked
     // again here with no await before the mark: every order still booked, not in flight, and unfilled since the
     // read. Otherwise this pass hands off nothing and the next one proposes from the book as it now is.
-    const snap = new Map(book.map((o) => [o.hash, o.filled]));
+    // The same booking, by `seq`: a hash removed and booked again since is a newer order with another time and
+    // priority (Codex MATCHER R8 F1).
+    const snap = new Map(book.map((o) => [o.hash, o]));
     if (hashes.some((h) => {
       const now = getOrder(sql, h);
-      return !now || now.inFlight || now.filled !== snap.get(h);
+      const was = snap.get(h);
+      return !now || !was || now.seq !== was.seq || now.inFlight || now.filled !== was.filled;
     })) return { handedOff: 0, resumeBelow: taker.seq + 1, finished: false }; // this taker again next time
     markInFlight(sql, hashes, deps.now());
     // Only the settler's explicit refusal releases the marks. A lost or unreadable answer may hide an acceptance
@@ -341,7 +343,7 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
     } catch {
       alert('handoff_unconfirmed', 'the settler did not answer the hand-off; its orders stay marked until it is known');
     }
-    if (answer === 'refused') releaseInFlight(sql, hashes);
+    if (answer === 'refused') releaseInFlight(sql, hashes, deps.now());
     return { handedOff: 1, resumeBelow: taker.seq, finished: false, answer };
   }
   return { handedOff: 0, resumeBelow: takers.length > 0 ? takers[takers.length - 1].seq : null, finished: true, tried };
@@ -427,7 +429,9 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   // not it ever proposes that account (Codex MATCHER R6 F1, plan 6.2). Unreadable: kept and alerted; the matching pass
   // reads again and proposes nothing without it.
   try {
-    await syncRefusals(state.storage, deps);
+    await syncRefusals(sql, deps);
+    // refusal records no intake can still be waiting for
+    sql.exec(`DELETE FROM refused_drops WHERE at < ?`, deps.now() - REFUSED_DROP_KEEP_MS);
   } catch {
     alert('refusal_list_unreadable', 'the settler refusal list could not be read; refused accounts are not dropped this tick');
   }
@@ -444,34 +448,21 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
 }
 
 /// Plan 6.2: reads every settler refusal since this book's last good read (or, with none, since the day its oldest order
-/// was booked, a day back), drops the orders each one covers (dropRefused; an intake request waiting on one is told), and returns the
+/// was booked, a day back), drops the orders each one covers (dropRefused, which records them), and returns the
 /// accounts refused today, lowercase.
 /// Throws when the settler cannot be read; callers match nothing then. The tick and every matching pass (intake too)
 /// call it, so no order booked on a refused day is proposed after that day turns (adversary R14, R15). The next read
 /// starts a day back, so a row the settler stamps with a day the market's clock has just left is read again.
-async function syncRefusals(storage: DurableObjectStorage, deps: MarketDeps): Promise<Set<Hex>> {
-  const sql = storage.sql;
+async function syncRefusals(sql: SqlStorage, deps: MarketDeps): Promise<Set<Hex>> {
   const now = deps.now();
   const oldest = sql.exec<{ t: number | null }>(`SELECT MIN(created_at) AS t FROM orders`).one().t ?? now;
   // a day before the oldest order's day: the settler may stamp a refusal covering it with the day before (its clock
   // behind; DAY_EDGE_SLACK_MS), and the first read must see that row too (Codex MATCHER R7 F1)
   const rows = await deps.refusalsSince(getMeta(sql, 'refusals_since') ?? utcDay(Math.min(oldest, now) - 86_400_000));
-  const watch = watched.get(storage);
-  for (const h of dropRefused(sql, rows)) for (const t of watch?.get(h) ?? []) t.refused = true;
+  dropRefused(sql, rows, now);
   setMeta(sql, 'refusals_since', utcDay(now - 86_400_000));
   const today = utcDay(now);
   return new Set(rows.filter((r) => r.day >= today).map((r) => r.maker));
-}
-
-/// Per object: for each order hash, one token per intake request answering for it; a refusal read that drops the order
-/// marks every token. In memory, because only requests running in this same live instance can interleave.
-const watched = new WeakMap<DurableObjectStorage, Map<Hex, Set<{ refused: boolean }>>>();
-function watchOf(storage: DurableObjectStorage, hash: Hex): Set<{ refused: boolean }> {
-  let w = watched.get(storage);
-  if (!w) watched.set(storage, (w = new Map()));
-  let t = w.get(hash);
-  if (!t) w.set(hash, (t = new Set()));
-  return t;
 }
 
 /// A mark set for a hand-off the settler never received (this object was replaced during the hand-off) would keep
@@ -488,7 +479,7 @@ async function releaseStaleMarks(sql: SqlStorage, deps: MarketDeps, alert: Alert
   // Read again after the await: a mark set or released meanwhile is judged on its current state.
   const free = marksOlderThan(sql, deps.now() - STALE_MARK_MS).filter((h) => !held.has(h));
   if (free.length === 0) return;
-  releaseInFlight(sql, free);
+  releaseInFlight(sql, free, deps.now());
   alert('stale_mark_released', `${free.length} order(s) marked for a hand-off the settler does not hold`);
 }
 

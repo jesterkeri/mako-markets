@@ -49,6 +49,7 @@ export async function fresh(id = '1'): Promise<Harness> {
     state.storage.sql.exec('DROP TABLE IF EXISTS orders');
     state.storage.sql.exec('DROP TABLE IF EXISTS meta');
     state.storage.sql.exec('DROP TABLE IF EXISTS alerts');
+    state.storage.sql.exec('DROP TABLE IF EXISTS refused_drops');
     migrate(state.storage.sql);
   });
   const w = new World();
