@@ -211,10 +211,6 @@ export function applyFill(sql: SqlStorage, hash: Hex, fill: bigint): void {
   else sql.exec(`UPDATE orders SET filled = ? WHERE hash = ?`, filled.toString(), hash);
 }
 
-export function deleteByMaker(sql: SqlStorage, maker: Hex): number {
-  return sql.exec(`DELETE FROM orders WHERE maker = ?`, maker).rowsWritten;
-}
-
 /// Plan 6.2: an account refused for a UTC day has the orders it had booked by the end of that day dropped as refused,
 /// in every market (Codex MATCHER R6 F1). `refusals` are the settler's rows since the market's last good read (so a day
 /// turn while the settler is unreadable loses nothing, adversary R14). An order in flight is flagged instead and goes

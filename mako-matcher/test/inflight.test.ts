@@ -176,10 +176,10 @@ describe('the settler\'s report to a market', () => {
     expect(await h.sql('SELECT COUNT(*) AS n FROM orders')).toEqual([{ n: 0 }]);
   });
 
-  it('removes a refused account\'s orders and, when trading closed, the whole market\'s', async () => {
+  it('leaves refused accounts to the dated refusal read (adversary R16), and when trading closed removes the whole market\'s', async () => {
     await put(['directMakerSell', 'mintMakerBuy2']);
     await outcome({ refusedMakers: [vec('directMakerSell').order.maker], release: [] });
-    expect(await h.sql('SELECT COUNT(*) AS n FROM orders')).toEqual([{ n: 1 }]);
+    expect(await h.sql('SELECT COUNT(*) AS n FROM orders'), 'the outcome alone removes nothing').toEqual([{ n: 2 }]);
     await outcome({ closed: true, release: [] });
     expect(await h.sql('SELECT COUNT(*) AS n FROM orders')).toEqual([{ n: 0 }]);
   });

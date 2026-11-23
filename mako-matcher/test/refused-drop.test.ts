@@ -1,5 +1,5 @@
 // Codex MATCHER R6 F1 (plan 6.2): when an account is refused for the UTC day, its booked orders are dropped as refused
-// in EVERY market, not only the one whose settlement failed (that one also gets `refusedMakers` in its outcome). Each
+// in EVERY market, not only the one whose settlement failed (its outcome names them in `refusedMakers`, no longer applied). Each
 // market's alarm tick reads the settler's daily list and drops that account's orders, whether or not the market has a
 // crossing proposal; orders in flight stay until their outcome or release.
 import { beforeEach, describe, expect, it } from 'vitest';

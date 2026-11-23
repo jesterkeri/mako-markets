@@ -1,7 +1,7 @@
 // What the settler reports back to a market object about a proposal it accepted (plan 6.2: "Report back").
 // Fills are applied, orders are dropped with a reason, in-flight marks are released, and a market may be stopped.
 import type { Hex } from 'viem';
-import { applyFill, deleteAll, deleteBelowNonce, deleteByHash, deleteByMaker, getOrder, releaseInFlight, setMeta } from './book';
+import { applyFill, deleteAll, deleteBelowNonce, deleteByHash, getOrder, releaseInFlight, setMeta } from './book';
 import type { Alert } from './alerts';
 
 export interface Outcome {
@@ -11,7 +11,9 @@ export interface Outcome {
   applied?: { hash: Hex; fill: string }[];
   /// Orders to remove, with the reason (`nonce` also removes the maker's older-nonce orders).
   dropped?: { hash: Hex; reason: string }[];
-  /// Accounts refused for the rest of the UTC day: their booked orders here are dropped as refused.
+  /// Accounts the settlement refused for the UTC day. Parsed, not applied: every market drops refused accounts' orders
+  /// from the settler's dated rows (syncRefusals), scoped to the refusal's day. Applying it here would also delete an
+  /// order booked after that day when the outcome is delivered late (adversary R16).
   refusedMakers?: Hex[];
   /// TradingClosed: every order of this market is removed as closed.
   closed?: boolean;
@@ -68,7 +70,6 @@ export function applyOutcome(sql: SqlStorage, o: Outcome, alert: Alert): void {
     // A nonce error means the chain's nonce is above this order's: every order of that maker at or below it is dead.
     if (d.reason === 'nonce' && ord) deleteBelowNonce(sql, ord.maker, ord.nonce + 1n);
   }
-  for (const m of o.refusedMakers ?? []) deleteByMaker(sql, m);
   if (o.closed) deleteAll(sql);
   if (o.stopMarket) {
     setMeta(sql, 'stopped', o.stopMarket);
