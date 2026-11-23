@@ -25,7 +25,7 @@ export const SCHEMA = [
      created_at INTEGER NOT NULL,
      in_flight INTEGER NOT NULL DEFAULT 0,
      refused INTEGER NOT NULL DEFAULT 0,
-     cancel_at_release INTEGER NOT NULL DEFAULT 0
+     remove_at_release INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
   // Bookings removed because their account is excluded, by `seq` (one booking; never reused). Intake answers from it
@@ -134,14 +134,23 @@ export function insertOrder(sql: SqlStorage, o: OrderTuple, hash: Hex, signature
   );
 }
 
-/// Plan 6.2 off-chain cancel. A booking in flight stays until its match reports or its mark is released, then goes
-/// (releaseInFlight): removing it now would free its hash for a new booking of the same signed order, and the late
-/// outcome, which names orders by hash, would then act on that new booking (adversary R20).
-export function cancelOffChain(sql: SqlStorage, hash: Hex): 'removed' | 'at_release' | 'absent' {
-  if (sql.exec(`UPDATE orders SET cancel_at_release = 1 WHERE hash = ? AND in_flight > 0`, hash).rowsWritten > 0) return 'at_release';
-  return deleteByHash(sql, hash) ? 'removed' : 'absent';
+/// Removes the bookings matching `where`, except that a booking in flight is only flagged and goes when its match
+/// reports or its mark is released (releaseInFlight). Removing it earlier would free its hash for a new booking of the
+/// same signed order, and the late outcome, which names orders by hash, would act on that new booking (adversary R20,
+/// R21). Every removal outside an outcome goes through here: off-chain and on-chain cancels, nonce bumps, expiry.
+function removeWhere(sql: SqlStorage, where: string, ...args: (string | number)[]): { removed: number; atRelease: number } {
+  const atRelease = sql.exec(`UPDATE orders SET remove_at_release = 1 WHERE (${where}) AND in_flight > 0`, ...args).rowsWritten;
+  const removed = sql.exec(`DELETE FROM orders WHERE (${where}) AND in_flight = 0`, ...args).rowsWritten;
+  return { removed, atRelease };
 }
 
+/// Plan 6.2 off-chain cancel (and an on-chain `OrderCancelled` log): see removeWhere.
+export function cancelOrder(sql: SqlStorage, hash: Hex): 'removed' | 'at_release' | 'absent' {
+  const r = removeWhere(sql, 'hash = ?', hash);
+  return r.atRelease > 0 ? 'at_release' : r.removed > 0 ? 'removed' : 'absent';
+}
+
+/// Immediate: only for an outcome, which reports on the bookings of its own match.
 export function deleteByHash(sql: SqlStorage, hash: Hex): boolean {
   const c = sql.exec(`DELETE FROM orders WHERE hash = ?`, hash);
   return c.rowsWritten > 0;
@@ -151,17 +160,13 @@ export function deleteByHash(sql: SqlStorage, hash: Hex): boolean {
 export function deleteBelowNonce(sql: SqlStorage, maker: Hex, newNonce: bigint): number {
   let n = 0;
   for (const r of sql.exec<{ hash: string; nonce: string }>(`SELECT hash, nonce FROM orders WHERE maker = ?`, maker).toArray()) {
-    if (BigInt(r.nonce) < newNonce) {
-      sql.exec(`DELETE FROM orders WHERE hash = ?`, r.hash);
-      n++;
-    }
+    if (BigInt(r.nonce) < newNonce) n += removeWhere(sql, 'hash = ?', r.hash).removed;
   }
   return n;
 }
 
 export function deleteExpired(sql: SqlStorage, nowSeconds: number): number {
-  const c = sql.exec(`DELETE FROM orders WHERE expiration <= ?`, nowSeconds);
-  return c.rowsWritten;
+  return removeWhere(sql, 'expiration <= ?', nowSeconds).removed;
 }
 
 /// What this market's resting orders of `maker` have reserved (plan 6.2 step 3, the scope as written: per market
@@ -210,8 +215,8 @@ export function releaseInFlight(sql: SqlStorage, hashes: Hex[], now: number): vo
   for (const h of hashes) {
     // flagged by dropRefused while in flight: dropped as refused once released
     recordRefused(sql, sql.exec<{ seq: number }>(`DELETE FROM orders WHERE hash = ? AND refused = 1 RETURNING seq`, h).toArray(), now);
-    // cancelled off chain while in flight: removed now its match is over
-    sql.exec(`DELETE FROM orders WHERE hash = ? AND cancel_at_release = 1`, h);
+    // cancelled or expired while in flight: removed now its match is over (removeWhere)
+    sql.exec(`DELETE FROM orders WHERE hash = ? AND remove_at_release = 1`, h);
     sql.exec(`UPDATE orders SET in_flight = 0 WHERE hash = ?`, h);
   }
 }

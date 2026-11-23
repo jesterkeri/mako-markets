@@ -83,6 +83,8 @@ export async function intakeOrder(d: IntakeDeps, rawBody: unknown): Promise<Inta
 
     // Step 4, in ONE synchronous block: nothing awaits between the checks below and the insert, so two orders in
     // flight at once cannot both pass the cap or the reservation check.
+    // expired while this request awaited the chain or the settler (adversary R21): refused, not booked
+    if (order.expiration <= BigInt(Math.floor(d.now() / 1000))) return refuse('expired');
     const live = allOrders(d.sql).filter((o) => o.expiration > BigInt(nowS));
     if (live.some((o) => o.hash === hash) || getOrder(d.sql, hash)) return refuse('duplicate_order');
     if (live.filter((o) => o.maker === order.maker).length >= MAX_OPEN_ORDERS) return refuse('too_many_orders');

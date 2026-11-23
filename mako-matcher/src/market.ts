@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, cancelOffChain, deleteBelowNonce, deleteByHash, deleteExpired, dropRefused, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, cancelOrder, deleteBelowNonce, deleteExpired, dropRefused, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
@@ -223,7 +223,7 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
   const del = /^\/orders\/(0x[0-9a-fA-F]{64})$/.exec(url.pathname);
   if (req.method === 'DELETE' && del) {
     // `removed`: gone now; `atRelease`: in a match now, so it goes when that match reports (and is never matched again)
-    const r = cancelOffChain(sql, del[1].toLowerCase() as Hex);
+    const r = cancelOrder(sql, del[1].toLowerCase() as Hex);
     return json(200, { ok: true, removed: r === 'removed', atRelease: r === 'at_release' });
   }
 
@@ -500,7 +500,7 @@ async function readCancels(state: DurableObjectState, cfg: Config, deps: MarketD
     const to = from + BigInt(LOG_CHUNK_BLOCKS) - 1n < latest ? from + BigInt(LOG_CHUNK_BLOCKS) - 1n : latest;
     const logs = await readLogs(chain, from, to);
     for (const l of logs) {
-      if (l.kind === 'cancelled') deleteByHash(sql, l.orderHash);
+      if (l.kind === 'cancelled') cancelOrder(sql, l.orderHash);
       else deleteBelowNonce(sql, l.account, l.nonce);
     }
     // An intake booked during the read may have moved the cursor back (or the cursor is gone): that value stands and
