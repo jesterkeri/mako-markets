@@ -180,9 +180,10 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
     // `handedOff`: proposals sent to the settler (0 or 1); `handoff`: its answer to that one (Codex MATCHER R6 F2).
     let handedOff = 0;
     let handoff: HandoffAnswer | null = null;
-    const watch = watchOf(state.storage);
-    watch.set(result.hash, false);
-    let refused = false;
+    // this request's own token: a retry of the same order in flight holds another (adversary R19)
+    const token = { refused: false };
+    const tokens = watchOf(state.storage, result.hash);
+    tokens.add(token);
     try {
       const r = await matchPass(state, cfg, deps, alert, [result.hash]);
       handedOff = r.handedOff;
@@ -190,12 +191,12 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
     } catch (err) {
       alert('match_failed', err instanceof Error ? err.name : 'error');
     } finally {
-      refused = watch.get(result.hash) === true;
-      watch.delete(result.hash);
+      tokens.delete(token);
+      if (tokens.size === 0) watched.get(state.storage)?.delete(result.hash);
     }
     // A refusal read dropped it while this request ran, its own pass's or the tick's: the account is refused for a day
     // that covers this booking (Codex MATCHER R7 F3, adversary R18).
-    if (refused) return json(400, { ok: false, code: 'account_refused', hash: result.hash });
+    if (token.refused) return json(400, { ok: false, code: 'account_refused', hash: result.hash });
     // `booked` says whether it is on the book now; gone for any other reason (a cancel or fill seen meanwhile): false.
     return json(200, { ok: true, hash: result.hash, booked: getOrder(sql, result.hash) !== null, handedOff, handoff });
   }
@@ -456,19 +457,21 @@ async function syncRefusals(storage: DurableObjectStorage, deps: MarketDeps): Pr
   // behind; DAY_EDGE_SLACK_MS), and the first read must see that row too (Codex MATCHER R7 F1)
   const rows = await deps.refusalsSince(getMeta(sql, 'refusals_since') ?? utcDay(Math.min(oldest, now) - 86_400_000));
   const watch = watched.get(storage);
-  for (const h of dropRefused(sql, rows)) if (watch?.has(h)) watch.set(h, true);
+  for (const h of dropRefused(sql, rows)) for (const t of watch?.get(h) ?? []) t.refused = true;
   setMeta(sql, 'refusals_since', utcDay(now - 86_400_000));
   const today = utcDay(now);
   return new Set(rows.filter((r) => r.day >= today).map((r) => r.maker));
 }
 
-/// Per object: the orders intake requests are answering for, and whether a refusal read dropped each one meanwhile. In
-/// memory, because only requests running in this same live instance can interleave.
-const watched = new WeakMap<DurableObjectStorage, Map<Hex, boolean>>();
-function watchOf(storage: DurableObjectStorage): Map<Hex, boolean> {
+/// Per object: for each order hash, one token per intake request answering for it; a refusal read that drops the order
+/// marks every token. In memory, because only requests running in this same live instance can interleave.
+const watched = new WeakMap<DurableObjectStorage, Map<Hex, Set<{ refused: boolean }>>>();
+function watchOf(storage: DurableObjectStorage, hash: Hex): Set<{ refused: boolean }> {
   let w = watched.get(storage);
   if (!w) watched.set(storage, (w = new Map()));
-  return w;
+  let t = w.get(hash);
+  if (!t) w.set(hash, (t = new Set()));
+  return t;
 }
 
 /// A mark set for a hand-off the settler never received (this object was replaced during the hand-off) would keep
