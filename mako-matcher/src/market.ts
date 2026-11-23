@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, dropRefused, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, cancelOffChain, deleteBelowNonce, deleteByHash, deleteExpired, dropRefused, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
@@ -222,8 +222,9 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
 
   const del = /^\/orders\/(0x[0-9a-fA-F]{64})$/.exec(url.pathname);
   if (req.method === 'DELETE' && del) {
-    const removed = deleteByHash(sql, del[1].toLowerCase() as Hex);
-    return json(200, { ok: true, removed });
+    // `removed`: gone now; `atRelease`: in a match now, so it goes when that match reports (and is never matched again)
+    const r = cancelOffChain(sql, del[1].toLowerCase() as Hex);
+    return json(200, { ok: true, removed: r === 'removed', atRelease: r === 'at_release' });
   }
 
   return json(404, { ok: false, code: 'not_found' });
@@ -406,6 +407,8 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   const sql = state.storage.sql;
   const alert = makeAlert(sql, deps.now, deps.log);
   deleteExpired(sql, Math.floor(deps.now() / 1000));
+  // refusal records no intake can still be waiting for (on an emptied book too)
+  sql.exec(`DELETE FROM refused_drops WHERE at < ?`, deps.now() - REFUSED_DROP_KEEP_MS);
   if (countOrders(sql) === 0) {
     delMeta(sql, 'log_cursor');
     delMeta(sql, 'refusals_since'); // an empty book has nothing to drop: the next read starts from its own day
@@ -430,8 +433,6 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
   // reads again and proposes nothing without it.
   try {
     await syncRefusals(sql, deps);
-    // refusal records no intake can still be waiting for
-    sql.exec(`DELETE FROM refused_drops WHERE at < ?`, deps.now() - REFUSED_DROP_KEEP_MS);
   } catch {
     alert('refusal_list_unreadable', 'the settler refusal list could not be read; refused accounts are not dropped this tick');
   }

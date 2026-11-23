@@ -117,10 +117,10 @@ describe('off-chain cancel (shared secret)', () => {
     expect(await h.sql('SELECT COUNT(*) AS n FROM orders')).toEqual([{ n: 1 }]);
     const ok = await del(o.hash, { 'x-matcher-secret': 'test-cancel-secret' });
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ ok: true, removed: true });
+    expect(await ok.json()).toEqual({ ok: true, removed: true, atRelease: false });
     expect(await h.sql('SELECT COUNT(*) AS n FROM orders')).toEqual([{ n: 0 }]);
     const again = await del(o.hash, { 'x-matcher-secret': 'test-cancel-secret' });
-    expect(await again.json()).toEqual({ ok: true, removed: false });
+    expect(await again.json()).toEqual({ ok: true, removed: false, atRelease: false });
   });
 
   it('with no secret configured no cancel is accepted', async () => {

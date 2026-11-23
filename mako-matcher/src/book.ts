@@ -24,7 +24,8 @@ export const SCHEMA = [
      filled TEXT NOT NULL DEFAULT '0',
      created_at INTEGER NOT NULL,
      in_flight INTEGER NOT NULL DEFAULT 0,
-     refused INTEGER NOT NULL DEFAULT 0
+     refused INTEGER NOT NULL DEFAULT 0,
+     cancel_at_release INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS orders_maker ON orders (maker)`,
   // Bookings removed because their account is excluded, by `seq` (one booking; never reused). Intake answers from it
@@ -133,6 +134,14 @@ export function insertOrder(sql: SqlStorage, o: OrderTuple, hash: Hex, signature
   );
 }
 
+/// Plan 6.2 off-chain cancel. A booking in flight stays until its match reports or its mark is released, then goes
+/// (releaseInFlight): removing it now would free its hash for a new booking of the same signed order, and the late
+/// outcome, which names orders by hash, would then act on that new booking (adversary R20).
+export function cancelOffChain(sql: SqlStorage, hash: Hex): 'removed' | 'at_release' | 'absent' {
+  if (sql.exec(`UPDATE orders SET cancel_at_release = 1 WHERE hash = ? AND in_flight > 0`, hash).rowsWritten > 0) return 'at_release';
+  return deleteByHash(sql, hash) ? 'removed' : 'absent';
+}
+
 export function deleteByHash(sql: SqlStorage, hash: Hex): boolean {
   const c = sql.exec(`DELETE FROM orders WHERE hash = ?`, hash);
   return c.rowsWritten > 0;
@@ -201,6 +210,8 @@ export function releaseInFlight(sql: SqlStorage, hashes: Hex[], now: number): vo
   for (const h of hashes) {
     // flagged by dropRefused while in flight: dropped as refused once released
     recordRefused(sql, sql.exec<{ seq: number }>(`DELETE FROM orders WHERE hash = ? AND refused = 1 RETURNING seq`, h).toArray(), now);
+    // cancelled off chain while in flight: removed now its match is over
+    sql.exec(`DELETE FROM orders WHERE hash = ? AND cancel_at_release = 1`, h);
     sql.exec(`UPDATE orders SET in_flight = 0 WHERE hash = ?`, h);
   }
 }

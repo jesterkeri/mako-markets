@@ -238,4 +238,14 @@ describe('refused_drops pruning', () => {
     await h.tick();
     expect(await h.sql(`SELECT seq FROM refused_drops`)).toEqual([]);
   });
+
+  it('the tick prunes an old record on an emptied book too (adversary R20 note)', async () => {
+    await place('directMakerSell');
+    h.refused.add(ASK.order.maker.toLowerCase());
+    await h.tick(); // drops the only order: the book is empty
+    expect(await h.sql(`SELECT seq FROM refused_drops`)).toHaveLength(1);
+    h.w.nowMs += 11 * 60_000;
+    await h.tick();
+    expect(await h.sql(`SELECT seq FROM refused_drops`)).toEqual([]);
+  });
 });
