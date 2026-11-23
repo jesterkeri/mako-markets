@@ -72,19 +72,19 @@ describe('adversary R12: whole-book party check', () => {
     expect(h.settled, 'recovered: the clean pair goes').toHaveLength(1);
   });
 
-  it('UTC day turn right after the book went idle: the new day is searched without waiting for IDLE_RECHECK_MS', async () => {
+  it('UTC day turn: an account refused for the day has its order dropped, and the new day does not bring it back (plan 6.2, Codex R6 F1)', async () => {
     const [refusedAsk] = await book([{ isBuy: false, price: 40 }]);
     h.refused.add(refusedAsk.toLowerCase());
-    const [bid] = await book([{ isBuy: true, price: 50 }]);
+    await book([{ isBuy: true, price: 50 }]);
     const midnight = (Math.floor(h.w.nowMs / 86_400_000) + 1) * 86_400_000;
     h.w.nowMs = midnight - 30_000;
     await h.tick();
     expect(h.settled).toHaveLength(0);
+    expect((await h.sql<{ n: number }>(`SELECT count(*) AS n FROM orders WHERE maker = ?`, refusedAsk.toLowerCase()))[0].n, 'dropped as refused').toBe(0);
     h.w.nowMs = midnight + 1_000;
     h.refused.clear();
     await h.tick();
-    expect(h.settled, 'new day, wallet no longer refused').toHaveLength(1);
-    expect(text(h.settled[0])).toContain(bid.toLowerCase());
+    expect(h.settled, 'the dropped order does not come back on the new day').toHaveLength(0);
   });
 
   it('worst alarm tick: full book, 5 log chunks, stale mark, role reads, list read and hand-off stay under 50 subrequests', async () => {

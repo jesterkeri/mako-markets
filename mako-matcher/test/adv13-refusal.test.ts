@@ -51,7 +51,8 @@ describe('adv13: settler side', () => {
     });
   });
 
-  it('handoffAnswer reads the real 503 body of a party_refused answer as an explicit refusal', () => {
+  // A parser test on a literal body; the real configured route is tested in handoff-answer.test.ts (Codex MATCHER R6 F3).
+  it('handoffAnswer parses a party_refused body as an explicit refusal', () => {
     expect(handoffAnswer('{"ok":false,"accepted":false,"error":"party_refused"}')).toEqual({ accepted: false });
   });
 });

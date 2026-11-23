@@ -210,6 +210,17 @@ export function deleteByMaker(sql: SqlStorage, maker: Hex): number {
   return sql.exec(`DELETE FROM orders WHERE maker = ?`, maker).rowsWritten;
 }
 
+/// Plan 6.2: an account refused for the UTC day has its booked orders dropped as refused, in every market (Codex MATCHER
+/// R6 F1: only the market whose settlement failed got the outcome that drops them). Orders in flight stay until their
+/// outcome or release; a later call drops them. Returns how many were dropped.
+export function dropRefused(sql: SqlStorage, refused: Set<Hex>): number {
+  let n = 0;
+  for (const { maker } of sql.exec<{ maker: string }>(`SELECT DISTINCT maker FROM orders`).toArray()) {
+    if (refused.has(maker.toLowerCase() as Hex)) n += sql.exec(`DELETE FROM orders WHERE maker = ? AND in_flight = 0`, maker).rowsWritten;
+  }
+  return n;
+}
+
 export function deleteAll(sql: SqlStorage): number {
   return sql.exec(`DELETE FROM orders`).rowsWritten;
 }

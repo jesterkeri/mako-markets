@@ -105,9 +105,10 @@ describe('one alarm tick stays inside the invocation subrequest limit', () => {
     expect(h.settled).toHaveLength(1);
   });
 
-  it('each pass reads the refusal list once and remembers nothing for the next pass', async () => {
+  it('a tick reads the refusal list twice (drop refused orders, then the pass) and a pass remembers nothing for the next', async () => {
+    // excluded by a contract role (the daily list's accounts are now dropped from the book, R6 F1)
     await book(Array.from({ length: 10 }, () => ({ option: 0, isBuy: false, price: 40, size: 10n * SH })), 3);
-    for (let n = 1; n <= 10; n++) h.refused.add(W(n).toLowerCase());
+    for (let n = 1; n <= 10; n++) h.w.operators.add(W(n).toLowerCase() as Hex);
     await book([{ option: 0, isBuy: true, price: 50, size: 100n * SH }], 3);
     let reads = 0;
     const inner = h.deps.refusedList;
@@ -116,13 +117,13 @@ describe('one alarm tick stays inside the invocation subrequest limit', () => {
       return inner();
     };
     await h.tick();
-    expect(reads, 'one list read for the whole pass').toBe(1);
+    expect(reads, 'one read to drop refused orders, one for the whole pass').toBe(2);
     expect(h.settled).toHaveLength(0);
-    // a wallet taken off the list is matched by the next pass: nothing was cached
-    h.refused.delete(W(1).toLowerCase());
+    // a role lifted is matched by the next pass: nothing was cached
+    h.w.operators.delete(W(1).toLowerCase() as Hex);
     await book([{ option: 1, isBuy: true, price: 5, size: 10n * SH }], 3); // the book changed (no idle skip)
     await h.tick();
-    expect(reads).toBe(2);
+    expect(reads).toBe(4);
     expect(h.settled).toHaveLength(1);
   });
 });

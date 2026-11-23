@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, deleteBelowNonce, deleteByHash, deleteExpired, dropRefused, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
@@ -172,13 +172,17 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
     );
     if (!result.ok) return json(result.status, { ok: false, code: result.code, ...(result.copy ? { copy: result.copy } : {}) });
     await ensureAlarm(state, deps);
+    // `handedOff`: proposals sent to the settler (0 or 1); `handoff`: its answer to that one (Codex MATCHER R6 F2).
     let handedOff = 0;
+    let handoff: HandoffAnswer | null = null;
     try {
-      handedOff = (await matchPass(state, cfg, deps, alert, [result.hash])).handedOff;
+      const r = await matchPass(state, cfg, deps, alert, [result.hash]);
+      handedOff = r.handedOff;
+      handoff = r.answer ?? null;
     } catch (err) {
       alert('match_failed', err instanceof Error ? err.name : 'error');
     }
-    return json(200, { ok: true, hash: result.hash, booked: true, handedOff });
+    return json(200, { ok: true, hash: result.hash, booked: true, handedOff, handoff });
   }
 
   if (req.method === 'POST' && url.pathname === '/outcome') {
@@ -250,7 +254,10 @@ function serialize(p: Proposal) {
 /// `finished`, true only when every given taker was tried and nothing stopped the pass early.
 /// `budgetStop`: the pass stopped before a taker because the work budget was spent (not a failure: the next tick
 /// continues from that taker); `tried`: how many takers it searched.
-export type PassResult = { handedOff: number; resumeBelow: number | null; finished: boolean; budgetStop?: boolean; tried?: number };
+/// `answer`: the settler's answer to the hand-off, when there was one (accepted, an explicit refusal such as `busy` or
+/// `party_refused`, or unknown: the answer was lost and the marks stay).
+export type PassResult = { handedOff: number; resumeBelow: number | null; finished: boolean; budgetStop?: boolean; tried?: number; answer?: HandoffAnswer };
+export type HandoffAnswer = 'accepted' | 'refused' | 'unknown';
 
 export async function matchPass(state: DurableObjectState, cfg: Config, deps: MarketDeps, alert: Alert, takerHashes: Hex[] | null, budget?: number): Promise<PassResult> {
   const sql = state.storage.sql;
@@ -311,14 +318,14 @@ export async function matchPass(state: DurableObjectState, cfg: Config, deps: Ma
     // Only the settler's explicit refusal releases the marks. A lost or unreadable answer may hide an acceptance
     // (the settler stores the proposal before it answers), so the marks stay until the settler reports, or until
     // the stale-mark check finds the settler does not hold them.
-    let refused = false;
+    let answer: HandoffAnswer = 'unknown';
     try {
-      refused = !(await deps.settle(serialize(p))).accepted;
+      answer = (await deps.settle(serialize(p))).accepted ? 'accepted' : 'refused';
     } catch {
       alert('handoff_unconfirmed', 'the settler did not answer the hand-off; its orders stay marked until it is known');
     }
-    if (refused) releaseInFlight(sql, hashes);
-    return { handedOff: 1, resumeBelow: taker.seq, finished: false };
+    if (answer === 'refused') releaseInFlight(sql, hashes);
+    return { handedOff: 1, resumeBelow: taker.seq, finished: false, answer };
   }
   return { handedOff: 0, resumeBelow: takers.length > 0 ? takers[takers.length - 1].seq : null, finished: true, tried };
 }
@@ -398,6 +405,14 @@ export async function handleAlarm(state: DurableObjectState, env: Env, deps: Mar
     alert('log_read_failed', err instanceof ChainError ? `${err.method} ${err.kind}` : 'error');
   }
   await releaseStaleMarks(sql, deps, alert);
+  // Every tick, idle or not, so each market drops a refused account's orders within one tick of the refusal, whether or
+  // not it ever proposes that account (Codex MATCHER R6 F1, plan 6.2). One settler read; unreadable: kept, alerted (the
+  // matching pass reads the list again and proposes nothing without it).
+  try {
+    dropRefused(sql, await deps.refusedList());
+  } catch {
+    alert('refusal_list_unreadable', 'the settler refusal list could not be read; refused accounts are not dropped this tick');
+  }
   if (countOrders(sql) > 0) {
     try {
       await spreadPass(state, cfg, deps, alert);

@@ -47,7 +47,7 @@ describe('a valid order is booked', () => {
     const o = await mk('eoaTaker');
     fund(h.w, o.order);
     const r = await h.place(o);
-    expect(r).toEqual({ status: 200, json: { ok: true, hash: o.hash, booked: true, handedOff: 0 } });
+    expect(r).toEqual({ status: 200, json: { ok: true, hash: o.hash, booked: true, handedOff: 0, handoff: null } });
     expect(await rows(h)).toEqual([{ hash: o.hash, signature: o.signature }]);
     // block number (log cursor), then ONE multicall; nothing else, and never a JSON-RPC array
     // (eth_chainId is asked once per object lifetime, so it is left out of exact lists)
