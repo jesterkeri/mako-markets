@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Hex } from 'viem';
 import { makeAlert, type Alert } from './alerts';
-import { allOrders, cancelOrder, deleteBelowNonce, deleteExpired, dropRefused, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
+import { allOrders, feedOrders, cancelOrder, deleteBelowNonce, deleteExpired, dropRefused, delMeta, getMeta, getOrder, markInFlight, marksOlderThan, migrate, releaseInFlight, setMeta, countOrders } from './book';
 import { applyOutcome, parseOutcome } from './outcome';
 import { blockNumber, checkChainId, ChainError, readLogs, readRefusedRoles, type ChainCtx } from './chain';
 import { readBody } from './body';
@@ -157,7 +157,7 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
   const url = new URL(req.url);
 
   if (req.method === 'GET' && url.pathname === '/book') {
-    return json(200, buildFeed(marketId, allOrders(sql), deps.now()));
+    return json(200, buildFeed(marketId, feedOrders(sql), deps.now()));
   }
 
   if (req.method === 'POST' && url.pathname === '/orders') {
@@ -195,8 +195,9 @@ export async function handleRequest(state: DurableObjectState, env: Env, req: Re
       return json(400, { ok: false, code: 'account_refused', hash: result.hash });
     }
     // `booked`: this booking is on the book now (resting or in flight); removed for another reason (a cancel, a fill,
-    // expiry) meanwhile: false.
-    const booked = sql.exec(`SELECT 1 FROM orders WHERE seq = ?`, seq).toArray().length > 0;
+    // expiry) meanwhile, or flagged to go when its match reports (a cancel, expiry or nonce bump while in flight): false
+    // (adversary R22).
+    const booked = sql.exec(`SELECT 1 FROM orders WHERE seq = ? AND remove_at_release = 0`, seq).toArray().length > 0;
     return json(200, { ok: true, hash: result.hash, booked, handedOff, handoff });
   }
 

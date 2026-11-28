@@ -100,6 +100,12 @@ export function allOrders(sql: SqlStorage): BookOrder[] {
   return sql.exec<Row>(`SELECT * FROM orders ORDER BY seq ASC`).toArray().map(fromRow);
 }
 
+/// The book feed's orders: a booking flagged to go at release (cancelled, expired, nonce-bumped or refused while in
+/// flight) can never be proposed again, so it is not shown (adversary R22).
+export function feedOrders(sql: SqlStorage): BookOrder[] {
+  return sql.exec<Row>(`SELECT * FROM orders WHERE remove_at_release = 0 AND refused = 0 ORDER BY seq ASC`).toArray().map(fromRow);
+}
+
 export function getOrder(sql: SqlStorage, hash: Hex): BookOrder | null {
   const r = sql.exec<Row>(`SELECT * FROM orders WHERE hash = ?`, hash).toArray()[0];
   return r ? fromRow(r) : null;
